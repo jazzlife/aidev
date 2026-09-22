@@ -90,6 +90,7 @@ function shouldAutoOpenUrlFromOutput(value: string): boolean {
   return (
     normalizedOutput.includes("browser didn't open") ||
     normalizedOutput.includes('open this url') ||
+    normalizedOutput.includes('open this link') ||
     normalizedOutput.includes('continue in your browser') ||
     normalizedOutput.includes('press enter to open') ||
     normalizedOutput.includes('open_url:')
@@ -479,16 +480,17 @@ export function handleShellConnection(
                 !urls.some((otherUrl) => otherUrl !== url && otherUrl.startsWith(url))
             );
 
-            dedupedDetectedUrls.forEach((url) => emitAuthUrl(url, false));
-
-            if (
-              shouldAutoOpenUrlFromOutput(cleanChunk) &&
-              dedupedDetectedUrls.length > 0
-            ) {
+            const shouldAutoOpen = shouldAutoOpenUrlFromOutput(cleanChunk);
+            if (shouldAutoOpen && dedupedDetectedUrls.length > 0) {
               const bestUrl = dedupedDetectedUrls.reduce((longest, current) =>
                 current.length > longest.length ? current : longest
               );
               emitAuthUrl(bestUrl, true);
+              dedupedDetectedUrls
+                .filter((url) => url !== bestUrl)
+                .forEach((url) => emitAuthUrl(url, false));
+            } else {
+              dedupedDetectedUrls.forEach((url) => emitAuthUrl(url, false));
             }
 
             session.ws.send(

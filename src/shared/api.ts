@@ -171,6 +171,7 @@ export const api = {
       body: JSON.stringify({ username, password }),
     }),
     refresh: () => post('/api/auth/refresh'),
+    logout: () => post('/api/auth/logout'),
     user: () => get('/api/auth/user'),
   },
 

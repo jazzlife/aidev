@@ -114,7 +114,7 @@ test('shell output detects and normalizes a wrapped authentication URL', () => {
   assert.deepEqual(authenticationFrame, {
     type: 'auth_url',
     url: 'https://example.com/authorize?code=abc',
-    autoOpen: false,
+    autoOpen: true,
   });
 
   pty.emitExit();

@@ -1,0 +1,19 @@
+{
+  "name": "aidev-runtime-manager",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "start": "node dist/runtime-manager.js",
+    "dev": "tsx src/runtime-manager.ts"
+  },
+  "devDependencies": {
+    "@types/jsonwebtoken": "^9.0.10",
+    "@types/node": "^22.19.7",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3"
+  },
+  "dependencies": {
+    "jsonwebtoken": "^9.0.3"
+  }
+}

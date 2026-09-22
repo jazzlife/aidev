@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+CONTAINER="${AIDEV_AUTH_CONTAINER:-aidev-auth-gateway}"
+
+usage() {
+  cat <<'HELP'
+사용법:
+  aidev-user add <사용자명>       사용자와 CloudCLI 컨테이너 생성
+  aidev-user list                 사용자와 연결된 컨테이너 조회
+  aidev-user delete <사용자명>    사용자와 CloudCLI 컨테이너 삭제
+  aidev-user disable <사용자명>   사용자 로그인만 비활성화
+HELP
+}
+
+fail() { printf '오류: %s\n' "$*" >&2; exit 1; }
+
+command -v docker >/dev/null 2>&1 || fail 'docker 명령을 찾을 수 없습니다.'
+docker inspect "$CONTAINER" >/dev/null 2>&1 || fail "$CONTAINER 컨테이너가 없습니다. aidev Stack 상태를 확인하세요."
+
+action="${1:-}"
+case "$action" in
+  list)
+    [[ $# -eq 1 ]] || { usage >&2; exit 2; }
+    exec docker exec "$CONTAINER" node /app/dist/manage-users.js list
+    ;;
+  delete)
+    [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+    [[ "$2" =~ ^[a-z0-9][a-z0-9_.-]{2,63}$ ]] || fail '사용자명은 영문 소문자, 숫자, ., _, -만 사용할 수 있습니다.'
+    exec docker exec "$CONTAINER" node /app/dist/manage-users.js delete "$2"
+    ;;
+  disable)
+    [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+    [[ "$2" =~ ^[a-z0-9][a-z0-9_.-]{2,63}$ ]] || fail '사용자명은 영문 소문자, 숫자, ., _, -만 사용할 수 있습니다.'
+    exec docker exec "$CONTAINER" node /app/dist/manage-users.js disable "$2"
+    ;;
+  add)
+    [[ $# -eq 2 ]] || { usage >&2; exit 2; }
+    username="$2"
+    [[ "$username" =~ ^[a-z0-9][a-z0-9_.-]{2,63}$ ]] || fail '사용자명은 영문 소문자, 숫자, ., _, -만 사용할 수 있습니다.'
+
+    while :; do
+      IFS= read -r -s -p "${username} 비밀번호(4자 이상): " password; printf '\n'
+      IFS= read -r -s -p '비밀번호 확인: ' confirmation; printf '\n'
+      [[ "$password" == "$confirmation" ]] || { printf '오류: 비밀번호가 다릅니다.\n' >&2; continue; }
+      [[ ${#password} -ge 4 && ${#password} -le 256 ]] || { printf '오류: 비밀번호는 4~256자여야 합니다.\n' >&2; continue; }
+      break
+    done
+    printf '%s\n' "$password" | docker exec -i "$CONTAINER" node /app/dist/manage-users.js add "$username"
+    unset password confirmation
+    printf '사용자 %s와 전용 CloudCLI 컨테이너를 생성했습니다. https://dev.nado.work 에서 로그인하세요.\n' "$username"
+    ;;
+  *)
+    usage >&2
+    exit 2
+    ;;
+esac

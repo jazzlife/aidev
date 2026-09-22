@@ -1,0 +1,73 @@
+name: aidev
+
+services:
+  auth-gateway:
+    container_name: aidev-auth-gateway
+    image: aidev/auth-gateway:phase1
+    build:
+      context: ./auth-gateway
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8080
+      PUBLIC_ORIGIN: https://dev.nado.work
+      DATABASE_PATH: /data/auth.db
+      JWT_SECRET_FILE: /run/secrets/gateway-jwt
+      RUNTIME_MANAGER_URL: http://runtime-manager:8090
+      RUNTIME_MANAGER_TOKEN_FILE: /run/secrets/runtime-token
+    secrets:
+      - gateway-jwt
+      - runtime-token
+    volumes:
+      - auth-data:/data
+    networks:
+      - npm-net
+      - control-net
+    depends_on:
+      runtime-manager:
+        condition: service_healthy
+    restart: unless-stopped
+
+  runtime-manager:
+    container_name: aidev-runtime-manager
+    image: aidev/runtime-manager:phase1
+    build:
+      context: ./runtime-manager
+    environment:
+      HOST: 0.0.0.0
+      PORT: 8090
+      RUNTIME_MANAGER_TOKEN_FILE: /run/secrets/runtime-token
+      DOCKER_SOCKET: /var/run/docker.sock
+      CLOUDCLI_IMAGE: aidev/cloudcli:dynamic
+      RUNTIME_KEYS_DIR: /runtime-keys
+      HOST_RUNTIME_KEYS_DIR: /home/turtlelab/aidev/runtime-keys
+      MANAGER_CONTAINER: aidev-runtime-manager
+    secrets:
+      - runtime-token
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - /home/turtlelab/aidev/runtime-keys:/runtime-keys
+    networks:
+      - control-net
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8090/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  auth-data:
+
+secrets:
+  gateway-jwt:
+    file: ${AIDEV_SECRET_DIR:-./secrets}/gateway-jwt
+  runtime-token:
+    file: ${AIDEV_SECRET_DIR:-./secrets}/runtime-token
+
+networks:
+  npm-net:
+    name: ${AIDEV_PROXY_NETWORK:-proxy-net}
+    external: true
+  control-net:
+    name: aidev-control-net
+    internal: true

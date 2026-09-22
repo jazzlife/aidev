@@ -33,7 +33,7 @@ type ShellIncomingMessage =
   // Sent instead of starting a PTY when the project path or session id is
   // rejected, so this is the only signal that the terminal will never start.
   | { type: 'error'; message?: string }
-  | { type: 'auth_url'; url?: string }
+  | { type: 'auth_url'; url?: string; autoOpen?: boolean }
   | { type: string; [key: string]: unknown };
 
 export function getShellWebSocketUrl(): string | null {

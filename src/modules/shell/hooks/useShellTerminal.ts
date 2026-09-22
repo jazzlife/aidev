@@ -186,10 +186,9 @@ export function useShellTerminal({
 
     nextTerminal.loadAddon(new ClipboardAddonCtor(undefined, oscClipboardProvider));
 
-    // Avoid wrapped partial links in compact login flows.
-    if (!minimal) {
-      nextTerminal.loadAddon(new WebLinksAddon());
-    }
+    // Login commands run in the compact terminal too. Keep URLs clickable
+    // there so a browser popup blocker still leaves a usable auth handoff.
+    nextTerminal.loadAddon(new WebLinksAddon());
 
     try {
       nextTerminal.loadAddon(new WebglAddon());

@@ -52,7 +52,10 @@ const getProviderCommand = ({
   }
 
   if (provider === 'codex') {
-    return IS_PLATFORM ? 'codex login --device-auth' : 'codex login';
+    // A web runtime cannot receive Codex's loopback OAuth callback from the
+    // user's browser. Device authorization keeps the login entirely on the
+    // public auth page and prints a one-time code in this terminal.
+    return 'codex login --device-auth';
   }
 
   if (provider === 'opencode') {

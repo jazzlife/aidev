@@ -113,6 +113,24 @@ export function useShellConnection({
         terminalRef.current?.write(`\r\n\x1b[31m${detail}\x1b[0m\r\n`);
         return;
       }
+
+      if (message.type === 'auth_url') {
+        const authUrl = typeof message.url === 'string' ? message.url : '';
+        if (!authUrl || !message.autoOpen) {
+          return;
+        }
+
+        // The PTY runs inside the runtime container, so a CLI-provided
+        // localhost URL must be opened by the user's current browser context.
+        // Browsers may block a websocket-triggered popup; leave a visible,
+        // copyable URL in the terminal in that case.
+        const openedWindow = window.open(authUrl, '_blank', 'noopener,noreferrer');
+        if (!openedWindow) {
+          terminalRef.current?.write(
+            `\r\n\x1b[33mOpen this URL in your browser:\x1b[0m ${authUrl}\r\n`,
+          );
+        }
+      }
     },
     [handleProcessCompletion, onOutputRef, terminalRef],
   );
