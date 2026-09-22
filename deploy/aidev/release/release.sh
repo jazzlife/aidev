@@ -13,8 +13,8 @@ VOL="${AIDEV_APP_VOLUME:-aidev_app}"
 # One release operation at a time per host (deploys, rollbacks, restarts must not interleave).
 if [ -z "${AIDEV_RELEASE_LOCKED:-}" ]; then exec env AIDEV_RELEASE_LOCKED=1 flock -w 600 /tmp/aidev-release.lock "$0" "$@"; fi
 HELPER=node:22-bookworm          # same glibc as the runtime images -> native modules match
-log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
-ok()   { printf '\033[1;32m ✓ \033[0m %s\n' "$*"; }
+log()  { printf '\033[1;34m==>\033[0m %s\n' "$*" >&2; }
+ok()   { printf '\033[1;32m ✓ \033[0m %s\n' "$*" >&2; }
 fail() { printf '\033[1;31m ✗ \033[0m %s\n' "$*" >&2; exit 1; }
 # Run a shell snippet inside the volume as the app user (1001). $1 = script, stdin passed through.
 vol()   { docker run --rm --user 1001:1001 -e HOME=/tmp -v "$VOL:/srv/app" -w /srv/app "$HELPER" bash -ec "$1" </dev/null; }
