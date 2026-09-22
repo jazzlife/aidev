@@ -29,7 +29,11 @@ ensure_volume() {
 }
 
 cmd_install() {
-  local tgz="${1:?release tgz}"; [ -f "$tgz" ] || fail "$tgz not found"
+  local tgz="${1:?release tgz or -}"
+  if [ "$tgz" = "-" ]; then  # streamed over SSH: `cat release.tgz | ssh host release.sh install -`
+    tgz=$(mktemp /tmp/aidev-release-XXXXXX.tgz); cat > "$tgz"; trap 'rm -f "$tgz"' RETURN
+  fi
+  [ -s "$tgz" ] || fail "$tgz not found or empty"
   ensure_volume
   local sha; sha=$(tar tzf "$tgz" | head -1 | cut -d/ -f1); [ -n "$sha" ] || fail "bad archive"
   if vol "test -f releases/$sha/RELEASE"; then ok "release $sha already installed"; else
@@ -138,7 +142,20 @@ cmd_diff() { # prints component names whose files differ between two releases
        d dist frontend; d dist-server server; d shared server; d public frontend; d runtime server; d node_modules server;
        d control/gateway gateway; d control/runtime-manager runtime-manager" | sort -u
 }
-cmd_rollback() { local to="${1:-}"; [ -n "$to" ] || to=$(vol 'cat previous 2>/dev/null'); [ -n "$to" ] || fail "no previous release"; cmd_activate "$to"; }
+cmd_rollback() { # rollback [sha] [restart opts]: activate an older release and restart only what differs
+  local to="${1:-}"; [ $# -gt 0 ] && shift
+  [ -n "$to" ] && [ "${to#--}" = "$to" ] || { set -- ${to:+"$to"} "$@"; to=$(vol 'cat previous 2>/dev/null'); }
+  [ -n "$to" ] || fail "no previous release"
+  local from; from=$(current); [ "$from" != "$to" ] || fail "release $to is already active"
+  local changed; changed=$(cmd_diff "$from" "$to" | tr '\n' ' ')
+  log "rollback $from -> $to ; changed: ${changed:-nothing}"
+  cmd_activate "$to"
+  local set=""
+  case " $changed " in *" runtime-manager "*) set="$set runtime-manager";; esac
+  case " $changed " in *" gateway "*)         set="$set gateway";; esac
+  case " $changed " in *" server "*)          set="$set runtimes";; esac
+  [ -n "$set" ] && cmd_restart "${@:---drain --batch 6}" $set || ok "frontend-only rollback: nothing restarted"
+}
 cmd_list() { vol 'ls -1 releases; echo "deps: $(ls -1 deps | tr "\n" " ")"; echo "current -> $(readlink current 2>/dev/null)"; echo "previous: $(cat previous 2>/dev/null)"'; }
 cmd_status() {
   echo "current release: $(current)"; echo "gateway: $(gw release 2>/dev/null || echo unreachable)"

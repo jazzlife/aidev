@@ -9,13 +9,18 @@
 # Rollback: release.sh rollback && release.sh restart <same set>.
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd); R="$here/release.sh"
-tgz="${1:?release tgz}"; shift || true
+tgz="${1:?release tgz, or - to read it from stdin}"; shift || true
+if [ "$tgz" = "-" ]; then  # direct SSH stream: cat release.tgz | ssh host deploy.sh -
+  spool=$(mktemp /tmp/aidev-release-XXXXXX.tgz); cat > "$spool"; tgz="$spool"; trap 'rm -f "$spool"' EXIT
+  [ -s "$tgz" ] || { echo "empty stream"; exit 1; }
+fi
 # Runtime restart policy for large fleets. Default: 6 in parallel, idle runtimes first,
 # runtimes with live WebSocket sessions deferred (finish later with `release.sh restart --drain runtimes`).
 # Override per deploy:  deploy.sh <tgz> --batch 10 --force      (or set RESTART_OPTS)
 RESTART_OPTS="${RESTART_OPTS:---drain --batch 6}"; [ $# -gt 0 ] && RESTART_OPTS="$*"
 # Hold the host-wide release lock for the whole deploy; nested release.sh calls inherit it.
-if [ -z "${AIDEV_RELEASE_LOCKED:-}" ]; then exec env AIDEV_RELEASE_LOCKED=1 flock -w 600 /tmp/aidev-release.lock "$0" "$tgz" "$@"; fi
+if [ -z "${AIDEV_RELEASE_LOCKED:-}" ]; then exec env AIDEV_RELEASE_LOCKED=1 AIDEV_SPOOL="${spool:-}" flock -w 600 /tmp/aidev-release.lock "$0" "$tgz" "$@"; fi
+[ -n "${AIDEV_SPOOL:-}" ] && trap 'rm -f "$AIDEV_SPOOL"' EXIT
 sha=$("$R" install "$tgz" | tail -1)
 prev=$(docker run --rm -v aidev_app:/srv/app node:22-bookworm-slim sh -c 'readlink /srv/app/current 2>/dev/null | sed "s#releases/##"' </dev/null || true)
 if [ "$prev" = "$sha" ]; then echo "release $sha is already active"; exit 0; fi
