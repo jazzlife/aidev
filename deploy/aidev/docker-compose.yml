@@ -1,13 +1,22 @@
 name: aidev
 
+# No service here is built from source. Application code for the gateway, the
+# runtime-manager and every CloudCLI runtime lives in the shared `app` volume as
+# releases/<sha>/ behind a `current` symlink (deploy/aidev/release/release.sh).
+# An update = install a release, swap the symlink, restart processes. Images are
+# plain node:22 (control plane) or the tools-only aidev/cloudcli-runtime image.
+
+x-node: &node
+  image: node:22-bookworm-slim
+  user: "1001:1001"
+  working_dir: /srv/app/current
+  restart: unless-stopped
+
 services:
   auth-gateway:
+    <<: *node
     container_name: aidev-auth-gateway
-    image: aidev/auth-gateway:${AIDEV_GATEWAY_TAG:-phase1}
-    build:
-      context: ./auth-gateway
-      args:
-        AIDEV_GATEWAY_VERSION: ${AIDEV_GATEWAY_TAG:-phase1}
+    command: ["node", "/srv/app/current/control/gateway/dist/auth-gateway.js"]
     environment:
       HOST: 0.0.0.0
       PORT: 8080
@@ -16,32 +25,40 @@ services:
       JWT_SECRET_FILE: /run/secrets/gateway-jwt
       RUNTIME_MANAGER_URL: http://runtime-manager:8090
       RUNTIME_MANAGER_TOKEN_FILE: /run/secrets/runtime-token
-      STATIC_ROOT: /srv/frontend/current
+      STATIC_ROOT: /srv/app/current/dist
+      AIDEV_RELEASE_FILE: /srv/app/current/RELEASE
     secrets:
       - gateway-jwt
       - runtime-token
     volumes:
       - auth-data:/data
-      - frontend:/srv/frontend:ro
+      - app:/srv/app:ro
     networks:
       - npm-net
       - control-net
     depends_on:
       runtime-manager:
         condition: service_healthy
-    restart: unless-stopped
+    healthcheck:
+      test: [CMD, node, -e, "fetch('http://127.0.0.1:8080/_gateway/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
 
   runtime-manager:
+    <<: *node
     container_name: aidev-runtime-manager
-    image: aidev/runtime-manager:${AIDEV_RUNTIME_MANAGER_TAG:-phase1}
-    build:
-      context: ./runtime-manager
+    # Docker Engine access is the only privileged capability in the stack; the socket is
+    # owned by root, so this service runs as root while the gateway and runtimes do not.
+    user: "0:0"
+    command: ["node", "/srv/app/current/control/runtime-manager/dist/runtime-manager.js"]
     environment:
       HOST: 0.0.0.0
       PORT: 8090
       RUNTIME_MANAGER_TOKEN_FILE: /run/secrets/runtime-token
       DOCKER_SOCKET: /var/run/docker.sock
-      CLOUDCLI_IMAGE: ${AIDEV_CLOUDCLI_IMAGE:-aidev/cloudcli:dynamic}
+      CLOUDCLI_IMAGE: ${AIDEV_RUNTIME_IMAGE:-aidev/cloudcli-runtime:latest}
+      APP_VOLUME: aidev_app
       RUNTIME_KEYS_DIR: /runtime-keys
       HOST_RUNTIME_KEYS_DIR: /home/turtlelab/aidev/runtime-keys
       MANAGER_CONTAINER: aidev-runtime-manager
@@ -50,6 +67,7 @@ services:
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - /home/turtlelab/aidev/runtime-keys:/runtime-keys
+      - app:/srv/app:ro
     networks:
       - control-net
     healthcheck:
@@ -57,13 +75,11 @@ services:
       interval: 15s
       timeout: 5s
       retries: 5
-    restart: unless-stopped
 
 volumes:
   auth-data:
-  # Frontend releases: releases/<id>/ + `current` symlink. Written only by
-  # deploy/aidev/release/frontend.sh through a short-lived helper container.
-  frontend:
+  app:
+    name: aidev_app
 
 secrets:
   gateway-jwt:

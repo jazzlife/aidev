@@ -7,7 +7,9 @@ const token = fs.readFileSync(process.env.RUNTIME_MANAGER_TOKEN_FILE ?? '/run/se
 if (token.length < 32) throw new Error('Runtime token too short');
 const socketPath = process.env.DOCKER_SOCKET ?? '/var/run/docker.sock';
 const apiVersion = process.env.DOCKER_API_VERSION ?? 'v1.45';
-const image = process.env.CLOUDCLI_IMAGE ?? 'aidev/cloudcli:dynamic';
+const image = process.env.CLOUDCLI_IMAGE ?? 'aidev/cloudcli-runtime:latest';
+// Shared, read-only release volume: application code lives here, not in the image.
+const appVolume = process.env.APP_VOLUME ?? 'aidev_app';
 const keyDir = process.env.RUNTIME_KEYS_DIR ?? '/runtime-keys';
 const hostKeyDir = process.env.HOST_RUNTIME_KEYS_DIR ?? '/home/turtlelab/aidev/runtime-keys';
 const peers = ['aidev-runtime-manager', 'aidev-auth-gateway'];
@@ -78,8 +80,13 @@ async function ensure(name: string) {
     if (!existing) await docker('POST', '/volumes/create', { Name: volume, Labels: labels(name) });
   }
   let current = await lookup('containers', containerName(name));
-  if (current) owned(current, name, true);
-  else {
+  if (current) {
+    owned(current, name, true);
+    const stale = !current.Mounts.some((m: any) => m.Type === 'volume' && m.Name === appVolume && m.Destination === '/srv/app')
+      || current.Config?.Image !== image;
+    if (stale && !current.State.Running) { await docker('DELETE', `/containers/${containerName(name)}?force=true&v=false`); current = null; }
+  }
+  if (!current) {
     await docker('POST', `/containers/create?name=${containerName(name)}`, {
       Image: image,
       Env: ['HOST=0.0.0.0','SERVER_PORT=3001',`AIDEV_RUNTIME=${name}`,'HOME=/home/cloudcli','DATABASE_PATH=/home/cloudcli/.cloudcli/auth.db','VITE_IS_PLATFORM=false'],
@@ -91,6 +98,7 @@ async function ensure(name: string) {
           { Type: 'bind', Source: `${hostKeyDir}/${name}.key`, Target: '/run/secrets/runtime-jwt', ReadOnly: true },
           { Type: 'volume', Source: `aidev_${name}-home`, Target: '/home/cloudcli' },
           { Type: 'volume', Source: `aidev_${name}-workspace`, Target: '/workspace' },
+          { Type: 'volume', Source: appVolume, Target: '/srv/app', ReadOnly: true },
         ],
       },
       NetworkingConfig: { EndpointsConfig: { [networkName(name)]: {}, [networkName(name, true)]: {} } },

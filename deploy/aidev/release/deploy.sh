@@ -1,56 +1,29 @@
 #!/usr/bin/env bash
-# Entry point for every partial update. Called by the relay's apply.sh from a payload dir:
-#   deploy.sh <payload-dir>
-# payload-dir contains:
-#   commits.bundle   git bundle of <deployed>..<new> on branch main   (optional if only dist)
-#   dist.tgz         Vite build of the new commit, made in the cloud workspace (optional)
-#   lanes            optional override: space-separated subset of "frontend runtime gateway runtime-manager"
-# Lanes are chosen from the paths that changed since the `deployed/current` tag:
-#   src/ public/ index.html vite.* tailwind.* postcss.*    -> frontend  (needs dist.tgz)
-#   server/ shared/ package*.json deploy/aidev/cloudcli*   -> runtime   (image build + rolling recreate)
-#   deploy/aidev/auth-gateway/                             -> gateway
-#   deploy/aidev/runtime-manager/                          -> runtime-manager
-#   deploy/aidev/docker-compose.yml                        -> gateway + runtime-manager
-. "$(dirname "$0")/lib.sh"
-payload="${1:?payload dir}"; payload=$(cd "$payload" && pwd)
-cd "$REPO"
-
-before=$(git rev-parse HEAD)
-if [ -f "$payload/commits.bundle" ]; then
-  log "fetching commits"
-  git bundle verify "$payload/commits.bundle" >/dev/null || fail "bundle does not apply to this repo (base mismatch)"
-  git fetch -q "$payload/commits.bundle" main
-  git merge -q --ff-only FETCH_HEAD || fail "server repo is not an ancestor of the payload (someone committed on the server?)"
-fi
-after=$(git rev-parse HEAD); sha=$(git_sha)
-deployed=$(git rev-parse -q --verify deployed/current 2>/dev/null || echo "")
-log "deploying $sha (deployed: ${deployed:0:12})"
-
-if [ -f "$payload/lanes" ]; then
-  lanes=$(cat "$payload/lanes")
+# One partial update, end to end, on the AI-PC:
+#   deploy.sh <release-<sha>.tgz>
+# 1. install   (unpack; build deps only if a lockfile changed — usually a no-op)
+# 2. diff      (which components differ from the active release)
+# 3. activate  (atomic `current` swap)
+# 4. restart   (only the processes whose code changed: gateway / runtime-manager / runtimes)
+# A frontend-only release therefore restarts nothing; users get it on their next page load.
+# Rollback: release.sh rollback && release.sh restart <same set>.
+set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd); R="$here/release.sh"
+tgz="${1:?release tgz}"
+sha=$("$R" install "$tgz" | tail -1)
+prev=$(docker run --rm -v aidev_app:/srv/app node:22-bookworm-slim sh -c 'readlink /srv/app/current 2>/dev/null | sed "s#releases/##"' </dev/null || true)
+if [ "$prev" = "$sha" ]; then echo "release $sha is already active"; exit 0; fi
+if [ -n "$prev" ]; then
+  changed=$("$R" diff "$prev" "$sha" | tr '\n' ' ')
 else
-  lanes=""
-  paths=$(changed_paths "$deployed" "$after")
-  echo "$paths" | grep -qE '^(src/|public/|index\.html$|vite\.config|tailwind\.config|postcss\.config)' && lanes="$lanes frontend"
-  echo "$paths" | grep -qE '^(server/|shared/|package(-lock)?\.json$|deploy/aidev/cloudcli)' && lanes="$lanes runtime"
-  echo "$paths" | grep -qE '^deploy/aidev/(auth-gateway/|docker-compose\.yml)' && lanes="$lanes gateway"
-  echo "$paths" | grep -qE '^deploy/aidev/(runtime-manager/|docker-compose\.yml)' && lanes="$lanes runtime-manager"
+  changed="frontend server gateway runtime-manager"
 fi
-[ -n "$lanes" ] || { ok "nothing to deploy for $sha"; git tag -f deployed/current >/dev/null; exit 0; }
-log "lanes:$lanes"
-
-for lane in $lanes; do
-  case $lane in
-    runtime-manager) "$DEPLOY/release/stack.sh" runtime-manager ;;
-    gateway)         "$DEPLOY/release/stack.sh" gateway ;;
-    frontend)
-      [ -f "$payload/dist.tgz" ] || fail "frontend lane needs dist.tgz in the payload"
-      "$DEPLOY/release/frontend.sh" "$payload/dist.tgz" "$sha" ;;
-    runtime)         "$DEPLOY/release/runtime.sh" build && "$DEPLOY/release/runtime.sh" rollout ;;
-    *) fail "unknown lane $lane" ;;
-  esac
-done
-
-git tag -f deployed/current >/dev/null; git tag -f "deployed/$(date +%Y%m%d-%H%M%S)-$sha" >/dev/null
-gateway_health && ok "deployed $sha  ($(gateway_release))"
-echo "DEPLOYED_SHA=$(git rev-parse HEAD)"
+echo "==> $prev -> $sha ; changed: ${changed:-nothing}"
+"$R" activate "$sha"
+restart=""
+case " $changed " in *" runtime-manager "*) restart="$restart runtime-manager";; esac
+case " $changed " in *" gateway "*)         restart="$restart gateway";; esac
+case " $changed " in *" server "*)          restart="$restart runtimes";; esac
+if [ -n "$restart" ]; then "$R" restart $restart; else echo " ✓ frontend-only release: no process restarted"; fi
+"$R" status
+echo "DEPLOYED_RELEASE=$sha"

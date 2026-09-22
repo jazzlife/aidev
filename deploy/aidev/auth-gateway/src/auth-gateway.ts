@@ -6,6 +6,8 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { openStore } from './store.js';
 
 const port = Number(process.env.PORT ?? 8080);
+// The release this process was started from; differs from /srv/app/current/RELEASE until restarted.
+const gatewayRelease = (() => { try { return fs.readFileSync(new URL('../../../RELEASE', import.meta.url), 'utf8').trim(); } catch { return 'unknown'; } })();
 const origin = new URL(process.env.PUBLIC_ORIGIN ?? 'https://dev.nado.work').origin;
 const secret = readSecret(process.env.JWT_SECRET_FILE ?? '/run/secrets/gateway-jwt');
 const managerToken = readSecret(process.env.RUNTIME_MANAGER_TOKEN_FILE ?? '/run/secrets/runtime-token');
@@ -118,7 +120,8 @@ async function proxyHttp(req: IncomingMessage, res: ServerResponse, session: Ses
 // STATIC_ROOT is a shared volume whose `current` entry is swapped atomically by the
 // release tooling, so a frontend release never rebuilds or restarts any container.
 // Only /api, /health and the WebSocket endpoints reach a user's CloudCLI runtime.
-const staticRoot = process.env.STATIC_ROOT ?? '/app/static';
+const staticRoot = process.env.STATIC_ROOT ?? '/srv/app/current/dist';
+const releaseFile = process.env.AIDEV_RELEASE_FILE ?? '/srv/app/current/RELEASE';
 const staticMime: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.map': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.wasm': 'application/wasm', '.txt': 'text/plain; charset=utf-8', '.webmanifest': 'application/manifest+json' };
 async function serveStatic(req: IncomingMessage, res: ServerResponse) {
   if (!['GET', 'HEAD'].includes(req.method ?? '')) return json(res, 405, { error: 'Method not allowed' });
@@ -189,8 +192,8 @@ const server = http.createServer(async (req, res) => {
       return await proxyHttp(req, res, session);
     }
     if (url.pathname === '/_gateway/release' && req.method === 'GET') {
-      const release = await fs.promises.readlink(staticRoot).then((link) => path.basename(link)).catch(() => 'unknown');
-      return json(res, 200, { release, gateway: process.env.AIDEV_GATEWAY_VERSION ?? 'unknown' });
+      const release = await fs.promises.readFile(releaseFile, 'utf8').then((v) => v.trim()).catch(() => 'unknown');
+      return json(res, 200, { release, gateway: gatewayRelease });
     }
     return await serveStatic(req, res);
   } catch (error) {

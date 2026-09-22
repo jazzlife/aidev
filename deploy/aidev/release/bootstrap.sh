@@ -1,52 +1,63 @@
 #!/usr/bin/env bash
-# One-time migration of the running Phase 1 stack onto the release tooling.
-#   bootstrap.sh <payload-dir>      payload has repo.tgz (this repo incl. .git) and dist.tgz
-# Steps, each idempotent:
-#   1. install the repo at ~/aidev/repo (the old ~/aidev/source is left untouched)
-#   2. create deploy/aidev/.env from the values the running stack already uses
-#   3. put the current frontend build into the shared volume as the first release
-#   4. rebuild the gateway (serves the SPA from the volume) and replace it — the
-#      runtime-manager and every user container keep running
-#   5. tag deployed/current so later deploys are incremental
+# One-time migration of the Phase 1 stack (code baked into images) to the release-volume
+# model. Idempotent. Run from a payload dir containing release-<sha>.tgz and this repo's
+# deploy/aidev/ tree (deploy.tgz).
+#   bootstrap.sh <payload-dir>
+# Order matters so the public endpoint is down for seconds, not minutes:
+#   1. ~/aidev/deploy  <- deploy/aidev tree (compose, scripts, runtime Dockerfile); .env written
+#   2. aidev_app volume <- release installed (deps built here once, several minutes) and activated
+#   3. aidev/cloudcli-runtime:latest built (tools only, ~2-3 min, no app code)
+#   4. compose up: runtime-manager then auth-gateway switch to node:22 + volume (~10 s)
+#   5. each running user runtime is recreated on the new image with the volume mount, one at a time
+# Untouched: ~/aidev/source, NPM, Portainer, certificates, networks, secrets, user volumes.
 set -euo pipefail
-payload="${1:?payload dir}"; payload=$(cd "$payload" && pwd)
-REPO="$HOME/aidev/repo"
+payload=$(cd "${1:?payload dir}" && pwd)
+DEPLOY="$HOME/aidev/deploy"
+log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 
-if [ ! -d "$REPO/.git" ]; then
-  mkdir -p "$REPO"; tar xzf "$payload/repo.tgz" -C "$REPO"
-  echo "==> repo installed at $REPO: $(git -C "$REPO" log --oneline -1)"
-else
-  echo "==> repo already present: $(git -C "$REPO" log --oneline -1)"
+log "1/5 deploy tree -> $DEPLOY"
+mkdir -p "$DEPLOY"; tar xzf "$payload/deploy.tgz" -C "$DEPLOY" --strip-components=1
+chmod +x "$DEPLOY"/release/*.sh
+if [ ! -f "$DEPLOY/.env" ]; then
+  sed 's/^AIDEV_PROXY_NETWORK=.*/AIDEV_PROXY_NETWORK=npm_bridge/; s#^AIDEV_SECRET_DIR=.*#AIDEV_SECRET_DIR=/home/turtlelab/aidev/secrets#' "$DEPLOY/.env.example" > "$DEPLOY/.env"
+  chmod 600 "$DEPLOY/.env"; echo "   wrote $DEPLOY/.env"
 fi
-git -C "$REPO" remote get-url upstream >/dev/null 2>&1 || git -C "$REPO" remote add upstream https://github.com/siteboon/claudecodeui.git
-chmod +x "$REPO"/deploy/aidev/release/*.sh
-. "$REPO/deploy/aidev/release/lib.sh"
+set -a; . "$DEPLOY/.env"; set +a
+[ -f "$AIDEV_SECRET_DIR/gateway-jwt" ] || { echo "secrets missing in $AIDEV_SECRET_DIR"; exit 1; }
+docker network inspect "$AIDEV_PROXY_NETWORK" >/dev/null
+docker ps --format '{{.Names}}' | grep -q '^aidev-auth-gateway$' || { echo "aidev stack not running"; exit 1; }
 
-if [ ! -f "$ENV_FILE" ]; then
-  sed 's/^AIDEV_PROXY_NETWORK=.*/AIDEV_PROXY_NETWORK=npm_bridge/; s#^AIDEV_SECRET_DIR=.*#AIDEV_SECRET_DIR=/home/turtlelab/aidev/secrets#' "$DEPLOY/.env.example" > "$ENV_FILE"
-  chmod 600 "$ENV_FILE"; echo "==> wrote $ENV_FILE"
-fi
-load_env
-[ -f "$AIDEV_SECRET_DIR/gateway-jwt" ] || fail "secrets not found in $AIDEV_SECRET_DIR"
-docker network inspect "$AIDEV_PROXY_NETWORK" >/dev/null || fail "proxy network $AIDEV_PROXY_NETWORK missing"
+log "2/5 release -> aidev_app volume"
+tgz=$(ls "$payload"/release-*.tgz | head -1)
+sha=$("$DEPLOY/release/release.sh" install "$tgz" | tail -1)
+"$DEPLOY/release/release.sh" activate "$sha"
 
-log "sanity: current stack"
-docker ps --format '{{.Names}}\t{{.Image}}\t{{.Status}}' | grep '^aidev-' || fail "aidev stack is not running"
-gateway_health && ok "gateway reachable on $AIDEV_PROXY_NETWORK"
+log "3/5 tools-only runtime image"
+"$DEPLOY/release/runtime-image.sh" build "tools-$(date +%Y%m%d)"
 
-sha=$(git_sha)
-log "frontend volume: first release $sha"
-docker volume inspect "$FRONTEND_VOLUME" >/dev/null 2>&1 || docker volume create --label com.docker.compose.project=aidev --label com.docker.compose.volume=frontend "$FRONTEND_VOLUME" >/dev/null
-"$DEPLOY/release/frontend.sh" "$payload/dist.tgz" "$sha"
+log "4/5 control plane -> node:22 + volume"
+( cd "$DEPLOY" && docker compose -p aidev --env-file .env -f docker-compose.yml up -d runtime-manager auth-gateway 2>&1 | tail -6 )
+for i in $(seq 1 40); do
+  [ "$(docker inspect aidev-runtime-manager --format '{{.State.Health.Status}}' 2>/dev/null)" = healthy ] \
+  && docker run --rm --network npm_bridge curlimages/curl:8.16.0 -fsS -m 3 http://aidev-auth-gateway:8080/_gateway/health >/dev/null 2>&1 && break; sleep 2
+done
+docker run --rm --network npm_bridge curlimages/curl:8.16.0 -fsS -m 5 http://aidev-auth-gateway:8080/_gateway/release; echo
 
-log "gateway: build + replace (serves SPA from volume for all users)"
-"$DEPLOY/release/stack.sh" gateway
+log "5/5 user runtimes -> new image + volume (one at a time)"
+token_start() { docker exec aidev-runtime-manager node -e '
+  const fs=require("node:fs"); const t=fs.readFileSync("/run/secrets/runtime-token","utf8").trim();
+  fetch("http://127.0.0.1:8090/v1/runtimes/"+process.argv[1]+"/start",{method:"POST",headers:{"x-runtime-token":t}})
+    .then(async r=>{ if(!r.ok) throw new Error(r.status+" "+await r.text()); console.log("   started",process.argv[1]); })
+    .catch(e=>{ console.error(String(e)); process.exit(1); });' "$1"; }
+docker ps -a --filter label=work.nado.aidev.managed=true --format '{{.Label "work.nado.aidev.runtime"}}\t{{.Names}}\t{{.State}}' \
+| while IFS=$'\t' read -r name cname state; do
+  [ -n "$name" ] || continue
+  if docker inspect "$cname" --format '{{range .Mounts}}{{.Destination}} {{end}}' | grep -q '/srv/app'; then echo "   $cname already migrated"; continue; fi
+  echo "   $cname ($state): recreate"
+  docker rm -f "$cname" >/dev/null
+  [ "$state" = running ] && token_start "$name" || echo "   $cname was $state; it is recreated on next login"
+done
 
-# Record the image the running user containers were built from, for rollback bookkeeping.
-docker image inspect aidev/cloudcli:dynamic --format '{{.Id}}' > "$STATE_DIR/cloudcli.bootstrap-image"
-echo "phase1-2026-09-18" > "$STATE_DIR/cloudcli.current"
-
-git -C "$REPO" tag -f deployed/current >/dev/null
-git -C "$REPO" tag -f "deployed/$(date +%Y%m%d-%H%M%S)-$sha" >/dev/null
-"$DEPLOY/release/stack.sh" status
-echo "DEPLOYED_SHA=$(git -C "$REPO" rev-parse HEAD)"
+"$DEPLOY/release/release.sh" status
+echo "DEPLOYED_RELEASE=$sha"
+echo "note: old images aidev/cloudcli:dynamic, aidev/auth-gateway:phase1, aidev/runtime-manager:phase1 kept for rollback; remove later with docker rmi"
