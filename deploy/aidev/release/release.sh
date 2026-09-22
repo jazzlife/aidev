@@ -104,13 +104,17 @@ cmd_restart() {
     --force) force=1; shift;;           # with --drain: restart busy ones too, after the idle ones
     --canary) canary=1; shift;;         # restart exactly one runtime, then stop
     --only) only="$2"; shift 2;;        # comma-separated runtime names
-    gateway|runtime-manager|runtimes|all) targets+=("$1"); shift;;
+    gateway|runtime-manager|runtimes|laya|all) targets+=("$1"); shift;;
     *) fail "restart: [--batch N] [--drain [--force]] [--canary] [--only a,b] gateway | runtime-manager | runtimes | all";;
   esac; done
   for what in "${targets[@]}"; do case $what in
     gateway)         docker restart -t 5 aidev-auth-gateway >/dev/null; for i in $(seq 1 30); do gw health >/dev/null 2>&1 && break; sleep 1; done; gw health >/dev/null || fail "gateway did not come back"; ok "gateway restarted: $(gw release)";;
     runtime-manager) docker restart -t 5 aidev-runtime-manager >/dev/null; for i in $(seq 1 40); do docker exec aidev-runtime-manager node -e "fetch('http://127.0.0.1:8090/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" 2>/dev/null && break; sleep 1; done; ok "runtime-manager restarted";;
-    all) cmd_restart --batch "$batch" $([ $drain = 1 ] && echo --drain) $([ $force = 1 ] && echo --force) runtime-manager gateway runtimes;;
+    laya) docker restart -t 10 aidev-laya >/dev/null || fail "aidev-laya not running (first time: laya-image.sh setup)"
+          for i in $(seq 1 240); do docker exec aidev-laya curl -fsS -m 2 http://127.0.0.1:8095/health >/dev/null 2>&1 && break; sleep 1; done
+          docker exec aidev-laya curl -fsS -m 2 http://127.0.0.1:8095/health >/dev/null || fail "laya did not become healthy in 240s (docker logs aidev-laya)"
+          ok "laya restarted: $(docker exec aidev-laya curl -fsS -m 2 http://127.0.0.1:8095/health)";;
+    all) cmd_restart --batch "$batch" $([ $drain = 1 ] && echo --drain) $([ $force = 1 ] && echo --force) runtime-manager gateway laya runtimes;;
     runtimes)
       local want; want=$(current)
       local idle=() busy=() skipped=0
@@ -143,7 +147,7 @@ cmd_diff() { # prints component names whose files differ between two releases
   local a="${1:?}" b="${2:?}"
   vol "cd releases; d(){ diff -rq --no-dereference \"$a/\$1\" \"$b/\$1\" >/dev/null 2>&1 || echo \"\$2\"; }
        d dist frontend; d dist-server server; d shared server; d public frontend; d runtime server; d node_modules server;
-       d control/gateway gateway; d control/runtime-manager runtime-manager" | sort -u
+       d control/gateway gateway; d control/runtime-manager runtime-manager; d control/laya laya" | sort -u
 }
 cmd_rollback() { # rollback [sha] [restart opts]: activate an older release and restart only what differs
   local to="${1:-}"; [ $# -gt 0 ] && shift
@@ -163,6 +167,7 @@ cmd_list() { vol 'ls -1 releases; echo "deps: $(ls -1 deps | tr "\n" " ")"; echo
 cmd_status() {
   echo "current release: $(current)"; echo "gateway: $(gw release 2>/dev/null || echo unreachable)"
   echo "runtime-manager: $(docker inspect aidev-runtime-manager --format '{{.State.Health.Status}} {{.Config.Image}}' 2>/dev/null)"
+  echo "laya: $(docker exec aidev-laya curl -fsS -m 2 http://127.0.0.1:8095/health 2>/dev/null || echo 'not running')"
   echo "--- managed runtimes (name  state  image  running-release)"
   docker ps -a --filter label=work.nado.aidev.managed=true --format '{{.Names}}\t{{.State}}\t{{.Image}}' | while IFS=$'\t' read -r n s i; do
     printf '%s\t%s\t%s\t%s\n' "$n" "$s" "$i" "$( [ "$s" = running ] && docker exec "$n" cat /tmp/aidev-release 2>/dev/null || echo -)"; done

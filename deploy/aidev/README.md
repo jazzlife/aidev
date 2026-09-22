@@ -199,3 +199,13 @@ Rollback is `release.sh rollback && release.sh restart <same set>`. `release.sh 
   `auth-data` volume, so either instance can serve any user. Not enabled yet.
 - **Multiple hosts**: the volume is per host. Run `deploy.sh` with the same release tarball on
   each host (same `release` id everywhere); runtime-manager is per host already.
+
+## Laya decision service (specialist-agent routing)
+
+`aidev-laya` runs the Laya multilingual System-1 decision model (typed choice/score/noul decisions with
+calibrated probabilities) on the AI-PC's Radeon 890M (gfx1150, ROCm) with CPU fallback. The image
+(`deploy/aidev/laya/Dockerfile`, `release/laya-image.sh build`) holds only torch+laya; the HTTP wrapper
+is `control/laya/app.py` in the release volume, so it updates like everything else. Weights live in the
+`aidev_models` volume (`laya-image.sh models`, once). The service is on `aidev-control-net` only; the
+gateway exposes it to signed-in users as `POST /api/aidev/route`, `POST /api/aidev/decide`,
+`GET /api/aidev/laya/health`. First-time: `release/laya-image.sh setup`.

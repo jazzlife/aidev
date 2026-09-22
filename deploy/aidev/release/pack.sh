@@ -19,6 +19,7 @@ for c in gateway:auth-gateway runtime-manager:runtime-manager; do
   cp -a "$dir/dist" "$dir/package.json" "$dir/package-lock.json" "$R/control/$name/"
 done
 cp -a deploy/aidev/runtime/entrypoint.mjs "$R/runtime/"
+mkdir -p "$R/control/laya" && cp -a deploy/aidev/laya/app/. "$R/control/laya/"   # python, no build step
 echo "$sha" > "$R/RELEASE"
 h() { sha256sum "$1" | cut -c1-12; }
 cat > "$R/manifest.json" <<EOF

@@ -27,6 +27,7 @@ services:
       RUNTIME_MANAGER_TOKEN_FILE: /run/secrets/runtime-token
       STATIC_ROOT: /srv/app/current/dist
       AIDEV_RELEASE_FILE: /srv/app/current/RELEASE
+      LAYA_URL: http://laya:8095
     secrets:
       - gateway-jwt
       - runtime-token
@@ -76,10 +77,36 @@ services:
       timeout: 5s
       retries: 5
 
+  laya:
+    container_name: aidev-laya
+    image: ${AIDEV_LAYA_IMAGE:-aidev/laya-runtime:latest}
+    user: "1001:1001"
+    group_add: ["44", "993"]          # video, render on the AI-PC -> /dev/dri, /dev/kfd
+    devices:
+      - /dev/kfd:/dev/kfd
+      - /dev/dri:/dev/dri
+    security_opt:
+      - seccomp:unconfined            # ROCm/HSA needs a few syscalls the default profile blocks
+    environment:
+      PORT: 8095
+      LAYA_MODEL: ${LAYA_MODEL:-convaiinnovations/laya-multilingual}
+      LAYA_DEVICE: ${LAYA_DEVICE:-auto}
+      HF_HOME: /models
+      HF_HUB_OFFLINE: "1"             # weights are pre-fetched into the models volume (laya-image.sh models)
+      HSA_OVERRIDE_GFX_VERSION: ${HSA_OVERRIDE_GFX_VERSION:-}
+    volumes:
+      - app:/srv/app:ro
+      - models:/models
+    networks:
+      - control-net
+    restart: unless-stopped
+
 volumes:
   auth-data:
   app:
     name: aidev_app
+  models:
+    name: aidev_models
 
 secrets:
   gateway-jwt:

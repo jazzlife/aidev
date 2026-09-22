@@ -28,13 +28,14 @@ if [ "$prev" = "$sha" ]; then echo "release $sha is already active"; exit 0; fi
 if [ -n "$prev" ]; then
   changed=$("$R" diff "$prev" "$sha" | tr '\n' ' ')
 else
-  changed="frontend server gateway runtime-manager"
+  changed="frontend server gateway runtime-manager laya"
 fi
 echo "==> $prev -> $sha ; changed: ${changed:-nothing}"
 "$R" activate "$sha"
 restart=""
 case " $changed " in *" runtime-manager "*) restart="$restart runtime-manager";; esac
 case " $changed " in *" gateway "*)         restart="$restart gateway";; esac
+case " $changed " in *" laya "*)            docker inspect aidev-laya >/dev/null 2>&1 && restart="$restart laya" || echo " ! laya changed but aidev-laya is not running yet (run laya-image.sh setup once)";; esac
 case " $changed " in *" server "*)          restart="$restart runtimes";; esac
 if [ -n "$restart" ]; then "$R" restart $RESTART_OPTS $restart; else echo " ✓ frontend-only release: no process restarted"; fi
 "$R" status

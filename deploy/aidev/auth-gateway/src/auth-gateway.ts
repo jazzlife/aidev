@@ -12,6 +12,24 @@ const origin = new URL(process.env.PUBLIC_ORIGIN ?? 'https://dev.nado.work').ori
 const secret = readSecret(process.env.JWT_SECRET_FILE ?? '/run/secrets/gateway-jwt');
 const managerToken = readSecret(process.env.RUNTIME_MANAGER_TOKEN_FILE ?? '/run/secrets/runtime-token');
 const managerUrl = process.env.RUNTIME_MANAGER_URL ?? 'http://runtime-manager:8090';
+const layaUrl = process.env.LAYA_URL ?? 'http://laya:8095';
+// Laya (System-1 decision model) is only reachable through the gateway; sessions are required.
+async function layaProxy(req: IncomingMessage, res: ServerResponse, path: string, session: Session | null) {
+  if (!session && path !== '/health') return json(res, 401, { error: 'Authentication required' }, { 'x-auth-error': 'invalid-token' });
+  let payload: string | undefined;
+  if (req.method === 'POST') {
+    const chunks: Buffer[] = []; let size = 0;
+    for await (const chunk of req) { size += Buffer.byteLength(chunk); if (size > 256 * 1024) return json(res, 413, { error: 'Body too large' }); chunks.push(Buffer.from(chunk)); }
+    payload = Buffer.concat(chunks).toString();
+  }
+  try {
+    const upstream = await fetch(`${layaUrl}${path}`, { method: req.method, headers: { 'content-type': 'application/json' }, body: payload, signal: AbortSignal.timeout(30_000) });
+    const text = await upstream.text();
+    res.writeHead(upstream.status, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(text);
+  } catch (error) {
+    json(res, 503, { error: 'Decision service unavailable', detail: error instanceof Error ? error.message : String(error) });
+  }
+}
 const store = openStore(process.env.DATABASE_PATH ?? '/data/auth.db');
 const cookieName = '__Host-aidev-session';
 const ttl = 8 * 3600;
@@ -207,6 +225,9 @@ const server = http.createServer(async (req, res) => {
       }
       return json(res, 404, { error: 'Not found' });
     }
+    if (url.pathname === '/api/aidev/laya/health' && req.method === 'GET') return await layaProxy(req, res, '/health', session);
+    if (url.pathname === '/api/aidev/route' && req.method === 'POST') return await layaProxy(req, res, '/route', session);
+    if (url.pathname === '/api/aidev/decide' && req.method === 'POST') return await layaProxy(req, res, '/decide', session);
     if (url.pathname === '/api' || url.pathname.startsWith('/api/') || url.pathname === '/health') {
       if (!session) return json(res, 401, { error: 'Authentication required' }, { 'x-auth-error': 'invalid-token' });
       return await proxyHttp(req, res, session);
