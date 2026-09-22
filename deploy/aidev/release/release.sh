@@ -10,6 +10,8 @@
 #   release.sh list | status | prune
 set -euo pipefail
 VOL="${AIDEV_APP_VOLUME:-aidev_app}"
+# One release operation at a time per host (deploys, rollbacks, restarts must not interleave).
+if [ -z "${AIDEV_RELEASE_LOCKED:-}" ]; then exec env AIDEV_RELEASE_LOCKED=1 flock -w 600 /tmp/aidev-release.lock "$0" "$@"; fi
 HELPER=node:22-bookworm          # same glibc as the runtime images -> native modules match
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 ok()   { printf '\033[1;32m ✓ \033[0m %s\n' "$*"; }
@@ -69,21 +71,65 @@ cmd_activate() {
   vol "ln -sfn releases/$sha current.tmp && mv -Tf current.tmp current && { [ -n '$prev' ] && echo '$prev' > previous || true; }"
   ok "current -> $sha (was: ${prev:-none}). Processes keep running the old code until restarted."
 }
+# --- runtime rolling restart, built for many users ---------------------------------
+# Probe a runtime's own /health from inside its network namespace (does not wait for the
+# 30 s Docker healthcheck interval).
+probe() { docker exec "$1" node -e "fetch('http://127.0.0.1:3001/health',{signal:AbortSignal.timeout(2000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" 2>/dev/null; }
+# Established client connections to :3001 (WebSocket chat/terminal sessions count here).
+busy_count() { docker exec "$1" node -e '
+  const t=require("fs").readFileSync("/proc/net/tcp","utf8").split("\n").slice(1);
+  let n=0; for (const l of t){ const f=l.trim().split(/\s+/); if(f.length>3 && f[1].endsWith(":0BB9") && f[3]==="01") n++; }
+  console.log(n)' 2>/dev/null || echo 0; }
+running_release() { docker exec "$1" cat /tmp/aidev-release 2>/dev/null || echo '?'; }
+restart_one() { # <container> <want>  (runs in a subshell under xargs)
+  local c="$1" want="$2" t0; t0=$(date +%s)
+  docker restart -t 10 "$c" >/dev/null 2>&1 || { echo "FAIL $c: docker restart failed"; return 1; }
+  for i in $(seq 1 90); do probe "$c" && { echo "OK   $c $(running_release "$c") in $(( $(date +%s) - t0 ))s"; return 0; }; sleep 1; done
+  echo "FAIL $c: not healthy after 90s (docker logs $c)"; return 1
+}
+export -f probe busy_count running_release restart_one
 cmd_restart() {
-  for what in "$@"; do case $what in
+  local batch=6 drain=0 canary=0 only="" force=0
+  local targets=()
+  while [ $# -gt 0 ]; do case "$1" in
+    --batch) batch="$2"; shift 2;;      # parallel restarts
+    --drain) drain=1; shift;;           # idle runtimes first; runtimes with live sessions are deferred (not restarted)
+    --force) force=1; shift;;           # with --drain: restart busy ones too, after the idle ones
+    --canary) canary=1; shift;;         # restart exactly one runtime, then stop
+    --only) only="$2"; shift 2;;        # comma-separated runtime names
+    gateway|runtime-manager|runtimes|all) targets+=("$1"); shift;;
+    *) fail "restart: [--batch N] [--drain [--force]] [--canary] [--only a,b] gateway | runtime-manager | runtimes | all";;
+  esac; done
+  for what in "${targets[@]}"; do case $what in
     gateway)         docker restart -t 5 aidev-auth-gateway >/dev/null; for i in $(seq 1 30); do gw health >/dev/null 2>&1 && break; sleep 1; done; gw health >/dev/null || fail "gateway did not come back"; ok "gateway restarted: $(gw release)";;
-    runtime-manager) docker restart -t 5 aidev-runtime-manager >/dev/null; for i in $(seq 1 40); do [ "$(docker inspect aidev-runtime-manager --format '{{.State.Health.Status}}')" = healthy ] && break; sleep 1; done; ok "runtime-manager restarted";;
+    runtime-manager) docker restart -t 5 aidev-runtime-manager >/dev/null; for i in $(seq 1 40); do docker exec aidev-runtime-manager node -e "fetch('http://127.0.0.1:8090/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" 2>/dev/null && break; sleep 1; done; ok "runtime-manager restarted";;
+    all) cmd_restart --batch "$batch" $([ $drain = 1 ] && echo --drain) $([ $force = 1 ] && echo --force) runtime-manager gateway runtimes;;
     runtimes)
       local want; want=$(current)
-      docker ps --filter label=work.nado.aidev.managed=true --filter status=running --format '{{.Names}}' | while read -r c; do
-        local have; have=$(docker exec "$c" cat /tmp/aidev-release 2>/dev/null || echo '?')
-        if [ "$have" = "$want" ]; then ok "$c already on $want"; continue; fi
-        log "restarting $c ($have -> $want)"; docker restart -t 10 "$c" >/dev/null
-        for i in $(seq 1 60); do [ "$(docker inspect "$c" --format '{{.State.Health.Status}}')" = healthy ] && break; sleep 1; done
-        [ "$(docker inspect "$c" --format '{{.State.Health.Status}}')" = healthy ] && ok "$c healthy on $want" || echo " ! $c not healthy yet (start-period 60s) — check: docker logs $c"
-      done;;
-    all) cmd_restart runtime-manager gateway runtimes;;
-    *) fail "restart: gateway | runtime-manager | runtimes | all";;
+      local idle=() busy=() skipped=0
+      while read -r c; do
+        [ -n "$c" ] || continue
+        if [ -n "$only" ]; then case ",$only," in *",${c#aidev-cloudcli-},"*) ;; *) continue;; esac; fi
+        if [ "$(running_release "$c")" = "$want" ]; then skipped=$((skipped+1)); continue; fi
+        if [ $drain = 1 ] && [ "$(busy_count "$c")" -gt 0 ]; then busy+=("$c"); else idle+=("$c"); fi
+      done < <(docker ps --filter label=work.nado.aidev.managed=true --filter status=running --format '{{.Names}}')
+      log "runtimes -> $want: ${#idle[@]} to restart now, ${#busy[@]} with live sessions, $skipped already current (batch $batch)"
+      [ $canary = 1 ] && [ ${#idle[@]} -gt 0 ] && { idle=("${idle[0]}"); busy=(); log "canary: ${idle[0]} only"; }
+      local failed=0
+      if [ ${#idle[@]} -gt 0 ]; then
+        printf '%s\n' "${idle[@]}" | xargs -P "$batch" -I{} bash -c 'restart_one "$1" "$2"' _ {} "$want" | tee /tmp/aidev-restart.log
+        failed=$(grep -c '^FAIL' /tmp/aidev-restart.log || true)
+      fi
+      if [ ${#busy[@]} -gt 0 ]; then
+        if [ $force = 1 ]; then
+          log "restarting ${#busy[@]} busy runtime(s) (--force)"
+          printf '%s\n' "${busy[@]}" | xargs -P "$batch" -I{} bash -c 'restart_one "$1" "$2"' _ {} "$want" | tee -a /tmp/aidev-restart.log
+          failed=$(grep -c '^FAIL' /tmp/aidev-restart.log || true)
+        else
+          echo " ! deferred (live sessions): ${busy[*]}"; echo "   re-run later:  release.sh restart --drain runtimes   (or --force)"
+        fi
+      fi
+      [ "$failed" = 0 ] && ok "runtimes done" || fail "$failed runtime(s) failed to come back — see above";;
   esac; done
 }
 cmd_diff() { # prints component names whose files differ between two releases

@@ -177,3 +177,25 @@ pack.sh (off-box)  ->  release-<sha>.tgz  ->  deploy.sh (AI-PC)
 
 Rollback is `release.sh rollback && release.sh restart <same set>`. `release.sh status|list|prune`.
 `release/bootstrap.sh` migrates a Phase 1 box once.
+
+### Behaviour at scale (hundreds of runtimes on one host)
+
+- **Frontend release**: one symlink swap; zero restarts regardless of user count. Open tabs
+  loaded on the previous release keep working: the gateway serves `/assets/<hash>` from any
+  retained release (hashed names are unique), so lazy-loaded chunks never 404 mid-session.
+- **Server release**: `release.sh restart runtimes` restarts N containers in parallel
+  (`--batch`, default 6) and probes each runtime's `/health` directly (no 30 s healthcheck
+  wait), so a fleet of 200 finishes in minutes, not hours. `--drain` restarts idle runtimes
+  first and defers those with live WebSocket sessions (re-run later, or `--force`); `--canary`
+  restarts one and stops; `--only a,b` targets specific runtimes. `status` shows the running
+  release of every runtime, so a mixed fleet is visible.
+- **Concurrency**: all release operations take a host-wide lock (`flock`), so two deploys or a
+  deploy and a rollback cannot interleave.
+- **deps**: built once per lockfile hash and shared by every runtime via the volume (one
+  copy on disk, no per-container node_modules). `prune` removes unreferenced deps.
+- **Gateway**: single process; a gateway release costs ~3 s of WebSocket reconnects for
+  everyone. For zero-downtime gateway releases run two gateway containers and point the NPM
+  proxy host at an nginx `upstream` with both — sessions are in SQLite on the shared
+  `auth-data` volume, so either instance can serve any user. Not enabled yet.
+- **Multiple hosts**: the volume is per host. Run `deploy.sh` with the same release tarball on
+  each host (same `release` id everywhere); runtime-manager is per host already.

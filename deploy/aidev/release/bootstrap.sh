@@ -11,6 +11,7 @@
 #   5. each running user runtime is recreated on the new image with the volume mount, one at a time
 # Untouched: ~/aidev/source, NPM, Portainer, certificates, networks, secrets, user volumes.
 set -euo pipefail
+export AIDEV_RELEASE_LOCKED=1   # bootstrap is the only release operation while it runs
 payload=$(cd "${1:?payload dir}" && pwd)
 DEPLOY="$HOME/aidev/deploy"
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }

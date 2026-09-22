@@ -131,18 +131,38 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse) {
   const pathname = decodeURIComponent(new URL(req.url ?? '/', origin).pathname);
   const file = path.resolve(root, `.${pathname}`);
   if (!file.startsWith(`${root}/`) && file !== root) return json(res, 404, { error: 'Not found' });
-  const stat = await fs.promises.stat(file).catch(() => null);
-  const isAsset = stat?.isFile() && pathname.startsWith('/assets/');
-  const target = stat?.isFile() ? file : path.join(root, 'index.html');
+  let stat = await fs.promises.stat(file).catch(() => null);
+  let target = stat?.isFile() ? file : null;
+  const isAsset = pathname.startsWith('/assets/');
+  // A tab loaded on release A may lazy-load /assets/<hash>.js after `current` moved to B.
+  // Hashed asset names are unique, so serving the file from a retained older release is
+  // safe and keeps every open tab working through a frontend release without a reload.
+  if (!target && isAsset) target = await findAssetInOtherReleases(root, pathname);
+  if (!target) target = path.join(root, 'index.html');
   const content = await fs.promises.readFile(target).catch(() => null);
   if (!content) return json(res, 503, { error: 'Frontend release missing' });
   res.writeHead(200, {
     'content-type': staticMime[path.extname(target)] ?? 'application/octet-stream',
     // Vite emits content-hashed files under /assets; everything else must revalidate.
-    'cache-control': isAsset ? 'public, max-age=31536000, immutable' : 'no-store',
+    'cache-control': isAsset && target !== path.join(root, 'index.html') ? 'public, max-age=31536000, immutable' : 'no-store',
     'x-content-type-options': 'nosniff',
   });
   res.end(req.method === 'HEAD' ? undefined : content);
+}
+const assetFallback = new Map<string, string | null>();
+async function findAssetInOtherReleases(currentRoot: string, pathname: string) {
+  const hit = assetFallback.get(pathname);
+  if (hit !== undefined) return hit && await fs.promises.stat(hit).then((s) => s.isFile()).catch(() => false) ? hit : null;
+  const releases = path.resolve(currentRoot, '..', '..'); // /srv/app/releases/<sha>/dist -> /srv/app/releases
+  let found: string | null = null;
+  for (const entry of await fs.promises.readdir(releases).catch(() => [] as string[])) {
+    const candidate = path.resolve(releases, entry, 'dist', `.${pathname}`);
+    if (!candidate.startsWith(`${path.resolve(releases, entry, 'dist')}/`)) continue;
+    if (await fs.promises.stat(candidate).then((s) => s.isFile()).catch(() => false)) { found = candidate; break; }
+  }
+  if (assetFallback.size > 2000) assetFallback.clear();
+  assetFallback.set(pathname, found);
+  return found;
 }
 
 const server = http.createServer(async (req, res) => {
