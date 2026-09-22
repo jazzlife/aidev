@@ -149,3 +149,19 @@ Each dynamically created `aidev-cloudcli-<username>` must have only its own
 internal `aidev-<username>-net` plus its own egress network, and the gateway
 mounts only `auth-data` plus Docker secret files; the Docker socket appears only
 in `aidev-runtime-manager`.
+
+## Partial updates (release tooling)
+
+Development happens off-box; the AI-PC only receives payloads. `deploy/aidev/release/`:
+
+| Script | Lane | What changes on the box | Downtime |
+| --- | --- | --- | --- |
+| `frontend.sh <dist.tgz> <id>` | A: `src/`, `public/`, Vite config | new `releases/<id>/` in the `aidev_frontend` volume, `current` symlink swapped | none — no container touched |
+| `runtime.sh build && runtime.sh rollout` | B: `server/`, `shared/`, `package*.json`, `cloudcli.Dockerfile`, entrypoint | `aidev/cloudcli:<sha>` built with cached deps layer, retagged `:dynamic`; managed runtimes recreated one by one via runtime-manager | per user: their runtime restarts (~30–60 s); sessions persist in volumes |
+| `stack.sh gateway` / `stack.sh runtime-manager` | C: `deploy/aidev/auth-gateway/`, `runtime-manager/`, `docker-compose.yml` | image `:<sha>` built, container replaced with the same compose project Portainer manages | ~5 s on the gateway |
+| `deploy.sh <payload>` | dispatcher | fast-forwards `~/aidev/repo` from `commits.bundle`, picks lanes from changed paths, tags `deployed/current` | as above |
+
+The gateway now serves the SPA for signed-in users too (from `STATIC_ROOT=/srv/frontend/current`),
+so a UI release is a volume write, not an image build. Rollback: `frontend.sh --rollback`,
+`runtime.sh rollback <sha> && runtime.sh rollout`, or set `AIDEV_GATEWAY_TAG=<old>` in `.env` and
+`stack.sh gateway`. `stack.sh status` shows what is live. `bootstrap.sh` migrates a Phase 1 box once.

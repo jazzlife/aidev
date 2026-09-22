@@ -3,10 +3,13 @@ RUN apt-get update && apt-get install -y --no-install-recommends build-essential
 WORKDIR /opt/cloudcli
 COPY package*.json ./
 ENV ELECTRON_SKIP_BINARY_DOWNLOAD=1 HUSKY=0
-RUN npm ci --ignore-scripts
+RUN npm ci --ignore-scripts && npm rebuild better-sqlite3 bcrypt node-pty
+# Everything above is cached until package*.json changes; a source-only release
+# re-runs only the steps below (tsc + vite, ~1 min) on the AI-PC.
 COPY . .
 ENV VITE_IS_PLATFORM=false
-RUN npm rebuild better-sqlite3 bcrypt node-pty && npm run build && npm prune --omit=dev --ignore-scripts
+ARG AIDEV_RELEASE=dev
+RUN npm run build && npm prune --omit=dev --ignore-scripts && echo "$AIDEV_RELEASE" > dist-server/AIDEV_RELEASE
 
 FROM node:22-bookworm-slim
 ARG CLAUDE_CODE_VERSION

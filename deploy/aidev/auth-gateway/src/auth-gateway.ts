@@ -114,17 +114,31 @@ async function proxyHttp(req: IncomingMessage, res: ServerResponse, session: Ses
   res.on('close', () => upstream.destroy());
   req.pipe(upstream);
 }
-async function proxyPublic(req: IncomingMessage, res: ServerResponse) {
-  if (!['GET', 'HEAD'].includes(req.method ?? '')) return json(res, 401, { error: 'Authentication required' });
-  const root = path.resolve(process.env.STATIC_ROOT ?? '/app/static');
+// The SPA is served by the gateway for every user, signed in or not, from STATIC_ROOT.
+// STATIC_ROOT is a shared volume whose `current` entry is swapped atomically by the
+// release tooling, so a frontend release never rebuilds or restarts any container.
+// Only /api, /health and the WebSocket endpoints reach a user's CloudCLI runtime.
+const staticRoot = process.env.STATIC_ROOT ?? '/app/static';
+const staticMime: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.map': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.wasm': 'application/wasm', '.txt': 'text/plain; charset=utf-8', '.webmanifest': 'application/manifest+json' };
+async function serveStatic(req: IncomingMessage, res: ServerResponse) {
+  if (!['GET', 'HEAD'].includes(req.method ?? '')) return json(res, 405, { error: 'Method not allowed' });
+  // Resolve the release symlink per request so a swap takes effect immediately.
+  const root = await fs.promises.realpath(staticRoot).catch(() => null);
+  if (!root) return json(res, 503, { error: 'Frontend release missing' });
   const pathname = decodeURIComponent(new URL(req.url ?? '/', origin).pathname);
   const file = path.resolve(root, `.${pathname}`);
   if (!file.startsWith(`${root}/`) && file !== root) return json(res, 404, { error: 'Not found' });
   const stat = await fs.promises.stat(file).catch(() => null);
+  const isAsset = stat?.isFile() && pathname.startsWith('/assets/');
   const target = stat?.isFile() ? file : path.join(root, 'index.html');
-  const mime: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.webmanifest': 'application/manifest+json' };
-  const content = await fs.promises.readFile(target);
-  res.writeHead(200, { 'content-type': mime[path.extname(target)] ?? 'application/octet-stream', 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+  const content = await fs.promises.readFile(target).catch(() => null);
+  if (!content) return json(res, 503, { error: 'Frontend release missing' });
+  res.writeHead(200, {
+    'content-type': staticMime[path.extname(target)] ?? 'application/octet-stream',
+    // Vite emits content-hashed files under /assets; everything else must revalidate.
+    'cache-control': isAsset ? 'public, max-age=31536000, immutable' : 'no-store',
+    'x-content-type-options': 'nosniff',
+  });
   res.end(req.method === 'HEAD' ? undefined : content);
 }
 
@@ -174,8 +188,11 @@ const server = http.createServer(async (req, res) => {
       if (!session) return json(res, 401, { error: 'Authentication required' }, { 'x-auth-error': 'invalid-token' });
       return await proxyHttp(req, res, session);
     }
-    if (session) return await proxyHttp(req, res, session);
-    return await proxyPublic(req, res);
+    if (url.pathname === '/_gateway/release' && req.method === 'GET') {
+      const release = await fs.promises.readlink(staticRoot).then((link) => path.basename(link)).catch(() => 'unknown');
+      return json(res, 200, { release, gateway: process.env.AIDEV_GATEWAY_VERSION ?? 'unknown' });
+    }
+    return await serveStatic(req, res);
   } catch (error) {
     console.error('[gateway]', error instanceof Error ? error.message : 'Request failed');
     json(res, 503, { error: 'Environment unavailable. Please retry shortly.' });

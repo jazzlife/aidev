@@ -3,9 +3,11 @@ name: aidev
 services:
   auth-gateway:
     container_name: aidev-auth-gateway
-    image: aidev/auth-gateway:phase1
+    image: aidev/auth-gateway:${AIDEV_GATEWAY_TAG:-phase1}
     build:
       context: ./auth-gateway
+      args:
+        AIDEV_GATEWAY_VERSION: ${AIDEV_GATEWAY_TAG:-phase1}
     environment:
       HOST: 0.0.0.0
       PORT: 8080
@@ -14,11 +16,13 @@ services:
       JWT_SECRET_FILE: /run/secrets/gateway-jwt
       RUNTIME_MANAGER_URL: http://runtime-manager:8090
       RUNTIME_MANAGER_TOKEN_FILE: /run/secrets/runtime-token
+      STATIC_ROOT: /srv/frontend/current
     secrets:
       - gateway-jwt
       - runtime-token
     volumes:
       - auth-data:/data
+      - frontend:/srv/frontend:ro
     networks:
       - npm-net
       - control-net
@@ -29,7 +33,7 @@ services:
 
   runtime-manager:
     container_name: aidev-runtime-manager
-    image: aidev/runtime-manager:phase1
+    image: aidev/runtime-manager:${AIDEV_RUNTIME_MANAGER_TAG:-phase1}
     build:
       context: ./runtime-manager
     environment:
@@ -37,7 +41,7 @@ services:
       PORT: 8090
       RUNTIME_MANAGER_TOKEN_FILE: /run/secrets/runtime-token
       DOCKER_SOCKET: /var/run/docker.sock
-      CLOUDCLI_IMAGE: aidev/cloudcli:dynamic
+      CLOUDCLI_IMAGE: ${AIDEV_CLOUDCLI_IMAGE:-aidev/cloudcli:dynamic}
       RUNTIME_KEYS_DIR: /runtime-keys
       HOST_RUNTIME_KEYS_DIR: /home/turtlelab/aidev/runtime-keys
       MANAGER_CONTAINER: aidev-runtime-manager
@@ -57,6 +61,9 @@ services:
 
 volumes:
   auth-data:
+  # Frontend releases: releases/<id>/ + `current` symlink. Written only by
+  # deploy/aidev/release/frontend.sh through a short-lived helper container.
+  frontend:
 
 secrets:
   gateway-jwt:
