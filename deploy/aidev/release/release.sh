@@ -9,6 +9,7 @@
 #   release.sh diff <shaA> <shaB>            which components differ -> tells what needs a restart
 #   release.sh list | status | prune
 set -euo pipefail
+trap 'echo " ✗ release.sh failed at line $LINENO (exit $?)" >&2' ERR
 VOL="${AIDEV_APP_VOLUME:-aidev_app}"
 # One release operation at a time per host (deploys, rollbacks, restarts must not interleave).
 if [ -z "${AIDEV_RELEASE_LOCKED:-}" ]; then exec env AIDEV_RELEASE_LOCKED=1 flock -w 600 /tmp/aidev-release.lock "$0" "$@"; fi
@@ -35,7 +36,9 @@ cmd_install() {
   fi
   [ -s "$tgz" ] || fail "$tgz not found or empty"
   ensure_volume
-  local sha; sha=$(tar tzf "$tgz" | head -1 | cut -d/ -f1); [ -n "$sha" ] || fail "bad archive"
+  # Read the release id from the RELEASE file inside the archive. (Never `tar tzf | head`:
+  # head exits early, tar dies with SIGPIPE and `pipefail` turns that into a silent exit.)
+  local sha; sha=$(tar xzOf "$tgz" --wildcards '*/RELEASE' 2>/dev/null | tr -d '[:space:]'); [ -n "$sha" ] || fail "bad archive: no RELEASE file"
   if vol "test -f releases/$sha/RELEASE"; then ok "release $sha already installed"; else
     log "installing release $sha"
     volin "rm -rf releases/$sha.partial && mkdir releases/$sha.partial && tar xzf - -C releases/$sha.partial --strip-components=1" < "$tgz"

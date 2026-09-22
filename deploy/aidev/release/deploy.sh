@@ -8,6 +8,7 @@
 # A frontend-only release therefore restarts nothing; users get it on their next page load.
 # Rollback: release.sh rollback && release.sh restart <same set>.
 set -euo pipefail
+trap 'echo " ✗ deploy.sh failed at line $LINENO (exit $?)" >&2' ERR
 here=$(cd "$(dirname "$0")" && pwd); R="$here/release.sh"
 tgz="${1:?release tgz, or - to read it from stdin}"; shift || true
 if [ "$tgz" = "-" ]; then  # direct SSH stream: cat release.tgz | ssh host deploy.sh -
