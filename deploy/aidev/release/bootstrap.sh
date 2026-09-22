@@ -17,7 +17,8 @@ DEPLOY="$HOME/aidev/deploy"
 log() { printf '\033[1;34m==>\033[0m %s\n' "$*"; }
 
 log "1/5 deploy tree -> $DEPLOY"
-mkdir -p "$DEPLOY"; tar xzf "$payload/deploy.tgz" -C "$DEPLOY" --strip-components=1
+mkdir -p "$DEPLOY"; rm -rf "$DEPLOY/aidev"   # stray from an earlier --strip-components=1 attempt
+tar xzf "$payload/deploy.tgz" -C "$DEPLOY" --strip-components=2
 chmod +x "$DEPLOY"/release/*.sh
 if [ ! -f "$DEPLOY/.env" ]; then
   sed 's/^AIDEV_PROXY_NETWORK=.*/AIDEV_PROXY_NETWORK=npm_bridge/; s#^AIDEV_SECRET_DIR=.*#AIDEV_SECRET_DIR=/home/turtlelab/aidev/secrets#' "$DEPLOY/.env.example" > "$DEPLOY/.env"
