@@ -9,3 +9,5 @@ export type { RoutingMode, RoutingOverrides, RoutingState } from '@/modules/aide
 export { useAidevRouting } from '@/modules/aidev-router/hooks/useAidevRouting';
 export type { AidevSendDecoration, BeforeSendContext } from '@/modules/aidev-router/hooks/useAidevRouting';
 export { useAidevDecide } from '@/modules/aidev-router/hooks/useAidevDecide';
+// Workbench-only UI (the mobile app has its own chip in src-mobile).
+export { AidevRouterBar } from '@/modules/aidev-router/AidevRouterBar';

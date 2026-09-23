@@ -101,7 +101,7 @@ export function useAidevRouting() {
       } catch {
         runId = null; // a missing run row only loses learning signal for this turn
       }
-      routingStore.patch({ busy: false, last: route, lastText: text, runId });
+      routingStore.patch({ busy: false, last: route, lastText: text, runId, runFinishedAt: null, runFeedback: null });
       if (current.mode === 'manual' && !current.overrides.agent && !current.overrides.model) {
         // Manual mode: show the plan, but send without it until the user applies it from the bar.
         return null;
@@ -123,6 +123,8 @@ export function useAidevRouting() {
   /** Records the terminal signal of the run started by the last routed send (§3.8). */
   const reportOutcome = useCallback(async (outcome: { exit_code?: number | null; tool_errors?: number; user_feedback?: 'up' | 'down' | null; test_result?: 'pass' | 'fail' | null; summary?: string; reverted?: boolean }, runId?: number | null) => {
     const id = runId ?? routingStore.get().runId;
+    if (outcome.exit_code !== undefined) routingStore.patch({ runFinishedAt: Date.now() });
+    if (outcome.user_feedback) routingStore.patch({ runFeedback: outcome.user_feedback });
     if (!id) {
       return null;
     }

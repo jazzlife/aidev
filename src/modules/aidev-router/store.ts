@@ -28,6 +28,10 @@ export type RoutingState = {
   overrides: RoutingOverrides;
   /** run id the gateway allocated for the send currently in flight or last sent */
   runId: number | null;
+  /** when the last routed run completed (null while running / before any run) */
+  runFinishedAt: number | null;
+  /** feedback already given for the finished run */
+  runFeedback: 'up' | 'down' | null;
 };
 
 const MODE_KEY = 'aidev.routing.mode';
@@ -41,7 +45,7 @@ function readMode(): RoutingMode {
   }
 }
 
-let state: RoutingState = { mode: readMode(), busy: false, last: null, lastText: null, error: null, overrides: {}, runId: null };
+let state: RoutingState = { mode: readMode(), busy: false, last: null, lastText: null, error: null, overrides: {}, runId: null, runFinishedAt: null, runFeedback: null };
 const listeners = new Set<() => void>();
 
 function emit() {

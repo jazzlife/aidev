@@ -26,6 +26,7 @@ import {
 } from '@/shared/context/SessionProtectionContext';
 import ChatMessagesPane from '@/modules/chat/transcript/ChatMessagesPane';
 import ChatComposer from '@/modules/chat/composer/ChatComposer';
+import { AidevRouterBar, useAidevRouting } from '@/modules/aidev-router';
 import CommandResultModal from '@/modules/chat/modals/CommandResultModal';
 
 type ChatInterfaceProps = {
@@ -71,6 +72,14 @@ function ChatInterface({
 }: ChatInterfaceProps) {
   const { tasksEnabled, isTaskMasterInstalled } = useTasksSettings();
   const { subscribe } = useWebSocket();
+  // Nado AI Dev: a provider `complete` event ends the routed run started by the last send (§3.8).
+  const { reportOutcome: reportAidevOutcome } = useAidevRouting();
+  useEffect(() => subscribe((event) => {
+    if (event.kind !== 'complete') return;
+    if (event.sessionId && selectedSession?.id && event.sessionId !== selectedSession.id) return;
+    const exitCode = typeof event.exitCode === 'number' ? event.exitCode : (event.isError ? 1 : 0);
+    void reportAidevOutcome({ exit_code: exitCode });
+  }), [reportAidevOutcome, selectedSession?.id, subscribe]);
   const { t } = useTranslation('chat');
   const processingSessions = useProcessingSessions();
   const {
@@ -566,6 +575,7 @@ function ChatInterface({
           isTextareaExpanded={isTextareaExpanded}
           sendByCtrlEnter={sendByCtrlEnter}
         />
+          <AidevRouterBar />
         </div>
       </div>
 
