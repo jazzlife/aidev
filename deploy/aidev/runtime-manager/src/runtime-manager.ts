@@ -162,6 +162,20 @@ const server = http.createServer(async (req, res) => {
   if (req.method === 'GET' && req.url === '/health') return reply(200, { status: 'ok' });
   const supplied = String(req.headers['x-runtime-token'] ?? '');
   if (Buffer.byteLength(supplied) !== Buffer.byteLength(token) || !crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(token))) return reply(403, { error: 'Forbidden' });
+  // Verify a JWT minted by a runtime with its own key (gateway internal API: runtime → gateway calls).
+  const verifyMatch = /^\/v1\/runtimes\/([^/]+)\/verify$/.exec(req.url ?? '');
+  if (req.method === 'POST' && verifyMatch && valid(verifyMatch[1])) {
+    const chunks: Buffer[] = []; let size = 0;
+    for await (const chunk of req) { size += Buffer.byteLength(chunk); if (size > 8192) return reply(413, { error: 'Body too large' }); chunks.push(Buffer.from(chunk)); }
+    try {
+      const body = JSON.parse(Buffer.concat(chunks).toString() || '{}') as { token?: unknown };
+      if (typeof body.token !== 'string') return reply(400, { error: 'token required' });
+      if (!fs.existsSync(`${keyDir}/${verifyMatch[1]}.json`)) return reply(404, { error: 'Unknown runtime' });
+      const claims = jwt.verify(body.token, key(verifyMatch[1]), { algorithms: ['HS256'], audience: 'aidev-gateway' });
+      if (typeof claims === 'string' || claims.username !== verifyMatch[1]) return reply(401, { error: 'Invalid runtime token' });
+      return reply(200, { ok: true, runtime: verifyMatch[1] });
+    } catch { return reply(401, { error: 'Invalid runtime token' }); }
+  }
   const match = /^\/v1\/runtimes\/([^/]+)\/(provision|start|delete)$/.exec(req.url ?? '');
   if (req.method !== 'POST' || !match || !valid(match[1])) return reply(404, { error: 'Not found' });
   try { reply(200, await run(match[1], match[2])); }

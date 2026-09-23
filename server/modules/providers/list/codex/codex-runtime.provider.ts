@@ -14,6 +14,7 @@
 import { Codex } from '@openai/codex-sdk';
 import type { ModelReasoningEffort, Thread, ThreadOptions } from '@openai/codex-sdk';
 
+import { aidevToolsService, composeAgentInstructions, sanitizeAidevOptions } from '@/modules/aidev-tools/index.js';
 import {
   appendFilesInputTag,
   buildCodexInputItems,
@@ -256,6 +257,33 @@ function mapPermissionModeToCodexOptions(permissionMode: string): Pick<ThreadOpt
  * @param {object} options - Options including cwd, sessionId, model, permissionMode
  * @param {WebSocket|object} ws - WebSocket connection or response writer
  */
+/**
+ * Nado AI Dev routing (IMPLEMENTATION-PLAN §3.5): the specialist prompt, lessons and
+ * knowledge go to the Codex CLI as `developer_instructions`; the platform's aidev-tools
+ * MCP server (and any agent-specific servers) as `mcp_servers.*` config overrides.
+ * Nothing is written to the user's config.toml — overrides live for this turn only.
+ */
+function buildCodexOptions(rawAidev: unknown): ConstructorParameters<typeof Codex>[0] {
+  const config: Record<string, unknown> = {};
+  const mcpServers: Record<string, Record<string, unknown>> = {};
+  const platformMcp = aidevToolsService.getMcpServerConfig();
+  if (platformMcp) {
+    mcpServers['aidev-tools'] = { command: platformMcp.command, args: platformMcp.args, env: platformMcp.env };
+  }
+  const aidev = sanitizeAidevOptions(rawAidev);
+  if (aidev) {
+    config.developer_instructions = composeAgentInstructions(aidev);
+    for (const [name, spec] of Object.entries(aidev.agent.mcpServers ?? {})) {
+      mcpServers[name] = 'url' in spec ? { url: spec.url } : { command: spec.command, ...(spec.args ? { args: spec.args } : {}), ...(spec.env ? { env: spec.env } : {}) };
+    }
+    console.log(`[Codex SDK] aidev routing: agent=${aidev.agent.name} v${aidev.agent.version ?? '?'} lessons=${aidev.lessons.length} knowledge=${aidev.knowledgeDigest?.length ?? 0}ch target=${aidev.target?.name ?? '-'} run=${aidev.runId ?? '-'}`);
+  }
+  if (Object.keys(mcpServers).length) {
+    config.mcp_servers = mcpServers;
+  }
+  return Object.keys(config).length ? { config: config as never } : undefined;
+}
+
 async function queryCodex(
   command: string,
   options: AnyRecord = {},
@@ -308,7 +336,7 @@ async function queryCodex(
   const sessionKey = () => sessionId || capturedSessionId || null;
 
   try {
-    codex = new Codex();
+    codex = new Codex(buildCodexOptions(options.aidev));
 
     const threadOptions: ThreadOptions = {
       workingDirectory,

@@ -76,6 +76,8 @@ const laya = http.createServer(async (req, res) => {
 laya.listen(layaPort, () => console.log(`mock laya on ${layaPort}`));
 
 const manager = http.createServer(async (req, res) => {
+  const v = req.url.match(/^\/v1\/runtimes\/([^/]+)\/verify$/);
+  if (v) { const b = await read(req); return b.token === `rtjwt-${v[1]}` ? send(res, 200, { ok: true, runtime: v[1] }) : send(res, 401, { error: 'Invalid runtime token' }); }
   const m = req.url.match(/^\/v1\/runtimes\/([^/]+)\/(provision|start|delete)$/);
   if (m) return send(res, 200, { target: `http://127.0.0.1:${managerPort}/rt/${m[1]}`, token: `tok-${m[1]}` });
   const r = req.url.match(/^\/rt\/([^/]+)(\/.*)$/);

@@ -100,6 +100,7 @@ export function openStore(filename: string) {
       return db.prepare('SELECT command, COALESCE(final_agent, agent) AS label, probability, confidence, decision, created_at FROM decision_log WHERE COALESCE(final_agent, agent) IS NOT NULL ORDER BY id').all();
     },
     account(username: string) { return db.prepare('SELECT * FROM accounts WHERE username=?').get(username) as Account | undefined; },
+    accountByRuntime(runtime: string) { return db.prepare('SELECT * FROM accounts WHERE runtime=?').get(runtime) as Account | undefined; },
     session(sid: string) {
       return db.prepare(`SELECT a.* FROM accounts a JOIN gateway_sessions s ON s.user_id=a.id
         WHERE s.sid=? AND s.expires>? AND a.active=1`).get(sid, Date.now()) as Account | undefined;

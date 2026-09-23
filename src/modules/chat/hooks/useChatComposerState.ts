@@ -11,6 +11,7 @@ import type {
 } from 'react';
 import { useDropzone } from 'react-dropzone';
 
+import { useAidevRouting } from '@/modules/aidev-router';
 import { api } from '@/shared/api';
 import { PROVIDER_PERMISSION_PREFERENCE_KEYS } from '@/shared/constants';
 import { readUserPreference } from '@/shared/userSettings';
@@ -611,6 +612,11 @@ export function useChatComposerState({
     selectedSession,
   ]);
 
+  // Nado AI Dev routing: one gateway round-trip before the send decides the specialist
+  // agent, engine and model tier for this turn (IMPLEMENTATION-PLAN §3.6). Failures
+  // never block the send — the message goes out exactly as an unrouted send would.
+  const { beforeSend: aidevBeforeSend } = useAidevRouting();
+
   const handleSubmit = useCallback(
     async (
       event: FormEvent<HTMLFormElement> | MouseEvent | TouchEvent | KeyboardEvent<HTMLTextAreaElement>,
@@ -839,6 +845,23 @@ export function useChatComposerState({
       setIsUserScrolledUp(false);
       setTimeout(() => scrollToBottom(), 100);
 
+      const baseSendOptions = queuedSubmission?.options ?? buildSendOptions(messageContent);
+      const aidevDecoration = await aidevBeforeSend(messageContent, {
+        sessionId: targetSessionId,
+        provider,
+        isNewSession: !(selectedSession?.id || currentSessionId),
+        projectHint: typeof selectedProject?.displayName === 'string' ? selectedProject.displayName : (typeof selectedProject?.name === 'string' ? selectedProject.name : null),
+        userPinnedModel: false,
+      });
+      const routedSendOptions = aidevDecoration
+        ? {
+          ...baseSendOptions,
+          aidev: aidevDecoration.aidev,
+          ...(aidevDecoration.model ? { model: aidevDecoration.model } : {}),
+          ...(aidevDecoration.effort ? { effort: aidevDecoration.effort } : {}),
+        }
+        : baseSendOptions;
+
       // One message shape for every provider. The backend resolves the
       // provider, project path, and provider-native resume id from the
       // session row; `options` only carries composer-level preferences.
@@ -851,7 +874,7 @@ export function useChatComposerState({
         ...(editingAnchorId ? { anchorId: editingAnchorId } : {}),
         content: messageContent,
         options: {
-          ...(queuedSubmission?.options ?? buildSendOptions(messageContent)),
+          ...routedSendOptions,
           attachments: uploadedAttachments,
         },
       });
@@ -878,6 +901,7 @@ export function useChatComposerState({
       }
     },
     [
+      aidevBeforeSend,
       selectedSession,
       attachedFiles,
       buildSendOptions,

@@ -29,6 +29,7 @@ import {
   CLAUDE_ULTRACODE_EFFORT
 } from '@/modules/providers/list/claude/claude-models.provider.js';
 import { resolveClaudeCodeExecutablePath } from '@/shared/claude-cli-path.js';
+import { aidevToolsService, composeAgentInstructions, sanitizeAidevOptions } from '@/modules/aidev-tools/index.js';
 import {
   createNotificationEvent,
   notifyBackgroundWorkCompleted,
@@ -213,6 +214,49 @@ function matchesToolPermission(entry, toolName, input) {
   }
 
   return false;
+}
+
+/**
+ * Nado AI Dev routing (IMPLEMENTATION-PLAN §3.5): the specialist agent chosen for this turn
+ * is applied as an *append* to the Claude Code preset system prompt (not `sdkOptions.agent`,
+ * which would replace the preset and drop the CLI's own tool guidance), plus tool
+ * restrictions, model pin, skills and MCP servers. The agent is also registered under
+ * `agents` so the Agent tool can delegate to it. The aidev-tools MCP server is injected
+ * whenever this runtime is part of the platform, even without a routed agent.
+ */
+function applyAidevRouting(sdkOptions, rawAidev) {
+  const platformMcp = aidevToolsService.getMcpServerConfig();
+  if (platformMcp) {
+    sdkOptions.mcpServers = { ...(sdkOptions.mcpServers || {}), 'aidev-tools': platformMcp };
+  }
+  const aidev = sanitizeAidevOptions(rawAidev);
+  if (!aidev) {
+    return;
+  }
+  const instructions = composeAgentInstructions(aidev);
+  sdkOptions.systemPrompt = { type: 'preset', preset: 'claude_code', append: instructions };
+  if (aidev.agent.mcpServers) {
+    sdkOptions.mcpServers = { ...(sdkOptions.mcpServers || {}), ...aidev.agent.mcpServers };
+  }
+  if (aidev.agent.tools && aidev.agent.tools.length) {
+    // Restrict to the agent's tools but keep the platform MCP tools reachable.
+    sdkOptions.allowedTools = [...new Set([...(sdkOptions.allowedTools || []), ...aidev.agent.tools, 'mcp__aidev-tools__*'])];
+  }
+  if (aidev.agent.maxTurns) {
+    sdkOptions.maxTurns = aidev.agent.maxTurns;
+  }
+  sdkOptions.agents = {
+    ...(sdkOptions.agents || {}),
+    [aidev.agent.name]: {
+      description: aidev.agent.description || `Specialist agent ${aidev.agent.name}`,
+      prompt: instructions,
+      ...(aidev.agent.tools && aidev.agent.tools.length ? { tools: aidev.agent.tools } : {}),
+      ...(aidev.agent.model ? { model: aidev.agent.model } : {}),
+      ...(aidev.agent.skills && aidev.agent.skills.length ? { skills: aidev.agent.skills } : {}),
+      ...(aidev.agent.maxTurns ? { maxTurns: aidev.agent.maxTurns } : {}),
+    },
+  };
+  console.log(`[Claude SDK] aidev routing: agent=${aidev.agent.name} v${aidev.agent.version ?? '?'} model=${sdkOptions.model} lessons=${aidev.lessons.length} knowledge=${aidev.knowledgeDigest ? aidev.knowledgeDigest.length : 0}ch target=${aidev.target ? aidev.target.name : '-'} run=${aidev.runId ?? '-'}`);
 }
 
 function mapCliOptionsToSDK(options = {}) {
@@ -791,6 +835,7 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
     if (mcpServers) {
       sdkOptions.mcpServers = mcpServers;
     }
+    applyAidevRouting(sdkOptions, options.aidev);
 
     // Every turn uses streaming input so stdin stays open past the turn's
     // `result`. The message list is reusable, but each query attempt needs its

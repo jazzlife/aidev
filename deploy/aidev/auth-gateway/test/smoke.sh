@@ -54,6 +54,9 @@ r=$(post "$A" /api/aidev/targets '{"name":"mac-studio","platform":"macos","tags"
 r=$(get "$ADM" /api/aidev/stats); check "$r" 'j.decisions_24h.some(d=>d.kind==="route")' "admin stats"
 r=$(get "$A" /api/aidev/stats); check "$r" 'j.error' "non-admin stats rejected"
 r=$(curl -s "$G/api/aidev/export/decisions?kind=route" -H "authorization: Bearer $ADM" | head -1); check "$r" 'j.command && j.label' "export decisions JSONL"
+r=$(curl -s -X POST "$G/internal/aidev/decide/agent.yesno" -H 'authorization: Bearer rtjwt-rt-alice' -H 'x-aidev-runtime: rt-alice' -H 'content-type: application/json' -d '{"state":{"question":"Is the build green?","summary":"tests pass ok"}}'); check "$r" 'j.kind==="agent.yesno" && j.decision_id>0' "runtime internal call (aidev-tools → gateway)"
+r=$(curl -s -X POST "$G/internal/aidev/decide/agent.yesno" -H 'authorization: Bearer wrong' -H 'x-aidev-runtime: rt-alice' -H 'content-type: application/json' -d '{"state":{}}'); check "$r" 'j.error' "runtime internal call rejects bad token"
+r=$(curl -s "$G/internal/aidev/targets" -H 'authorization: Bearer rtjwt-rt-alice' -H 'x-aidev-runtime: rt-alice'); check "$r" 'j.targets.length===1' "runtime lists user targets"
 # Laya outage → fallback, service keeps answering
 kill %1; sleep 0.3
 r=$(post "$A" /api/aidev/route '{"text":"React 컴포넌트에 다크모드 토글 훅을 추가해줘"}'); check "$r" 'j.fallback===true && j.agent.name==="generalist" && j.plan.engine' "laya down → generalist fallback, engine still chosen"

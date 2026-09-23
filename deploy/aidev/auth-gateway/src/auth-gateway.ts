@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import http, { type IncomingMessage, type ServerResponse } from 'node:http';
@@ -86,6 +87,26 @@ function ready(runtimeName: string) {
     readyCache.set(runtimeName, { value, expires: Date.now() + 30_000 }); return value;
   })().finally(() => inflight.delete(runtimeName));
   inflight.set(runtimeName, pending); return pending;
+}
+
+const runtimeAuthCache = new Map<string, { session: Session; expires: number }>();
+async function authenticateRuntime(req: IncomingMessage): Promise<Session | null> {
+  const runtimeName = String(req.headers['x-aidev-runtime'] ?? '');
+  const bearer = req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : '';
+  if (!/^[a-z0-9_.-]{3,64}$/.test(runtimeName) || !bearer) return null;
+  const cacheKey = crypto.createHash('sha256').update(`${runtimeName}:${bearer}`).digest('hex');
+  const hit = runtimeAuthCache.get(cacheKey);
+  if (hit && hit.expires > Date.now()) return hit.session;
+  try {
+    const r = await fetch(`${managerUrl}/v1/runtimes/${runtimeName}/verify`, { method: 'POST', headers: { 'x-runtime-token': managerToken, 'content-type': 'application/json' }, body: JSON.stringify({ token: bearer }), signal: AbortSignal.timeout(5000) });
+    if (!r.ok) return null;
+  } catch { return null; }
+  const user = store.accountByRuntime(runtimeName);
+  if (!user || !user.active) return null;
+  const session = { user, token: bearer, sid: `runtime:${runtimeName}` } as Session;
+  if (runtimeAuthCache.size > 500) runtimeAuthCache.clear();
+  runtimeAuthCache.set(cacheKey, { session, expires: Date.now() + 4 * 60_000 });
+  return session;
 }
 
 function upstreamPath(req: IncomingMessage, target: string, token: string) {
@@ -223,6 +244,15 @@ const server = http.createServer(async (req, res) => {
       return json(res, 404, { error: 'Not found' });
     }
     if (await aidev.handle(req, res, url, session)) return;
+    // Runtime → gateway calls (aidev-tools MCP inside a user's CloudCLI container). The runtime signs a
+    // JWT with its own key; the runtime-manager verifies it; the account is derived from the runtime name.
+    if (url.pathname.startsWith('/internal/aidev/')) {
+      const runtimeSession = await authenticateRuntime(req);
+      if (!runtimeSession) return json(res, 401, { error: 'Runtime authentication failed' });
+      const rewritten = new URL(url); rewritten.pathname = url.pathname.replace('/internal/aidev/', '/api/aidev/');
+      if (await aidev.handle(req, res, rewritten, runtimeSession)) return;
+      return json(res, 404, { error: 'Not found' });
+    }
     if (url.pathname === '/api' || url.pathname.startsWith('/api/') || url.pathname === '/health') {
       if (!session) return json(res, 401, { error: 'Authentication required' }, { 'x-auth-error': 'invalid-token' });
       return await proxyHttp(req, res, session);
