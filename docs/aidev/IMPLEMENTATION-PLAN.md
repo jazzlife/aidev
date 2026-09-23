@@ -17,7 +17,7 @@
 1. **원격 서버 AI-PC(100.64.0.9, `ai-turtle`)에서만 운영.** 로컬(Mac)에서 서비스를 돌리지 않는다. Mac은 `ops/relay.sh`로 SSH 중계만, 클라우드 작업공간(`/home/claude/aidev`)은 빌드만.
 2. **저장소 연동 없음, 이미지 재빌드 없음.** 배포 = `pack.sh` → `release-<sha>.tgz` → `relay.sh deploy` → 서버 `deploy.sh`가 볼륨 `releases/<sha>/`에 풀고 `current` 원자 교체 → 바뀐 프로세스만 재시작. 도구 이미지(`cloudcli-runtime`, `laya-runtime`)는 도구 버전이 바뀔 때만.
 3. **기존 인프라 불변**: NPM(4.conf), Portainer, 인증서, 네트워크(npm_bridge/aidev-control-net/aidev-<user>-net), 시크릿, 사용자 볼륨, `~/aidev/source`. NPM에 무언가를 **추가**하는 것은 §7 결정 후에만.
-4. **CloudUI upstream 수정 최소화.** 본체 수정 허용 지점: `server/modules/providers/list/claude/claude-runtime.provider.js`, `server/modules/providers/list/codex/codex-runtime.provider.ts`, `src/modules/chat/hooks/useChatComposerState.ts`, `src/modules/chat/ChatInterface.tsx`, `src/modules/project-workspace/{ProjectWorkspaceRoute,ProjectMainRegion,WorkspaceMain}.tsx`(작업대 분기 1곳씩), `src/shared/types.ts`(`AppTab` 확장). 나머지는 새 모듈 `src/modules/aidev-router/`, `src/modules/workbench/`, `src/modules/remote-target/`, 서버 `server/modules/aidev-tools/`, 게이트웨이(`deploy/aidev/auth-gateway`), 러너(`deploy/aidev/runner`)에.
+4. **CloudUI upstream 수정 최소화.** 본체 수정 허용 지점: `server/modules/providers/list/claude/claude-runtime.provider.js`, `server/modules/providers/list/codex/codex-runtime.provider.ts`, `src/modules/chat/hooks/useChatComposerState.ts`, `src/modules/chat/ChatInterface.tsx`, `src/modules/project-workspace/ProjectWorkspaceRoute.tsx`(작업대 분기 1곳), `src/shared/types.ts`(`AppTab` 확장), `vite.config.ts`(mobile 빌드 추가). `src/modules/chat/`에서 비시각 로직을 `src/modules/chat-core/`로 뽑아낼 때는 **이동이 아니라 re-export**(upstream 파일 위치 유지). 나머지는 새 모듈 `src/modules/aidev-router/`, `src/modules/chat-core/`, `src/modules/workbench/`, `src/modules/remote-target/`, 모바일 앱 `src-mobile/`, 서버 `server/modules/aidev-tools/`, 게이트웨이(`deploy/aidev/auth-gateway`), 러너(`deploy/aidev/runner`)에.
 5. **Laya는 결정만, 생성은 LLM.** 텍스트가 필요한 모든 것(agent 프롬프트, 지식, 교훈)은 계정이 쓸 수 있는 엔진이 만든다.
 6. **분별·선택이 필요한 곳에는 하드코딩 규칙 대신 Laya 질문을 둔다.** 모든 결정 지점은 §3.10 레지스트리에 등록하고 `decision_log`에 남긴다. Laya가 없거나 확신이 낮으면 레지스트리에 적힌 **결정적 fallback**으로 간다(서비스가 멈추지 않는다).
 7. **검증되지 않은 지식은 주입하지 않는다.** verified(테스트/승인) · sourced(공식 출처+날짜) · unverified(보관만).
@@ -36,7 +36,9 @@
 - 교훈·지식은 **사용자 범위**로 축적, 전역 승격은 관리자 승인.
 - 계정 엔진 권한은 **`aidev-user` CLI 옵션**으로 관리, 관리 UI는 나중.
 - CloudCLI 세션은 provider 고정 → 엔진 선택은 새 세션 시작 시점, 도중 전환은 요약 handoff 새 세션.
-- **UI 3단**: 모바일(<768) = 채팅 중심 단일 열, 태블릿(768~1279) = 채팅 + 도구 패널 1개, 데스크탑(≥1280) = IDE 작업대(탐색기·에디터·diff·터미널·미리보기·원격 화면·디버그). 기존 CloudUI 탭(chat/files/shell/git/browser)은 작업대의 **패널**로 재사용한다. 새 편집기·터미널을 만들지 않는다(CodeMirror 6·xterm 재사용).
+- **UI는 두 개의 독립 앱으로 완전히 분리한다(반응형 단일 앱 아님).** `mobile`(`src-mobile/`, 채팅 중심, 경량 번들, 자체 디자인)과 `workbench`(`src/`, 태블릿·데스크탑 IDE 작업대). 같은 저장소, 같은 백엔드·WS·게이트웨이 API를 쓰고, 화면 코드는 공유하지 않는다. 공유는 **비시각 코어**만: `src/shared`(api·types·i18n), `src/modules/chat-core`(메시지·스트리밍·툴콜 모델, 세션 상태), `src/modules/aidev-router`(라우팅 훅·API·스토어). 근거: 현재 단일 번들 `index-*.js` 2.9MB(+ codemirror 648K, xterm 388K, mermaid 580K…)를 모바일이 그대로 받는다; 조건부 렌더링으로는 번들도 디자인도 나뉘지 않는다.
+- 작업대는 기존 CloudUI 탭(chat/files/shell/git/browser)을 **패널**로 재사용한다. 새 편집기·터미널을 만들지 않는다(CodeMirror 6·xterm 재사용). 태블릿은 작업대(2패널 모드)로 간다.
+- 제공: 게이트웨이가 `/m/*` → `dist-mobile`, `/` → `dist`. 루트 요청이 모바일(`Sec-CH-UA-Mobile: ?1` 또는 UA)이고 override 쿠키 `aidev_ui`가 없으면 302 `/m/<같은 경로>`. 두 앱 모두 "다른 UI로 전환" 메뉴(쿠키 설정). PWA manifest·service worker는 앱별 scope.
 - **원격 실행 러너 = Rust 단일 바이너리 `aidev-runner`.** 코드 동기화는 런타임 컨테이너 → 원격 PC 단방향(manifest diff)부터. 원격 PC에서 실행되는 것은 사용자 코드(빌드·실행·테스트·디버그 어댑터)뿐이고 AI 엔진은 항상 서버 런타임에서 돈다.
 - AI agent(Claude/Codex)가 원격 PC를 쓰는 통로는 런타임 안의 MCP 서버 `aidev-tools` 하나(`remote_*`, `aidev_decide`). 사용자가 쓰는 통로는 작업대 패널.
 
@@ -62,9 +64,10 @@
 ## 2. 시스템 구성 (구현 대상 전체 지도)
 
 ```
-브라우저 (CloudUI 포크)
-   ├─ 모바일: chat 단일 열 (+ aidev-router 칩, RunFeedback, 파일 peek, 알림)
-   ├─ 태블릿/데스크탑: src/modules/workbench = 탐색기 | 에디터·diff | 채팅 / 하단: 터미널·실행출력·미리보기·원격화면·디버그
+브라우저 — 두 개의 독립 SPA (같은 백엔드)
+   ├─ /m/  mobile   (src-mobile → dist-mobile): chat 단일 열, 자체 디자인, ≤600KB 목표 (+ 라우터 칩, RunFeedback, 파일 peek, 결과 카드, 알림)
+   ├─ /    workbench(src → dist, CloudUI 포크): src/modules/workbench = 탐색기 | 에디터·diff | 채팅 / 하단: 터미널·실행출력·미리보기·원격화면·디버그
+   ├─ 공유(비시각): src/shared, src/modules/chat-core, src/modules/aidev-router
    │  POST /api/aidev/route  {text, sessionId?, engine?}                      ← 전송 직전
    │  POST /api/aidev/decide/:kind {state}                                     ← UI 분별(패널 포커스, 알림 등급…)
    │  chat.send options.aidev = {agent, engine, model, effort, runId, target?}
@@ -206,13 +209,13 @@ store.ts            useSyncExternalStore: {mode:'auto'|'manual'|'off', last: Rou
 useAidevRouting.ts  beforeSend(text, session) → Promise<AidevOptions|null>  (clarify>0.7 & depth≥2 → ClarifyPrompt 먼저); onRunEvent(...)
 useAidevDecide.ts   decide(kind, state) 래퍼 + 결과 캐시(같은 state 30s)
 AidevRouterBar.tsx  데스크탑/태블릿 컴포저 위 한 줄: [범위 D2·implement·risk1] [agent frontend-react 99%] [Claude · sonnet/high] [대상 Mac-studio] ▾대안 ▾엔진/모델 ▾대상
-AidevRouterChip.tsx 모바일: 접힌 칩 1개(탭하면 bottom sheet로 위 내용)
+(모바일 앱의 AidevRouterChip·ClarifyPrompt·RunFeedback은 src-mobile/ 안에 따로 구현 — 이 모듈에서는 api/store/hooks만 import)
 ClarifyPrompt.tsx   되묻기 1문항(인라인, 답하면 원문+답을 합쳐 전송)
 AgentCreateCard.tsx 생성 승인 카드(이름/설명/프롬프트/지식 출처 편집, 승인/거절)
 AgentCatalog.tsx    카탈로그 화면(목록·상세: 버전·지식·교훈·실행 통계) — 설정 모달 탭으로 진입
 RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실패" 표시
 ```
-본체 수정: `useChatComposerState.ts` `handleSubmit` — `sendMessage` 직전 `const aidev = await beforeSend(messageContent, selectedSession)`; `options.aidev = aidev`. `ChatInterface.tsx` — `<AidevRouterBar/>`/`<AidevRouterChip/>`(기기별), `<AgentCreateCard/>`, `<ClarifyPrompt/>` 렌더, 실행 완료 이벤트에서 `onRunEvent`.
+본체 수정(작업대): `useChatComposerState.ts` `handleSubmit` — `sendMessage` 직전 `const aidev = await beforeSend(messageContent, selectedSession)`; `options.aidev = aidev`. `ChatInterface.tsx` — `<AidevRouterBar/>`, `<AgentCreateCard/>`, `<ClarifyPrompt/>` 렌더, 실행 완료 이벤트에서 `onRunEvent`. 모바일 앱은 `chat-core`의 send 훅을 직접 감싸므로 본체 수정 없음.
 
 ### 3.7 agent 생성 (agent-architect)
 - 트리거: `/route`가 `decision: create`이고 depth ≥ 2 (D0~1은 `create_queue`에 넣고 범용으로 처리).
@@ -258,15 +261,28 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 
 규칙: (a) `probabilities`를 항상 로그에 남긴다(보정·학습용). (b) fallback 사용 시 `decision_log.fallback=1`. (c) 결과가 사용자에게 보이는 kind(`route`, `target.select`, `ui.focus`, `ui.artifact`)는 override를 `PATCH /decisions/:id`로 기록한다. (d) Laya `/health` 실패 시 모든 kind는 즉시 fallback(대기 없음), 30s 후 재시도.
 
-### 3.11 기기별 UI (`src/modules/workbench/`, 모바일은 기존 chat 탭 강화)
-- 판정: `useDeviceTier()` → `mobile`(<768, 기존 `isMobile`) / `tablet`(768~1279) / `desktop`(≥1280). 터치+가로 태블릿은 `tablet`, 외부 키보드 감지 시 `desktop` 허용(설정에서 고정 가능).
-- **모바일(채팅 중심)**: 기존 탭 구조 유지하되 첫 화면 = chat. 컴포저 위 `AidevRouterChip` 1개. assistant 메시지의 파일·diff 링크 → **bottom sheet 뷰어**(읽기 전용 CodeMirror, diff는 `@codemirror/merge` 단일 열). "실행 결과" 카드(exit code·마지막 20줄·스크린샷 썸네일) → 탭하면 전체. 원격 화면은 스냅샷(정지 이미지, 새로고침 버튼)만. 백그라운드 run 완료는 `notify.level`에 따라 배지/푸시(PWA 기존 알림 사용). 터미널·git·파일 탭은 유지(보조).
-- **태블릿**: 2패널. 왼쪽 chat(고정) + 오른쪽 도구 패널 1개(탐색기+에디터 / 미리보기 / 원격 화면 / 터미널 중 택1, 상단 세그먼트). 세로 모드는 모바일 레이아웃으로 강등. 스와이프로 패널 전환.
-- **데스크탑(IDE 작업대)**: `WorkbenchLayout` = 좌 활동바(탐색기·검색·git·대상·카탈로그) + 좌 사이드(선택된 뷰) + 중앙 **에디터 그룹**(탭: 파일·diff·이미지) + 우 **chat**(라우터 바 포함, 접기 가능) + 하단 **패널**(탭: 터미널·실행 출력·미리보기·원격 화면·디버그·문제). 크기 조절 가능한 split(자체 구현 `SplitPane`, 라이브러리 추가 없음), 배치는 `localStorage['aidev.workbench.<tier>']`(try/catch).
-- 패널 레지스트리 `panes.ts`: `{id, title, icon, mount: () => ReactNode, tiers: Tier[]}` — `explorer`(file-tree), `editor`(code-editor, 다중 탭), `diff`(git-panel GitDiffViewer 재사용), `terminal`(shell), `git`(git-panel), `browser`(browser-use), `chat`(chat), `run_output`(신규, 원격/로컬 exec 스트림), `preview`(신규, iframe → `/p/<target>/<port>/`), `screen`(신규, canvas 프레임), `debug`(신규, DAP 클라이언트), `targets`(신규, remote-target 모듈).
+### 3.11 두 개의 UI 앱 (`src-mobile/` 모바일, `src/` + `src/modules/workbench/` 작업대)
+**공통 규칙**
+- 빌드: `vite.config.ts`에 두 번째 앱 정의(`build:client:mobile` → `dist-mobile`, `base: '/m/'`, `root: src-mobile`). `npm run build`가 둘 다 만든다. 모바일 번들 예산 **≤600KB(gzip 전, 메인 청크)** — CodeMirror·xterm·mermaid·katex·cytoscape 금지(ESLint `no-restricted-imports`로 강제). 코드 하이라이트는 `shiki` 대신 경량 `highlight.js` 코어+언어 8개(≈60KB) 또는 서버 측 하이라이트 응답.
+- 공유는 비시각 코어만: `src/shared`(api 래퍼·types·i18n 리소스), `src/modules/chat-core`(WS 프로토콜, 메시지 스트리밍·툴콜·권한 요청 상태 머신, 세션 목록 스토어 — `src/modules/chat`의 훅/유틸에서 re-export로 구성, 파일 이동 없음), `src/modules/aidev-router`(api·store·useAidevRouting·useAidevDecide; 컴포넌트는 앱별). 시각 컴포넌트·라우트·디자인 토큰은 앱별로 따로.
+- 제공(게이트웨이 `serveStatic`): `/m/*` → `dist-mobile/`(SPA fallback `/m/index.html`), 그 외 → `dist/`. 루트 진입 시 `Sec-CH-UA-Mobile: ?1` 또는 UA에 `Mobile|Android|iPhone`이고 `aidev_ui` 쿠키가 없으면 302 `/m` + 원래 경로(예: `/session/abc` → `/m/session/abc`). iPad·태블릿 UA는 작업대. 쿠키 `aidev_ui=mobile|workbench`(1년)가 있으면 그대로. 두 앱 모두 설정에 "다른 UI로 전환". 릴리스 간 자산 fallback(`findAssetInOtherReleases`)은 `/m/assets/*`에도 적용. 라우트 이름은 두 앱이 같게(`/session/:id`, `/project/:name`)해서 링크·알림 딥링크를 공용으로 쓴다.
+- PWA: `dist-mobile/manifest.webmanifest`(scope `/m/`, standalone, 아이콘 별도), 작업대는 upstream manifest 유지. 푸시는 모바일 앱만 구독.
+
+**모바일 앱 `src-mobile/` (채팅 중심, 자체 디자인)**
+- 스택: React 19 + react-router + Tailwind(자체 `tailwind.mobile.config`, 토큰 `src-mobile/theme/tokens.css`: 큰 터치 타깃 44px, safe-area, 하단 고정 컴포저, 시스템 다크모드). 상태는 `chat-core` 훅 + 앱 로컬 store.
+- 화면: `Sessions`(프로젝트별 세션 목록, 스와이프 삭제·고정) → `Chat`(트랜스크립트 가상 스크롤, 스트리밍, 툴콜 접힘 카드, 권한 요청 시트, `AidevRouterChip`+bottom sheet, `ClarifyPrompt`, `RunFeedback`, `ApprovalCard`) → 보조 시트: `FilePeek`(읽기 전용, highlight.js, 줄 이동), `DiffPeek`(단일 열 +/− 표시, 자체 렌더러 — `@codemirror/merge` 금지), `RunResultCard`(exit code·마지막 20줄·스크린샷 썸네일·전체 로그 페이지), `ScreenSnapshot`(정지 이미지·새로고침·핀치줌), `TargetsSheet`(온라인 여부·대상 선택), `Catalog`(agent 목록·상세 읽기, 편집은 작업대로 안내), `Settings`(엔진·알림·UI 전환·로그아웃). 터미널·git·파일 트리 화면은 **없음**(작업대 전용); 파일은 검색→peek만.
+- 음성 입력: upstream `voice` 모듈의 API만 재사용(버튼은 자체).
+- 알림: run 완료·승인 요청·생성 카드는 `notify.level`로 배지/푸시. 앱이 포그라운드면 인라인.
+- 성능 목표: LCP < 2.0s(4G), 메인 청크 ≤600KB, 트랜스크립트 1,000 메시지 스크롤 60fps(가상화).
+
+**작업대 앱 `src/` + `src/modules/workbench/` (태블릿·데스크탑, CloudUI 포크)**
+- 판정: `useDeviceTier()` → `tablet`(<1280 또는 터치 가로) / `desktop`(≥1280). 모바일 UA가 쿠키로 작업대를 고집하면 `tablet` 모드.
+- **데스크탑(IDE 작업대)**: `WorkbenchLayout` = 좌 활동바(탐색기·검색·git·대상·카탈로그) + 좌 사이드(선택된 뷰) + 중앙 **에디터 그룹**(탭: 파일·diff·이미지) + 우 **chat**(라우터 바 포함, 접기 가능) + 하단 **패널**(탭: 터미널·실행 출력·미리보기·원격 화면·디버그·문제). 크기 조절 가능한 split(자체 `SplitPane`, 라이브러리 추가 없음), 배치는 `localStorage['aidev.workbench.<tier>']`(try/catch).
+- **태블릿**: 같은 `WorkbenchLayout`의 2패널 모드 — 왼쪽 chat 고정 + 오른쪽 도구 패널 1개(탐색기+에디터 / 미리보기 / 원격 화면 / 터미널 세그먼트), 스와이프 전환, 하단 패널은 시트로. 세로 모드도 작업대(2패널 상하 배치).
+- 패널 레지스트리 `panes.ts`: `{id, title, icon, mount: () => ReactNode, tiers: Tier[]}` — `explorer`(file-tree), `editor`(code-editor, 다중 탭), `diff`(git-panel GitDiffViewer 재사용), `terminal`(shell), `git`(git-panel), `browser`(browser-use), `chat`(chat), `run_output`(신규), `preview`(신규, iframe → `/p/<target>/<port>/`), `screen`(신규, canvas 프레임), `debug`(신규, DAP 클라이언트), `targets`(신규, remote-target 모듈).
 - 에디터 그룹: 기존 `code-editor`를 탭 컨테이너로 감싼다(파일당 인스턴스, 저장은 기존 API). chat의 파일 경로·`path:line` 링크 클릭 → 에디터 탭 열기·해당 줄. run 완료 후 `ui.artifact`가 고른 파일을 자동으로 연다(설정으로 끔).
 - `ui.focus`: run 이벤트(테스트 실패 → terminal/run_output, 미리보기 포트 열림 → preview, 디버그 중단 → debug)마다 Laya로 어느 패널을 앞으로 가져올지 결정. 사용자가 3회 연속 되돌리면 그 kind는 해당 세션에서 off.
-- 본체 분기: `ProjectWorkspaceRoute`에서 `tier !== 'mobile'`이면 `<WorkbenchLayout/>`, 아니면 기존 `ProjectWorkspaceShell`. 기존 탭 UI는 모바일에서만 계속 쓴다.
+- 본체 분기: `ProjectWorkspaceRoute`에서 `<WorkbenchLayout/>` 렌더(기존 `ProjectWorkspaceShell`은 upstream 머지용으로 남기되 사용하지 않음; 설정 `legacy_layout`으로만 진입).
 
 ### 3.12 원격 PC 실행·디버깅·화면 (`deploy/aidev/runner/` Rust, 게이트웨이 `runner-hub.ts`, 런타임 `server/modules/aidev-tools/`)
 **러너 `aidev-runner`** (crate: tokio, tokio-tungstenite, rustls, serde, portable-pty, xcap(화면), blake3, ignore(gitignore), notify(감시)):
@@ -313,20 +329,20 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 
 **B 완료 기준**: B-13~B-16 서버 로그로 확인, 기준선 수치 기록, 롤백 성공.
 
-### C. 기기별 UI (목표: 모바일은 채팅으로 끝까지 쓸 수 있고, 태블릿·데스크탑은 IDE처럼 코드를 보며 작업한다)
-- [ ] C-01 `useDeviceTier()` (mobile/tablet/desktop, 키보드 감지, 설정 고정) + `ProjectWorkspaceRoute` 분기(`WorkbenchLayout` vs 기존 shell)
-- [ ] C-02 `workbench/`: `SplitPane`(가로·세로, 드래그, 최소폭, 접기), `WorkbenchLayout`(활동바·사이드·에디터 그룹·chat·하단 패널), 배치 저장/복원, `panes.ts` 레지스트리에 기존 모듈 6개(explorer/editor/diff/terminal/git/browser/chat) 장착
-- [ ] C-03 에디터 그룹: 다중 탭, dirty 표시, chat `path:line` 링크 → 탭 열기, diff 탭(`@codemirror/merge`), 이미지 탭
-- [ ] C-04 모바일 chat 강화: `AidevRouterChip` + bottom sheet, 파일·diff bottom-sheet 뷰어(읽기 전용), 실행 결과 카드, 원격 화면 스냅샷 카드, `notify.level` → 배지/푸시
-- [ ] C-05 태블릿 2패널(chat + 도구 패널 세그먼트, 스와이프, 세로 → 모바일 강등)
-- [ ] C-06 `AidevRouterBar`: 범위 칩(depth·task_kind·risk), agent 칩(확률 바), 엔진/모델 칩, 대상 칩, 대안 드롭다운, 수동/자동/off 토글, 불가 엔진 비활성+사유; `ClarifyPrompt`
-- [ ] C-07 override 시 `PATCH /decisions/:id` 기록, 이후 같은 세션엔 override 유지
-- [ ] C-08 `RunFeedback`: 👍/👎, 테스트 결과 표시 → `PATCH /runs/:id/outcome`
-- [ ] C-09 `AgentCatalog`: 목록/상세(버전·지식·교훈·통계), 편집(새 버전), 개인→전역 승격 버튼(관리자)
-- [ ] C-10 `ui.focus`·`ui.artifact` 연결: run 이벤트 → Laya → 패널 포커스/파일 자동 열기, 3회 되돌림 시 off
-- [ ] C-11 dev.nado.work에서 iPhone(세로)/iPad(가로·세로)/데스크탑 실기기 확인(스크린샷 inbox 회수), 모바일 폭에서 chat·터미널·뷰어 깨짐 없음
+### C. 두 개의 UI (목표: 모바일 앱은 채팅으로 끝까지 쓸 수 있고, 작업대는 IDE처럼 코드를 보며 작업한다)
+- [ ] C-01 빌드 분리: `vite.config.ts` 두 번째 앱(`src-mobile`, base `/m/`, `dist-mobile`), `npm run build`가 둘 다 생성, `pack.sh`·manifest에 `dist-mobile` 포함, 모바일 금지 import ESLint 규칙, 번들 예산 검사 스크립트(`scripts/check-bundle.mjs`, >600KB면 빌드 실패)
+- [ ] C-02 게이트웨이 `serveStatic`: `/m/*` → `dist-mobile`, 루트 UA/쿠키 판정 302, `aidev_ui` 쿠키, `/m/assets` 구 릴리스 fallback — 서버 검증: iPhone UA로 `/` → `/m/`, 쿠키로 고정 시 작업대
+- [ ] C-03 `src/modules/chat-core/`: 기존 chat 훅·유틸 re-export 정리(WS 프로토콜·스트리밍 상태·세션 스토어·권한 요청), 시각 의존 0 확인(`tsc` + import 검사). `aidev-router` 컴포넌트/로직 분리
+- [ ] C-04 모바일 앱 골격: 라우팅(`/m/session/:id`, `/m/project/:name`), 로그인(게이트웨이 세션 재사용), 테마 토큰, `Sessions`·`Chat`(스트리밍·툴콜 카드·권한 시트) — 서버 검증: iPhone에서 명령 1건 완주
+- [ ] C-05 모바일 보조 시트: `AidevRouterChip`+sheet, `ClarifyPrompt`, `RunFeedback`, `FilePeek`(highlight.js), `DiffPeek`(자체 렌더러), `RunResultCard`, `ScreenSnapshot`, `TargetsSheet`, `Catalog`(읽기), `Settings`(UI 전환 포함)
+- [ ] C-06 모바일 PWA(manifest scope `/m/`, SW, 아이콘) + `notify.level` 배지/푸시 + 성능 측정(Lighthouse 모바일 4G: LCP<2.0s, 메인 청크 크기 기록)
+- [ ] C-07 작업대 `useDeviceTier()` + `workbench/`: `SplitPane`, `WorkbenchLayout`(활동바·사이드·에디터 그룹·chat·하단 패널), 태블릿 2패널 모드, 배치 저장/복원, `panes.ts`에 기존 모듈 6개 장착, `ProjectWorkspaceRoute` 분기
+- [ ] C-08 작업대 에디터 그룹: 다중 탭, dirty 표시, chat `path:line` 링크 → 탭, diff 탭(`@codemirror/merge`), 이미지 탭
+- [ ] C-09 작업대 `AidevRouterBar`(범위·agent·엔진/모델·대상 칩, 대안, 수동/자동/off, 불가 엔진 사유), `ClarifyPrompt`, `RunFeedback`, `AgentCatalog`(편집·새 버전·승격), override `PATCH /decisions/:id`
+- [ ] C-10 `ui.focus`·`ui.artifact` 연결(작업대): run 이벤트 → Laya → 패널 포커스/파일 자동 열기, 3회 되돌림 시 off
+- [ ] C-11 실기기 확인(스크린샷 inbox 회수): iPhone 세로(모바일 앱), iPad 가로·세로(작업대 태블릿 모드), 데스크탑(작업대). 두 앱에서 같은 세션 딥링크가 열림
 
-**C 완료 기준**: C-11 3기기 확인, override·피드백이 DB에 기록, 데스크탑에서 파일 열기·diff·터미널·chat이 한 화면에서 동작.
+**C 완료 기준**: C-11 3기기 확인, 모바일 메인 청크 ≤600KB 기록, override·피드백이 DB에 기록, 데스크탑에서 파일 열기·diff·터미널·chat이 한 화면에서 동작.
 
 ### F. 원격 PC 실행·디버깅·화면 (목표: 지정한 PC에서 실행·테스트·디버그하고 그 화면이 작업대와 모바일에 보인다)
 - [ ] F-01 러너 crate 골격: `pair`/`start`/`install-service`, 토큰 저장, WS 접속·heartbeat·재접속, capabilities 보고, allowed_roots. Linux·Windows cross-build 스크립트(`deploy/aidev/runner/build.sh`), macOS는 `ops/runner/build.sh`
@@ -370,7 +386,7 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 ---
 
 ## 5. 매 릴리스 절차
-1. 클라우드: 구현 → `npm run build`/`tsc`(+ 러너 변경 시 `cargo build --release` cross) 통과 → 커밋 → `bash deploy/aidev/release/pack.sh /mnt/user-data/outputs/rel`
+1. 클라우드: 구현 → `npm run build`(작업대 `dist` + 모바일 `dist-mobile` + 서버)/`tsc`(+ 러너 변경 시 `cargo build --release` cross) 통과, 모바일 번들 예산 통과 → 커밋 → `bash deploy/aidev/release/pack.sh /mnt/user-data/outputs/rel`
 2. `release-<sha>.tgz`를 Mac `ops/releases/`로 전달 (러너 바이너리는 `ops/runner/`로 별도)
 3. 사용자: `./relay.sh deploy releases/release-<sha>.tgz` (`changed:` 레인과 재시작 대상 확인)
 4. 검증: `./relay.sh status`, 필요 시 `./relay.sh run <cmd>`/`diag` 로그 회수 → 체크리스트 [x] + 릴리스 ID 기록
@@ -392,6 +408,8 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 | 사용자 컨테이너 재시작(서버 레인) | `--drain` 롤링, 세션은 볼륨 보존 |
 | 관리자 승인 병목(전역 승격) | 개인 범위에서 먼저 효과, 승격은 주기 검토 |
 | 작업대가 upstream 레이아웃과 충돌 | 본체는 분기 1곳, 패널은 기존 모듈을 props로 그대로 마운트, upstream 머지 시 `workbench/`만 재검토 |
+| 두 앱 사이 기능 불일치·중복 구현 | 프로토콜·상태 머신은 `chat-core` 한 곳, 새 서버 이벤트는 코어에 먼저 추가; 화면은 앱별 책임(중복 허용). 릴리스마다 C-11 딥링크 교차 확인 |
+| 모바일 번들이 다시 비대해짐 | 금지 import ESLint + 빌드 시 예산 검사(실패), 청크 크기를 릴리스 기록에 남김 |
 | 미리보기 경로 재작성 실패(절대 경로 SPA) | `<base>` 삽입 + 안내(Vite `base` 설정), 실패 시 §7 서브도메인 방식으로 전환 |
 | 화면 스트림 대역폭·CPU | 변화 감지 프레임 생략, ≤10fps, JPEG 품질 적응, 모바일은 스냅샷만; WebRTC는 측정 후 결정 |
 | 러너 보안(사용자 PC에서 임의 실행) | outbound 전용, allowed_roots, `remote.approve`+policy, 전 실행 기록, 토큰 해시·즉시 폐기, 캡처 명시 동의 |
@@ -411,3 +429,4 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 - 동기화 방향: 런타임 → 원격 PC 단방향 + 결과물 회수 → **채택**. 원격 PC에서의 편집 반영(역방향)은 F 이후 별도 단계.
 - 원격 화면 원격 조작(입력): 하지 않음 → **채택**(보기 전용). 필요 시 `screen.input` 추가.
 - 디버그 1차 어댑터: js-debug, debugpy, codelldb → **채택**
+- UI 분리: 반응형 단일 앱 대신 모바일·작업대 두 앱 → **채택**(성능·디자인 독립). 태블릿은 작업대 소속. 모바일 앱의 네이티브 래핑(Capacitor, 푸시·백그라운드)은 C 완료 후 검토
