@@ -1,0 +1,195 @@
+import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { Bot, FolderTree, GitBranch, Globe, LayoutPanelLeft, ListChecks, MessageSquare, MonitorSmartphone, PanelBottom, PanelRight, TerminalSquare } from 'lucide-react';
+
+import { ChatInterface } from '@/modules/chat';
+import { FileTree } from '@/modules/file-tree';
+import { StandaloneShell } from '@/modules/standalone-shell';
+import { GitPanel } from '@/modules/git-panel';
+import { BrowserUsePanel, useBrowserUseEnabled } from '@/modules/browser-use';
+import { usePaletteOpsRegister } from '@/modules/command-palette';
+import { TaskMasterPanel, useTaskMasterProjectSync, useTasksSettings } from '@/modules/task-master';
+import { useUiPreferences } from '@/shared/context/UiPreferencesContext';
+import { useFileOpenResolver, WorkspaceErrorBoundary, WorkspaceStateView } from '@/modules/project-workspace';
+import type { DirectoryRevealRequest, WorkspaceMainProps } from '@/shared/types';
+import { EditorGroup, useEditorGroup } from '@/modules/workbench/EditorGroup';
+import { SplitHandle } from '@/modules/workbench/SplitHandle';
+import { layoutStore, useWorkbenchLayout, type BottomTab, type SideView, type TabletPane } from '@/modules/workbench/layoutStore';
+import type { DeviceTier } from '@/modules/workbench/hooks/useDeviceTier';
+
+type WorkbenchLayoutProps = WorkspaceMainProps & { tier: Exclude<DeviceTier, 'mobile'> };
+
+const SIDE_VIEWS: Array<{ id: SideView; title: string; icon: typeof FolderTree }> = [
+  { id: 'explorer', title: '탐색기', icon: FolderTree },
+  { id: 'git', title: 'Git', icon: GitBranch },
+  { id: 'targets', title: '원격 대상', icon: MonitorSmartphone },
+  { id: 'catalog', title: 'Agent 카탈로그', icon: Bot },
+];
+const BOTTOM_TABS: Array<{ id: BottomTab; title: string; icon: typeof TerminalSquare }> = [
+  { id: 'terminal', title: '터미널', icon: TerminalSquare },
+  { id: 'browser', title: '브라우저', icon: Globe },
+  { id: 'tasks', title: '작업', icon: ListChecks },
+];
+const TABLET_PANES: Array<{ id: TabletPane; title: string }> = [
+  { id: 'files', title: '파일' }, { id: 'terminal', title: '터미널' }, { id: 'git', title: 'Git' }, { id: 'browser', title: '브라우저' },
+];
+
+/**
+ * IDE workbench for tablet and desktop (IMPLEMENTATION-PLAN §3.11). Composes the existing CloudUI
+ * modules as panes: activity bar + side view | editor group / bottom panel | chat. Rendered by
+ * ProjectMainRegion instead of the tabbed WorkspaceMain when the device tier is not mobile.
+ */
+function WorkbenchLayout(props: WorkbenchLayoutProps) {
+  const { selectedProject, selectedSession, ws, sendMessage, isLoading, onMenuClick, onNavigateToSession, onSessionEstablished, onShowSettings, externalMessageUpdate, newSessionTrigger, onProjectSelect, onProjectsRefresh, setActiveTab, tier } = props;
+  const layout = useWorkbenchLayout(tier);
+  const { showRawParameters, showThinking, sendByCtrlEnter } = useUiPreferences();
+  const { tasksEnabled, isTaskMasterInstalled } = useTasksSettings();
+  const browserUseEnabled = useBrowserUseEnabled();
+  useTaskMasterProjectSync(selectedProject);
+  const [revealDirectory, setRevealDirectory] = useState<DirectoryRevealRequest | null>(null);
+  const editor = useEditorGroup(selectedProject?.projectId);
+  const isTablet = tier === 'tablet';
+
+  // Chat/file-tree/git hand us paths (optionally with a diff or a line); everything lands in the editor group.
+  const handleFileOpen = useCallback((filePath: string, diffInfo?: unknown, line?: number | null) => {
+    editor.api.open(filePath, (diffInfo as never) ?? null, line ?? null);
+    if (isTablet) layoutStore.patch('tablet', { tabletShowChat: false, tabletPane: 'files' });
+  }, [editor.api, isTablet]);
+  const resolvedFileOpen = useFileOpenResolver(selectedProject, handleFileOpen as never);
+  const openFile = useCallback((filePath: string) => { handleFileOpen(filePath); }, [handleFileOpen]);
+  const openFileInEditor = useCallback((filePath: string, line?: number | null) => { resolvedFileOpen(filePath, undefined, line); }, [resolvedFileOpen]);
+  const openDirectory = useCallback((directoryPath: string) => {
+    layoutStore.patch(tier, { sideView: 'explorer' });
+    setRevealDirectory({ path: directoryPath });
+  }, [tier]);
+  usePaletteOpsRegister({ openFile, openFileInEditor, openDirectory });
+  // The legacy tab state still drives a few upstream effects (task banner, palette); keep it on chat.
+  useEffect(() => { setActiveTab('chat'); }, [setActiveTab]);
+
+  const showAllTasks = useCallback(() => { layoutStore.patch(tier, { bottomOpen: true, bottomTab: 'tasks' }); }, [tier]);
+  const shouldShowTasks = Boolean(tasksEnabled && isTaskMasterInstalled);
+  const bottomTabs = useMemo(() => BOTTOM_TABS.filter((tab) => (tab.id === 'tasks' ? shouldShowTasks : tab.id === 'browser' ? browserUseEnabled : true)), [browserUseEnabled, shouldShowTasks]);
+  const bottomTab: BottomTab = bottomTabs.some((tab) => tab.id === layout.bottomTab) ? layout.bottomTab : 'terminal';
+
+  if (isLoading) return <WorkspaceStateView mode="loading" isMobile={false} onMenuClick={onMenuClick} />;
+  if (!selectedProject) return <WorkspaceStateView mode="empty" isMobile={false} onMenuClick={onMenuClick} />;
+
+  const chat = (
+    <WorkspaceErrorBoundary showDetails>
+      <ChatInterface
+        isActive
+        selectedProject={selectedProject}
+        selectedSession={selectedSession}
+        ws={ws}
+        sendMessage={sendMessage}
+        onFileOpen={handleFileOpen}
+        onNavigateToSession={onNavigateToSession}
+        onSessionEstablished={onSessionEstablished}
+        onShowSettings={onShowSettings}
+        showRawParameters={showRawParameters}
+        showThinking={showThinking}
+        sendByCtrlEnter={sendByCtrlEnter}
+        externalMessageUpdate={externalMessageUpdate}
+        newSessionTrigger={newSessionTrigger}
+        onShowAllTasks={shouldShowTasks ? showAllTasks : null}
+      />
+    </WorkspaceErrorBoundary>
+  );
+  const explorer = <FileTree selectedProject={selectedProject} onFileOpen={handleFileOpen} revealDirectory={revealDirectory} />;
+  const git = <GitPanel selectedProject={selectedProject} isMobile={false} onFileOpen={handleFileOpen} onProjectSelect={onProjectSelect} onProjectsRefresh={onProjectsRefresh} />;
+  const terminal = (active: boolean) => <StandaloneShell project={selectedProject} session={selectedSession} showHeader={false} isActive={active} />;
+  const editorGroup = <EditorGroup tabs={editor.tabs} active={editor.active} onActivate={editor.setActive} onClose={editor.api.close} projectPath={selectedProject.path} />;
+  const placeholder = (title: string) => <div className="h-full flex items-center justify-center text-sm text-muted-foreground">{title} — 단계 F에서 제공됩니다</div>;
+
+  if (isTablet) {
+    // Two panes: chat, or one tool pane, switched by the segmented control (swipe lands in C-05).
+    const pane = layout.tabletPane;
+    return (
+      <div className="flex h-full flex-col">
+        <div className="flex items-center gap-1 px-2 h-10 border-b border-border bg-muted/30 shrink-0">
+          <button type="button" onClick={onMenuClick} aria-label="프로젝트" className="p-2 rounded hover:bg-muted"><LayoutPanelLeft size={16} /></button>
+          <div className="flex-1 min-w-0 truncate text-sm font-medium">{selectedProject.displayName}{selectedSession?.summary ? ` · ${selectedSession.summary}` : ''}</div>
+          <div className="flex rounded-md border border-border overflow-hidden text-xs">
+            <button type="button" className={`px-3 h-7 ${layout.tabletShowChat ? 'bg-primary text-primary-foreground' : ''}`} onClick={() => layoutStore.patch('tablet', { tabletShowChat: true })}>채팅</button>
+            {TABLET_PANES.filter((entry) => entry.id !== 'browser' || browserUseEnabled).map((entry) => (
+              <button key={entry.id} type="button" className={`px-3 h-7 border-l border-border ${!layout.tabletShowChat && pane === entry.id ? 'bg-primary text-primary-foreground' : ''}`} onClick={() => layoutStore.patch('tablet', { tabletShowChat: false, tabletPane: entry.id })}>{entry.title}</button>
+            ))}
+          </div>
+        </div>
+        <div className="flex-1 min-h-0 relative">
+          <div className={`absolute inset-0 ${layout.tabletShowChat ? '' : 'hidden'}`}>{chat}</div>
+          {!layout.tabletShowChat && pane === 'files' ? (
+            <div className="absolute inset-0 flex">
+              <div className="w-[260px] shrink-0 border-r border-border overflow-hidden">{explorer}</div>
+              <div className="flex-1 min-w-0">{editorGroup}</div>
+            </div>
+          ) : null}
+          <div className={`absolute inset-0 ${!layout.tabletShowChat && pane === 'terminal' ? '' : 'hidden'}`}>{terminal(!layout.tabletShowChat && pane === 'terminal')}</div>
+          {!layout.tabletShowChat && pane === 'git' ? <div className="absolute inset-0">{git}</div> : null}
+          {!layout.tabletShowChat && pane === 'browser' && browserUseEnabled ? <div className="absolute inset-0"><BrowserUsePanel isVisible onShowSettings={onShowSettings} /></div> : null}
+        </div>
+      </div>
+    );
+  }
+
+  const sideView = layout.sideView;
+  return (
+    <div className="flex h-full min-h-0">
+      {/* activity bar */}
+      <div className="w-11 shrink-0 flex flex-col items-center gap-1 py-2 border-r border-border bg-muted/40">
+        <button type="button" onClick={onMenuClick} aria-label="프로젝트 목록" title="프로젝트 목록" className="p-2 rounded hover:bg-muted text-muted-foreground"><LayoutPanelLeft size={18} /></button>
+        {SIDE_VIEWS.map((view) => (
+          <button key={view.id} type="button" title={view.title} aria-label={view.title} aria-pressed={sideView === view.id} onClick={() => layoutStore.patch('desktop', { sideView: sideView === view.id ? null : view.id })}
+            className={`p-2 rounded ${sideView === view.id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}><view.icon size={18} /></button>
+        ))}
+        <div className="flex-1" />
+        <button type="button" title="하단 패널" aria-label="하단 패널" aria-pressed={layout.bottomOpen} onClick={() => layoutStore.patch('desktop', { bottomOpen: !layout.bottomOpen })} className={`p-2 rounded ${layout.bottomOpen ? 'text-foreground' : 'text-muted-foreground'} hover:bg-muted`}><PanelBottom size={18} /></button>
+        <button type="button" title="채팅 패널" aria-label="채팅 패널" aria-pressed={layout.chatOpen} onClick={() => layoutStore.patch('desktop', { chatOpen: !layout.chatOpen })} className={`p-2 rounded ${layout.chatOpen ? 'text-foreground' : 'text-muted-foreground'} hover:bg-muted`}><PanelRight size={18} /></button>
+      </div>
+      {/* side view */}
+      {sideView ? (
+        <>
+          <div className="shrink-0 min-w-[200px] overflow-hidden border-r border-border flex flex-col" style={{ width: layout.sideWidth }}>
+            <div className="h-8 px-3 flex items-center text-[11px] uppercase tracking-wide text-muted-foreground border-b border-border shrink-0">{SIDE_VIEWS.find((view) => view.id === sideView)?.title}</div>
+            <div className="flex-1 min-h-0 overflow-hidden">
+              {sideView === 'explorer' ? explorer : sideView === 'git' ? git : sideView === 'targets' ? placeholder('원격 대상') : placeholder('Agent 카탈로그')}
+            </div>
+          </div>
+          <SplitHandle edge="right" size={layout.sideWidth} min={200} max={600} onSize={(size) => layoutStore.patch('desktop', { sideWidth: size })} />
+        </>
+      ) : null}
+      {/* center: editor group + bottom panel */}
+      <div className="flex-1 min-w-0 flex flex-col min-h-0">
+        <div className="flex-1 min-h-0">{editorGroup}</div>
+        {layout.bottomOpen ? (
+          <>
+            <SplitHandle edge="top" size={layout.bottomHeight} min={120} max={800} onSize={(size) => layoutStore.patch('desktop', { bottomHeight: size })} />
+            <div className="shrink-0 flex flex-col border-t border-border" style={{ height: layout.bottomHeight }}>
+              <div className="h-8 flex items-center gap-1 px-2 border-b border-border bg-muted/30 text-xs shrink-0" role="tablist">
+                {bottomTabs.map((tab) => (
+                  <button key={tab.id} type="button" role="tab" aria-selected={bottomTab === tab.id} onClick={() => layoutStore.patch('desktop', { bottomTab: tab.id })} className={`flex items-center gap-1 px-2 h-6 rounded ${bottomTab === tab.id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}><tab.icon size={13} />{tab.title}</button>
+                ))}
+              </div>
+              <div className="flex-1 min-h-0 relative">
+                <div className={`absolute inset-0 ${bottomTab === 'terminal' ? '' : 'hidden'}`}>{terminal(bottomTab === 'terminal')}</div>
+                {shouldShowTasks ? <div className={`absolute inset-0 ${bottomTab === 'tasks' ? '' : 'hidden'}`}><TaskMasterPanel isVisible={bottomTab === 'tasks'} /></div> : null}
+                {browserUseEnabled && bottomTab === 'browser' ? <div className="absolute inset-0"><BrowserUsePanel isVisible onShowSettings={onShowSettings} /></div> : null}
+              </div>
+            </div>
+          </>
+        ) : null}
+      </div>
+      {/* chat */}
+      {layout.chatOpen ? (
+        <>
+          <SplitHandle edge="left" size={layout.chatWidth} min={320} max={900} onSize={(size) => layoutStore.patch('desktop', { chatWidth: size })} />
+          <div className="shrink-0 min-w-[320px] border-l border-border flex flex-col" style={{ width: layout.chatWidth }}>
+            <div className="h-8 px-3 flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted-foreground border-b border-border shrink-0"><MessageSquare size={12} /> 채팅{selectedSession?.summary ? <span className="normal-case tracking-normal truncate text-foreground/80">· {selectedSession.summary}</span> : null}</div>
+            <div className="flex-1 min-h-0">{chat}</div>
+          </div>
+        </>
+      ) : null}
+    </div>
+  );
+}
+
+export default memo(WorkbenchLayout);

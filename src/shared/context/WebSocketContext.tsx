@@ -1,8 +1,6 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 
-// Context file rather than the auth barrel: the barrel drags ProtectedRoute → Onboarding into every
-// bundle that only needs the session (the mobile app, IMPLEMENTATION-PLAN §3.11).
-import { useAuth } from '@/modules/auth/context/AuthContext';
+import { useAuth } from '@/modules/auth';
 import { IS_PLATFORM } from '@/shared/utils';
 import { expireAuthSession, isAuthTokenExpired } from '@/shared/authToken';
 import type { ServerEvent } from '@/shared/types';

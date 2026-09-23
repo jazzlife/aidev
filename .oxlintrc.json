@@ -260,6 +260,13 @@
       }
     },
     {
+      // chat-core is the one deliberate exception to the barrel rule: it re-exports the chat
+      // module's non-visual internals for the mobile app, whose bundle must not contain
+      // ChatInterface's import graph (CodeMirror, mermaid, katex). See src/modules/chat-core/index.ts.
+      "files": ["src/modules/chat-core/index.ts"],
+      "rules": { "boundaries/dependencies": "off" }
+    },
+    {
       "files": ["server/**/*.js", "server/**/*.ts"],
       "excludeFiles": ["server/**/*.d.ts"],
       "rules": {

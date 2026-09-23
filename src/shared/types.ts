@@ -1,5 +1,5 @@
 import type { TFunction } from 'i18next';
-import type { CSSProperties } from 'react';
+import type { CSSProperties, Dispatch, SetStateAction } from 'react';
 import type { NavigateFunction } from 'react-router-dom';
 
 //----------------- LLM PROVIDER MODEL CATALOG ------------
@@ -1114,6 +1114,28 @@ export type RealtimeProps = {
 export type ProjectWorkspaceShellProps = RealtimeProps & {
   isMobile: boolean;
   navigate: NavigateFunction;
+};
+
+/** Props of the workspace main region, shared by the legacy tabbed WorkspaceMain (project-workspace) and the IDE WorkbenchLayout (workbench): the selected project/session, realtime socket, tab state and navigation callbacks. */
+export type WorkspaceMainProps = {
+  selectedProject: Project | null;
+  selectedSession: ProjectSession | null;
+  activeTab: AppTab;
+  setActiveTab: Dispatch<SetStateAction<AppTab>>;
+  ws: WebSocket | null;
+  sendMessage: (message: unknown) => void;
+  isMobile: boolean;
+  onMenuClick: () => void;
+  isLoading: boolean;
+  onNavigateToSession: (targetSessionId: string, options?: SessionNavigationOptions) => void;
+  onSessionEstablished: (sessionId: string, context: SessionEstablishedContext) => void;
+  onShowSettings: (tab?: SettingsMainTab) => void;
+  externalMessageUpdate: number;
+  newSessionTrigger: number;
+  /** Switches the app to another project — used by the git panel's Worktrees view. */
+  onProjectSelect: (project: Project) => void;
+  /** Silently re-syncs the sidebar project list after worktree projects change. */
+  onProjectsRefresh: () => void;
 };
 
 // ---------------------------

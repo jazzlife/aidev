@@ -20,6 +20,6 @@ export { parseToolPayload, summarizeDiff, calculateDiff } from '@/modules/chat/u
 export { splitStreamingMarkdown } from '@/modules/chat/utils/streamingMarkdown';
 export { normalizeInlineCodeFences, stripProposedPlanEnvelope } from '@/modules/chat/utils/chatFormatting';
 export { WebSocketProvider, useWebSocket } from '@/shared/context/WebSocketContext';
-export { AuthProvider, useAuth } from '@/modules/auth/context/AuthContext';
+export { AuthProvider, useAuth } from '@/modules/auth';
 export { api, authenticatedFetch, readApiJson } from '@/shared/api';
 export type { NormalizedMessage, ServerEvent, PendingPermissionRequest, LLMProvider, ProjectSession } from '@/shared/types';
