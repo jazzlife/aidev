@@ -94,6 +94,7 @@ services:
       HF_HOME: /models
       HF_HUB_OFFLINE: "1"             # weights are pre-fetched into the models volume (laya-image.sh models)
       HSA_OVERRIDE_GFX_VERSION: ${HSA_OVERRIDE_GFX_VERSION:-11.5.0}   # gfx1150 (Radeon 890M); an empty value breaks HSA device enumeration
+      TORCH_ROCM_AOTRITON_ENABLE_EXPERIMENTAL: "1"                        # fused SDPA attention on RDNA3.5 (torch warns it is experimental)
     volumes:
       - app:/srv/app:ro
       - models:/models
