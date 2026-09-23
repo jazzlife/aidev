@@ -67,7 +67,7 @@ export function createAidevApi(deps: AidevDeps) {
     if (write && a.owner_id === null && store.accountEngines(session.user.id).role !== 'admin') throw new HttpError(403, 'Global agents are edited by administrators; create a private copy instead');
     return a;
   }
-  const agentView = (a: ReturnType<Store['agentById']> & object) => ({ id: a.id, name: a.name, domain: a.domain, description: a.description, prompt: a.prompt, tools: a.tools ? JSON.parse(a.tools) : null, model: a.model, maxTurns: a.max_turns, skills: a.skills ? JSON.parse(a.skills) : null, mcpServers: a.mcp_servers ? JSON.parse(a.mcp_servers) : null, ownerId: a.owner_id, source: a.source, active: Boolean(a.active), uses: a.uses, version: a.version, createdAt: a.created_at, updatedAt: a.updated_at });
+  const agentView = (a: ReturnType<Store['agentById']> & object) => ({ id: a.id, name: a.name, domain: a.domain, description: a.description, hint: a.hint, prompt: a.prompt, tools: a.tools ? JSON.parse(a.tools) : null, model: a.model, maxTurns: a.max_turns, skills: a.skills ? JSON.parse(a.skills) : null, mcpServers: a.mcp_servers ? JSON.parse(a.mcp_servers) : null, ownerId: a.owner_id, source: a.source, active: Boolean(a.active), uses: a.uses, version: a.version, createdAt: a.created_at, updatedAt: a.updated_at });
 
   /** Returns true when the request was handled. */
   async function handle(req: IncomingMessage, res: ServerResponse, url: URL, session: Session | null): Promise<boolean> {
@@ -134,7 +134,7 @@ export function createAidevApi(deps: AidevDeps) {
       }
       if (rest === '/agents' && m === 'POST') {
         const b = await readJson(req);
-        const id = store.addAgent({ name: str(b.name, 'name', 41), domain: optStr(b.domain, 40) ?? '', description: str(b.description, 'description', 600), prompt: str(b.prompt, 'prompt'), tools: Array.isArray(b.tools) ? (b.tools as unknown[]).map(String) : null,
+        const id = store.addAgent({ name: str(b.name, 'name', 41), domain: optStr(b.domain, 40) ?? '', description: str(b.description, 'description', 600), hint: optStr(b.hint, 60) ?? null, prompt: str(b.prompt, 'prompt'), tools: Array.isArray(b.tools) ? (b.tools as unknown[]).map(String) : null,
           model: optStr(b.model, 100) ?? null, maxTurns: b.maxTurns === undefined ? null : num(b.maxTurns, 'maxTurns'), skills: Array.isArray(b.skills) ? (b.skills as unknown[]).map(String) : null, mcpServers: b.mcpServers && typeof b.mcpServers === 'object' ? b.mcpServers as Record<string, unknown> : null,
           ownerId: b.global === true ? (requireAdmin(session), null) : uid, source: optStr(b.source, 20) ?? 'user' });
         if (Array.isArray(b.knowledge)) for (const k of b.knowledge as Array<Record<string, unknown>>) {
@@ -156,7 +156,7 @@ export function createAidevApi(deps: AidevDeps) {
           const b = await readJson(req);
           const version = store.newAgentVersion(id, { prompt: optStr(b.prompt), description: optStr(b.description, 600), domain: optStr(b.domain, 40), tools: b.tools === undefined ? undefined : (Array.isArray(b.tools) ? (b.tools as unknown[]).map(String) : null), model: b.model === undefined ? undefined : (optStr(b.model, 100) ?? null),
             skills: b.skills === undefined ? undefined : (Array.isArray(b.skills) ? (b.skills as unknown[]).map(String) : null), mcpServers: b.mcpServers === undefined ? undefined : (b.mcpServers && typeof b.mcpServers === 'object' ? b.mcpServers as Record<string, unknown> : null), maxTurns: b.maxTurns === undefined ? undefined : (b.maxTurns === null ? null : num(b.maxTurns, 'maxTurns')) }, optStr(b.changelog, 2000) ?? 'edited');
-          if (typeof b.active === 'boolean') store.updateAgent(id, { active: b.active ? 1 : 0 });
+          if (typeof b.active === 'boolean' || b.hint !== undefined) store.updateAgent(id, { ...(typeof b.active === 'boolean' ? { active: b.active ? 1 : 0 } : {}), ...(b.hint !== undefined ? { hint: optStr(b.hint, 60) ?? null } : {}) });
           return json(res, 200, { agent: agentView(store.agentById(id)!), version }), true;
         }
         if (!agentMatch[2] && m === 'DELETE') { ownAgent(session, id, true); store.updateAgent(id, { active: 0 }); return json(res, 200, { ok: true }), true; }

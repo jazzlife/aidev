@@ -21,7 +21,7 @@ done
 cp -a deploy/aidev/runtime/entrypoint.mjs "$R/runtime/"
 mkdir -p "$R/control/laya" && cp -a deploy/aidev/laya/app/. "$R/control/laya/"   # python, no build step
 # routing benchmark needs the seed catalog exactly as the gateway sends it to Laya
-node --input-type=module -e "import('$ROOT/deploy/aidev/auth-gateway/dist/seed-agents.js').then(m=>console.log(JSON.stringify(Object.fromEntries(m.seedAgents.filter(a=>a.domain!=='meta').map(a=>[a.name,a.description])),null,1)))" > "$R/control/laya/bench/catalog.json"
+node --input-type=module -e "import('$ROOT/deploy/aidev/auth-gateway/dist/seed-agents.js').then(m=>console.log(JSON.stringify(Object.fromEntries(m.seedAgents.filter(a=>a.domain!=='meta').map(a=>[a.name,{hint:a.hint,description:a.description,domain:a.domain}])),null,1)))" > "$R/control/laya/bench/catalog.json"
 echo "$sha" > "$R/RELEASE"
 h() { sha256sum "$1" | cut -c1-12; }
 cat > "$R/manifest.json" <<EOF

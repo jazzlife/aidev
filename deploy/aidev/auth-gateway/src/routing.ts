@@ -1,5 +1,5 @@
 import type { openStore } from './store.js';
-import type { Engine } from './store-aidev.js';
+import { routingHint, type Engine } from './store-aidev.js';
 import { budgetState, topChoice, type LayaClient, type Question } from './laya.js';
 import { DEPTH_LEVELS, REMOTE_ACTIONS, RISK_LEVELS, TASK_KIND_CRITERIA, decide } from './laya-questions.js';
 
@@ -32,9 +32,12 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
 
   // ---- catalog ---------------------------------------------------------------------
   const all = store.agents(userId).filter((a) => a.domain !== 'meta');
-  const catalog: Record<string, string> = Object.fromEntries(all.map((a) => [a.name, a.description]));
+  // Laya's option head is ~192 tokens for ALL options together, so every agent is presented as
+  // "name: <short hint>"; the long bilingual descriptions would be truncated to their first words.
+  const catalog: Record<string, string> = Object.fromEntries(all.map((a) => [a.name, routingHint(a)]));
+  const descriptions: Record<string, string> = Object.fromEntries(all.map((a) => [a.name, a.description]));
   const state = budgetState({ command: text, project: input.projectHint ?? undefined, recent_files: input.recentFiles?.slice(0, 10)?.join(', ') || undefined });
-  const agentInstructions = 'Which specialist agent should handle this developer command? Pick the agent whose expertise matches the task best.';
+  const agentInstructions = 'Which specialist should handle the developer request in `command`?';
   let shortlisted: string[] | null = null;
   let criteria = catalog;
   if (Object.keys(catalog).length > 20) {
@@ -182,7 +185,7 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     scope: { depth, depth_raw: depthRaw, task_kind: taskKind, task_kind_probability: taskKindP, risk, multi_domain: multiDomain, clarify, remote_action: remoteAction, needs_llm_analysis: needsLlmAnalysis, ask_clarify: askClarify },
     agent: { id: agent.id, name: agent.name, version: agent.version, domain: agent.domain, description: agent.description, probability: agentTop.probability, confidence: agentTop.confidence,
       definition: { prompt, tools: agent.tools ? JSON.parse(agent.tools) as string[] : null, model: agent.model, maxTurns: agent.max_turns, skills: agent.skills ? JSON.parse(agent.skills) as string[] : null, mcpServers: agent.mcp_servers ? JSON.parse(agent.mcp_servers) as Record<string, unknown> : null } },
-    alternatives: agentTop.ranked.filter(([name]) => name !== agentName).slice(0, 3).map(([name, probability]) => ({ name, probability, description: catalog[name] })),
+    alternatives: agentTop.ranked.filter(([name]) => name !== agentName).slice(0, 3).map(([name, probability]) => ({ name, probability, description: descriptions[name] })),
     needs_new: needsNew, shortlisted,
     plan: { engine, engine_locked: engineLocked, model: tier.model, effort: tier.effort, target: target ? { id: target.id, name: target.name, platform: target.platform, tags: target.tags ? JSON.parse(target.tags) as string[] : [], capabilities: target.capabilities ? JSON.parse(target.capabilities) as unknown : null } : null, reason },
     engines: { claude: { ...engines.claude, score: scores.claude.score, notes: scores.claude.parts }, codex: { ...engines.codex, score: scores.codex.score, notes: scores.codex.parts } },

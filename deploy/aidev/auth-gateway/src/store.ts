@@ -51,33 +51,40 @@ export function openStore(filename: string) {
       return db.prepare('SELECT * FROM agents WHERE name=? AND (owner_id=? OR owner_id IS NULL) AND active=1 ORDER BY owner_id IS NULL LIMIT 1').get(name, userId) as AgentRow | undefined;
     },
     agentById(id: number) { return db.prepare('SELECT * FROM agents WHERE id=?').get(id) as AgentRow | undefined; },
-    addAgent(a: { name: string; domain?: string; description: string; prompt: string; tools?: string[] | null; model?: string | null; maxTurns?: number | null; ownerId: number | null; source: string; skills?: string[] | null; mcpServers?: Record<string, unknown> | null }) {
+    addAgent(a: { name: string; domain?: string; description: string; hint?: string | null; prompt: string; tools?: string[] | null; model?: string | null; maxTurns?: number | null; ownerId: number | null; source: string; skills?: string[] | null; mcpServers?: Record<string, unknown> | null }) {
       if (!agentName.test(a.name)) throw new Error('Agent name: lowercase letters, digits and dashes, 2-41 chars');
       if (a.description.length < 10 || a.description.length > 600) throw new Error('Description must be 10-600 characters (it is what the router sees)');
       if (a.prompt.length < 20 || a.prompt.length > 20000) throw new Error('Prompt must be 20-20000 characters');
       const now = Date.now();
-      const r = db.prepare('INSERT INTO agents(name,domain,description,prompt,tools,model,max_turns,owner_id,source,created_at,updated_at,skills,mcp_servers) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
-        .run(a.name, a.domain ?? '', a.description, a.prompt, a.tools ? JSON.stringify(a.tools) : null, a.model ?? null, a.maxTurns ?? null, a.ownerId, a.source, now, now, a.skills ? JSON.stringify(a.skills) : null, a.mcpServers ? JSON.stringify(a.mcpServers) : null);
+      if (a.hint && a.hint.length > 60) throw new Error('hint must be at most 60 characters (4-7 English words)');
+      const r = db.prepare('INSERT INTO agents(name,domain,description,prompt,tools,model,max_turns,owner_id,source,created_at,updated_at,skills,mcp_servers,hint) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        .run(a.name, a.domain ?? '', a.description, a.prompt, a.tools ? JSON.stringify(a.tools) : null, a.model ?? null, a.maxTurns ?? null, a.ownerId, a.source, now, now, a.skills ? JSON.stringify(a.skills) : null, a.mcpServers ? JSON.stringify(a.mcpServers) : null, a.hint?.trim() || null);
       const id = Number(r.lastInsertRowid);
       db.prepare('INSERT INTO agent_versions(agent_id,version,prompt,tools,model,skills,mcp_servers,changelog,created_at) VALUES(?,?,?,?,?,?,?,?,?)')
         .run(id, 1, a.prompt, a.tools ? JSON.stringify(a.tools) : null, a.model ?? null, a.skills ? JSON.stringify(a.skills) : null, a.mcpServers ? JSON.stringify(a.mcpServers) : null, 'initial', now);
       return id;
     },
-    updateAgent(id: number, patch: Partial<{ domain: string; description: string; prompt: string; tools: string[] | null; model: string | null; maxTurns: number | null; active: number }>) {
+    updateAgent(id: number, patch: Partial<{ domain: string; description: string; hint: string | null; prompt: string; tools: string[] | null; model: string | null; maxTurns: number | null; active: number }>) {
       const cur = this.agentById(id); if (!cur) throw new Error('Agent not found');
+      if (patch.hint && patch.hint.length > 60) throw new Error('hint must be at most 60 characters');
       const next = { domain: patch.domain ?? cur.domain, description: patch.description ?? cur.description, prompt: patch.prompt ?? cur.prompt,
         tools: patch.tools === undefined ? cur.tools : (patch.tools ? JSON.stringify(patch.tools) : null), model: patch.model === undefined ? cur.model : patch.model,
-        max_turns: patch.maxTurns === undefined ? cur.max_turns : patch.maxTurns, active: patch.active ?? cur.active };
-      db.prepare('UPDATE agents SET domain=?,description=?,prompt=?,tools=?,model=?,max_turns=?,active=?,updated_at=? WHERE id=?')
-        .run(next.domain, next.description, next.prompt, next.tools, next.model, next.max_turns, next.active, Date.now(), id);
+        max_turns: patch.maxTurns === undefined ? cur.max_turns : patch.maxTurns, active: patch.active ?? cur.active, hint: patch.hint === undefined ? cur.hint : (patch.hint?.trim() || null) };
+      db.prepare('UPDATE agents SET domain=?,description=?,prompt=?,tools=?,model=?,max_turns=?,active=?,hint=?,updated_at=? WHERE id=?')
+        .run(next.domain, next.description, next.prompt, next.tools, next.model, next.max_turns, next.active, next.hint, Date.now(), id);
     },
     bumpAgentUse(userId: number, name: string) { db.prepare('UPDATE agents SET uses=uses+1 WHERE name=? AND (owner_id=? OR owner_id IS NULL)').run(name, userId); },
     /** Insert every seed agent whose name is not yet a global agent (existing rows are never overwritten). */
-    seedAgents(seed: Array<{ name: string; domain: string; description: string; prompt: string; tools?: string[]; model?: string; maxTurns?: number; skills?: string[] }>) {
+    seedAgents(seed: Array<{ name: string; domain: string; description: string; hint?: string; prompt: string; tools?: string[]; model?: string; maxTurns?: number; skills?: string[] }>) {
       let added = 0;
       db.transaction(() => {
         for (const a of seed) {
-          if (db.prepare('SELECT 1 FROM agents WHERE name=? AND owner_id IS NULL').get(a.name)) continue;
+          const existing = db.prepare('SELECT id, hint FROM agents WHERE name=? AND owner_id IS NULL').get(a.name) as { id: number; hint: string | null } | undefined;
+          if (existing) {
+            // seeds may gain a routing hint after the row was created (migration from older releases)
+            if (!existing.hint && a.hint) db.prepare('UPDATE agents SET hint=? WHERE id=?').run(a.hint, existing.id);
+            continue;
+          }
           this.addAgent({ ...a, ownerId: null, source: 'seed' }); added++;
         }
       })();

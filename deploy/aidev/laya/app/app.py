@@ -8,6 +8,7 @@ probabilities). Lives in the release volume; the image only provides torch/laya.
                           -> {agent, confidence, probabilities, needs_new, alternatives, latency_ms}
   POST /decide            {state, questions}  raw laya predict (choice/score/noul) + latency_ms, device
   POST /shortlist         {state, options:{id:desc}, k, instructions?} -> {keep:[id]}  embedding shortlist
+  POST /embed             {texts:[...]} -> {vectors:[[...]], dim}   sentence embeddings from the Laya encoder
 
 Only reachable on aidev-control-net; the gateway is the sole caller.
 """
@@ -57,8 +58,10 @@ def load_model():
         # warm-up: first forward pass compiles kernels / allocates
         agent.predict("warm up", {"q": {"type": "noul", "instructions": "Is this a warm-up?"}})
         with LOCK:
+            cfg = getattr(agent, "cfg", {}) or {}
             STATE.update(loaded=True, device=str(agent.device), agent=agent, gpu=gpu,
-                         load_seconds=round(time.time() - t0, 1), laya=laya.__version__, torch=torch.__version__)
+                         load_seconds=round(time.time() - t0, 1), laya=laya.__version__, torch=torch.__version__,
+                         max_len=cfg.get("max_len"), head_max_len=cfg.get("head_max_len"))
         print(f"[laya] loaded {MODEL} on {agent.device} ({gpu}) in {STATE['load_seconds']}s", flush=True)
     except Exception as e:  # noqa: BLE001
         with LOCK:
@@ -146,6 +149,23 @@ def shortlist(body):
     return {"keep": [x for x in keep if x in options], "k": k, "latency_ms": round((time.time() - t0) * 1000, 1)}
 
 
+def embed(body):
+    """Sentence embeddings from the Laya encoder (used for similarity ensembles and shortlists)."""
+    import laya
+    texts = body.get("texts")
+    if not isinstance(texts, list) or not texts or len(texts) > 256:
+        raise ValueError("texts: list of 1-256 strings required")
+    texts = [str(t)[:2000] for t in texts]
+    t0 = time.time()
+    fn = laya.embed_fn_from_agent(STATE["agent"])
+    vecs = fn(texts)
+    try:
+        vecs = vecs.tolist()
+    except AttributeError:
+        vecs = [list(map(float, v)) for v in vecs]
+    return {"vectors": vecs, "dim": len(vecs[0]) if vecs else 0, "latency_ms": round((time.time() - t0) * 1000, 1)}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "aidev-laya/1"
 
@@ -171,7 +191,7 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path not in ("/route", "/decide", "/shortlist"):
+        if self.path not in ("/route", "/decide", "/shortlist", "/embed"):
             return self._json(404, {"error": "not found"})
         if not STATE["loaded"]:
             return self._json(503, {"error": "model not loaded", "detail": STATE["error"]})
@@ -187,6 +207,8 @@ class Handler(BaseHTTPRequestHandler):
                 return self._json(200, route(body))
             if self.path == "/shortlist":
                 return self._json(200, shortlist(body))
+            if self.path == "/embed":
+                return self._json(200, embed(body))
             t0 = time.time()
             res = STATE["agent"].predict(body.get("state"), body.get("questions") or {})
             res["latency_ms"] = round((time.time() - t0) * 1000, 1)

@@ -1,11 +1,11 @@
 #!/usr/bin/env bash
 # Stage B server verification (IMPLEMENTATION-PLAN B-13 … B-17). Runs ON the AI-PC:
-#   verify-b.sh USERNAME PASSWORD [--bench] [--backup]
+#   verify-b.sh USERNAME PASSWORD [--bench] [--backup] [--experiments]
 # Talks to the gateway over the proxy network exactly like the browser does, then reads
 # container logs. Prints PASS/FAIL per check; exit 1 when any check fails.
 set -uo pipefail
 user=${1:?username}; pass=${2:?password}; shift 2
-bench=0; backup=0; for a in "$@"; do case "$a" in --bench) bench=1;; --backup) backup=1;; esac; done
+bench=0; backup=0; experiments=0; for a in "$@"; do case "$a" in --bench) bench=1;; --backup) backup=1;; --experiments) experiments=1;; esac; done
 NET=${AIDEV_PROXY_NETWORK:-npm_bridge}
 GW=http://aidev-auth-gateway:8080
 CURL="docker run --rm -i --network $NET curlimages/curl:8.16.0 -sS -m 30"
@@ -49,5 +49,6 @@ for c in $(docker ps --format '{{.Names}}' | grep '^aidev-cloudcli-'); do
 done
 
 if [ $backup -eq 1 ]; then echo "## db backup"; bash "$(dirname "$0")/db-backup.sh" run && bash "$(dirname "$0")/db-backup.sh" list; fi
+if [ $experiments -eq 1 ]; then echo "## laya routing strategy experiments (A..E x 126 commands, ~5 min)"; docker exec aidev-laya python /srv/app/current/control/laya/bench/bench.py --experiments --out /models/bench 2>/tmp/bench-exp.err; grep -E "^\{\"strategy" /tmp/bench-exp.err; fi
 if [ $bench -eq 1 ]; then echo "## laya benchmark (126 commands)"; docker exec aidev-laya python /srv/app/current/control/laya/bench/bench.py --out /models/bench 2>/tmp/bench.err | tail -40; grep -c MISS /tmp/bench.err | sed 's/^/misses: /'; fi
 [ $fail -eq 0 ] && echo "ALL PASS" || { echo "SOME CHECKS FAILED"; exit 1; }

@@ -101,6 +101,7 @@ aidev-cloudcli-<user> (cloudcli-runtime 이미지 + 볼륨 current)
 ## 3. 명세 (구현 시 그대로 따를 것)
 
 ### 3.1 Laya 판정 질문 (한 번의 `/route` 호출)
+**토큰 예산(실측)**: 선택지 전체가 `head_max_len`(기본 192) 토큰을 나눠 쓴다(선택지당 최대 48, 13개면 ~12). 따라서 agent 선택지는 `name: hint`(hint = 4~7 영단어, `agents.hint`)로만 보내고, 긴 description은 사람·LLM용이다. 질문 지시문은 상태 키를 백틱으로 가리킨다(예: "… in `command`?"). 상태(state)는 남는 예산(max_len 1024)에 들어간다.
 `state = {command, project_hint?, recent_files?, targets?}` (1024 토큰 예산 — command 우선, 나머지 잘라냄)
 
 | id | type | criteria / 설명 |
@@ -400,7 +401,7 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 ## 6. 위험과 대응
 | 위험 | 대응 |
 |---|---|
-| Laya zero-shot 정확도 낮음(문서상 baseline 근처) | description 품질, 벤치마크로 조기 측정, 애매하면 LLM 정밀 분석, 보정→fine-tune |
+| Laya zero-shot 정확도 낮음(문서상 baseline 근처) | **실측(2026-09-23, 릴리스 1ce81d6b): 126건 중 76 미스(agent 40%)**. 원인: Laya는 모든 선택지를 `head_max_len≈192` 토큰 안에 "name: 설명"으로 넣으므로 13개 선택지면 선택지당 ~12토큰 — 긴 한/영 설명은 앞 몇 단어만 보였음. 대응: agents.hint(4~7 영단어) 도입, bench `--experiments`로 A 긴설명 / B 짧은 힌트 / C +짧은 기준 / D 2단계(분야→agent) / E 임베딩 앙상블 비교 후 채택, 그래도 부족하면 영어 명령은 영어 체크포인트(`convaiinnovations/laya`, en 0.78 vs 0.66)로 라우팅, 결정 로그로 보정→fine-tune |
 | Laya 결정 지점이 많아져 지연 누적 | 한 이벤트당 Laya 호출 ≤2, 배치 질문(한 `/decide`에 여러 question), UI kind는 비동기(결과 늦으면 무시), fallback 즉시 |
 | 잘못된 교훈 축적 | 후보/검증 분리, `lesson.accept`, 자동 재성공 또는 승인 없이는 주입 금지, 거절 기록 |
 | 프롬프트 비대화로 지연·비용 증가 | depth별 길이 상한, `inject.select` top-k, 지식은 SKILL.md로 필요 시 로드 |

@@ -35,7 +35,7 @@ function choice(state, q) {
   const sum = Object.values(raw).reduce((a, b) => a + b, 0);
   const probabilities = Object.fromEntries(keys.map((k) => [k, raw[k] / sum]));
   const top = keys.sort((a, b) => probabilities[b] - probabilities[a])[0];
-  if (q.instructions.includes('specialist agent')) lastAgentTop = probabilities[top];
+  if (q.instructions.includes('specialist')) lastAgentTop = probabilities[top];
   return { choice: top, probabilities, confidence: probabilities[top] };
 }
 function score(state, q) {

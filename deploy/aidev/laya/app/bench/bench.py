@@ -58,36 +58,138 @@ def ece(pairs, bins=10):
     return round(err, 4)
 
 
+# ---- routing strategies under test (--experiments) ------------------------------------------
+TASK_KIND_SHORT = {
+    "bulk_read": "read or analyze many files or long logs", "implement": "write new code or a feature", "debug": "find and fix a bug",
+    "refactor": "restructure code, same behavior", "design": "plan architecture, API or schema", "ops": "deploy, servers, containers, CI", "explain": "explain, answer, document",
+}
+DEPTH_SHORT = ["one-line answer or trivial change", "small change in one file", "feature across several files", "unknown-cause debugging, refactor or design", "architecture or migration, many steps"]
+DOMAINS = {  # coarse stage for the two-stage strategy; members are seed agent names
+    "web-ui": (["frontend-react", "mobile-responsive"], "web frontend UI React mobile"),
+    "server": (["backend-node", "database"], "backend API server database SQL"),
+    "infra": (["devops", "git-workflow", "security-review"], "deploy Docker servers git security"),
+    "device": (["tizen-device", "android-device"], "Samsung Tizen Android device apps"),
+    "quality": (["testing", "docs"], "tests documentation"),
+    "ai": (["ai-integration"], "LLM agents MCP prompts"),
+    "general": (["generalist"], "general small tasks questions"),
+}
+
+
+def strategies(catalog, health):
+    """Each strategy: name -> function(text) -> (agent, p_agent, depth, kind, p_kind, risk, calls)."""
+    hints = {k: v["hint"] for k, v in catalog.items()}
+    longs = {k: v["description"] for k, v in catalog.items()}
+    base_tail = lambda tk, dp: {  # noqa: E731
+        "depth": {"type": "score", "instructions": "How deep is the work in `command`?", "criteria": dp},
+        "task_kind": {"type": "choice", "instructions": "What kind of work does `command` mainly ask for?", "criteria": tk},
+        "risk": {"type": "score", "instructions": "How risky is executing `command` on a developer workstation?", "criteria": RISK},
+    }
+
+    def flat(criteria, instructions, tk=TASK_KIND, dp=DEPTH):
+        def run(text):
+            q = {"agent": {"type": "choice", "instructions": instructions, "criteria": criteria}, **base_tail(tk, dp)}
+            a = post("/decide", {"state": {"command": text}, "questions": q})["answers"]
+            agent, p = top(a["agent"]); kind, pk = top(a["task_kind"])
+            return agent, p, a["depth"].get("score", 0), kind, pk, a["risk"].get("score"), 1
+        return run
+
+    def two_stage(tk=TASK_KIND_SHORT, dp=DEPTH_SHORT):
+        dom_crit = {d: v[1] for d, v in DOMAINS.items()}
+        def run(text):
+            q = {"domain": {"type": "choice", "instructions": "Which area does the developer request in `command` belong to?", "criteria": dom_crit}, **base_tail(tk, dp)}
+            a = post("/decide", {"state": {"command": text}, "questions": q})["answers"]
+            dom, pd = top(a["domain"]); kind, pk = top(a["task_kind"])
+            members = [m for m in DOMAINS[dom][0] if m in hints]
+            calls = 1
+            if len(members) == 1:
+                agent, p = members[0], pd
+            else:
+                q2 = {"agent": {"type": "choice", "instructions": "Which specialist should handle the developer request in `command`?", "criteria": {m: hints[m] for m in members}}}
+                a2 = post("/decide", {"state": {"command": text}, "questions": q2})["answers"]
+                agent, p2 = top(a2["agent"]); p = pd * p2; calls = 2
+            return agent, p, a["depth"].get("score", 0), kind, pk, a["risk"].get("score"), calls
+        return run
+
+    def ensemble(alpha=0.5, tau=0.05):
+        """Average Laya choice probabilities with a cosine-similarity softmax over "name: hint" embeddings."""
+        names = list(hints)
+        opt_vecs = post("/embed", {"texts": [f"{n}: {hints[n]}" for n in names]})["vectors"]
+        import math
+        def norm(v):
+            s = math.sqrt(sum(x * x for x in v)) or 1.0
+            return [x / s for x in v]
+        opt_vecs = [norm(v) for v in opt_vecs]
+        inner = flat(hints, "Which specialist should handle the developer request in `command`?", TASK_KIND_SHORT, DEPTH_SHORT)
+        def run(text):
+            q = {"agent": {"type": "choice", "instructions": "Which specialist should handle the developer request in `command`?", "criteria": hints}, **base_tail(TASK_KIND_SHORT, DEPTH_SHORT)}
+            a = post("/decide", {"state": {"command": text}, "questions": q})["answers"]
+            probs = a["agent"]["probabilities"]
+            cv = norm(post("/embed", {"texts": [text]})["vectors"][0])
+            sims = [sum(x * y for x, y in zip(cv, ov)) for ov in opt_vecs]
+            mx = max(sims); ex = [math.exp((s_ - mx) / tau) for s_ in sims]; z = sum(ex)
+            emb = {n: e / z for n, e in zip(names, ex)}
+            mixed = {n: alpha * probs.get(n, 0) + (1 - alpha) * emb[n] for n in names}
+            agent = max(mixed, key=mixed.get)
+            kind, pk = top(a["task_kind"])
+            return agent, mixed[agent], a["depth"].get("score", 0), kind, pk, a["risk"].get("score"), 2
+        _ = inner
+        return run
+
+    return {
+        "A_long_desc": flat(longs, "Which specialist agent should handle this developer command? Pick the agent whose expertise matches the task best."),
+        "B_short_hint": flat(hints, "Which specialist should handle the developer request in `command`?"),
+        "C_hint_shortcrit": flat(hints, "Which specialist should handle the developer request in `command`?", TASK_KIND_SHORT, DEPTH_SHORT),
+        "D_two_stage": two_stage(),
+        "E_embed_ensemble": ensemble(),
+    }
+
+
+def score_rows(rows, run):
+    results, lat = [], []
+    for i, r in enumerate(rows):
+        t0 = time.time()
+        agent, p_agent, depth, kind, p_kind, risk, calls = run(r["text"])
+        lat.append((time.time() - t0) * 1000)
+        results.append({**r, "pred_agent": agent, "p_agent": round(p_agent, 4), "pred_depth": depth, "pred_kind": kind, "p_kind": round(p_kind, 4), "risk": risk, "ms": round(lat[-1], 1), "calls": calls})
+        print(f"[{i+1}/{len(rows)}] {'OK ' if agent == r['agent'] else 'MISS'} agent={agent}({p_agent:.2f}) want={r['agent']} depth={depth}/{r['depth']} kind={kind}/{r['task_kind']} {lat[-1]:.0f}ms", file=sys.stderr)
+    return results, lat
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--limit", type=int, default=0)
     ap.add_argument("--out", default="/models/bench")
     ap.add_argument("--commands", default=os.path.join(HERE, "commands.jsonl"))
     ap.add_argument("--catalog", default=os.path.join(HERE, "catalog.json"))
+    ap.add_argument("--experiments", action="store_true", help="compare routing strategies A..E and print a table")
+    ap.add_argument("--strategy", default="B_short_hint", help="strategy used for the single run (default: what the gateway does)")
     args = ap.parse_args()
     catalog = json.load(open(args.catalog, encoding="utf-8"))
     rows = [json.loads(l) for l in open(args.commands, encoding="utf-8") if l.strip()]
     if args.limit:
         rows = rows[: args.limit]
     health = json.loads(urllib.request.urlopen(f"{LAYA}/health", timeout=10).read())
-    questions = {
-        "agent": {"type": "choice", "instructions": "Which specialist agent should handle this developer command? Pick the agent whose expertise matches the task best.", "criteria": catalog},
-        "depth": {"type": "score", "instructions": "How deep is this task?", "criteria": DEPTH},
-        "task_kind": {"type": "choice", "instructions": "What kind of work is this command mainly asking for?", "criteria": TASK_KIND},
-        "risk": {"type": "score", "instructions": "How risky is executing this command on a developer workstation?", "criteria": RISK},
-    }
-    results, lat = [], []
-    for i, r in enumerate(rows):
-        t0 = time.time()
-        res = post("/decide", {"state": {"command": r["text"]}, "questions": questions})
-        lat.append((time.time() - t0) * 1000)
-        a = res["answers"]
-        agent, p_agent = top(a["agent"])
-        kind, p_kind = top(a["task_kind"])
-        depth = a["depth"].get("score", 0)
-        results.append({**r, "pred_agent": agent, "p_agent": round(p_agent, 4), "pred_depth": depth, "pred_kind": kind, "p_kind": round(p_kind, 4),
-                        "risk": a["risk"].get("score"), "ms": round(lat[-1], 1)})
-        print(f"[{i+1}/{len(rows)}] {'OK ' if agent == r['agent'] else 'MISS'} agent={agent}({p_agent:.2f}) want={r['agent']} depth={depth}/{r['depth']} kind={kind}/{r['task_kind']} {lat[-1]:.0f}ms", file=sys.stderr)
+    strat = strategies(catalog, health)
+    if args.experiments:
+        table = []
+        for name, run in strat.items():
+            print(f"=== {name}", file=sys.stderr)
+            try:
+                res, lat = score_rows(rows, run)
+            except Exception as e:  # noqa: BLE001
+                print(f"{name}: failed {e}", file=sys.stderr); continue
+            n = len(res)
+            table.append({"strategy": name, "agent_acc": round(sum(1 for x in res if x["pred_agent"] == x["agent"]) / n, 3),
+                          "ko": round(sum(1 for x in res if x["lang"] == "ko" and x["pred_agent"] == x["agent"]) / max(1, sum(1 for x in res if x["lang"] == "ko")), 3),
+                          "en": round(sum(1 for x in res if x["lang"] == "en" and x["pred_agent"] == x["agent"]) / max(1, sum(1 for x in res if x["lang"] == "en")), 3),
+                          "kind_acc": round(sum(1 for x in res if x["pred_kind"] == x["task_kind"]) / n, 3), "depth_mae": round(sum(abs(x["pred_depth"] - x["depth"]) for x in res) / n, 3),
+                          "ece": ece([(x["p_agent"], x["pred_agent"] == x["agent"]) for x in res]), "p50_ms": round(statistics.median(lat), 0)})
+            print(json.dumps(table[-1]), file=sys.stderr)
+        print(json.dumps({"release": health.get("release"), "device": health.get("device"), "head_max_len": health.get("head_max_len"), "max_len": health.get("max_len"), "experiments": table}, indent=1))
+        os.makedirs(args.out, exist_ok=True)
+        json.dump(table, open(os.path.join(args.out, f"experiments-{time.strftime('%Y%m%d-%H%M%S')}.json"), "w"), indent=1)
+        return
+    results, lat = score_rows(rows, strat[args.strategy])
     n = len(results)
     agent_acc = sum(1 for x in results if x["pred_agent"] == x["agent"]) / n
     kind_acc = sum(1 for x in results if x["pred_kind"] == x["task_kind"]) / n
