@@ -21,6 +21,7 @@ case "${1:-}" in
       --build-arg TORCH_INDEX="${LAYA_TORCH_INDEX:-https://download.pytorch.org/whl/rocm7.1}" -t "$IMG:$tag" 2>&1 | tail -12
     docker tag "$IMG:$tag" "$IMG:latest"; echo " ✓ $IMG:latest -> $tag" ;;
   models)
+    if docker run --rm -v aidev_models:/models "$IMG:latest" python -c "import os,sys; sys.exit(0 if any('laya-multilingual' in d for d in os.listdir('/models/hub') if os.path.isdir('/models/hub/'+d)) else 1)" 2>/dev/null; then echo " ✓ weights already in aidev_models"; exit 0; fi
     docker volume inspect aidev_models >/dev/null 2>&1 || docker volume create --label com.docker.compose.project=aidev --label com.docker.compose.volume=models aidev_models >/dev/null
     docker run --rm -v aidev_models:/models -e HF_HOME=/models -e HF_HUB_OFFLINE=0 "$IMG:latest" \
       python -c "import laya,time; t=time.time(); a=laya.load('$MODEL', device='cpu'); print('downloaded', '$MODEL', 'in', round(time.time()-t,1), 's')"

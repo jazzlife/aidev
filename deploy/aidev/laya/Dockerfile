@@ -10,7 +10,7 @@ ARG TORCH_SPEC=torch
 ARG LAYA_SPEC=laya==0.3.5
 ENV PIP_NO_CACHE_DIR=1 PYTHONUNBUFFERED=1 HF_HOME=/models HF_HUB_OFFLINE=0 \
     TOKENIZERS_PARALLELISM=false
-RUN apt-get update && apt-get install -y --no-install-recommends libnuma1 curl ca-certificates \
+RUN apt-get update && apt-get install -y --no-install-recommends libnuma1 libatomic1 libstdc++6 libgomp1 curl ca-certificates \
  && rm -rf /var/lib/apt/lists/* \
  && pip install --index-url "$TORCH_INDEX" "$TORCH_SPEC" \
  && pip install "$LAYA_SPEC" \
