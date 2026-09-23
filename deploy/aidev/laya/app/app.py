@@ -6,7 +6,8 @@ probabilities). Lives in the release volume; the image only provides torch/laya.
   GET  /health            {status, loaded, device, model, release}
   POST /route             {text, agents:{id:description}, instructions?, threshold?, extra?}
                           -> {agent, confidence, probabilities, needs_new, alternatives, latency_ms}
-  POST /decide            {state, questions}  raw laya predict (choice/score/noul)
+  POST /decide            {state, questions}  raw laya predict (choice/score/noul) + latency_ms, device
+  POST /shortlist         {state, options:{id:desc}, k, instructions?} -> {keep:[id]}  embedding shortlist
 
 Only reachable on aidev-control-net; the gateway is the sole caller.
 """
@@ -128,6 +129,23 @@ def route(body):
     }
 
 
+def shortlist(body):
+    """Coarse-to-fine: embedding shortlist of a large option set before one decision pass."""
+    import laya
+    options = body.get("options") or {}
+    if not isinstance(options, dict) or len(options) < 2:
+        raise ValueError("options {id: description} required")
+    if len(options) > 500:
+        raise ValueError("too many options (max 500)")
+    k = max(1, min(int(body.get("k", SHORTLIST_K)), len(options)))
+    state = body.get("state") if isinstance(body.get("state"), dict) else {"command": str(body.get("state", ""))}
+    instructions = body.get("instructions") or "Which option fits the situation best?"
+    t0 = time.time()
+    embed = laya.embed_fn_from_agent(STATE["agent"])
+    keep = laya.shortlist_choice(state, options, embed, k=k, instructions=instructions)
+    return {"keep": [x for x in keep if x in options], "k": k, "latency_ms": round((time.time() - t0) * 1000, 1)}
+
+
 class Handler(BaseHTTPRequestHandler):
     server_version = "aidev-laya/1"
 
@@ -153,7 +171,7 @@ class Handler(BaseHTTPRequestHandler):
         return self._json(404, {"error": "not found"})
 
     def do_POST(self):
-        if self.path not in ("/route", "/decide"):
+        if self.path not in ("/route", "/decide", "/shortlist"):
             return self._json(404, {"error": "not found"})
         if not STATE["loaded"]:
             return self._json(503, {"error": "model not loaded", "detail": STATE["error"]})
@@ -167,9 +185,12 @@ class Handler(BaseHTTPRequestHandler):
         try:
             if self.path == "/route":
                 return self._json(200, route(body))
+            if self.path == "/shortlist":
+                return self._json(200, shortlist(body))
             t0 = time.time()
             res = STATE["agent"].predict(body.get("state"), body.get("questions") or {})
             res["latency_ms"] = round((time.time() - t0) * 1000, 1)
+            res["device"] = STATE["device"]
             return self._json(200, res)
         except ValueError as e:
             return self._json(400, {"error": str(e)})

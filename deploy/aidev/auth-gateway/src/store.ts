@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
+import { aidevMethods, migrateAidev, agentName, type AgentRow } from './store-aidev.js';
 
 /** Gateway server and offline administration share this persistent identity store. */
 export function openStore(filename: string) {
@@ -35,11 +36,12 @@ export function openStore(filename: string) {
       created_at INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS decision_log_user ON decision_log(user_id, created_at);
   `);
-  type Account = { id: number; username: string; password_hash: string; runtime: string; active: number };
-  type AgentRow = { id: number; name: string; domain: string; description: string; prompt: string; tools: string | null; model: string | null; max_turns: number | null; owner_id: number | null; source: string; active: number; uses: number; created_at: number; updated_at: number };
-  const agentName = /^[a-z0-9][a-z0-9-]{1,40}$/;
+  migrateAidev(db);
+  type Account = { id: number; username: string; password_hash: string; runtime: string; active: number; engines: string; default_engine: string | null; role: string };
+  const aidev = aidevMethods(db);
   return {
     db,
+    ...aidev,
     // ---- specialist agents -------------------------------------------------
     agents(userId: number, includeInactive = false) {
       return db.prepare(`SELECT * FROM agents WHERE (owner_id IS NULL OR owner_id=?) ${includeInactive ? '' : 'AND active=1'} ORDER BY owner_id IS NOT NULL, domain, name`).all(userId) as AgentRow[];
@@ -49,14 +51,17 @@ export function openStore(filename: string) {
       return db.prepare('SELECT * FROM agents WHERE name=? AND (owner_id=? OR owner_id IS NULL) AND active=1 ORDER BY owner_id IS NULL LIMIT 1').get(name, userId) as AgentRow | undefined;
     },
     agentById(id: number) { return db.prepare('SELECT * FROM agents WHERE id=?').get(id) as AgentRow | undefined; },
-    addAgent(a: { name: string; domain?: string; description: string; prompt: string; tools?: string[] | null; model?: string | null; maxTurns?: number | null; ownerId: number | null; source: string }) {
+    addAgent(a: { name: string; domain?: string; description: string; prompt: string; tools?: string[] | null; model?: string | null; maxTurns?: number | null; ownerId: number | null; source: string; skills?: string[] | null; mcpServers?: Record<string, unknown> | null }) {
       if (!agentName.test(a.name)) throw new Error('Agent name: lowercase letters, digits and dashes, 2-41 chars');
       if (a.description.length < 10 || a.description.length > 600) throw new Error('Description must be 10-600 characters (it is what the router sees)');
       if (a.prompt.length < 20 || a.prompt.length > 20000) throw new Error('Prompt must be 20-20000 characters');
       const now = Date.now();
-      const r = db.prepare('INSERT INTO agents(name,domain,description,prompt,tools,model,max_turns,owner_id,source,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
-        .run(a.name, a.domain ?? '', a.description, a.prompt, a.tools ? JSON.stringify(a.tools) : null, a.model ?? null, a.maxTurns ?? null, a.ownerId, a.source, now, now);
-      return Number(r.lastInsertRowid);
+      const r = db.prepare('INSERT INTO agents(name,domain,description,prompt,tools,model,max_turns,owner_id,source,created_at,updated_at,skills,mcp_servers) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        .run(a.name, a.domain ?? '', a.description, a.prompt, a.tools ? JSON.stringify(a.tools) : null, a.model ?? null, a.maxTurns ?? null, a.ownerId, a.source, now, now, a.skills ? JSON.stringify(a.skills) : null, a.mcpServers ? JSON.stringify(a.mcpServers) : null);
+      const id = Number(r.lastInsertRowid);
+      db.prepare('INSERT INTO agent_versions(agent_id,version,prompt,tools,model,skills,mcp_servers,changelog,created_at) VALUES(?,?,?,?,?,?,?,?,?)')
+        .run(id, 1, a.prompt, a.tools ? JSON.stringify(a.tools) : null, a.model ?? null, a.skills ? JSON.stringify(a.skills) : null, a.mcpServers ? JSON.stringify(a.mcpServers) : null, 'initial', now);
+      return id;
     },
     updateAgent(id: number, patch: Partial<{ domain: string; description: string; prompt: string; tools: string[] | null; model: string | null; maxTurns: number | null; active: number }>) {
       const cur = this.agentById(id); if (!cur) throw new Error('Agent not found');
@@ -67,11 +72,16 @@ export function openStore(filename: string) {
         .run(next.domain, next.description, next.prompt, next.tools, next.model, next.max_turns, next.active, Date.now(), id);
     },
     bumpAgentUse(userId: number, name: string) { db.prepare('UPDATE agents SET uses=uses+1 WHERE name=? AND (owner_id=? OR owner_id IS NULL)').run(name, userId); },
-    seedAgents(seed: Array<{ name: string; domain: string; description: string; prompt: string; tools?: string[]; model?: string; maxTurns?: number }>) {
-      const has = db.prepare('SELECT COUNT(*) AS n FROM agents WHERE owner_id IS NULL').get() as { n: number };
-      if (has.n > 0) return 0;
-      const tx = db.transaction(() => { for (const a of seed) this.addAgent({ ...a, ownerId: null, source: 'seed' }); });
-      tx(); return seed.length;
+    /** Insert every seed agent whose name is not yet a global agent (existing rows are never overwritten). */
+    seedAgents(seed: Array<{ name: string; domain: string; description: string; prompt: string; tools?: string[]; model?: string; maxTurns?: number; skills?: string[] }>) {
+      let added = 0;
+      db.transaction(() => {
+        for (const a of seed) {
+          if (db.prepare('SELECT 1 FROM agents WHERE name=? AND owner_id IS NULL').get(a.name)) continue;
+          this.addAgent({ ...a, ownerId: null, source: 'seed' }); added++;
+        }
+      })();
+      return added;
     },
     // ---- routing decisions -------------------------------------------------
     logDecision(d: { userId: number; command: string; agent?: string; probability?: number; confidence?: number; needsNew?: number; risk?: number; decision?: string; probabilities?: unknown; latencyMs?: number; device?: string }) {

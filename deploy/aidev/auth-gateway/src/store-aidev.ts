@@ -1,0 +1,313 @@
+import type Database from 'better-sqlite3';
+
+/**
+ * Routing / learning / remote-target tables (IMPLEMENTATION-PLAN §3.2). Everything that is
+ * not account identity lives here. Only the gateway process writes; runtimes and runners
+ * go through the gateway API. Migrations are idempotent: re-running on an existing DB is a no-op.
+ */
+export type Engine = 'claude' | 'codex';
+export const ENGINES: Engine[] = ['claude', 'codex'];
+export const TASK_KINDS = ['bulk_read', 'implement', 'debug', 'refactor', 'design', 'ops', 'explain'] as const;
+export type TaskKind = typeof TASK_KINDS[number];
+
+export type AgentRow = { id: number; name: string; domain: string; description: string; prompt: string; tools: string | null; model: string | null; max_turns: number | null; owner_id: number | null; source: string; active: number; uses: number; created_at: number; updated_at: number; version: number; skills: string | null; mcp_servers: string | null };
+export type AgentVersionRow = { id: number; agent_id: number; version: number; prompt: string; tools: string | null; model: string | null; skills: string | null; mcp_servers: string | null; changelog: string | null; created_at: number };
+export type KnowledgeRow = { id: number; agent_id: number; title: string; body: string; source_url: string | null; source_date: string | null; status: string; superseded_by: number | null; expires_at: number | null; owner_id: number | null; created_at: number; updated_at: number };
+export type LessonRow = { id: number; agent_id: number; engine: string | null; trigger: string; rule: string; evidence_run_id: number | null; status: string; hits: number; owner_id: number | null; promoted_to_prompt: number; created_at: number };
+export type RunRow = { id: number; user_id: number; session_id: string | null; decision_id: number | null; agent_id: number | null; agent_version: number | null; engine: string | null; model: string | null; effort: string | null; depth: number | null; task_kind: string | null; risk: number | null; target_id: number | null; started_at: number; finished_at: number | null; exit_code: number | null; tool_errors: number; user_feedback: string | null; reverted: number; reasked: number; test_result: string | null; cost_tokens: number | null; escalated_from_run: number | null; outcome: string | null };
+export type TargetRow = { id: number; user_id: number; name: string; platform: string | null; arch: string | null; tags: string | null; description: string; token_hash: string | null; pairing_code: string | null; pairing_expires: number | null; policy: string; allowed_roots: string | null; capabilities: string | null; status: string; last_seen: number | null; created_at: number };
+
+const agentName = /^[a-z0-9][a-z0-9-]{1,40}$/;
+const json = (v: unknown) => (v === undefined || v === null ? null : JSON.stringify(v));
+
+function addColumn(db: Database.Database, table: string, column: string, definition: string) {
+  const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
+  if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
+}
+
+export function migrateAidev(db: Database.Database) {
+  addColumn(db, 'accounts', 'engines', "TEXT NOT NULL DEFAULT 'claude,codex'");
+  addColumn(db, 'accounts', 'default_engine', 'TEXT');
+  addColumn(db, 'accounts', 'role', "TEXT NOT NULL DEFAULT 'user'");
+  addColumn(db, 'decision_log', 'kind', "TEXT NOT NULL DEFAULT 'route'");
+  addColumn(db, 'decision_log', 'fallback', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(db, 'decision_log', 'answer', 'TEXT');
+  addColumn(db, 'decision_log', 'final_engine', 'TEXT');
+  addColumn(db, 'decision_log', 'final_model', 'TEXT');
+  addColumn(db, 'decision_log', 'final_target', 'TEXT');
+  addColumn(db, 'decision_log', 'state', 'TEXT');
+  addColumn(db, 'agents', 'version', 'INTEGER NOT NULL DEFAULT 1');
+  addColumn(db, 'agents', 'skills', 'TEXT');
+  addColumn(db, 'agents', 'mcp_servers', 'TEXT');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS agent_versions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      version INTEGER NOT NULL, prompt TEXT NOT NULL, tools TEXT, model TEXT, skills TEXT, mcp_servers TEXT,
+      changelog TEXT, created_at INTEGER NOT NULL, UNIQUE(agent_id, version));
+    CREATE TABLE IF NOT EXISTS knowledge (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      title TEXT NOT NULL, body TEXT NOT NULL, source_url TEXT, source_date TEXT,
+      status TEXT NOT NULL DEFAULT 'unverified', superseded_by INTEGER, expires_at INTEGER,
+      owner_id INTEGER REFERENCES accounts(id), created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+    CREATE INDEX IF NOT EXISTS knowledge_agent ON knowledge(agent_id, status);
+    CREATE VIRTUAL TABLE IF NOT EXISTS knowledge_fts USING fts5(title, body, content='knowledge', content_rowid='id');
+    CREATE TRIGGER IF NOT EXISTS knowledge_ai AFTER INSERT ON knowledge BEGIN
+      INSERT INTO knowledge_fts(rowid, title, body) VALUES (new.id, new.title, new.body); END;
+    CREATE TRIGGER IF NOT EXISTS knowledge_ad AFTER DELETE ON knowledge BEGIN
+      INSERT INTO knowledge_fts(knowledge_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body); END;
+    CREATE TRIGGER IF NOT EXISTS knowledge_au AFTER UPDATE OF title, body ON knowledge BEGIN
+      INSERT INTO knowledge_fts(knowledge_fts, rowid, title, body) VALUES ('delete', old.id, old.title, old.body);
+      INSERT INTO knowledge_fts(rowid, title, body) VALUES (new.id, new.title, new.body); END;
+    CREATE TABLE IF NOT EXISTS lessons (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      engine TEXT, trigger TEXT NOT NULL, rule TEXT NOT NULL, evidence_run_id INTEGER,
+      status TEXT NOT NULL DEFAULT 'candidate', hits INTEGER NOT NULL DEFAULT 0,
+      owner_id INTEGER REFERENCES accounts(id), promoted_to_prompt INTEGER NOT NULL DEFAULT 0, created_at INTEGER NOT NULL);
+    CREATE INDEX IF NOT EXISTS lessons_agent ON lessons(agent_id, status);
+    CREATE TABLE IF NOT EXISTS runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES accounts(id), session_id TEXT,
+      decision_id INTEGER REFERENCES decision_log(id), agent_id INTEGER, agent_version INTEGER,
+      engine TEXT, model TEXT, effort TEXT, depth REAL, task_kind TEXT, risk REAL, target_id INTEGER,
+      started_at INTEGER NOT NULL, finished_at INTEGER, exit_code INTEGER, tool_errors INTEGER NOT NULL DEFAULT 0,
+      user_feedback TEXT, reverted INTEGER NOT NULL DEFAULT 0, reasked INTEGER NOT NULL DEFAULT 0, test_result TEXT,
+      cost_tokens INTEGER, escalated_from_run INTEGER, outcome TEXT);
+    CREATE INDEX IF NOT EXISTS runs_user ON runs(user_id, started_at);
+    CREATE INDEX IF NOT EXISTS runs_agent ON runs(agent_id, outcome);
+    CREATE TABLE IF NOT EXISTS engine_status (
+      user_id INTEGER NOT NULL, engine TEXT NOT NULL, authenticated INTEGER NOT NULL, checked_at INTEGER NOT NULL,
+      last_error TEXT, PRIMARY KEY(user_id, engine));
+    CREATE TABLE IF NOT EXISTS engine_weights (task_kind TEXT NOT NULL, engine TEXT NOT NULL, weight REAL NOT NULL, PRIMARY KEY(task_kind, engine));
+    CREATE TABLE IF NOT EXISTS tier_policy (
+      domain TEXT NOT NULL, depth INTEGER NOT NULL, engine TEXT NOT NULL, model TEXT, effort TEXT,
+      success_n INTEGER NOT NULL DEFAULT 0, fail_n INTEGER NOT NULL DEFAULT 0, avg_ms INTEGER, PRIMARY KEY(domain, depth, engine));
+    CREATE TABLE IF NOT EXISTS targets (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES accounts(id), name TEXT NOT NULL,
+      platform TEXT, arch TEXT, tags TEXT, description TEXT NOT NULL DEFAULT '', token_hash TEXT,
+      pairing_code TEXT, pairing_expires INTEGER, policy TEXT NOT NULL DEFAULT 'ask', allowed_roots TEXT,
+      capabilities TEXT, status TEXT NOT NULL DEFAULT 'offline', last_seen INTEGER, created_at INTEGER NOT NULL,
+      UNIQUE(user_id, name));
+    CREATE TABLE IF NOT EXISTS remote_runs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER, target_id INTEGER NOT NULL REFERENCES targets(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL, kind TEXT NOT NULL, cmd TEXT, cwd TEXT, risk REAL, approved_by TEXT,
+      started_at INTEGER NOT NULL, finished_at INTEGER, exit_code INTEGER, artifacts TEXT);
+    CREATE INDEX IF NOT EXISTS remote_runs_target ON remote_runs(target_id, started_at);
+  `);
+  // engine_weights seed: bulk reading/analysis prefers Codex, everything else neutral (§0 decisions)
+  const n = (db.prepare('SELECT COUNT(*) AS n FROM engine_weights').get() as { n: number }).n;
+  if (n === 0) {
+    const ins = db.prepare('INSERT INTO engine_weights VALUES(?,?,?)');
+    db.transaction(() => {
+      for (const kind of TASK_KINDS) for (const engine of ENGINES) ins.run(kind, engine, kind === 'bulk_read' ? (engine === 'codex' ? 0.7 : 0.3) : 0.5);
+    })();
+  }
+}
+
+export function aidevMethods(db: Database.Database) {
+  const m = {
+    // ---- account engines --------------------------------------------------
+    accountEngines(userId: number): { engines: Engine[]; defaultEngine: Engine | null; role: string } {
+      const row = db.prepare('SELECT engines, default_engine, role FROM accounts WHERE id=?').get(userId) as { engines: string; default_engine: string | null; role: string } | undefined;
+      const engines = (row?.engines ?? '').split(',').map((s) => s.trim()).filter((s): s is Engine => ENGINES.includes(s as Engine));
+      return { engines: engines.length ? engines : ['claude', 'codex'], defaultEngine: (row?.default_engine as Engine | null) ?? null, role: row?.role ?? 'user' };
+    },
+    setAccountEngines(username: string, engines: Engine[]) {
+      const list = engines.filter((e) => ENGINES.includes(e));
+      if (!list.length) throw new Error(`engines must be one or more of ${ENGINES.join(',')}`);
+      const r = db.prepare('UPDATE accounts SET engines=? WHERE username=?').run(list.join(','), username);
+      if (!r.changes) throw new Error('User not found');
+    },
+    setDefaultEngine(username: string, engine: Engine | null) {
+      if (engine && !ENGINES.includes(engine)) throw new Error(`engine must be one of ${ENGINES.join(',')}`);
+      const r = db.prepare('UPDATE accounts SET default_engine=? WHERE username=?').run(engine, username);
+      if (!r.changes) throw new Error('User not found');
+    },
+    setRole(username: string, role: 'user' | 'admin') {
+      const r = db.prepare('UPDATE accounts SET role=? WHERE username=?').run(role, username);
+      if (!r.changes) throw new Error('User not found');
+    },
+    engineStatus(userId: number) {
+      return db.prepare('SELECT engine, authenticated, checked_at, last_error FROM engine_status WHERE user_id=?').all(userId) as Array<{ engine: Engine; authenticated: number; checked_at: number; last_error: string | null }>;
+    },
+    setEngineStatus(userId: number, engine: Engine, authenticated: boolean, error?: string | null) {
+      db.prepare('INSERT INTO engine_status(user_id,engine,authenticated,checked_at,last_error) VALUES(?,?,?,?,?) ON CONFLICT(user_id,engine) DO UPDATE SET authenticated=excluded.authenticated, checked_at=excluded.checked_at, last_error=excluded.last_error')
+        .run(userId, engine, authenticated ? 1 : 0, Date.now(), error ?? null);
+    },
+    engineWeights() {
+      const out: Record<string, Record<Engine, number>> = {};
+      for (const r of db.prepare('SELECT * FROM engine_weights').all() as Array<{ task_kind: string; engine: Engine; weight: number }>) (out[r.task_kind] ??= { claude: 0.5, codex: 0.5 })[r.engine] = r.weight;
+      return out;
+    },
+    setEngineWeight(taskKind: string, engine: Engine, weight: number) {
+      db.prepare('INSERT INTO engine_weights VALUES(?,?,?) ON CONFLICT(task_kind,engine) DO UPDATE SET weight=excluded.weight').run(taskKind, engine, Math.max(0, Math.min(1, weight)));
+    },
+    tierPolicy(domain: string, depth: number, engine: Engine) {
+      return db.prepare('SELECT * FROM tier_policy WHERE domain IN (?, \'*\') AND depth=? AND engine=? ORDER BY domain=\'*\' LIMIT 1').get(domain, depth, engine) as { model: string | null; effort: string | null; success_n: number; fail_n: number; avg_ms: number | null } | undefined;
+    },
+    tierStats(engine: Engine) {
+      return db.prepare('SELECT domain, depth, success_n, fail_n FROM tier_policy WHERE engine=?').all(engine) as Array<{ domain: string; depth: number; success_n: number; fail_n: number }>;
+    },
+    // ---- agents (versions, skills, mcp) -----------------------------------
+    agentVersions(agentId: number) { return db.prepare('SELECT * FROM agent_versions WHERE agent_id=? ORDER BY version DESC').all(agentId) as AgentVersionRow[]; },
+    /** Snapshot the current definition as a new version row, then apply the patch to the agent. */
+    newAgentVersion(agentId: number, patch: Partial<{ prompt: string; tools: string[] | null; model: string | null; skills: string[] | null; mcpServers: Record<string, unknown> | null; description: string; domain: string; maxTurns: number | null }>, changelog: string) {
+      const cur = db.prepare('SELECT * FROM agents WHERE id=?').get(agentId) as AgentRow | undefined;
+      if (!cur) throw new Error('Agent not found');
+      if (patch.prompt !== undefined && (patch.prompt.length < 20 || patch.prompt.length > 20000)) throw new Error('Prompt must be 20-20000 characters');
+      if (patch.description !== undefined && (patch.description.length < 10 || patch.description.length > 600)) throw new Error('Description must be 10-600 characters');
+      const now = Date.now();
+      const version = cur.version + 1;
+      db.transaction(() => {
+        if (!db.prepare('SELECT 1 FROM agent_versions WHERE agent_id=? AND version=?').get(agentId, cur.version))
+          db.prepare('INSERT INTO agent_versions(agent_id,version,prompt,tools,model,skills,mcp_servers,changelog,created_at) VALUES(?,?,?,?,?,?,?,?,?)')
+            .run(agentId, cur.version, cur.prompt, cur.tools, cur.model, cur.skills, cur.mcp_servers, 'initial', cur.created_at);
+        const next = {
+          prompt: patch.prompt ?? cur.prompt, tools: patch.tools === undefined ? cur.tools : json(patch.tools), model: patch.model === undefined ? cur.model : patch.model,
+          skills: patch.skills === undefined ? cur.skills : json(patch.skills), mcp: patch.mcpServers === undefined ? cur.mcp_servers : json(patch.mcpServers),
+          description: patch.description ?? cur.description, domain: patch.domain ?? cur.domain, maxTurns: patch.maxTurns === undefined ? cur.max_turns : patch.maxTurns,
+        };
+        db.prepare('INSERT INTO agent_versions(agent_id,version,prompt,tools,model,skills,mcp_servers,changelog,created_at) VALUES(?,?,?,?,?,?,?,?,?)')
+          .run(agentId, version, next.prompt, next.tools, next.model, next.skills, next.mcp, changelog.slice(0, 2000), now);
+        db.prepare('UPDATE agents SET prompt=?,tools=?,model=?,skills=?,mcp_servers=?,description=?,domain=?,max_turns=?,version=?,updated_at=? WHERE id=?')
+          .run(next.prompt, next.tools, next.model, next.skills, next.mcp, next.description, next.domain, next.maxTurns, version, now, agentId);
+      })();
+      return version;
+    },
+    promoteAgent(agentId: number) {
+      const cur = db.prepare('SELECT * FROM agents WHERE id=?').get(agentId) as AgentRow | undefined;
+      if (!cur) throw new Error('Agent not found');
+      if (cur.owner_id === null) return;
+      if (db.prepare('SELECT 1 FROM agents WHERE name=? AND owner_id IS NULL').get(cur.name)) throw new Error('A global agent with this name already exists');
+      db.prepare('UPDATE agents SET owner_id=NULL, source=?, updated_at=? WHERE id=?').run('promoted', Date.now(), agentId);
+    },
+    agentStats(agentId: number) {
+      return db.prepare(`SELECT COUNT(*) AS runs, SUM(outcome='success') AS success, SUM(outcome='fail') AS fail,
+        AVG(CASE WHEN finished_at IS NOT NULL THEN finished_at-started_at END) AS avg_ms FROM runs WHERE agent_id=?`).get(agentId) as { runs: number; success: number | null; fail: number | null; avg_ms: number | null };
+    },
+    // ---- knowledge ----------------------------------------------------------
+    knowledge(agentId: number, status?: string[]) {
+      const st = status?.length ? status : ['verified', 'sourced'];
+      return db.prepare(`SELECT * FROM knowledge WHERE agent_id=? AND status IN (${st.map(() => '?').join(',')}) ORDER BY status='verified' DESC, updated_at DESC`).all(agentId, ...st) as KnowledgeRow[];
+    },
+    knowledgeById(id: number) { return db.prepare('SELECT * FROM knowledge WHERE id=?').get(id) as KnowledgeRow | undefined; },
+    searchKnowledge(query: string, agentId?: number, limit = 20) {
+      const q = query.replace(/["*^]/g, ' ').trim().split(/\s+/).filter(Boolean).map((t) => `"${t}"`).join(' OR ');
+      if (!q) return [] as KnowledgeRow[];
+      return db.prepare(`SELECT k.* FROM knowledge_fts f JOIN knowledge k ON k.id=f.rowid WHERE knowledge_fts MATCH ? ${agentId ? 'AND k.agent_id=?' : ''} AND k.status!='superseded' ORDER BY bm25(knowledge_fts) LIMIT ?`)
+        .all(...(agentId ? [q, agentId, limit] : [q, limit])) as KnowledgeRow[];
+    },
+    addKnowledge(k: { agentId: number; title: string; body: string; sourceUrl?: string | null; sourceDate?: string | null; status?: string; ownerId: number | null; expiresAt?: number | null }) {
+      if (k.title.length < 3 || k.title.length > 200) throw new Error('title must be 3-200 characters');
+      if (k.body.length < 10 || k.body.length > 60000) throw new Error('body must be 10-60000 characters');
+      const status = k.status ?? (k.sourceUrl ? 'sourced' : 'unverified');
+      if (!['verified', 'sourced', 'unverified'].includes(status)) throw new Error('invalid status');
+      const now = Date.now();
+      const r = db.prepare('INSERT INTO knowledge(agent_id,title,body,source_url,source_date,status,expires_at,owner_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)')
+        .run(k.agentId, k.title, k.body, k.sourceUrl ?? null, k.sourceDate ?? null, status, k.expiresAt === undefined ? now + 90 * 86400_000 : k.expiresAt, k.ownerId, now, now);
+      return Number(r.lastInsertRowid);
+    },
+    updateKnowledge(id: number, patch: Partial<{ status: string; supersededBy: number | null; title: string; body: string; expiresAt: number | null }>) {
+      const cur = m.knowledgeById(id); if (!cur) throw new Error('Knowledge not found');
+      if (patch.status && !['verified', 'sourced', 'unverified', 'superseded'].includes(patch.status)) throw new Error('invalid status');
+      db.prepare('UPDATE knowledge SET status=?, superseded_by=?, title=?, body=?, expires_at=?, updated_at=? WHERE id=?')
+        .run(patch.status ?? cur.status, patch.supersededBy === undefined ? cur.superseded_by : patch.supersededBy, patch.title ?? cur.title, patch.body ?? cur.body, patch.expiresAt === undefined ? cur.expires_at : patch.expiresAt, Date.now(), id);
+    },
+    expiredKnowledge(limit = 50) { return db.prepare('SELECT * FROM knowledge WHERE status IN (\'sourced\',\'verified\') AND expires_at IS NOT NULL AND expires_at < ? ORDER BY expires_at LIMIT ?').all(Date.now(), limit) as KnowledgeRow[]; },
+    // ---- lessons --------------------------------------------------------------
+    lessons(agentId: number, userId: number, status: string[] = ['verified']) {
+      return db.prepare(`SELECT * FROM lessons WHERE agent_id=? AND (owner_id IS NULL OR owner_id=?) AND status IN (${status.map(() => '?').join(',')}) ORDER BY hits DESC, created_at DESC`).all(agentId, userId, ...status) as LessonRow[];
+    },
+    lessonById(id: number) { return db.prepare('SELECT * FROM lessons WHERE id=?').get(id) as LessonRow | undefined; },
+    addLesson(l: { agentId: number; engine?: string | null; trigger: string; rule: string; evidenceRunId?: number | null; ownerId: number | null; status?: string }) {
+      if (l.trigger.length < 5 || l.trigger.length > 1000) throw new Error('trigger must be 5-1000 characters');
+      if (l.rule.length < 5 || l.rule.length > 2000) throw new Error('rule must be 5-2000 characters');
+      const r = db.prepare('INSERT INTO lessons(agent_id,engine,trigger,rule,evidence_run_id,status,owner_id,created_at) VALUES(?,?,?,?,?,?,?,?)')
+        .run(l.agentId, l.engine ?? null, l.trigger, l.rule, l.evidenceRunId ?? null, l.status ?? 'candidate', l.ownerId, Date.now());
+      return Number(r.lastInsertRowid);
+    },
+    updateLesson(id: number, patch: Partial<{ status: string; hits: number; promotedToPrompt: number; rule: string; trigger: string }>) {
+      const cur = m.lessonById(id); if (!cur) throw new Error('Lesson not found');
+      if (patch.status && !['verified', 'candidate', 'rejected'].includes(patch.status)) throw new Error('invalid status');
+      db.prepare('UPDATE lessons SET status=?, hits=?, promoted_to_prompt=?, rule=?, trigger=? WHERE id=?')
+        .run(patch.status ?? cur.status, patch.hits ?? cur.hits, patch.promotedToPrompt ?? cur.promoted_to_prompt, patch.rule ?? cur.rule, patch.trigger ?? cur.trigger, id);
+    },
+    bumpLessonHits(ids: number[]) { if (ids.length) db.prepare(`UPDATE lessons SET hits=hits+1 WHERE id IN (${ids.map(() => '?').join(',')})`).run(...ids); },
+    // ---- runs -------------------------------------------------------------------
+    addRun(r: { userId: number; sessionId?: string | null; decisionId?: number | null; agentId?: number | null; agentVersion?: number | null; engine?: string | null; model?: string | null; effort?: string | null; depth?: number | null; taskKind?: string | null; risk?: number | null; targetId?: number | null; escalatedFromRun?: number | null }) {
+      const res = db.prepare('INSERT INTO runs(user_id,session_id,decision_id,agent_id,agent_version,engine,model,effort,depth,task_kind,risk,target_id,started_at,escalated_from_run) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        .run(r.userId, r.sessionId ?? null, r.decisionId ?? null, r.agentId ?? null, r.agentVersion ?? null, r.engine ?? null, r.model ?? null, r.effort ?? null, r.depth ?? null, r.taskKind ?? null, r.risk ?? null, r.targetId ?? null, Date.now(), r.escalatedFromRun ?? null);
+      return Number(res.lastInsertRowid);
+    },
+    run(userId: number, id: number) { return db.prepare('SELECT * FROM runs WHERE id=? AND user_id=?').get(id, userId) as RunRow | undefined; },
+    runs(userId: number, opts: { agentId?: number; limit?: number; sessionId?: string } = {}) {
+      const where = ['user_id=?']; const args: unknown[] = [userId];
+      if (opts.agentId) { where.push('agent_id=?'); args.push(opts.agentId); }
+      if (opts.sessionId) { where.push('session_id=?'); args.push(opts.sessionId); }
+      args.push(Math.min(opts.limit ?? 50, 500));
+      return db.prepare(`SELECT * FROM runs WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT ?`).all(...args) as RunRow[];
+    },
+    /** Merge outcome signals; returns the row after the update so the caller can classify. */
+    updateRun(userId: number, id: number, p: Partial<{ finishedAt: number; exitCode: number | null; toolErrors: number; userFeedback: string | null; reverted: number; reasked: number; testResult: string | null; costTokens: number | null; outcome: string | null }>) {
+      const cur = m.run(userId, id); if (!cur) throw new Error('Run not found');
+      db.prepare('UPDATE runs SET finished_at=?, exit_code=?, tool_errors=?, user_feedback=?, reverted=?, reasked=?, test_result=?, cost_tokens=?, outcome=? WHERE id=?')
+        .run(p.finishedAt ?? cur.finished_at, p.exitCode === undefined ? cur.exit_code : p.exitCode, p.toolErrors ?? cur.tool_errors, p.userFeedback === undefined ? cur.user_feedback : p.userFeedback,
+          p.reverted ?? cur.reverted, p.reasked ?? cur.reasked, p.testResult === undefined ? cur.test_result : p.testResult, p.costTokens === undefined ? cur.cost_tokens : p.costTokens, p.outcome === undefined ? cur.outcome : p.outcome, id);
+      return m.run(userId, id)!;
+    },
+    recentEngineErrors(userId: number, engine: Engine, sinceMs: number) {
+      return (db.prepare('SELECT COUNT(*) AS n FROM runs WHERE user_id=? AND engine=? AND outcome=\'fail\' AND started_at>?').get(userId, engine, Date.now() - sinceMs) as { n: number }).n;
+    },
+    // ---- decisions (all kinds) ------------------------------------------------
+    logKindDecision(d: { userId: number; kind: string; command: string; answer: unknown; confidence?: number | null; probabilities?: unknown; latencyMs?: number | null; device?: string | null; fallback: boolean; state?: unknown }) {
+      const r = db.prepare('INSERT INTO decision_log(user_id,kind,command,answer,confidence,probabilities,latency_ms,device,fallback,state,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
+        .run(d.userId, d.kind, d.command.slice(0, 4000), json(d.answer), d.confidence ?? null, json(d.probabilities), d.latencyMs ?? null, d.device ?? null, d.fallback ? 1 : 0, d.state === undefined ? null : JSON.stringify(d.state).slice(0, 8000), Date.now());
+      return Number(r.lastInsertRowid);
+    },
+    overrideDecision(userId: number, id: number, p: { finalAgent?: string | null; finalEngine?: string | null; finalModel?: string | null; finalTarget?: string | null; finalAnswer?: unknown }) {
+      const r = db.prepare('UPDATE decision_log SET final_agent=COALESCE(?,final_agent), final_engine=COALESCE(?,final_engine), final_model=COALESCE(?,final_model), final_target=COALESCE(?,final_target), outcome=COALESCE(?,outcome) WHERE id=? AND user_id=?')
+        .run(p.finalAgent ?? null, p.finalEngine ?? null, p.finalModel ?? null, p.finalTarget ?? null, p.finalAnswer === undefined ? null : JSON.stringify(p.finalAnswer), id, userId);
+      if (!r.changes) throw new Error('Decision not found');
+    },
+    decisionStats(sinceMs: number) {
+      return db.prepare('SELECT kind, COUNT(*) AS n, SUM(fallback) AS fallbacks, AVG(latency_ms) AS avg_ms FROM decision_log WHERE created_at>? GROUP BY kind').all(Date.now() - sinceMs) as Array<{ kind: string; n: number; fallbacks: number; avg_ms: number | null }>;
+    },
+    decisionExportKind(kind: string) {
+      return db.prepare('SELECT command, state, answer, COALESCE(final_agent, agent) AS label, final_engine, final_model, probabilities, confidence, fallback, created_at FROM decision_log WHERE kind=? ORDER BY id').all(kind);
+    },
+    // ---- remote targets ---------------------------------------------------------
+    targets(userId: number) { return db.prepare('SELECT * FROM targets WHERE user_id=? ORDER BY name').all(userId) as TargetRow[]; },
+    target(userId: number, id: number) { return db.prepare('SELECT * FROM targets WHERE id=? AND user_id=?').get(id, userId) as TargetRow | undefined; },
+    targetByTokenHash(hash: string) { return db.prepare('SELECT * FROM targets WHERE token_hash=?').get(hash) as TargetRow | undefined; },
+    targetByPairingCode(code: string) { return db.prepare('SELECT * FROM targets WHERE pairing_code=? AND pairing_expires>?').get(code, Date.now()) as TargetRow | undefined; },
+    addTarget(t: { userId: number; name: string; platform?: string | null; tags?: string[]; description?: string; policy?: string; pairingCode: string; pairingExpires: number }) {
+      if (!/^[a-z0-9][a-z0-9-]{1,40}$/.test(t.name)) throw new Error('Target name: lowercase letters, digits and dashes, 2-41 chars');
+      if (t.policy && !['auto', 'ask', 'deny'].includes(t.policy)) throw new Error('policy must be auto|ask|deny');
+      const r = db.prepare('INSERT INTO targets(user_id,name,platform,tags,description,pairing_code,pairing_expires,policy,created_at) VALUES(?,?,?,?,?,?,?,?,?)')
+        .run(t.userId, t.name, t.platform ?? null, json(t.tags ?? []), (t.description ?? '').slice(0, 600), t.pairingCode, t.pairingExpires, t.policy ?? 'ask', Date.now());
+      return Number(r.lastInsertRowid);
+    },
+    updateTarget(userId: number, id: number, p: Partial<{ name: string; description: string; tags: string[]; policy: string; allowedRoots: string[] | null; pairingCode: string | null; pairingExpires: number | null; tokenHash: string | null; platform: string | null; arch: string | null; capabilities: unknown; status: string; lastSeen: number | null }>) {
+      const cur = m.target(userId, id); if (!cur) throw new Error('Target not found');
+      if (p.policy && !['auto', 'ask', 'deny'].includes(p.policy)) throw new Error('policy must be auto|ask|deny');
+      db.prepare('UPDATE targets SET name=?,description=?,tags=?,policy=?,allowed_roots=?,pairing_code=?,pairing_expires=?,token_hash=?,platform=?,arch=?,capabilities=?,status=?,last_seen=? WHERE id=?')
+        .run(p.name ?? cur.name, p.description === undefined ? cur.description : p.description.slice(0, 600), p.tags === undefined ? cur.tags : json(p.tags), p.policy ?? cur.policy,
+          p.allowedRoots === undefined ? cur.allowed_roots : json(p.allowedRoots), p.pairingCode === undefined ? cur.pairing_code : p.pairingCode, p.pairingExpires === undefined ? cur.pairing_expires : p.pairingExpires,
+          p.tokenHash === undefined ? cur.token_hash : p.tokenHash, p.platform === undefined ? cur.platform : p.platform, p.arch === undefined ? cur.arch : p.arch,
+          p.capabilities === undefined ? cur.capabilities : json(p.capabilities), p.status ?? cur.status, p.lastSeen === undefined ? cur.last_seen : p.lastSeen, id);
+    },
+    deleteTarget(userId: number, id: number) { db.prepare('DELETE FROM targets WHERE id=? AND user_id=?').run(id, userId); },
+    addRemoteRun(r: { runId?: number | null; targetId: number; userId: number; kind: string; cmd?: string | null; cwd?: string | null; risk?: number | null; approvedBy?: string | null }) {
+      const res = db.prepare('INSERT INTO remote_runs(run_id,target_id,user_id,kind,cmd,cwd,risk,approved_by,started_at) VALUES(?,?,?,?,?,?,?,?,?)')
+        .run(r.runId ?? null, r.targetId, r.userId, r.kind, r.cmd?.slice(0, 4000) ?? null, r.cwd ?? null, r.risk ?? null, r.approvedBy ?? null, Date.now());
+      return Number(res.lastInsertRowid);
+    },
+    finishRemoteRun(id: number, p: { exitCode?: number | null; artifacts?: unknown; approvedBy?: string | null }) {
+      db.prepare('UPDATE remote_runs SET finished_at=?, exit_code=COALESCE(?,exit_code), artifacts=COALESCE(?,artifacts), approved_by=COALESCE(?,approved_by) WHERE id=?').run(Date.now(), p.exitCode ?? null, json(p.artifacts), p.approvedBy ?? null, id);
+    },
+    remoteRuns(userId: number, targetId?: number, limit = 50) {
+      return db.prepare(`SELECT * FROM remote_runs WHERE user_id=? ${targetId ? 'AND target_id=?' : ''} ORDER BY id DESC LIMIT ?`).all(...(targetId ? [userId, targetId, limit] : [userId, limit]));
+    },
+  };
+  return m;
+}
+
+export { agentName };

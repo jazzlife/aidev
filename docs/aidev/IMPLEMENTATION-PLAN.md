@@ -309,13 +309,14 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 순서: **B → C → F → D → E**. F-01~F-05(실행·동기화·MCP)는 C와 병행 가능. D·E는 B·F가 만드는 신호(run, remote_runs)를 쓰므로 뒤.
 
 ### B. 판정·선택·실행 (목표: "명령 → 알맞은 agent·엔진·모델로 실제 실행"이 서버에서 동작)
-- [ ] B-01 `store.ts`: 3.2의 테이블/컬럼 추가(`decision_log.kind/fallback`, `knowledge_fts`, `targets`, `remote_runs` 포함) + 마이그레이션(있으면 건너뜀), `engine_weights` 시드, 백업 cron 스크립트 `deploy/aidev/release/db-backup.sh`
-- [ ] B-02 `store.ts`: 시드 agent 12개 (frontend-react, backend-node, database, devops, tizen-device, android-device, testing, docs, mobile-responsive, security-review, git-workflow, agent-architect) + lesson-curator, knowledge-refresher, generalist. description은 라우팅 기준이므로 한/영 키워드 포함
-- [ ] B-03 게이트웨이 `/api/aidev/engines`: accounts.engines ∩ 런타임 auth status(캐시 60s, 실패 시 마지막 값)
-- [ ] B-04 게이트웨이 `laya-questions.ts` 레지스트리(§3.10 전 kind, fallback 포함) + `/api/aidev/decide/:kind` + health 실패 시 즉시 fallback
-- [ ] B-05 게이트웨이 `/api/aidev/route`: 3.1 질문(+clarify, remote_action) → Laya → 3.4 등급·엔진 점수 → decision_log 기록 → 3.3 응답. 카탈로그 >20이면 shortlist
-- [ ] B-06 게이트웨이 agents CRUD + versions, runs POST/PATCH/GET, decisions PATCH, knowledge FTS 검색
-- [ ] B-07 `aidev-user` CLI: `engines <user> codex|claude,codex`, `default-engine <user> <engine>` (manage-users.ts 확장)
+로컬 검증 도구: `deploy/aidev/auth-gateway/test/smoke.sh`(mock Laya·runtime으로 게이트웨이 API 30개 체크). 백업 포인트: `deploy/aidev/release/checkpoint.sh <ID> "<msg>"` → 태그 `ckpt/<ID>-<날짜>` + bundle + origin push.
+- [~] 구현·로컬검증 완료(smoke 30/30), 서버 확인 대기 — B-01 `store.ts`: 3.2의 테이블/컬럼 추가(`decision_log.kind/fallback`, `knowledge_fts`, `targets`, `remote_runs` 포함) + 마이그레이션(있으면 건너뜀), `engine_weights` 시드, 백업 cron 스크립트 `deploy/aidev/release/db-backup.sh`
+- [~] 구현 완료(시드 16: 13 라우팅 + 3 메타), 서버 확인 대기 — B-02 `store.ts`: 시드 agent 12개 (frontend-react, backend-node, database, devops, tizen-device, android-device, testing, docs, mobile-responsive, security-review, git-workflow, agent-architect) + lesson-curator, knowledge-refresher, generalist. description은 라우팅 기준이므로 한/영 키워드 포함
+- [~] 구현·로컬검증 완료, 서버 확인 대기 — B-03 게이트웨이 `/api/aidev/engines`: accounts.engines ∩ 런타임 auth status(캐시 60s, 실패 시 마지막 값)
+- [~] 구현·로컬검증 완료(18 kind, fallback 검증), 서버 확인 대기 — B-04 게이트웨이 `laya-questions.ts` 레지스트리(§3.10 전 kind, fallback 포함) + `/api/aidev/decide/:kind` + health 실패 시 즉시 fallback
+- [~] 구현·로컬검증 완료, 서버 확인 대기 — B-05 게이트웨이 `/api/aidev/route`: 3.1 질문(+clarify, remote_action) → Laya → 3.4 등급·엔진 점수 → decision_log 기록 → 3.3 응답. 카탈로그 >20이면 shortlist
+- [~] 구현·로컬검증 완료, 서버 확인 대기 — B-06 게이트웨이 agents CRUD + versions, runs POST/PATCH/GET, decisions PATCH, knowledge FTS 검색
+- [~] 구현 완료(engines/default-engine/role), 서버 확인 대기 — B-07 `aidev-user` CLI: `engines <user> codex|claude,codex`, `default-engine <user> <engine>` (manage-users.ts 확장)
 - [ ] B-08 런타임 `server/modules/aidev-tools/` MCP 서버 골격 + `aidev_decide` 도구(게이트웨이 `/decide/:kind` 호출, 런타임 토큰) — remote_* 는 F에서
 - [ ] B-09 `claude-runtime.provider.js`: `options.aidev` → `sdkOptions.agent/agents/model` + `mcpServers.aidev-tools` (화이트리스트, 길이 제한)
 - [ ] B-10 `codex-runtime.provider.ts`: `options.aidev` → `new Codex({config:{developer_instructions, mcp_servers}})`

@@ -11,8 +11,13 @@ async function runtime(name: string, operation: 'provision' | 'delete') {
   if (!response.ok) throw new Error(`Runtime ${operation} failed; check runtime-manager logs and retry`);
 }
 try {
-  if (extra || (action === 'list' ? username : !/^[a-z0-9][a-z0-9_.-]{2,63}$/.test(username ?? ''))) throw new Error('Usage: list | add USERNAME | delete USERNAME | disable USERNAME');
-  if (action === 'list') console.log(JSON.stringify(store.db.prepare('SELECT id,username,runtime,active FROM accounts ORDER BY id').all(), null, 2));
+  const usage = 'Usage: list | add USERNAME | delete USERNAME | disable USERNAME | engines USERNAME codex|claude|claude,codex | default-engine USERNAME claude|codex|none | role USERNAME user|admin';
+  const withExtra = ['engines', 'default-engine', 'role'].includes(action ?? '');
+  if ((extra && !withExtra) || (withExtra && !extra) || (action === 'list' ? username : !/^[a-z0-9][a-z0-9_.-]{2,63}$/.test(username ?? ''))) throw new Error(usage);
+  if (action === 'list') console.log(JSON.stringify(store.db.prepare('SELECT id,username,runtime,active,engines,default_engine,role FROM accounts ORDER BY id').all(), null, 2));
+  else if (action === 'engines') { store.setAccountEngines(username, extra.split(',').map((s) => s.trim()) as never); console.log(`${username}: engines=${extra}`); }
+  else if (action === 'default-engine') { store.setDefaultEngine(username, extra === 'none' ? null : extra as never); console.log(`${username}: default_engine=${extra}`); }
+  else if (action === 'role') { if (extra !== 'user' && extra !== 'admin') throw new Error(usage); store.setRole(username, extra); console.log(`${username}: role=${extra}`); }
   else if (action === 'add') {
     if (store.account(username)) throw new Error('User already exists');
     let password = '';
@@ -36,7 +41,7 @@ try {
       await runtime(account.runtime, 'delete'); store.remove(username);
       console.log(`Deleted ${username} and its container. Home/workspace volumes retained for recovery.`);
     } else console.log(`Disabled ${username}`);
-  } else throw new Error('Usage: list | add USERNAME | delete USERNAME | disable USERNAME');
+  } else throw new Error(usage);
 } catch (error) {
   console.error(error instanceof Error ? error.message : 'Account operation failed'); process.exitCode = 1;
 } finally { store.db.close(); }

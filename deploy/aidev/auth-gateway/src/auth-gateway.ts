@@ -4,6 +4,9 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import jwt from 'jsonwebtoken';
 import { WebSocket, WebSocketServer } from 'ws';
 import { openStore } from './store.js';
+import { LayaClient } from './laya.js';
+import { createAidevApi } from './aidev-api.js';
+import { seedAgents } from './seed-agents.js';
 
 const port = Number(process.env.PORT ?? 8080);
 // The release this process was started from; differs from /srv/app/current/RELEASE until restarted.
@@ -13,24 +16,9 @@ const secret = readSecret(process.env.JWT_SECRET_FILE ?? '/run/secrets/gateway-j
 const managerToken = readSecret(process.env.RUNTIME_MANAGER_TOKEN_FILE ?? '/run/secrets/runtime-token');
 const managerUrl = process.env.RUNTIME_MANAGER_URL ?? 'http://runtime-manager:8090';
 const layaUrl = process.env.LAYA_URL ?? 'http://laya:8095';
-// Laya (System-1 decision model) is only reachable through the gateway; sessions are required.
-async function layaProxy(req: IncomingMessage, res: ServerResponse, path: string, session: Session | null) {
-  if (!session && path !== '/health') return json(res, 401, { error: 'Authentication required' }, { 'x-auth-error': 'invalid-token' });
-  let payload: string | undefined;
-  if (req.method === 'POST') {
-    const chunks: Buffer[] = []; let size = 0;
-    for await (const chunk of req) { size += Buffer.byteLength(chunk); if (size > 256 * 1024) return json(res, 413, { error: 'Body too large' }); chunks.push(Buffer.from(chunk)); }
-    payload = Buffer.concat(chunks).toString();
-  }
-  try {
-    const upstream = await fetch(`${layaUrl}${path}`, { method: req.method, headers: { 'content-type': 'application/json' }, body: payload, signal: AbortSignal.timeout(30_000) });
-    const text = await upstream.text();
-    res.writeHead(upstream.status, { 'content-type': 'application/json', 'cache-control': 'no-store' }); res.end(text);
-  } catch (error) {
-    json(res, 503, { error: 'Decision service unavailable', detail: error instanceof Error ? error.message : String(error) });
-  }
-}
 const store = openStore(process.env.DATABASE_PATH ?? '/data/auth.db');
+{ const added = store.seedAgents(seedAgents); if (added) console.log(`[gateway] seeded ${added} agents`); }
+const laya = new LayaClient(layaUrl);
 const cookieName = '__Host-aidev-session';
 const ttl = 8 * 3600;
 const inflight = new Map<string, Promise<{ target: string; token: string }>>();
@@ -134,6 +122,15 @@ async function proxyHttp(req: IncomingMessage, res: ServerResponse, session: Ses
   res.on('close', () => upstream.destroy());
   req.pipe(upstream);
 }
+// /api/aidev/* is answered by the gateway itself (routing, catalog, runs …); the runtime is only
+// consulted for provider auth status. See aidev-api.ts.
+const aidev = createAidevApi({
+  store, laya, json,
+  async runtimeFetch(session, path, init) {
+    const runtime = await ready(session.user.runtime);
+    return fetch(`${runtime.target}${path}`, { ...init, headers: { ...(init?.headers as Record<string, string> | undefined), authorization: `Bearer ${runtime.token}` }, signal: AbortSignal.timeout(10_000) });
+  },
+});
 // The SPA is served by the gateway for every user, signed in or not, from STATIC_ROOT.
 // STATIC_ROOT is a shared volume whose `current` entry is swapped atomically by the
 // release tooling, so a frontend release never rebuilds or restarts any container.
@@ -225,9 +222,7 @@ const server = http.createServer(async (req, res) => {
       }
       return json(res, 404, { error: 'Not found' });
     }
-    if (url.pathname === '/api/aidev/laya/health' && req.method === 'GET') return await layaProxy(req, res, '/health', session);
-    if (url.pathname === '/api/aidev/route' && req.method === 'POST') return await layaProxy(req, res, '/route', session);
-    if (url.pathname === '/api/aidev/decide' && req.method === 'POST') return await layaProxy(req, res, '/decide', session);
+    if (await aidev.handle(req, res, url, session)) return;
     if (url.pathname === '/api' || url.pathname.startsWith('/api/') || url.pathname === '/health') {
       if (!session) return json(res, 401, { error: 'Authentication required' }, { 'x-auth-error': 'invalid-token' });
       return await proxyHttp(req, res, session);
