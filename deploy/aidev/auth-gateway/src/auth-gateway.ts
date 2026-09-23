@@ -159,12 +159,49 @@ const aidev = createAidevApi({
 const staticRoot = process.env.STATIC_ROOT ?? '/srv/app/current/dist';
 const releaseFile = process.env.AIDEV_RELEASE_FILE ?? '/srv/app/current/RELEASE';
 const staticMime: Record<string, string> = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.mjs': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.map': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.gif': 'image/gif', '.webp': 'image/webp', '.woff': 'font/woff', '.woff2': 'font/woff2', '.ttf': 'font/ttf', '.wasm': 'application/wasm', '.txt': 'text/plain; charset=utf-8', '.webmanifest': 'application/manifest+json' };
+// Two independent SPAs (IMPLEMENTATION-PLAN §3.11): the workbench at / (dist) and the mobile app at
+// /m/ (dist-mobile). A phone landing on the root is redirected to /m/<same path> unless the
+// `aidev_ui` cookie pins a choice; `?ui=mobile|workbench` sets that cookie from either app.
+const mobileStaticRoot = process.env.MOBILE_STATIC_ROOT ?? path.join(path.dirname(staticRoot), 'dist-mobile');
+const uiCookie = 'aidev_ui';
+function readCookie(req: IncomingMessage, name: string) {
+  return (req.headers.cookie ?? '').split(';').map((value) => value.trim()).find((value) => value.startsWith(`${name}=`))?.slice(name.length + 1) ?? null;
+}
+function isPhone(req: IncomingMessage) {
+  const hint = req.headers['sec-ch-ua-mobile'];
+  if (typeof hint === 'string') return hint.trim() === '?1';
+  const ua = String(req.headers['user-agent'] ?? '');
+  return /iPhone|iPod|Android.+Mobile|Windows Phone|Mobile Safari/i.test(ua) && !/iPad|Tablet/i.test(ua);
+}
+function uiRedirect(req: IncomingMessage, res: ServerResponse, url: URL): boolean {
+  if (!['GET', 'HEAD'].includes(req.method ?? '')) return false;
+  const wantsHtml = String(req.headers.accept ?? '').includes('text/html');
+  const inMobile = url.pathname === '/m' || url.pathname.startsWith('/m/');
+  const forced = url.searchParams.get('ui');
+  if (forced === 'mobile' || forced === 'workbench') {
+    url.searchParams.delete('ui');
+    const target = forced === 'mobile' ? (inMobile ? url.pathname : `/m${url.pathname === '/' ? '' : url.pathname}`) : (inMobile ? url.pathname.slice(2) || '/' : url.pathname);
+    res.writeHead(302, { location: `${target}${url.search}`, 'set-cookie': `${uiCookie}=${forced}; Path=/; Max-Age=31536000; SameSite=Lax; Secure`, 'cache-control': 'no-store' });
+    res.end(); return true;
+  }
+  if (!wantsHtml || inMobile || url.pathname.startsWith('/assets/') || url.pathname.includes('.')) return false;
+  const pinned = readCookie(req, uiCookie);
+  if (pinned === 'workbench') return false;
+  if (pinned === 'mobile' || (pinned === null && isPhone(req))) {
+    res.writeHead(302, { location: `/m${url.pathname === '/' ? '' : url.pathname}${url.search}`, vary: 'User-Agent, Sec-CH-UA-Mobile, Cookie', 'cache-control': 'no-store' });
+    res.end(); return true;
+  }
+  return false;
+}
 async function serveStatic(req: IncomingMessage, res: ServerResponse) {
   if (!['GET', 'HEAD'].includes(req.method ?? '')) return json(res, 405, { error: 'Method not allowed' });
+  const url = new URL(req.url ?? '/', origin);
+  if (uiRedirect(req, res, url)) return;
+  const mobile = url.pathname === '/m' || url.pathname.startsWith('/m/');
   // Resolve the release symlink per request so a swap takes effect immediately.
-  const root = await fs.promises.realpath(staticRoot).catch(() => null);
+  const root = await fs.promises.realpath(mobile ? mobileStaticRoot : staticRoot).catch(() => null);
   if (!root) return json(res, 503, { error: 'Frontend release missing' });
-  const pathname = decodeURIComponent(new URL(req.url ?? '/', origin).pathname);
+  const pathname = decodeURIComponent(mobile ? (url.pathname.slice(2) || '/') : url.pathname);
   const file = path.resolve(root, `.${pathname}`);
   if (!file.startsWith(`${root}/`) && file !== root) return json(res, 404, { error: 'Not found' });
   let stat = await fs.promises.stat(file).catch(() => null);
@@ -173,7 +210,7 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse) {
   // A tab loaded on release A may lazy-load /assets/<hash>.js after `current` moved to B.
   // Hashed asset names are unique, so serving the file from a retained older release is
   // safe and keeps every open tab working through a frontend release without a reload.
-  if (!target && isAsset) target = await findAssetInOtherReleases(root, pathname);
+  if (!target && isAsset) target = await findAssetInOtherReleases(root, pathname, mobile ? 'dist-mobile' : 'dist');
   if (!target) target = path.join(root, 'index.html');
   const content = await fs.promises.readFile(target).catch(() => null);
   if (!content) return json(res, 503, { error: 'Frontend release missing' });
@@ -182,22 +219,24 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse) {
     // Vite emits content-hashed files under /assets; everything else must revalidate.
     'cache-control': isAsset && target !== path.join(root, 'index.html') ? 'public, max-age=31536000, immutable' : 'no-store',
     'x-content-type-options': 'nosniff',
+    ...(target.endsWith('sw.js') ? { 'service-worker-allowed': mobile ? '/m/' : '/' } : {}),
   });
   res.end(req.method === 'HEAD' ? undefined : content);
 }
 const assetFallback = new Map<string, string | null>();
-async function findAssetInOtherReleases(currentRoot: string, pathname: string) {
-  const hit = assetFallback.get(pathname);
+async function findAssetInOtherReleases(currentRoot: string, pathname: string, distDir = 'dist') {
+  const key = `${distDir}:${pathname}`;
+  const hit = assetFallback.get(key);
   if (hit !== undefined) return hit && await fs.promises.stat(hit).then((s) => s.isFile()).catch(() => false) ? hit : null;
   const releases = path.resolve(currentRoot, '..', '..'); // /srv/app/releases/<sha>/dist -> /srv/app/releases
   let found: string | null = null;
   for (const entry of await fs.promises.readdir(releases).catch(() => [] as string[])) {
-    const candidate = path.resolve(releases, entry, 'dist', `.${pathname}`);
-    if (!candidate.startsWith(`${path.resolve(releases, entry, 'dist')}/`)) continue;
+    const candidate = path.resolve(releases, entry, distDir, `.${pathname}`);
+    if (!candidate.startsWith(`${path.resolve(releases, entry, distDir)}/`)) continue;
     if (await fs.promises.stat(candidate).then((s) => s.isFile()).catch(() => false)) { found = candidate; break; }
   }
   if (assetFallback.size > 2000) assetFallback.clear();
-  assetFallback.set(pathname, found);
+  assetFallback.set(key, found);
   return found;
 }
 

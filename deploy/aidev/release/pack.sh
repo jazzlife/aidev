@@ -11,7 +11,7 @@ R="$stage/$sha"; mkdir -p "$R/control/gateway" "$R/control/runtime-manager" "$R/
 
 echo "==> app: vite + tsc"
 npm run build >/dev/null
-cp -a dist dist-server public shared package.json package-lock.json "$R/"
+cp -a dist dist-mobile dist-server public shared package.json package-lock.json "$R/"
 echo "==> control plane: tsc"
 for c in gateway:auth-gateway runtime-manager:runtime-manager; do
   name=${c%%:*}; dir=deploy/aidev/${c##*:}

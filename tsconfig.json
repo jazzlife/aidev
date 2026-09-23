@@ -9,7 +9,8 @@
       // The frontend keeps "@" mapped to /src.
       // The backend gets its own "@" mapping in server/tsconfig.json so both sides can use
       // the same alias name without sharing one compiler configuration.
-      "@/*": ["src/*"]
+      "@/*": ["src/*"],
+      "@m/*": ["src-mobile/*"]
     },
     "skipLibCheck": true,
     "moduleResolution": "Bundler",
@@ -24,5 +25,5 @@
     "types": ["vite/client"],
     "ignoreDeprecations": "5.0"
   },
-  "include": ["src", "shared", "vite.config.js"]
+  "include": ["src", "src-mobile", "shared", "vite.config.js"]
 }

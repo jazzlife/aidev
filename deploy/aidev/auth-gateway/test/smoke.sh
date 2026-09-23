@@ -10,7 +10,7 @@ MOCK_CODEX_ONLY=rt-codexonly node test/mock-services.mjs >"$T/mock.log" 2>&1 &
 sleep 0.5
 export DATABASE_PATH="$T/auth.db" JWT_SECRET_FILE="$T/secrets/jwt" RUNTIME_MANAGER_TOKEN_FILE="$T/secrets/rt" \
   RUNTIME_MANAGER_URL=http://127.0.0.1:18090 LAYA_URL=http://127.0.0.1:18095 PUBLIC_ORIGIN=http://127.0.0.1:18080 PORT=18080 STATIC_ROOT="$T/dist"
-mkdir -p "$T/dist"; echo '<html>x</html>' > "$T/dist/index.html"
+mkdir -p "$T/dist" "$T/dist-mobile"; echo '<html>workbench</html>' > "$T/dist/index.html"; echo '<html>mobile</html>' > "$T/dist-mobile/index.html"
 # accounts: alice (both engines), bob (codex only, runtime rt-codexonly)
 node -e "
 const {openStore}=await import('./dist/store.js'); const s=openStore(process.env.DATABASE_PATH);
@@ -57,6 +57,12 @@ r=$(curl -s "$G/api/aidev/export/decisions?kind=route" -H "authorization: Bearer
 r=$(curl -s -X POST "$G/internal/aidev/decide/agent.yesno" -H 'authorization: Bearer rtjwt-rt-alice' -H 'x-aidev-runtime: rt-alice' -H 'content-type: application/json' -d '{"state":{"question":"Is the build green?","summary":"tests pass ok"}}'); check "$r" 'j.kind==="agent.yesno" && j.decision_id>0' "runtime internal call (aidev-tools → gateway)"
 r=$(curl -s -X POST "$G/internal/aidev/decide/agent.yesno" -H 'authorization: Bearer wrong' -H 'x-aidev-runtime: rt-alice' -H 'content-type: application/json' -d '{"state":{}}'); check "$r" 'j.error' "runtime internal call rejects bad token"
 r=$(curl -s "$G/internal/aidev/targets" -H 'authorization: Bearer rtjwt-rt-alice' -H 'x-aidev-runtime: rt-alice'); check "$r" 'j.targets.length===1' "runtime lists user targets"
+# two SPAs: /m/ → dist-mobile, phones redirected from /, cookie pins the choice
+r=$(curl -s "$G/m/session/abc"); check "{\"body\":\"$r\"}" 'j.body.includes("mobile")' "/m/* serves the mobile app"
+r=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' -H 'accept: text/html' -H 'user-agent: Mozilla/5.0 (iPhone; CPU iPhone OS 17_0 like Mac OS X) AppleWebKit/605.1.15 Mobile Safari/604.1' "$G/session/abc"); check "{\"r\":\"$r\"}" 'j.r.startsWith("302 ") && j.r.endsWith("/m/session/abc")' "phone at / → 302 /m/<path>"
+r=$(curl -s -H 'accept: text/html' -H 'user-agent: Mozilla/5.0 (iPhone) Mobile' -H "cookie: aidev_ui=workbench" "$G/"); check "{\"body\":\"$r\"}" 'j.body.includes("workbench")' "cookie aidev_ui=workbench keeps the workbench on a phone"
+r=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' -H 'accept: text/html' -H 'user-agent: Mozilla/5.0 (Macintosh)' "$G/?ui=mobile"); check "{\"r\":\"$r\"}" 'j.r.startsWith("302 ") && j.r.endsWith("/m")' "?ui=mobile switches (sets cookie)"
+r=$(curl -s -H 'accept: text/html' -H 'user-agent: Mozilla/5.0 (Macintosh)' "$G/"); check "{\"body\":\"$r\"}" 'j.body.includes("workbench")' "desktop at / gets the workbench"
 # Laya outage → fallback, service keeps answering
 kill %1; sleep 0.3
 r=$(post "$A" /api/aidev/route '{"text":"React 컴포넌트에 다크모드 토글 훅을 추가해줘"}'); check "$r" 'j.fallback===true && j.agent.name==="generalist" && j.plan.engine' "laya down → generalist fallback, engine still chosen"

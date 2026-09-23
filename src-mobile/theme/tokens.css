@@ -1,0 +1,58 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Mobile design tokens (RGB triplets so Tailwind can apply alpha). Warm neutral light theme,
+   true-dark for OLED, 44px touch targets, safe-area aware. */
+:root {
+  --m-bg: 250 249 246;
+  --m-surface: 255 255 255;
+  --m-elevated: 244 242 237;
+  --m-line: 228 225 217;
+  --m-ink: 28 26 22;
+  --m-muted: 118 112 102;
+  --m-accent: 196 89 46;
+  --m-accent-ink: 255 255 255;
+  --m-ok: 40 140 90;
+  --m-warn: 196 140 30;
+  --m-danger: 200 60 50;
+  color-scheme: light dark;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --m-bg: 14 14 15;
+    --m-surface: 24 24 26;
+    --m-elevated: 34 34 37;
+    --m-line: 52 52 56;
+    --m-ink: 236 234 228;
+    --m-muted: 150 146 138;
+    --m-accent: 232 122 76;
+    --m-accent-ink: 20 14 10;
+  }
+}
+html, body, #root { height: 100%; }
+body {
+  margin: 0;
+  background: rgb(var(--m-bg));
+  color: rgb(var(--m-ink));
+  -webkit-font-smoothing: antialiased;
+  overscroll-behavior-y: none;
+  -webkit-text-size-adjust: 100%;
+}
+/* The app fills the dynamic viewport so the composer stays above the virtual keyboard. */
+.m-app { height: 100dvh; display: flex; flex-direction: column; }
+.m-scroll { overflow-y: auto; -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
+.m-touch { min-height: 44px; min-width: 44px; }
+.m-prose { line-height: 1.55; word-break: break-word; overflow-wrap: anywhere; }
+.m-prose p { margin: 0 0 0.6em; }
+.m-prose p:last-child { margin-bottom: 0; }
+.m-prose pre { background: rgb(var(--m-elevated)); border: 1px solid rgb(var(--m-line)); border-radius: 10px; padding: 10px 12px; overflow-x: auto; font-size: 12.5px; line-height: 1.45; }
+.m-prose code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.92em; }
+.m-prose :not(pre) > code { background: rgb(var(--m-elevated)); padding: 1px 5px; border-radius: 5px; }
+.m-prose ul, .m-prose ol { padding-left: 1.2em; margin: 0 0 0.6em; }
+.m-prose h1, .m-prose h2, .m-prose h3 { font-size: 1.02em; font-weight: 600; margin: 0.8em 0 0.4em; }
+.m-prose a { color: rgb(var(--m-accent)); text-decoration: underline; }
+.m-prose table { border-collapse: collapse; font-size: 0.9em; display: block; overflow-x: auto; }
+.m-prose td, .m-prose th { border: 1px solid rgb(var(--m-line)); padding: 3px 8px; }
+@keyframes m-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
+.m-pulse { animation: m-pulse 1.2s ease-in-out infinite; }

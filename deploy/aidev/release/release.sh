@@ -146,7 +146,7 @@ cmd_restart() {
 cmd_diff() { # prints component names whose files differ between two releases
   local a="${1:?}" b="${2:?}"
   vol "cd releases; d(){ diff -rq --no-dereference \"$a/\$1\" \"$b/\$1\" >/dev/null 2>&1 || echo \"\$2\"; }
-       d dist frontend; d dist-server server; d shared server; d public frontend; d runtime server; d node_modules server;
+       d dist frontend; d dist-mobile frontend; d dist-server server; d shared server; d public frontend; d runtime server; d node_modules server;
        d control/gateway gateway; d control/runtime-manager runtime-manager; d control/laya laya" | sort -u
 }
 cmd_rollback() { # rollback [sha] [restart opts]: activate an older release and restart only what differs
