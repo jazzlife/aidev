@@ -1,0 +1,126 @@
+{"text": "React 컴포넌트에 다크모드 토글 훅을 추가해줘", "agent": "frontend-react", "depth": 1, "task_kind": "implement", "lang": "ko"}
+{"text": "이 페이지 렌더링이 느린데 useMemo 없이 원인을 찾아서 고쳐줘", "agent": "frontend-react", "depth": 3, "task_kind": "debug", "lang": "ko"}
+{"text": "Tailwind로 카드 리스트를 3열 그리드로 바꿔줘", "agent": "frontend-react", "depth": 1, "task_kind": "implement", "lang": "ko"}
+{"text": "useEffect 안에서 setState 경고가 나는 이유를 설명해줘", "agent": "frontend-react", "depth": 0, "task_kind": "explain", "lang": "ko"}
+{"text": "채팅 화면을 컴포넌트 단위로 분리하고 상태를 컨텍스트로 옮기는 리팩터링을 해줘", "agent": "frontend-react", "depth": 3, "task_kind": "refactor", "lang": "ko"}
+{"text": "Add a debounced search input component with keyboard navigation", "agent": "frontend-react", "depth": 2, "task_kind": "implement", "lang": "en"}
+{"text": "Why does this React list re-render every item when one changes?", "agent": "frontend-react", "depth": 1, "task_kind": "explain", "lang": "en"}
+{"text": "Fix the hydration mismatch error on the settings page", "agent": "frontend-react", "depth": 2, "task_kind": "debug", "lang": "en"}
+{"text": "Split the 900-line Dashboard.tsx into feature modules without changing behavior", "agent": "frontend-react", "depth": 3, "task_kind": "refactor", "lang": "en"}
+{"text": "Make the modal accessible: focus trap, ESC to close, aria attributes", "agent": "frontend-react", "depth": 2, "task_kind": "implement", "lang": "en"}
+{"text": "Express API에 rate limit 미들웨어를 추가해줘", "agent": "backend-node", "depth": 1, "task_kind": "implement", "lang": "ko"}
+{"text": "웹소켓 연결이 5분 후에 끊기는 문제를 찾아서 고쳐줘", "agent": "backend-node", "depth": 3, "task_kind": "debug", "lang": "ko"}
+{"text": "파일 업로드 엔드포인트를 스트리밍 방식으로 바꿔줘", "agent": "backend-node", "depth": 2, "task_kind": "refactor", "lang": "ko"}
+{"text": "이 서비스 계층 구조에서 라우트와 서비스 책임을 어떻게 나눌지 설계해줘", "agent": "backend-node", "depth": 3, "task_kind": "design", "lang": "ko"}
+{"text": "JWT 리프레시 토큰 흐름을 설명해줘", "agent": "backend-node", "depth": 0, "task_kind": "explain", "lang": "ko"}
+{"text": "Add a POST /api/projects endpoint with validation and error envelope", "agent": "backend-node", "depth": 2, "task_kind": "implement", "lang": "en"}
+{"text": "The server leaks memory after many websocket reconnects; find the cause", "agent": "backend-node", "depth": 3, "task_kind": "debug", "lang": "en"}
+{"text": "Move business logic out of the route handlers into services", "agent": "backend-node", "depth": 2, "task_kind": "refactor", "lang": "en"}
+{"text": "Design the API for scheduling messages with retries and idempotency", "agent": "backend-node", "depth": 3, "task_kind": "design", "lang": "en"}
+{"text": "What does express.json() limit default to?", "agent": "backend-node", "depth": 0, "task_kind": "explain", "lang": "en"}
+{"text": "SQLite 스키마에 agent_versions 테이블을 추가하는 마이그레이션을 작성해줘", "agent": "database", "depth": 1, "task_kind": "implement", "lang": "ko"}
+{"text": "이 쿼리가 풀스캔을 하는데 인덱스를 설계해줘", "agent": "database", "depth": 2, "task_kind": "debug", "lang": "ko"}
+{"text": "주문 테이블을 파티셔닝할지 판단하고 설계안을 만들어줘", "agent": "database", "depth": 3, "task_kind": "design", "lang": "ko"}
+{"text": "FTS5 가상 테이블과 트리거를 설명해줘", "agent": "database", "depth": 0, "task_kind": "explain", "lang": "ko"}
+{"text": "Postgres로 옮기기 위한 스키마 변환 계획을 세워줘", "agent": "database", "depth": 4, "task_kind": "design", "lang": "ko"}
+{"text": "Write a migration adding a unique index on (user_id, name)", "agent": "database", "depth": 1, "task_kind": "implement", "lang": "en"}
+{"text": "EXPLAIN shows a nested loop on a 2M row join; optimize it", "agent": "database", "depth": 3, "task_kind": "debug", "lang": "en"}
+{"text": "Normalize the settings table that stores JSON blobs into proper columns", "agent": "database", "depth": 3, "task_kind": "refactor", "lang": "en"}
+{"text": "What isolation level does SQLite use in WAL mode?", "agent": "database", "depth": 0, "task_kind": "explain", "lang": "en"}
+{"text": "Design a schema for versioned documents with soft delete", "agent": "database", "depth": 2, "task_kind": "design", "lang": "en"}
+{"text": "docker compose에 헬스체크와 재시작 정책을 추가해줘", "agent": "devops", "depth": 1, "task_kind": "ops", "lang": "ko"}
+{"text": "배포 후 컨테이너가 계속 재시작되는 원인을 찾아줘", "agent": "devops", "depth": 3, "task_kind": "debug", "lang": "ko"}
+{"text": "nginx 리버스 프록시에 웹소켓 업그레이드 설정을 넣어줘", "agent": "devops", "depth": 1, "task_kind": "ops", "lang": "ko"}
+{"text": "무중단 배포를 위한 릴리스 볼륨 구조를 설계해줘", "agent": "devops", "depth": 4, "task_kind": "design", "lang": "ko"}
+{"text": "systemd 서비스 파일에서 Restart=always와 on-failure 차이를 설명해줘", "agent": "devops", "depth": 0, "task_kind": "explain", "lang": "ko"}
+{"text": "Write a bash script that rotates logs and prunes old docker images", "agent": "devops", "depth": 2, "task_kind": "ops", "lang": "en"}
+{"text": "The cron backup job silently stops after the first pipe failure; fix the script", "agent": "devops", "depth": 2, "task_kind": "debug", "lang": "en"}
+{"text": "Set up a wildcard TLS certificate renewal with the existing proxy", "agent": "devops", "depth": 2, "task_kind": "ops", "lang": "en"}
+{"text": "Plan a rollback procedure for the release volume deployment", "agent": "devops", "depth": 3, "task_kind": "design", "lang": "en"}
+{"text": "How do I see why a container exited?", "agent": "devops", "depth": 0, "task_kind": "explain", "lang": "en"}
+{"text": "타이젠 TV 앱을 sdb로 설치하고 dlog 로그를 확인하는 절차를 알려줘", "agent": "tizen-device", "depth": 1, "task_kind": "ops", "lang": "ko"}
+{"text": "갤럭시 워치 앱이 설치 후 바로 종료되는데 원인을 찾아줘", "agent": "tizen-device", "depth": 3, "task_kind": "debug", "lang": "ko"}
+{"text": "Tizen 웹앱 config.xml에 네트워크 privilege를 추가해줘", "agent": "tizen-device", "depth": 1, "task_kind": "implement", "lang": "ko"}
+{"text": "타이젠 인증서 프로필 생성 방법을 설명해줘", "agent": "tizen-device", "depth": 0, "task_kind": "explain", "lang": "ko"}
+{"text": "TV 리모컨 키 이벤트 처리 모듈을 만들어줘", "agent": "tizen-device", "depth": 2, "task_kind": "implement", "lang": "ko"}
+{"text": "Package this Tizen web app and install it on the connected TV", "agent": "tizen-device", "depth": 1, "task_kind": "ops", "lang": "en"}
+{"text": "sdb connect times out to the watch; diagnose it", "agent": "tizen-device", "depth": 2, "task_kind": "debug", "lang": "en"}
+{"text": "Explain the Tizen wearable app lifecycle callbacks", "agent": "tizen-device", "depth": 0, "task_kind": "explain", "lang": "en"}
+{"text": "Build a Tizen TV navigation layer for 5-way remote focus", "agent": "tizen-device", "depth": 3, "task_kind": "implement", "lang": "en"}
+{"text": "Which Tizen version supports the Samsung Product API for TV?", "agent": "tizen-device", "depth": 0, "task_kind": "explain", "lang": "en"}
+{"text": "안드로이드 앱에서 카메라 권한 요청 흐름을 구현해줘", "agent": "android-device", "depth": 2, "task_kind": "implement", "lang": "ko"}
+{"text": "adb logcat에서 이 크래시 스택트레이스의 원인을 찾아줘", "agent": "android-device", "depth": 3, "task_kind": "debug", "lang": "ko"}
+{"text": "gradle 빌드가 의존성 충돌로 실패하는데 해결해줘", "agent": "android-device", "depth": 2, "task_kind": "debug", "lang": "ko"}
+{"text": "Jetpack Compose 상태 호이스팅을 설명해줘", "agent": "android-device", "depth": 0, "task_kind": "explain", "lang": "ko"}
+{"text": "에뮬레이터에 APK 설치하고 실행하는 명령을 알려줘", "agent": "android-device", "depth": 0, "task_kind": "ops", "lang": "ko"}
+{"text": "Add a foreground service that keeps the upload running", "agent": "android-device", "depth": 2, "task_kind": "implement", "lang": "en"}
+{"text": "The app is killed in the background on Android 14; fix battery restrictions handling", "agent": "android-device", "depth": 3, "task_kind": "debug", "lang": "en"}
+{"text": "Migrate the Gradle build to Kotlin DSL with a version catalog", "agent": "android-device", "depth": 3, "task_kind": "refactor", "lang": "en"}
+{"text": "Explain runtime permissions vs manifest permissions", "agent": "android-device", "depth": 0, "task_kind": "explain", "lang": "en"}
+{"text": "Build a release AAB signed with the upload key", "agent": "android-device", "depth": 1, "task_kind": "ops", "lang": "en"}
+{"text": "이 훅에 대한 Vitest 단위 테스트를 작성해줘", "agent": "testing", "depth": 1, "task_kind": "implement", "lang": "ko"}
+{"text": "Playwright e2e 테스트가 CI에서만 가끔 실패하는 원인을 찾아줘", "agent": "testing", "depth": 3, "task_kind": "debug", "lang": "ko"}
+{"text": "로그인 흐름의 e2e 테스트를 추가해줘", "agent": "testing", "depth": 2, "task_kind": "implement", "lang": "ko"}
+{"text": "테스트 커버리지 리포트에서 우선 채워야 할 부분을 알려줘", "agent": "testing", "depth": 1, "task_kind": "explain", "lang": "ko"}
+{"text": "테스트 픽스처를 공유 헬퍼로 정리해줘", "agent": "testing", "depth": 2, "task_kind": "refactor", "lang": "ko"}
+{"text": "Write integration tests for the /api/projects endpoints", "agent": "testing", "depth": 2, "task_kind": "implement", "lang": "en"}
+{"text": "This test passes locally but fails in CI with a timeout; make it deterministic", "agent": "testing", "depth": 3, "task_kind": "debug", "lang": "en"}
+{"text": "Mock the websocket in the chat tests without touching production code", "agent": "testing", "depth": 2, "task_kind": "implement", "lang": "en"}
+{"text": "What is the difference between vi.mock and vi.spyOn?", "agent": "testing", "depth": 0, "task_kind": "explain", "lang": "en"}
+{"text": "Refactor the test suite to use a shared server fixture", "agent": "testing", "depth": 2, "task_kind": "refactor", "lang": "en"}
+{"text": "이 모듈의 README를 작성해줘", "agent": "docs", "depth": 1, "task_kind": "explain", "lang": "ko"}
+{"text": "API 엔드포인트 문서를 표로 정리해줘", "agent": "docs", "depth": 1, "task_kind": "explain", "lang": "ko"}
+{"text": "배포 절차를 운영자용 문서로 만들어줘", "agent": "docs", "depth": 2, "task_kind": "explain", "lang": "ko"}
+{"text": "이 영어 설계 문서를 한국어로 번역해줘", "agent": "docs", "depth": 1, "task_kind": "explain", "lang": "ko"}
+{"text": "변경 이력(CHANGELOG)을 최근 커밋 기준으로 정리해줘", "agent": "docs", "depth": 1, "task_kind": "explain", "lang": "ko"}
+{"text": "Write the architecture overview document for the gateway", "agent": "docs", "depth": 2, "task_kind": "explain", "lang": "en"}
+{"text": "Document the environment variables in a table", "agent": "docs", "depth": 1, "task_kind": "explain", "lang": "en"}
+{"text": "Turn these code comments into a user guide", "agent": "docs", "depth": 2, "task_kind": "explain", "lang": "en"}
+{"text": "Draft release notes for version 1.4", "agent": "docs", "depth": 1, "task_kind": "explain", "lang": "en"}
+{"text": "Improve the wording of this onboarding guide", "agent": "docs", "depth": 1, "task_kind": "explain", "lang": "en"}
+{"text": "모바일에서 채팅 입력창이 키보드에 가려지는 문제를 고쳐줘", "agent": "mobile-responsive", "depth": 2, "task_kind": "debug", "lang": "ko"}
+{"text": "이 화면을 360px 폭에서 깨지지 않게 반응형으로 만들어줘", "agent": "mobile-responsive", "depth": 2, "task_kind": "implement", "lang": "ko"}
+{"text": "PWA 매니페스트와 서비스 워커를 추가해서 설치 가능하게 해줘", "agent": "mobile-responsive", "depth": 2, "task_kind": "implement", "lang": "ko"}
+{"text": "iOS 사파리에서 100vh가 다르게 동작하는 이유를 설명해줘", "agent": "mobile-responsive", "depth": 0, "task_kind": "explain", "lang": "ko"}
+{"text": "터치 타깃 크기와 safe-area를 점검해서 고쳐줘", "agent": "mobile-responsive", "depth": 1, "task_kind": "implement", "lang": "ko"}
+{"text": "Make the sidebar a bottom sheet on phones", "agent": "mobile-responsive", "depth": 2, "task_kind": "implement", "lang": "en"}
+{"text": "The sticky header jumps on iOS when scrolling; fix it", "agent": "mobile-responsive", "depth": 2, "task_kind": "debug", "lang": "en"}
+{"text": "Reduce the mobile bundle: this page loads 3MB of JS", "agent": "mobile-responsive", "depth": 3, "task_kind": "refactor", "lang": "en"}
+{"text": "Explain safe-area-inset and when to use dvh", "agent": "mobile-responsive", "depth": 0, "task_kind": "explain", "lang": "en"}
+{"text": "Add swipe gestures to switch between panels on tablets", "agent": "mobile-responsive", "depth": 2, "task_kind": "implement", "lang": "en"}
+{"text": "이 인증 미들웨어의 보안 취약점을 점검해줘", "agent": "security-review", "depth": 2, "task_kind": "explain", "lang": "ko"}
+{"text": "경로 조작(path traversal) 공격이 가능한지 파일 API를 검토해줘", "agent": "security-review", "depth": 2, "task_kind": "explain", "lang": "ko"}
+{"text": "업로드된 파일명으로 인한 인젝션 위험을 막아줘", "agent": "security-review", "depth": 2, "task_kind": "implement", "lang": "ko"}
+{"text": "CSRF 토큰이 필요한 이유를 설명해줘", "agent": "security-review", "depth": 0, "task_kind": "explain", "lang": "ko"}
+{"text": "의존성 취약점 보고서를 보고 위험도 순으로 조치 계획을 세워줘", "agent": "security-review", "depth": 2, "task_kind": "design", "lang": "ko"}
+{"text": "Review the session cookie settings for security issues", "agent": "security-review", "depth": 1, "task_kind": "explain", "lang": "en"}
+{"text": "Harden the docker socket access in this stack", "agent": "security-review", "depth": 2, "task_kind": "ops", "lang": "en"}
+{"text": "Check this SQL builder for injection risks and fix them", "agent": "security-review", "depth": 2, "task_kind": "debug", "lang": "en"}
+{"text": "Why should secrets never be passed as command-line arguments?", "agent": "security-review", "depth": 0, "task_kind": "explain", "lang": "en"}
+{"text": "Audit the websocket auth handshake for token leakage", "agent": "security-review", "depth": 2, "task_kind": "explain", "lang": "en"}
+{"text": "이 브랜치를 main 위로 rebase 하고 충돌을 해결해줘", "agent": "git-workflow", "depth": 2, "task_kind": "ops", "lang": "ko"}
+{"text": "실수로 삭제한 커밋을 reflog로 복구해줘", "agent": "git-workflow", "depth": 1, "task_kind": "ops", "lang": "ko"}
+{"text": "upstream 포크와 동기화하면서 우리 커밋을 유지하는 방법을 알려줘", "agent": "git-workflow", "depth": 2, "task_kind": "explain", "lang": "ko"}
+{"text": "커밋 3개를 하나로 합쳐줘", "agent": "git-workflow", "depth": 1, "task_kind": "ops", "lang": "ko"}
+{"text": "git bundle로 백업을 만들고 복원하는 절차를 설명해줘", "agent": "git-workflow", "depth": 0, "task_kind": "explain", "lang": "ko"}
+{"text": "Cherry-pick the hotfix commits onto the release branch", "agent": "git-workflow", "depth": 1, "task_kind": "ops", "lang": "en"}
+{"text": "Find which commit introduced the regression with bisect", "agent": "git-workflow", "depth": 2, "task_kind": "debug", "lang": "en"}
+{"text": "Explain rebase vs merge for a long-lived feature branch", "agent": "git-workflow", "depth": 0, "task_kind": "explain", "lang": "en"}
+{"text": "Set up conventional commit messages with a commit-msg hook", "agent": "git-workflow", "depth": 1, "task_kind": "ops", "lang": "en"}
+{"text": "Remove a leaked secret from the git history safely", "agent": "git-workflow", "depth": 3, "task_kind": "ops", "lang": "en"}
+{"text": "Claude Agent SDK로 서브에이전트를 정의하고 호출하는 코드를 작성해줘", "agent": "ai-integration", "depth": 2, "task_kind": "implement", "lang": "ko"}
+{"text": "MCP 서버를 stdio로 만들고 도구 스키마를 정의해줘", "agent": "ai-integration", "depth": 2, "task_kind": "implement", "lang": "ko"}
+{"text": "Laya 같은 소형 결정 모델을 라우팅에 쓰는 방식을 설계해줘", "agent": "ai-integration", "depth": 3, "task_kind": "design", "lang": "ko"}
+{"text": "프롬프트가 길어져서 비용이 늘었는데 컨텍스트 예산을 줄이는 방법을 제안해줘", "agent": "ai-integration", "depth": 2, "task_kind": "design", "lang": "ko"}
+{"text": "Codex SDK에서 developer_instructions 설정이 뭔지 설명해줘", "agent": "ai-integration", "depth": 0, "task_kind": "explain", "lang": "ko"}
+{"text": "Stream tool-call events from the agent SDK to the websocket client", "agent": "ai-integration", "depth": 2, "task_kind": "implement", "lang": "en"}
+{"text": "The agent loops calling the same tool forever; add a guard", "agent": "ai-integration", "depth": 2, "task_kind": "debug", "lang": "en"}
+{"text": "Design a lesson-learning loop that feeds failures back into prompts", "agent": "ai-integration", "depth": 3, "task_kind": "design", "lang": "en"}
+{"text": "Explain the difference between system prompt append and a custom agent prompt", "agent": "ai-integration", "depth": 0, "task_kind": "explain", "lang": "en"}
+{"text": "Register an MCP server for both Claude and Codex without editing config files", "agent": "ai-integration", "depth": 2, "task_kind": "implement", "lang": "en"}
+{"text": "이 로그 파일 5만 줄을 읽고 오류 패턴을 요약해줘", "agent": "generalist", "depth": 2, "task_kind": "bulk_read", "lang": "ko"}
+{"text": "저장소 전체 코드를 훑어서 사용하지 않는 함수를 목록으로 뽑아줘", "agent": "generalist", "depth": 2, "task_kind": "bulk_read", "lang": "ko"}
+{"text": "Read all 300 issue reports and cluster them by root cause", "agent": "generalist", "depth": 2, "task_kind": "bulk_read", "lang": "en"}
+{"text": "Summarize the 40 CSV exports in the data folder", "agent": "generalist", "depth": 2, "task_kind": "bulk_read", "lang": "en"}
+{"text": "오늘 날짜가 뭐야?", "agent": "generalist", "depth": 0, "task_kind": "explain", "lang": "ko"}
+{"text": "package.json의 버전을 1.5.0으로 올려줘", "agent": "generalist", "depth": 0, "task_kind": "implement", "lang": "ko"}
