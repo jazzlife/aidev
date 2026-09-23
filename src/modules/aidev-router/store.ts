@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
-import type { Engine, RouteResult } from '@/modules/aidev-router/api';
+import type { AgentDraft, Engine, RouteResult } from '@/modules/aidev-router/api';
 
 /**
  * Small external store for routing state shared between the composer hook and the
@@ -19,8 +19,24 @@ export type RoutingOverrides = {
   targetId?: number | null;
 };
 
+/** Agent creation in progress (§3.7): architect turn → review card → optional self-check turn. */
+export type PendingCreate = {
+  stage: 'architect' | 'review' | 'selfcheck' | 'done';
+  originalText: string;
+  sessionId: string | null;
+  decisionId: number;
+  draft: AgentDraft | null;
+  agentId: number | null;
+  agentName: string | null;
+  selfCheckResult: { pass: boolean | null; confidence: number; note: string } | null;
+  error: string | null;
+};
+
 export type RoutingState = {
   mode: RoutingMode;
+  pendingCreate: PendingCreate | null;
+  /** Agent forced for exactly the next send (creation re-send, self-check); consumed by beforeSend. */
+  oneShotAgent: string | null;
   busy: boolean;
   last: RouteResult | null;
   lastText: string | null;
@@ -45,7 +61,7 @@ function readMode(): RoutingMode {
   }
 }
 
-let state: RoutingState = { mode: readMode(), busy: false, last: null, lastText: null, error: null, overrides: {}, runId: null, runFinishedAt: null, runFeedback: null };
+let state: RoutingState = { mode: readMode(), pendingCreate: null, oneShotAgent: null, busy: false, last: null, lastText: null, error: null, overrides: {}, runId: null, runFinishedAt: null, runFeedback: null };
 const listeners = new Set<() => void>();
 
 function emit() {

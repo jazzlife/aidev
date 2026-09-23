@@ -30,13 +30,12 @@ export type BeforeSendContext = {
 const ENGINES: Engine[] = ['claude', 'codex'];
 const asEngine = (value: string): Engine | null => (ENGINES.includes(value as Engine) ? value as Engine : null);
 
-function buildAidevPayload(route: RouteResult, runId: number | null, overrides: { agent?: string }) {
-  const agentName = overrides.agent && route.alternatives.some((alternative) => alternative.name === overrides.agent) ? overrides.agent : route.agent.name;
+function buildAidevPayload(route: RouteResult, runId: number | null) {
   return {
     runId,
     decisionId: route.decision_id,
     agent: {
-      name: agentName,
+      name: route.agent.name,
       version: route.agent.version,
       description: route.agent.description,
       prompt: route.agent.definition.prompt,
@@ -72,6 +71,9 @@ export function useAidevRouting() {
     routingStore.patch({ busy: true, error: null });
     try {
       const overrides = current.overrides;
+      // A self-check turn or an explicit agent pick bypasses Laya's agent choice (§3.7, C-07).
+      const forceAgent = current.oneShotAgent || overrides.agent || null;
+      if (current.oneShotAgent) routingStore.patch({ oneShotAgent: null });
       const route = await aidevApi.route({
         text,
         sessionId: context.sessionId,
@@ -81,6 +83,7 @@ export function useAidevRouting() {
         projectHint: context.projectHint ?? null,
         model: overrides.model ?? null,
         effort: overrides.effort ?? null,
+        forceAgent,
       });
       let runId: number | null = null;
       try {
@@ -107,8 +110,18 @@ export function useAidevRouting() {
         return null;
       }
       const applyPlan = !context.userPinnedModel && route.plan.engine !== null && (context.isNewSession || route.plan.engine === asEngine(context.provider));
+      const payload = buildAidevPayload(route, runId);
+      // No fitting specialist: this turn goes to the agent-architect (design only); the original
+      // command is re-sent once the user approves the draft (§3.7). Shallow tasks just run.
+      if (route.decision === 'create' && route.create && !route.create.background && !forceAgent && !current.pendingCreate) {
+        routingStore.patch({ pendingCreate: { stage: 'architect', originalText: text, sessionId: context.sessionId, decisionId: route.decision_id, draft: null, agentId: null, agentName: null, selfCheckResult: null, error: null } });
+        const architect = route.create.architect;
+        payload.agent = { name: architect.name, version: architect.version, description: architect.description, prompt: architect.prompt, tools: architect.tools, model: architect.model, maxTurns: architect.maxTurns, skills: null, mcpServers: null };
+        payload.lessons = [];
+        payload.knowledgeDigest = `## 현재 카탈로그 (name: routing hint)\n${route.create.catalog}`;
+      }
       return {
-        aidev: buildAidevPayload(route, runId, overrides),
+        aidev: payload,
         model: applyPlan ? route.plan.model : null,
         effort: applyPlan ? route.plan.effort : null,
         route,

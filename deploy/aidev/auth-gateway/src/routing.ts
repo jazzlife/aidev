@@ -9,7 +9,7 @@ import { DEPTH_LEVELS, REMOTE_ACTIONS, RISK_LEVELS, TASK_KIND_CRITERIA, decide }
  */
 type Store = ReturnType<typeof openStore>;
 export type EngineAvailability = Record<Engine, { allowed: boolean; authenticated: boolean; error?: string | null }>;
-export type RouteInput = { text: string; sessionId?: string | null; sessionEngine?: Engine | null; preferEngine?: Engine | null; targetId?: number | null; projectHint?: string | null; recentFiles?: string[] | null; model?: string | null; effort?: string | null };
+export type RouteInput = { text: string; sessionId?: string | null; sessionEngine?: Engine | null; preferEngine?: Engine | null; targetId?: number | null; projectHint?: string | null; recentFiles?: string[] | null; model?: string | null; effort?: string | null; /** user override: use this agent regardless of Laya's pick */ forceAgent?: string | null };
 
 export const TIER_TABLE: Record<number, Record<Engine, { model: string; effort: string }>> = {
   0: { claude: { model: 'haiku', effort: 'low' }, codex: { model: 'gpt-5.6-luna', effort: 'low' } },
@@ -94,6 +94,7 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     if (depth <= 1) { decision = 'generalist'; agentName = 'generalist'; reason.push(`ambiguous agent (${agentTop.probability.toFixed(2)}) and shallow → generalist fast path`); }
     else reason.push(`ambiguous agent (${agentTop.probability.toFixed(2)}); using best match, LLM review suggested`);
   } else reason.push(`agent ${agentName} ${(agentTop.probability * 100).toFixed(0)}%`);
+  if (input.forceAgent && store.agent(userId, input.forceAgent)) { agentName = input.forceAgent; decision = 'use'; reason.push(`user override → ${agentName}`); }
   const needsLlmAnalysis = !fallback && (agentTop.probability < 0.5 || depthRaw >= 2.5 || multiDomain > 0.6);
   const askClarify = !fallback && clarify > 0.7 && depth >= 2;
   const agent = store.agent(userId, agentName) ?? store.agent(userId, 'generalist') ?? all[0];
@@ -179,9 +180,17 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     JSON.stringify({ agent: agentName, engine, model: tier.model, effort: tier.effort, depth, task_kind: taskKind, remote_action: remoteAction, target: target?.name ?? null }), JSON.stringify(state).slice(0, 8000), decisionId);
   if (decision === 'use') store.bumpAgentUse(userId, agentName);
 
+  // Creation flow (§3.7): the client sends the same command to the agent-architect meta agent first.
+  const architect = decision === 'create' || decision === 'create_background' ? store.agent(userId, 'agent-architect') : undefined;
+  const create = architect ? {
+    architect: { name: architect.name, version: architect.version, description: architect.description, prompt: architect.prompt, tools: architect.tools ? JSON.parse(architect.tools) as string[] : null, maxTurns: architect.max_turns, model: architect.model },
+    catalog: all.map((a) => `${a.name}: ${routingHint(a)}`).join('\n'),
+    background: decision === 'create_background',
+  } : null;
+
   return {
     decision_id: decisionId,
-    decision, fallback, laya_error: layaError,
+    decision, fallback, laya_error: layaError, create,
     scope: { depth, depth_raw: depthRaw, task_kind: taskKind, task_kind_probability: taskKindP, risk, multi_domain: multiDomain, clarify, remote_action: remoteAction, needs_llm_analysis: needsLlmAnalysis, ask_clarify: askClarify },
     agent: { id: agent.id, name: agent.name, version: agent.version, domain: agent.domain, description: agent.description, probability: agentTop.probability, confidence: agentTop.confidence,
       definition: { prompt, tools: agent.tools ? JSON.parse(agent.tools) as string[] : null, model: agent.model, maxTurns: agent.max_turns, skills: agent.skills ? JSON.parse(agent.skills) as string[] : null, mcpServers: agent.mcp_servers ? JSON.parse(agent.mcp_servers) as Record<string, unknown> : null } },

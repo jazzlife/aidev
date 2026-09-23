@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
 import { api, useChatRealtimeHandlers, useSessionStore, useWebSocket, type LLMProvider, type NormalizedMessage, type PendingPermissionRequest, type ProjectSession } from '@/modules/chat-core';
-import { useAidevRouting, type Engine } from '@/modules/aidev-router';
+import { AgentCreateCard, useAgentCreation, useAidevRouting, type Engine } from '@/modules/aidev-router';
 import { Composer } from '@m/components/Composer';
 import { MessageList } from '@m/components/MessageList';
 import { PermissionSheet } from '@m/components/PermissionSheet';
@@ -80,12 +80,21 @@ export function ChatScreen() {
     onSessionIdle: (id) => { if (!id || id === sessionId) setBusy(false); },
     requestLatestMessages, sessionStore,
   });
+  // Agent creation flow (§3.7): the architect's draft is read from the newest assistant message.
+  const sendRef = useRef<(text: string) => void>(() => undefined);
+  const agentCreation = useAgentCreation({
+    getLastAssistantText: () => { const list = sessionId ? sessionStore.getMessages(sessionId) : []; for (let index = list.length - 1; index >= 0; index -= 1) { const message = list[index]; if (message.kind === 'text' && message.role === 'assistant' && message.content) return message.content; } return null; },
+    resend: (text) => sendRef.current(text),
+  });
+  const agentCreationRef = useRef(agentCreation);
+  useEffect(() => { agentCreationRef.current = agentCreation; });
   // Run outcome signal (§3.8): the provider's `complete` event ends the routed run.
   useEffect(() => subscribe((event) => {
     if (event.kind !== 'complete' || (event.sessionId && event.sessionId !== sessionId)) return;
     const exitCode = typeof event.exitCode === 'number' ? event.exitCode : (event.isError ? 1 : 0);
     void reportOutcome({ exit_code: exitCode });
     setLastRunFinished(Date.now());
+    setTimeout(() => { void agentCreationRef.current.onRunComplete(); }, 400);
   }), [subscribe, sessionId, reportOutcome]);
 
   // ---- send ------------------------------------------------------------------------------------
@@ -128,6 +137,7 @@ export function ChatScreen() {
     });
   }, [beforeSend, busy, meta, navigate, project, provider, sendMessage, sessionStore]);
 
+  useEffect(() => { sendRef.current = (text) => { void send(text); }; }, [send]);
   const abort = useCallback(() => { if (sessionId) sendMessage({ type: 'chat.abort', sessionId }); }, [sendMessage, sessionId]);
   const decidePermission = useCallback((requestId: string, allow: boolean) => {
     sendMessage({ type: 'chat.permission-response', requestId, allow });
@@ -145,6 +155,7 @@ export function ChatScreen() {
       {loadError ? <div className="px-4 py-2 text-danger text-sm">{loadError}</div> : null}
       {!isConnected ? <div className="px-4 py-1 text-[12px] text-warn bg-warn/10">연결 중…</div> : null}
       <MessageList messages={messages} loading={slot?.status === 'loading'} />
+      {agentCreation.pending ? <div className="m-scroll max-h-[45dvh]"><AgentCreateCard compact pending={agentCreation.pending} onApprove={(draft) => { void agentCreation.approve(draft); }} onSelfCheck={agentCreation.runSelfCheck} onDismiss={agentCreation.dismiss} /></div> : null}
       {lastRunFinished && !busy ? <RunFeedback key={lastRunFinished} onFeedback={(value) => { void reportOutcome({ user_feedback: value }); }} /> : null}
       <RouterChip />
       <Composer busy={busy} disabled={!isConnected} onSend={(text) => { void send(text); }} onAbort={abort} placeholder={meta ? undefined : '무엇을 만들까요?'} />

@@ -31,9 +31,13 @@ export type AgentDefinition = {
 
 export type RouteTarget = { id: number; name: string; platform: string | null; tags: string[]; capabilities: unknown } | null;
 
+export type ArchitectDefinition = { name: string; version: number; description: string; prompt: string; tools: string[] | null; maxTurns: number | null; model: string | null };
+
 export type RouteResult = {
   decision_id: number;
   decision: 'use' | 'generalist' | 'create' | 'create_background';
+  /** Present when no fitting agent exists: what to send to the agent-architect first (§3.7). */
+  create: { architect: ArchitectDefinition; catalog: string; background: boolean } | null;
   fallback: boolean;
   laya_error: string | null;
   scope: RouteScope;
@@ -97,7 +101,42 @@ export type RouteRequest = {
   recentFiles?: string[] | null;
   model?: string | null;
   effort?: string | null;
+  forceAgent?: string | null;
 };
+
+/** Draft produced by the agent-architect (parsed from its <aidev-agent> block). */
+export type AgentDraft = {
+  name: string;
+  domain: string;
+  hint: string;
+  description: string;
+  prompt: string;
+  tools: string[] | null;
+  knowledge: Array<{ title: string; body: string; source_url?: string; source_date?: string }>;
+  self_check: { task: string; expected: string } | null;
+};
+
+/** Used by the create-flow watcher (ChatInterface / mobile ChatScreen) to pull the architect's draft out of an assistant message. */
+export function parseAgentDraft(text: string): AgentDraft | null {
+  const match = /<aidev-agent>\s*([\s\S]*?)\s*<\/aidev-agent>/.exec(text);
+  if (!match) return null;
+  try {
+    const raw = JSON.parse(match[1].replace(/^```(?:json)?/m, '').replace(/```$/m, '')) as Record<string, unknown>;
+    if (typeof raw.name !== 'string' || typeof raw.prompt !== 'string') return null;
+    return {
+      name: raw.name.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 41),
+      domain: typeof raw.domain === 'string' ? raw.domain.slice(0, 40) : '',
+      hint: typeof raw.hint === 'string' ? raw.hint.slice(0, 60) : '',
+      description: typeof raw.description === 'string' ? raw.description.slice(0, 600) : '',
+      prompt: raw.prompt,
+      tools: Array.isArray(raw.tools) ? raw.tools.map(String) : null,
+      knowledge: Array.isArray(raw.knowledge) ? raw.knowledge.filter((k): k is Record<string, string> => Boolean(k && typeof k === 'object' && typeof (k as Record<string, unknown>).title === 'string' && typeof (k as Record<string, unknown>).body === 'string')).map((k) => ({ title: k.title, body: k.body, source_url: k.source_url, source_date: k.source_date })) : [],
+      self_check: raw.self_check && typeof raw.self_check === 'object' && typeof (raw.self_check as Record<string, unknown>).task === 'string' ? { task: String((raw.self_check as Record<string, unknown>).task), expected: String((raw.self_check as Record<string, unknown>).expected ?? '') } : null,
+    };
+  } catch {
+    return null;
+  }
+}
 
 async function readJson<T>(response: Response): Promise<T> {
   const data = await response.json().catch(() => ({})) as T & { error?: string };

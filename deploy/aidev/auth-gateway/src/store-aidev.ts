@@ -10,7 +10,7 @@ export const ENGINES: Engine[] = ['claude', 'codex'];
 export const TASK_KINDS = ['bulk_read', 'implement', 'debug', 'refactor', 'design', 'ops', 'explain'] as const;
 export type TaskKind = typeof TASK_KINDS[number];
 
-export type AgentRow = { id: number; name: string; domain: string; description: string; hint: string | null; prompt: string; tools: string | null; model: string | null; max_turns: number | null; owner_id: number | null; source: string; active: number; uses: number; created_at: number; updated_at: number; version: number; skills: string | null; mcp_servers: string | null };
+export type AgentRow = { id: number; name: string; domain: string; description: string; hint: string | null; verified: number; prompt: string; tools: string | null; model: string | null; max_turns: number | null; owner_id: number | null; source: string; active: number; uses: number; created_at: number; updated_at: number; version: number; skills: string | null; mcp_servers: string | null };
 export type AgentVersionRow = { id: number; agent_id: number; version: number; prompt: string; tools: string | null; model: string | null; skills: string | null; mcp_servers: string | null; changelog: string | null; created_at: number };
 export type KnowledgeRow = { id: number; agent_id: number; title: string; body: string; source_url: string | null; source_date: string | null; status: string; superseded_by: number | null; expires_at: number | null; owner_id: number | null; created_at: number; updated_at: number };
 export type LessonRow = { id: number; agent_id: number; engine: string | null; trigger: string; rule: string; evidence_run_id: number | null; status: string; hits: number; owner_id: number | null; promoted_to_prompt: number; created_at: number };
@@ -40,6 +40,7 @@ export function migrateAidev(db: Database.Database) {
   addColumn(db, 'agents', 'skills', 'TEXT');
   addColumn(db, 'agents', 'mcp_servers', 'TEXT');
   addColumn(db, 'agents', 'hint', 'TEXT');   // short routing label Laya reads (4-7 English words)
+  addColumn(db, 'agents', 'verified', 'INTEGER NOT NULL DEFAULT 0');   // generated agents: self-check passed
   db.exec(`
     CREATE TABLE IF NOT EXISTS agent_versions (
       id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
@@ -173,6 +174,7 @@ export function aidevMethods(db: Database.Database) {
       })();
       return version;
     },
+    setAgentVerified(agentId: number, verified: boolean) { db.prepare('UPDATE agents SET verified=?, updated_at=? WHERE id=?').run(verified ? 1 : 0, Date.now(), agentId); },
     promoteAgent(agentId: number) {
       const cur = db.prepare('SELECT * FROM agents WHERE id=?').get(agentId) as AgentRow | undefined;
       if (!cur) throw new Error('Agent not found');

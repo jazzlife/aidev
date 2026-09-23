@@ -11,3 +11,8 @@ export type { AidevSendDecoration, BeforeSendContext } from '@/modules/aidev-rou
 export { useAidevDecide } from '@/modules/aidev-router/hooks/useAidevDecide';
 // Workbench-only UI (the mobile app has its own chip in src-mobile).
 export { AidevRouterBar } from '@/modules/aidev-router/AidevRouterBar';
+export { AgentCreateCard } from '@/modules/aidev-router/AgentCreateCard';
+export { useAgentCreation } from '@/modules/aidev-router/hooks/useAgentCreation';
+export { parseAgentDraft } from '@/modules/aidev-router/api';
+export type { AgentDraft } from '@/modules/aidev-router/api';
+export type { PendingCreate } from '@/modules/aidev-router/store';

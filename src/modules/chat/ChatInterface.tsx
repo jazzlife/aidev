@@ -26,7 +26,7 @@ import {
 } from '@/shared/context/SessionProtectionContext';
 import ChatMessagesPane from '@/modules/chat/transcript/ChatMessagesPane';
 import ChatComposer from '@/modules/chat/composer/ChatComposer';
-import { AidevRouterBar, useAidevRouting } from '@/modules/aidev-router';
+import { AgentCreateCard, AidevRouterBar, useAgentCreation, useAidevRouting } from '@/modules/aidev-router';
 import CommandResultModal from '@/modules/chat/modals/CommandResultModal';
 
 type ChatInterfaceProps = {
@@ -72,13 +72,24 @@ function ChatInterface({
 }: ChatInterfaceProps) {
   const { tasksEnabled, isTaskMasterInstalled } = useTasksSettings();
   const { subscribe } = useWebSocket();
-  // Nado AI Dev: a provider `complete` event ends the routed run started by the last send (§3.8).
+  // Nado AI Dev: a provider `complete` event ends the routed run started by the last send (§3.8)
+  // and advances the agent-creation flow when one is pending (§3.7).
   const { reportOutcome: reportAidevOutcome } = useAidevRouting();
+  const chatMessagesRef = useRef<ChatMessage[]>([]);
+  const agentCreation = useAgentCreation({
+    getLastAssistantText: () => { const list = chatMessagesRef.current; for (let index = list.length - 1; index >= 0; index -= 1) { const message = list[index]; if (message.type === 'assistant' && typeof message.content === 'string' && message.content.trim()) return message.content; } return null; },
+    resend: (text) => { handleVoiceTranscriptRef.current?.(text, true); },
+  });
+  const handleVoiceTranscriptRef = useRef<((text: string, send?: boolean) => void) | null>(null);
+  const agentCreationRef = useRef(agentCreation);
+  useEffect(() => { agentCreationRef.current = agentCreation; });
   useEffect(() => subscribe((event) => {
     if (event.kind !== 'complete') return;
     if (event.sessionId && selectedSession?.id && event.sessionId !== selectedSession.id) return;
     const exitCode = typeof event.exitCode === 'number' ? event.exitCode : (event.isError ? 1 : 0);
     void reportAidevOutcome({ exit_code: exitCode });
+    // the store applies the final assistant text on the same tick; read it after React commits
+    setTimeout(() => { void agentCreationRef.current.onRunComplete(); }, 400);
   }), [reportAidevOutcome, selectedSession?.id, subscribe]);
   const { t } = useTranslation('chat');
   const processingSessions = useProcessingSessions();
@@ -265,6 +276,7 @@ function ChatInterface({
     setPendingPermissionRequests,
     resolvePermissionModeForProvider,
   });
+  useEffect(() => { chatMessagesRef.current = chatMessages; handleVoiceTranscriptRef.current = handleVoiceTranscript; });
 
   // On WebSocket reconnect, request a bounded persisted-tail sync (deferred
   // while Chat is hidden), then re-subscribe — the
@@ -575,6 +587,7 @@ function ChatInterface({
           isTextareaExpanded={isTextareaExpanded}
           sendByCtrlEnter={sendByCtrlEnter}
         />
+          {agentCreation.pending ? <AgentCreateCard pending={agentCreation.pending} onApprove={(draft) => { void agentCreation.approve(draft); }} onSelfCheck={agentCreation.runSelfCheck} onDismiss={agentCreation.dismiss} /> : null}
           <AidevRouterBar />
         </div>
       </div>

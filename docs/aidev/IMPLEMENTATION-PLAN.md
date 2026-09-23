@@ -363,9 +363,9 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 **F 완료 기준**: F-12 e2e, F-11 점검 통과, 러너 3 OS 바이너리 존재(macOS는 Mac 빌드).
 
 ### D. 생성 (목표: 없는 분야를 스스로 만들어 검증하고 쓴다)
-- [ ] D-01 `agent-architect` 프롬프트·출력 스키마 확정(3.7), 시드에 포함
-- [ ] D-02 프런트 watcher: `<aidev-agent>` 파싱 → `AgentCreateCard`
-- [ ] D-03 승인 → `POST /agents`(knowledge sourced 포함) → 자가 검증 턴 → Laya `selfcheck.pass` → 활성화 → 원래 명령 자동 재전송
+- [~] 확정(hint 필드 포함), 로컬 e2e에서 Claude가 3개 출처 지식과 함께 설계 블록 출력 — D-01 `agent-architect` 프롬프트·출력 스키마 확정(3.7), 시드에 포함
+- [~] 구현(작업대·모바일 공용 useAgentCreation + AgentCreateCard), 로컬 e2e 확인 — D-02 프런트 watcher: `<aidev-agent>` 파싱 → `AgentCreateCard`
+- [~] 승인→생성(knowledge sourced)→원래 명령 재전송(forceAgent)까지 로컬 e2e 확인(runtime 로그 agent=unity-shader-graphics, knowledge 950ch); 자가 검증은 카드의 버튼으로 선택 실행(verified 플래그), 실 Laya 판정은 서버 확인 대기 — D-03 승인 → `POST /agents`(knowledge sourced 포함) → 자가 검증 턴 → Laya `selfcheck.pass` → 활성화 → 원래 명령 자동 재전송
 - [ ] D-04 D0~1 `create_queue` + 동일 분야 3회 반복 시 백그라운드 생성 제안(알림)
 - [ ] D-05 Codex 전용 계정에서 생성 전 과정이 Codex로 동작
 - [ ] D-06 서버 검증: 카탈로그에 없는 분야(예: "Unity 셰이더") 명령 → 생성 → 검증 → 실행 e2e
