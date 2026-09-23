@@ -76,6 +76,7 @@ export type CatalogAgent = {
   name: string;
   domain: string;
   description: string;
+  hint: string | null;
   prompt: string;
   tools: string[] | null;
   model: string | null;
@@ -84,6 +85,7 @@ export type CatalogAgent = {
   mcpServers: Record<string, unknown> | null;
   ownerId: number | null;
   source: string;
+  verified?: boolean;
   active: boolean;
   uses: number;
   version: number;
@@ -165,4 +167,7 @@ export const aidevApi = {
   createRun: (input: Record<string, unknown>) => post('/api/aidev/runs', input).then((response) => readJson<{ run_id: number }>(response)),
   runOutcome: (runId: number, outcome: Record<string, unknown>) => post(`/api/aidev/runs/${runId}/outcome`, outcome, 'PATCH').then((response) => readJson<{ run: Record<string, unknown> }>(response)),
   targets: () => authenticatedFetch('/api/aidev/targets').then((response) => readJson<{ targets: Array<Record<string, unknown>> }>(response)),
+  agentExamples: (id: number) => authenticatedFetch(`/api/aidev/agents/${id}/examples`).then((response) => readJson<{ examples: Array<{ id: number; text: string; source: string }> }>(response)),
+  addAgentExamples: (id: number, examples: string[]) => post(`/api/aidev/agents/${id}/examples`, { examples }).then((response) => readJson<{ added: number }>(response)),
+  routeEval: () => post('/api/aidev/route/eval', {}).then((response) => readJson<Record<string, unknown>>(response)),
 };

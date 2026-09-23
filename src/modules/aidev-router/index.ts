@@ -16,3 +16,4 @@ export { useAgentCreation } from '@/modules/aidev-router/hooks/useAgentCreation'
 export { parseAgentDraft } from '@/modules/aidev-router/api';
 export type { AgentDraft } from '@/modules/aidev-router/api';
 export type { PendingCreate } from '@/modules/aidev-router/store';
+export { AgentCatalog } from '@/modules/aidev-router/AgentCatalog';

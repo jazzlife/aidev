@@ -11,6 +11,7 @@ import { TaskMasterPanel, useTaskMasterProjectSync, useTasksSettings } from '@/m
 import { useUiPreferences } from '@/shared/context/UiPreferencesContext';
 import { useFileOpenResolver, WorkspaceErrorBoundary, WorkspaceStateView } from '@/modules/project-workspace';
 import type { DirectoryRevealRequest, WorkspaceMainProps } from '@/shared/types';
+import { AgentCatalog } from '@/modules/aidev-router';
 import { EditorGroup, useEditorGroup } from '@/modules/workbench/EditorGroup';
 import { SplitHandle } from '@/modules/workbench/SplitHandle';
 import { layoutStore, useWorkbenchLayout, type BottomTab, type SideView, type TabletPane } from '@/modules/workbench/layoutStore';
@@ -151,7 +152,7 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
           <div className="shrink-0 min-w-[200px] overflow-hidden border-r border-border flex flex-col" style={{ width: layout.sideWidth }}>
             <div className="h-8 px-3 flex items-center text-[11px] uppercase tracking-wide text-muted-foreground border-b border-border shrink-0">{SIDE_VIEWS.find((view) => view.id === sideView)?.title}</div>
             <div className="flex-1 min-h-0 overflow-hidden">
-              {sideView === 'explorer' ? explorer : sideView === 'git' ? git : sideView === 'targets' ? placeholder('원격 대상') : placeholder('Agent 카탈로그')}
+              {sideView === 'explorer' ? explorer : sideView === 'git' ? git : sideView === 'targets' ? placeholder('원격 대상') : <AgentCatalog />}
             </div>
           </div>
           <SplitHandle edge="right" size={layout.sideWidth} min={200} max={600} onSize={(size) => layoutStore.patch('desktop', { sideWidth: size })} />

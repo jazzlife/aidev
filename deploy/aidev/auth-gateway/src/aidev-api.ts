@@ -216,6 +216,13 @@ export function createAidevApi(deps: AidevDeps) {
         }
         const final = store.updateRun(uid, id, { outcome });
         if (final.decision_id) store.finalizeDecision(uid, final.decision_id, null, outcome);
+        // Learning loop (§3.8): a successful run with a specialist confirms the routing — the command
+        // becomes an example for that agent, so the lexical prior sharpens with real usage.
+        if (outcome === 'success' && final.agent_id && final.decision_id && row.outcome !== 'success') {
+          const decisionRow = store.db.prepare('SELECT command FROM decision_log WHERE id=?').get(final.decision_id) as { command: string } | undefined;
+          const agent = store.agentById(final.agent_id);
+          if (decisionRow && agent && agent.name !== 'generalist' && agent.domain !== 'meta') store.addExamples(agent.id, [{ text: decisionRow.command, source: 'run' }]);
+        }
         return json(res, 200, { run: final, classified }), true;
       }
 
