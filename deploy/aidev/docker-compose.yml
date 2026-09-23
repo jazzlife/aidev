@@ -93,7 +93,7 @@ services:
       LAYA_DEVICE: ${LAYA_DEVICE:-auto}
       HF_HOME: /models
       HF_HUB_OFFLINE: "1"             # weights are pre-fetched into the models volume (laya-image.sh models)
-      HSA_OVERRIDE_GFX_VERSION: ${HSA_OVERRIDE_GFX_VERSION:-}
+      HSA_OVERRIDE_GFX_VERSION: ${HSA_OVERRIDE_GFX_VERSION:-11.5.0}   # gfx1150 (Radeon 890M); an empty value breaks HSA device enumeration
     volumes:
       - app:/srv/app:ro
       - models:/models

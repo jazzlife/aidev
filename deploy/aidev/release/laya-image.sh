@@ -27,8 +27,8 @@ case "${1:-}" in
       python -c "import laya,time; t=time.time(); a=laya.load('$MODEL', device='cpu'); print('downloaded', '$MODEL', 'in', round(time.time()-t,1), 's')"
     echo " ✓ weights in aidev_models" ;;
   gpu)
-    docker run --rm "${GPU_ARGS[@]}" -v aidev_models:/models -e HF_HOME=/models -e HF_HUB_OFFLINE=1 \
-      -e HSA_OVERRIDE_GFX_VERSION="${HSA_OVERRIDE_GFX_VERSION:-}" "$IMG:latest" python - <<'PY'
+    docker run --rm -i "${GPU_ARGS[@]}" -v aidev_models:/models -e HF_HOME=/models -e HF_HUB_OFFLINE=1 \
+      -e HSA_OVERRIDE_GFX_VERSION="${HSA_OVERRIDE_GFX_VERSION:-11.5.0}" "$IMG:latest" python - <<'PY'
 import torch, time
 print("torch", torch.__version__, "hip", getattr(torch.version, "hip", None), "cuda_available", torch.cuda.is_available())
 if torch.cuda.is_available():
@@ -47,7 +47,7 @@ PY
   gpu-diag)
     echo "## host devices"; ls -la /dev/kfd /dev/dri; getent group video render
     echo "## HIP init inside the image (no env override)"
-    docker run --rm "${GPU_ARGS[@]}" "$IMG:latest" python - <<'PY' || true
+    docker run --rm -i "${GPU_ARGS[@]}" -e HSA_OVERRIDE_GFX_VERSION="${HSA_OVERRIDE_GFX_VERSION:-11.5.0}" "$IMG:latest" python - <<'PY' || true
 import os, torch
 print("torch", torch.__version__, "hip", getattr(torch.version,"hip",None))
 print("HSA_OVERRIDE_GFX_VERSION=", repr(os.environ.get("HSA_OVERRIDE_GFX_VERSION")))
