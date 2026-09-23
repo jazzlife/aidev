@@ -772,11 +772,23 @@ export function useChatComposerState({
       // via the session gateway. There is no client-visible session-id
       // handoff later — this id stays valid for the conversation's lifetime.
       let targetSessionId = selectedSession?.id || currentSessionId || null;
+      // Routing (IMPLEMENTATION-PLAN §3.1) runs before a brand-new session is allocated: the plan's
+      // engine decides the provider of that session (sessions are provider-bound), so a Codex plan
+      // never lands on a Claude session with a Codex model — and vice versa.
+      const aidevDecoration = await aidevBeforeSend(messageContent, {
+        sessionId: targetSessionId,
+        provider,
+        isNewSession: !targetSessionId,
+        projectHint: typeof selectedProject?.displayName === 'string' ? selectedProject.displayName : (typeof selectedProject?.name === 'string' ? selectedProject.name : null),
+        userPinnedModel: false,
+      });
+      const plannedEngine = aidevDecoration?.route.plan.engine;
+      const sessionProvider: LLMProvider = !targetSessionId && (plannedEngine === 'claude' || plannedEngine === 'codex') ? plannedEngine : provider;
       if (!targetSessionId) {
         let createdSessionName = sessionSummary;
         try {
           const response = await api.providers.createSession({
-            provider,
+            provider: sessionProvider,
             projectPath: resolvedProjectPath,
             initialMessage: messageContent,
           });
@@ -814,7 +826,7 @@ export function useChatComposerState({
         }
 
         onSessionEstablished?.(targetSessionId, {
-          provider,
+          provider: sessionProvider,
           project: selectedProject,
           summary: createdSessionName,
         });
@@ -846,13 +858,6 @@ export function useChatComposerState({
       setTimeout(() => scrollToBottom(), 100);
 
       const baseSendOptions = queuedSubmission?.options ?? buildSendOptions(messageContent);
-      const aidevDecoration = await aidevBeforeSend(messageContent, {
-        sessionId: targetSessionId,
-        provider,
-        isNewSession: !(selectedSession?.id || currentSessionId),
-        projectHint: typeof selectedProject?.displayName === 'string' ? selectedProject.displayName : (typeof selectedProject?.name === 'string' ? selectedProject.name : null),
-        userPinnedModel: false,
-      });
       const routedSendOptions = aidevDecoration
         ? {
           ...baseSendOptions,

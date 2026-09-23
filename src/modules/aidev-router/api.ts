@@ -44,7 +44,7 @@ export type RouteResult = {
   agent: { id: number; name: string; version: number; domain: string; description: string; probability: number; confidence: number; definition: AgentDefinition };
   alternatives: Array<{ name: string; probability: number; description: string }>;
   needs_new: number;
-  plan: { engine: Engine | null; engine_locked: boolean; model: string | null; effort: string | null; target: RouteTarget; reason: string[] };
+  plan: { engine: Engine | null; engine_locked: boolean; engine_error?: string | null; model: string | null; effort: string | null; target: RouteTarget; reason: string[] };
   engines: Record<Engine, { allowed: boolean; authenticated: boolean; error?: string | null; score: number | null; notes: string[] }>;
   lessons: Array<{ id: number; trigger: string; rule: string }>;
   knowledge_digest: string | null;

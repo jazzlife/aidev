@@ -19,6 +19,7 @@ export function RouterChip() {
         <Sparkles size={13} className={state.busy ? 'm-pulse text-accent' : 'text-accent'} />
         <span className="truncate">{label}</span>
         {last?.fallback ? <span className="text-warn">· fallback</span> : null}
+        {last?.plan.engine_error ? <span className="text-danger">· {last.plan.engine} 인증 만료</span> : null}
       </button>
       <BottomSheet open={open} onClose={() => setOpen(false)} title="라우팅">
         {!last ? <div className="text-muted">아직 판정된 명령이 없습니다. 명령을 보내면 Laya가 전문 agent·엔진·모델을 고릅니다.</div> : (

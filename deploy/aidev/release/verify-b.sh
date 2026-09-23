@@ -45,6 +45,8 @@ r=$(jget "/api/aidev/decisions?limit=5"); check "$r" 'j.decisions.length>=3' "de
 echo "## routing eval on the held-out bench set (Laya-only vs lexical prior vs fused)"
 r=$(jpost /api/aidev/route/eval '{}'); echo "$r" | cut -c1-600; echo "task_kind: $(echo "$r" | sed -n 's/.*"kind":{\([^}]*}\).*/\1/p' | cut -c1-400)"; check "$r" 'j.kind && j.kind.bulk_read_recall>=0.75' "task_kind fusion: bulk_read recall >= 0.75 (laya $(echo "$r" | sed -n 's/.*"kind":{[^}]*"laya_only":\([0-9.]*\).*/\1/p') nb $(echo "$r" | sed -n 's/.*"kind":{[^}]*"lexical_only":\([0-9.]*\).*/\1/p') fused $(echo "$r" | sed -n 's/.*"kind":{[^}]*"fused":\([0-9.]*\).*/\1/p') best α $(echo "$r" | sed -n 's/.*"kind":{[^}]*"best_alpha":\([0-9.]*\).*/\1/p'))"; check "$r" 'j.fused>=0.75' "fused routing accuracy >= 0.75 (laya $(echo "$r" | sed -n 's/.*"laya_only":\([0-9.]*\).*/\1/p') nb $(echo "$r" | sed -n 's/.*"lexical_only":\([0-9.]*\).*/\1/p') fused $(echo "$r" | sed -n 's/.*"fused":\([0-9.]*\).*/\1/p') best α $(echo "$r" | sed -n 's/.*"best_alpha":\([0-9.]*\).*/\1/p'))"
 
+echo "## recent routing decisions (signals behind each pick)"
+docker exec aidev-auth-gateway node /srv/app/current/control/gateway/dist/manage-users.js decisions 6 2>&1 | grep -v "^$" | head -24
 echo "## runtime logs: aidev routing applied (send a chat message first; B-13)"
 for c in $(docker ps --format '{{.Names}}' | grep '^aidev-cloudcli-'); do
   n=$(docker logs --since 24h "$c" 2>&1 | grep -c "aidev routing"); echo "$c: $n routed turns"

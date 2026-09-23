@@ -324,6 +324,7 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 - [~] 구현 완료(developer_instructions + mcp_servers config), 서버 확인 대기 — B-10 `codex-runtime.provider.ts`: `options.aidev` → `new Codex({config:{developer_instructions, mcp_servers}})`
 - [ ] (D-03으로 이동: 지식 팩 SKILL.md 볼륨은 agent 생성 단계에서 함께 구현; 현재는 knowledge_digest 프롬프트 주입으로 대체) B-11 `runtime/entrypoint.mjs`: `aidev_agents` 볼륨 → `~/.claude/skills`, `~/.agents/skills` 링크; runtime-manager가 볼륨 마운트(ro)
 - [~] 구현·typecheck/lint 통과, 서버 확인 대기 — B-12 프런트 `aidev-router/` api.ts, store.ts, useAidevRouting.ts(beforeSend, clarify), useAidevDecide.ts + `useChatComposerState.ts` 훅 연결 (bar 없이도 동작)
+- [~] B-13 서버 검증(2026-09-24, 639d88db): "react로 간단한 todo 앱 만들어봐" → 라우팅 로그는 찍혔으나 (1) 런타임 Claude OAuth 만료로 Codex plan이 나왔는데 워크벤치가 세션을 UI provider(Claude)로 먼저 만들어 Codex 모델을 Claude 세션에 적용 → 실패, (2) 어휘 prior가 generalist 예시에 잠식돼 create 경로(agent-architect)로 빠짐. 수정: 라우팅→세션 생성 순서(plan.engine으로 생성), generalist 예시 제외+저신뢰 규칙, create는 어휘 확신 <0.6일 때만, `plan.engine_error` 표시, `relay.sh claude-token`(setup-token 장기 토큰 설치). 재검증 대기
 - [ ] B-13 서버 검증: 한국어 React 명령 → `/route` → Claude 세션에서 `frontend-react` agent로 실행됨을 런타임 로그(`agents` 옵션)로 확인; Codex 세션에서 `developer_instructions` 적용 확인; agent가 `aidev_decide`를 호출한 로그 확인
 - [ ] B-14 Codex 전용 계정 시나리오: 테스트 계정 `engines=codex` → route가 Claude를 제외하는지, 실패 상향이 Codex 내부에 머무는지
 - [~] B-15 `bulk_read` 명령("이 로그 5만 줄 분석해줘")이 두-엔진 계정에서 Codex로 가는지

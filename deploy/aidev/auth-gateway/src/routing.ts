@@ -71,11 +71,13 @@ export async function evaluateRouting(store: Store, laya: LayaClient, userId: nu
     items.push({ text: row.text, agent: row.agent, lang: row.lang, kind: row.task_kind ?? null, laya: layaP, nb: nbP, kindLaya: kindLayaP, kindNb: kindP });
   }
   const top = (p: Record<string, number>) => Object.entries(p).sort((a, b) => b[1] - a[1])[0]?.[0];
+  // agent picks mirror route(): a best match under 0.5 is the generalist (the prior is never trained on it)
+  const topAgent = (p: Record<string, number>) => { const best = Object.entries(p).sort((a, b) => b[1] - a[1])[0]; return best ? (best[1] < 0.5 ? 'generalist' : best[0]) : undefined; };
   const acc = (pick: (item: typeof items[number]) => string | undefined, filter?: (item: typeof items[number]) => boolean) => {
     const subset = filter ? items.filter(filter) : items; if (!subset.length) return null;
     return Number((subset.filter((item) => pick(item) === item.agent).length / subset.length).toFixed(3));
   };
-  const sweep = [0, 0.2, 0.35, 0.5, 0.65, 0.8, 1].map((alpha) => ({ alpha, accuracy: acc((item) => top(fuse(item.laya, item.nb, alpha, (name) => (nb.count(name) >= MIN_EXAMPLES ? alpha : 0.85)))) }));
+  const sweep = [0, 0.2, 0.35, 0.5, 0.65, 0.8, 1].map((alpha) => ({ alpha, accuracy: acc((item) => topAgent(fuse(item.laya, item.nb, alpha, (name) => (nb.count(name) >= MIN_EXAMPLES ? alpha : 0.85)))) }));
   const best = sweep.reduce((a, b) => ((b.accuracy ?? 0) > (a.accuracy ?? 0) ? b : a));
   // task_kind: same three-way comparison on the rows that carry a label
   const labelled = items.filter((item) => item.kind);
@@ -92,10 +94,10 @@ export async function evaluateRouting(store: Store, laya: LayaClient, userId: nu
   return {
     kind,
     n: items.length, catalog: names.length, examples: store.exampleCount(), laya_failures: layaFailures, laya_weight: LAYA_WEIGHT,
-    laya_only: acc((item) => (item.laya ? top(item.laya) : undefined)), lexical_only: acc((item) => top(item.nb)),
-    fused: acc((item) => top(fuse(item.laya, item.nb, LAYA_WEIGHT, alphaFor))),
-    fused_ko: acc((item) => top(fuse(item.laya, item.nb, LAYA_WEIGHT, alphaFor)), (item) => item.lang === 'ko'),
-    fused_en: acc((item) => top(fuse(item.laya, item.nb, LAYA_WEIGHT, alphaFor)), (item) => item.lang === 'en'),
+    laya_only: acc((item) => (item.laya ? topAgent(item.laya) : undefined)), lexical_only: acc((item) => topAgent(item.nb)),
+    fused: acc((item) => topAgent(fuse(item.laya, item.nb, LAYA_WEIGHT, alphaFor))),
+    fused_ko: acc((item) => topAgent(fuse(item.laya, item.nb, LAYA_WEIGHT, alphaFor)), (item) => item.lang === 'ko'),
+    fused_en: acc((item) => topAgent(fuse(item.laya, item.nb, LAYA_WEIGHT, alphaFor)), (item) => item.lang === 'en'),
     sweep, best_alpha: best.alpha, ms: Date.now() - t0,
   };
 }
@@ -139,6 +141,7 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   let needsNew = 0, depthRaw = 1, risk = 1, multiDomain = 0, clarify = 0, taskKind = 'implement', taskKindP = 0, remoteAction = 'none', remoteActionP = 0;
   let probabilities: Record<string, unknown> = {};
   const nbProbs = lexicalPrior(store, text, Object.keys(criteria));
+  const nbTop = topChoice({ probabilities: nbProbs });
   const kindProbs = kindPrior(store, text);
   let layaProbs: Record<string, number> | null = null;
   try {
@@ -174,7 +177,8 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   let decision: 'use' | 'generalist' | 'create' | 'create_background' = 'use';
   if (fallback && agentTop.probability < 0.5) { agentName = 'generalist'; decision = 'generalist'; }
   else if (fallback) { reason.push(`lexical prior ${agentName} ${(agentTop.probability * 100).toFixed(0)}%`); }
-  else if (needsNew >= 0.5 && agentTop.probability < 0.7) {
+  else if (needsNew >= 0.5 && agentTop.probability < 0.7 && nbTop.probability < 0.6) {
+    // Laya's needs_new is noisy; a confident lexical match ("react로 todo 앱" → frontend-react) vetoes creation.
     decision = depth >= 2 ? 'create' : 'create_background';
     agentName = 'generalist';
     reason.push(`no fitting agent (needs_new ${needsNew.toFixed(2)}, best ${agentTop.choice} ${agentTop.probability.toFixed(2)}) → ${decision}`);
@@ -205,7 +209,12 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   const usable = (['claude', 'codex'] as Engine[]).filter((e) => scores[e].score !== null);
   let engine: Engine | null = null; let engineLocked = false;
   const acct = store.accountEngines(userId);
-  if (input.sessionEngine && engines[input.sessionEngine]?.allowed) { engine = input.sessionEngine; engineLocked = true; reason.push(`session is bound to ${engine}`); }
+  let engineError: string | null = null;
+  if (input.sessionEngine && engines[input.sessionEngine]?.allowed) {
+    engine = input.sessionEngine; engineLocked = true; reason.push(`session is bound to ${engine}`);
+    // the bound engine cannot run right now (expired OAuth, missing key): say so instead of failing mid-turn
+    if (!engines[engine].authenticated) { engineError = engines[engine].error ?? `${engine} is not authenticated`; reason.push(`${engine} unavailable: ${engineError}`); }
+  }
   else if (input.preferEngine && usable.includes(input.preferEngine)) { engine = input.preferEngine; reason.push(`user prefers ${engine}`); }
   else if (usable.length) {
     const best = Math.max(...usable.map((e) => scores[e].score!));
@@ -284,7 +293,7 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
       definition: { prompt, tools: agent.tools ? JSON.parse(agent.tools) as string[] : null, model: agent.model, maxTurns: agent.max_turns, skills: agent.skills ? JSON.parse(agent.skills) as string[] : null, mcpServers: agent.mcp_servers ? JSON.parse(agent.mcp_servers) as Record<string, unknown> : null } },
     alternatives: agentTop.ranked.filter(([name]) => name !== agentName).slice(0, 3).map(([name, probability]) => ({ name, probability, description: descriptions[name] })),
     needs_new: needsNew, shortlisted,
-    plan: { engine, engine_locked: engineLocked, model: tier.model, effort: tier.effort, target: target ? { id: target.id, name: target.name, platform: target.platform, tags: target.tags ? JSON.parse(target.tags) as string[] : [], capabilities: target.capabilities ? JSON.parse(target.capabilities) as unknown : null } : null, reason },
+    plan: { engine, engine_locked: engineLocked, engine_error: engineError, model: tier.model, effort: tier.effort, target: target ? { id: target.id, name: target.name, platform: target.platform, tags: target.tags ? JSON.parse(target.tags) as string[] : [], capabilities: target.capabilities ? JSON.parse(target.capabilities) as unknown : null } : null, reason },
     engines: { claude: { ...engines.claude, score: scores.claude.score, notes: scores.claude.parts }, codex: { ...engines.codex, score: scores.codex.score, notes: scores.codex.parts } },
     lessons: lessons.map((l) => ({ id: l.id, trigger: l.trigger, rule: l.rule })),
     knowledge_digest: knowledgeDigest || null,

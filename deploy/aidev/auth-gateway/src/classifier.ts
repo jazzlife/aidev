@@ -83,9 +83,12 @@ export function fuse(laya: Record<string, number> | null, nb: Record<string, num
   if (!nb || Object.keys(nb).length === 0) return laya;
   const names = Object.keys(laya);
   const eps = 1e-6;
+  // A name the lexical model has no opinion about (the generalist, which is never trained) gets a
+  // uniform share rather than zero, so Laya alone decides its share.
+  const uniform = 1 / Math.max(1, Object.keys(nb).length + 1);
   // Agents the lexical model knows little about (a freshly created agent) keep Laya's opinion:
   // their alpha leans toward Laya so a sparse pseudo-document cannot bury a confident pick.
-  const scores = names.map((name) => { const a = alphaFor ? alphaFor(name) : alpha; return a * Math.log((laya[name] ?? 0) + eps) + (1 - a) * Math.log((nb[name] ?? 0) + eps); });
+  const scores = names.map((name) => { const a = alphaFor ? alphaFor(name) : alpha; return a * Math.log((laya[name] ?? 0) + eps) + (1 - a) * Math.log((nb[name] ?? uniform) + eps); });
   const max = Math.max(...scores);
   const exps = scores.map((s) => Math.exp(s - max));
   const z = exps.reduce((a, b) => a + b, 0);

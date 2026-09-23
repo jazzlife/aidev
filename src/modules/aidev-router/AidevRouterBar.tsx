@@ -46,6 +46,7 @@ export function AidevRouterBar() {
               {last.fallback ? <span className="text-amber-600">fallback</span> : null}
               <ChevronDown size={11} />
             </button>
+            {last.plan.engine_error ? <span className={`${chip} border-red-300 text-red-600`} title={last.plan.engine_error}>{last.plan.engine}: 인증 만료 — 이 세션은 실행되지 않습니다 (관리자: 런타임에서 다시 로그인)</span> : null}
             {open === 'agent' ? (
               <div className="absolute left-0 top-7 z-30 w-72 rounded-md border border-border bg-popover shadow-md p-1" onClick={(event) => event.stopPropagation()}>
                 {[{ name: last.agent.name, probability: last.agent.probability, description: last.agent.description }, ...last.alternatives].map((alternative) => (

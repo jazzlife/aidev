@@ -194,9 +194,15 @@ export function aidevMethods(db: Database.Database) {
     /** Bumped whenever examples or agents change; the lexical prior retrains lazily on change. */
     examplesVersion() { return exampleVersion; },
     /** Examples plus one pseudo-example per active agent (name + hint + description) so agents without examples still have a lexical footprint. */
+    /**
+     * Training rows for the lexical agent prior. The generalist is a fallback, not a domain: its
+     * examples are generic phrasing ("간단한 앱 만들어봐") that swamps weak domain signals, so they are
+     * left out and "generalist" is reached through low confidence instead (bench: same accuracy,
+     * "react로 간단한 todo 앱" moves from generalist 0.82 to frontend-react 0.76).
+     */
     allExamples() {
-      const rows = db.prepare('SELECT e.text, a.name AS agent FROM agent_examples e JOIN agents a ON a.id=e.agent_id WHERE a.active=1').all() as Array<{ text: string; agent: string }>;
-      const pseudo = (db.prepare("SELECT name, hint, description FROM agents WHERE active=1 AND domain!='meta'").all() as Array<{ name: string; hint: string | null; description: string }>)
+      const rows = db.prepare("SELECT e.text, a.name AS agent FROM agent_examples e JOIN agents a ON a.id=e.agent_id WHERE a.active=1 AND a.name!='generalist' AND a.domain!='meta'").all() as Array<{ text: string; agent: string }>;
+      const pseudo = (db.prepare("SELECT name, hint, description FROM agents WHERE active=1 AND domain!='meta' AND name!='generalist'").all() as Array<{ name: string; hint: string | null; description: string }>)
         .map((a) => ({ text: `${a.name.replace(/-/g, ' ')} ${a.hint ?? ''} ${a.description}`, agent: a.name }));
       return [...rows, ...pseudo];
     },
