@@ -61,7 +61,7 @@ export function RouterChip() {
                   );
                 })}
               </div>
-              <div className="text-[12px] text-muted mt-2">{last.plan.model} / {last.plan.effort}{last.plan.engine_locked ? ' · 이 세션은 엔진 고정' : ''}</div>
+              <div className="text-[12px] text-muted mt-2">{last.plan.model ? `${last.plan.model} / ${last.plan.effort ?? "-"}` : "모델 미정 (사용 가능한 엔진 없음)"}{last.plan.engine_locked ? ' · 이 세션은 엔진 고정' : ''}</div>
               <ul className="text-[11px] text-muted mt-1 list-disc pl-4">{last.plan.reason.map((reason) => <li key={reason}>{reason}</li>)}</ul>
             </div>
             {last.lessons.length ? <div><div className="text-[12px] text-muted mb-1">주입된 교훈</div><ul className="text-[12px] list-disc pl-4">{last.lessons.map((lesson) => <li key={lesson.id}>{lesson.trigger} → {lesson.rule}</li>)}</ul></div> : null}

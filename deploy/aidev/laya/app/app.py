@@ -59,7 +59,9 @@ def load_model():
         agent.predict("warm up", {"q": {"type": "noul", "instructions": "Is this a warm-up?"}})
         with LOCK:
             cfg = getattr(agent, "cfg", {}) or {}
-            STATE.update(loaded=True, device=str(agent.device), agent=agent, gpu=gpu,
+            # PyTorch ROCm exposes AMD GPUs through the torch.cuda API, so `device` reads "cuda" on the Radeon 890M.
+            backend = "rocm" if getattr(torch.version, "hip", None) else ("cuda" if dev == "cuda" else "cpu")
+            STATE.update(loaded=True, device=str(agent.device), backend=backend, agent=agent, gpu=gpu,
                          load_seconds=round(time.time() - t0, 1), laya=laya.__version__, torch=torch.__version__,
                          max_len=cfg.get("max_len"), head_max_len=cfg.get("head_max_len"))
         print(f"[laya] loaded {MODEL} on {agent.device} ({gpu}) in {STATE['load_seconds']}s", flush=True)
