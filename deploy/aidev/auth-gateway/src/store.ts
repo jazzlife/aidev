@@ -77,10 +77,10 @@ export function openStore(filename: string) {
     },
     bumpAgentUse(userId: number, name: string) { db.prepare('UPDATE agents SET uses=uses+1 WHERE name=? AND (owner_id=? OR owner_id IS NULL)').run(name, userId); },
     /** Seed routing examples for global agents (idempotent: (agent,text) unique). Returns rows added. */
-    seedExamples(rows: Array<{ agent: string; text: string; lang?: string | null }>) {
+    seedExamples(rows: Array<{ agent: string; text: string; lang?: string | null; task_kind?: string | null }>) {
       let added = 0;
-      const byAgent = new Map<string, Array<{ text: string; lang?: string | null; source: string }>>();
-      for (const row of rows) { const list = byAgent.get(row.agent) ?? []; list.push({ text: row.text, lang: row.lang ?? null, source: 'seed' }); byAgent.set(row.agent, list); }
+      const byAgent = new Map<string, Array<{ text: string; lang?: string | null; source: string; taskKind?: string | null }>>();
+      for (const row of rows) { const list = byAgent.get(row.agent) ?? []; list.push({ text: row.text, lang: row.lang ?? null, source: 'seed', taskKind: row.task_kind ?? null }); byAgent.set(row.agent, list); }
       for (const [name, items] of byAgent) {
         const agent = db.prepare('SELECT id FROM agents WHERE name=? AND owner_id IS NULL').get(name) as { id: number } | undefined;
         if (agent) added += aidev.addExamples(agent.id, items);

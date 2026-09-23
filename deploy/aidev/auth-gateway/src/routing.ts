@@ -5,13 +5,24 @@ import { DEPTH_LEVELS, REMOTE_ACTIONS, RISK_LEVELS, TASK_KIND_CRITERIA, decide }
 import { NaiveBayesRouter, fuse } from './classifier.js';
 
 /** Weight of Laya vs the lexical prior in the fused agent choice (tuned on the bench set; env LAYA_WEIGHT). */
-export const LAYA_WEIGHT = Math.max(0, Math.min(1, Number(process.env.LAYA_WEIGHT ?? 0.35)));
+export const LAYA_WEIGHT = Math.max(0, Math.min(1, Number(process.env.LAYA_WEIGHT ?? 0.3)));   // bench 2026-09-23: plateau 0.2–0.35 (0.833)
+/** Weight of Laya vs the lexical prior for task_kind (env LAYA_KIND_WEIGHT). */
+export const LAYA_KIND_WEIGHT = Math.max(0, Math.min(1, Number(process.env.LAYA_KIND_WEIGHT ?? 0.35)));
 const nb = new NaiveBayesRouter();
+const kindNb = new NaiveBayesRouter();
 let nbVersion = -1;
+function retrain(store: Store) {
+  if (nbVersion !== store.examplesVersion() || nb.size === 0) { nb.train(store.allExamples()); kindNb.train(store.kindExamples()); nbVersion = store.examplesVersion(); }
+}
 /** Lexical prior over the caller's catalog; retrained lazily when examples change. */
 export function lexicalPrior(store: Store, text: string, names: string[]) {
-  if (nbVersion !== store.examplesVersion() || nb.size === 0) { nb.train(store.allExamples()); nbVersion = store.examplesVersion(); }
+  retrain(store);
   return nb.predict(text, names);
+}
+/** Lexical prior over task kinds (same examples, `task_kind` labels); {} until any example carries a label. */
+export function kindPrior(store: Store, text: string) {
+  retrain(store);
+  return kindNb.predict(text, Object.keys(TASK_KIND_CRITERIA));
 }
 const MIN_EXAMPLES = 10;
 /** Per-agent fusion weight: well-exemplified agents use LAYA_WEIGHT, sparse ones lean on Laya. */
@@ -42,19 +53,22 @@ function clampDepth(d: number) { return Math.max(0, Math.min(4, Math.round(d)));
  * Routing evaluation on a labelled command set (admin): Laya-only, lexical-only and fused agent
  * accuracy plus the best fusion weight. Used by /api/aidev/route/eval and verify-b.sh.
  */
-export async function evaluateRouting(store: Store, laya: LayaClient, userId: number, rows: Array<{ text: string; agent: string; lang?: string }>) {
+export async function evaluateRouting(store: Store, laya: LayaClient, userId: number, rows: Array<{ text: string; agent: string; lang?: string; task_kind?: string | null }>) {
   const all = store.agents(userId).filter((a) => a.domain !== 'meta');
   const criteria: Record<string, string> = Object.fromEntries(all.map((a) => [a.name, routingHint(a)]));
   const names = Object.keys(criteria);
   const t0 = Date.now();
-  const items: Array<{ text: string; agent: string; lang?: string; laya: Record<string, number> | null; nb: Record<string, number> }> = [];
+  const items: Array<{ text: string; agent: string; lang?: string; kind: string | null; laya: Record<string, number> | null; nb: Record<string, number>; kindLaya: Record<string, number> | null; kindNb: Record<string, number> }> = [];
   let layaFailures = 0;
   for (const row of rows) {
     const nbP = lexicalPrior(store, row.text, names);
-    let layaP: Record<string, number> | null = null;
-    try { const r = await laya.predict({ command: row.text }, { agent: { type: 'choice', instructions: 'Which specialist should handle the developer request in `command`?', criteria } }); layaP = r.answers.agent?.probabilities ?? null; }
-    catch { layaFailures++; }
-    items.push({ text: row.text, agent: row.agent, lang: row.lang, laya: layaP, nb: nbP });
+    const kindP = kindPrior(store, row.text);
+    let layaP: Record<string, number> | null = null; let kindLayaP: Record<string, number> | null = null;
+    try {
+      const r = await laya.predict({ command: row.text }, { agent: { type: 'choice', instructions: 'Which specialist should handle the developer request in `command`?', criteria }, task_kind: { type: 'choice', instructions: 'What kind of work is this command mainly asking for?', criteria: TASK_KIND_CRITERIA } });
+      layaP = r.answers.agent?.probabilities ?? null; kindLayaP = r.answers.task_kind?.probabilities ?? null;
+    } catch { layaFailures++; }
+    items.push({ text: row.text, agent: row.agent, lang: row.lang, kind: row.task_kind ?? null, laya: layaP, nb: nbP, kindLaya: kindLayaP, kindNb: kindP });
   }
   const top = (p: Record<string, number>) => Object.entries(p).sort((a, b) => b[1] - a[1])[0]?.[0];
   const acc = (pick: (item: typeof items[number]) => string | undefined, filter?: (item: typeof items[number]) => boolean) => {
@@ -63,7 +77,20 @@ export async function evaluateRouting(store: Store, laya: LayaClient, userId: nu
   };
   const sweep = [0, 0.2, 0.35, 0.5, 0.65, 0.8, 1].map((alpha) => ({ alpha, accuracy: acc((item) => top(fuse(item.laya, item.nb, alpha, (name) => (nb.count(name) >= MIN_EXAMPLES ? alpha : 0.85)))) }));
   const best = sweep.reduce((a, b) => ((b.accuracy ?? 0) > (a.accuracy ?? 0) ? b : a));
+  // task_kind: same three-way comparison on the rows that carry a label
+  const labelled = items.filter((item) => item.kind);
+  const kindAcc = (pick: (item: typeof items[number]) => string | undefined) => (labelled.length ? Number((labelled.filter((item) => pick(item) === item.kind).length / labelled.length).toFixed(3)) : null);
+  const kindSweep = [0, 0.2, 0.35, 0.5, 0.65, 0.8, 1].map((alpha) => ({ alpha, accuracy: kindAcc((item) => top(fuse(item.kindLaya, item.kindNb, alpha))) }));
+  const kindBest = kindSweep.reduce((a, b) => ((b.accuracy ?? 0) > (a.accuracy ?? 0) ? b : a));
+  const kind = {
+    n: labelled.length, laya_weight: LAYA_KIND_WEIGHT, examples: store.kindExamples().length,
+    laya_only: kindAcc((item) => (item.kindLaya ? top(item.kindLaya) : undefined)), lexical_only: kindAcc((item) => top(item.kindNb)),
+    fused: kindAcc((item) => top(fuse(item.kindLaya, item.kindNb, LAYA_KIND_WEIGHT))),
+    bulk_read_recall: (() => { const rows = labelled.filter((item) => item.kind === 'bulk_read'); return rows.length ? Number((rows.filter((item) => top(fuse(item.kindLaya, item.kindNb, LAYA_KIND_WEIGHT)) === 'bulk_read').length / rows.length).toFixed(3)) : null; })(),
+    best_alpha: kindBest.alpha, sweep: kindSweep,
+  };
   return {
+    kind,
     n: items.length, catalog: names.length, examples: store.exampleCount(), laya_failures: layaFailures, laya_weight: LAYA_WEIGHT,
     laya_only: acc((item) => (item.laya ? top(item.laya) : undefined)), lexical_only: acc((item) => top(item.nb)),
     fused: acc((item) => top(fuse(item.laya, item.nb, LAYA_WEIGHT, alphaFor))),
@@ -112,6 +139,7 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   let needsNew = 0, depthRaw = 1, risk = 1, multiDomain = 0, clarify = 0, taskKind = 'implement', taskKindP = 0, remoteAction = 'none', remoteActionP = 0;
   let probabilities: Record<string, unknown> = {};
   const nbProbs = lexicalPrior(store, text, Object.keys(criteria));
+  const kindProbs = kindPrior(store, text);
   let layaProbs: Record<string, number> | null = null;
   try {
     const r = await laya.predict(state, questions);
@@ -125,13 +153,16 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     risk = r.answers.risk?.score ?? 1;
     multiDomain = r.answers.multi_domain?.noul ?? 0;
     clarify = r.answers.clarify?.noul ?? 0;
-    const tk = topChoice(r.answers.task_kind); taskKind = tk.choice ?? 'implement'; taskKindP = tk.probability;
+    // task_kind: the volume cues that mark bulk_read (line counts, "all files", log paths) are lexical,
+    // so the same fusion applies (bench: see /route/eval kind_*).
+    const tk = topChoice({ probabilities: fuse(r.answers.task_kind?.probabilities ?? null, kindProbs, LAYA_KIND_WEIGHT) }); taskKind = tk.choice ?? 'implement'; taskKindP = tk.probability;
     if (r.answers.remote_action) { const ra = topChoice(r.answers.remote_action); remoteAction = ra.choice ?? 'none'; remoteActionP = ra.probability; }
-    probabilities = { agent: fuse(layaProbs, nbProbs, LAYA_WEIGHT, alphaFor), agent_laya: layaProbs, agent_nb: nbProbs, task_kind: r.answers.task_kind?.probabilities, depth: r.answers.depth?.probabilities, risk: r.answers.risk?.probabilities, remote_action: r.answers.remote_action?.probabilities, needs_new: needsNew, multi_domain: multiDomain, clarify };
+    probabilities = { agent: fuse(layaProbs, nbProbs, LAYA_WEIGHT, alphaFor), agent_laya: layaProbs, agent_nb: nbProbs, task_kind: fuse(r.answers.task_kind?.probabilities ?? null, kindProbs, LAYA_KIND_WEIGHT), task_kind_laya: r.answers.task_kind?.probabilities, task_kind_nb: kindProbs, depth: r.answers.depth?.probabilities, risk: r.answers.risk?.probabilities, remote_action: r.answers.remote_action?.probabilities, needs_new: needsNew, multi_domain: multiDomain, clarify };
   } catch (error) {
     fallback = true; layaError = error instanceof Error ? error.message : String(error);
     // Laya down: the lexical prior alone still routes (agent only); scope falls back to D1/implement.
     if (Object.keys(nbProbs).length) { agentTop = topChoice({ probabilities: nbProbs }); probabilities = { agent: nbProbs, agent_nb: nbProbs }; }
+    if (Object.keys(kindProbs).length) { const tk = topChoice({ probabilities: kindProbs }); taskKind = tk.choice ?? 'implement'; taskKindP = tk.probability; probabilities.task_kind = kindProbs; }
     reason.push(`Laya unavailable (${layaError}); lexical prior only, depth D1`);
   }
   if (!fallback && remoteActionP < 0.6) remoteAction = 'none';

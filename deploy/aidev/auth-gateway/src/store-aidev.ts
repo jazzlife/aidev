@@ -77,7 +77,7 @@ export function migrateAidev(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS runs_agent ON runs(agent_id, outcome);
     CREATE TABLE IF NOT EXISTS agent_examples (
       id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
-      text TEXT NOT NULL, lang TEXT, source TEXT NOT NULL DEFAULT 'seed', created_at INTEGER NOT NULL);
+      text TEXT NOT NULL, lang TEXT, source TEXT NOT NULL DEFAULT 'seed', task_kind TEXT, created_at INTEGER NOT NULL);
     CREATE INDEX IF NOT EXISTS agent_examples_agent ON agent_examples(agent_id);
     CREATE UNIQUE INDEX IF NOT EXISTS agent_examples_unique ON agent_examples(agent_id, text);
     CREATE TABLE IF NOT EXISTS engine_status (
@@ -99,6 +99,7 @@ export function migrateAidev(db: Database.Database) {
       started_at INTEGER NOT NULL, finished_at INTEGER, exit_code INTEGER, artifacts TEXT);
     CREATE INDEX IF NOT EXISTS remote_runs_target ON remote_runs(target_id, started_at);
   `);
+  addColumn(db, 'agent_examples', 'task_kind', 'TEXT');   // label for the task-kind lexical prior (databases created before the column)
   // engine_weights seed: bulk reading/analysis prefers Codex, everything else neutral (§0 decisions)
   const n = (db.prepare('SELECT COUNT(*) AS n FROM engine_weights').get() as { n: number }).n;
   if (n === 0) {
@@ -199,19 +200,28 @@ export function aidevMethods(db: Database.Database) {
         .map((a) => ({ text: `${a.name.replace(/-/g, ' ')} ${a.hint ?? ''} ${a.description}`, agent: a.name }));
       return [...rows, ...pseudo];
     },
-    examples(agentId: number, limit = 200) { return db.prepare('SELECT id, text, lang, source, created_at FROM agent_examples WHERE agent_id=? ORDER BY id DESC LIMIT ?').all(agentId, limit) as Array<{ id: number; text: string; lang: string | null; source: string; created_at: number }>; },
-    addExamples(agentId: number, items: Array<{ text: string; lang?: string | null; source?: string }>) {
-      const ins = db.prepare('INSERT OR IGNORE INTO agent_examples(agent_id,text,lang,source,created_at) VALUES(?,?,?,?,?)');
-      let added = 0;
+    /** Examples labelled with a task kind, for the task-kind lexical prior (label in the `agent` slot). */
+    kindExamples() {
+      return db.prepare('SELECT text, task_kind AS agent FROM agent_examples WHERE task_kind IS NOT NULL').all() as Array<{ text: string; agent: string }>;
+    },
+    examples(agentId: number, limit = 200) { return db.prepare('SELECT id, text, lang, source, task_kind, created_at FROM agent_examples WHERE agent_id=? ORDER BY id DESC LIMIT ?').all(agentId, limit) as Array<{ id: number; text: string; lang: string | null; source: string; task_kind: string | null; created_at: number }>; },
+    addExamples(agentId: number, items: Array<{ text: string; lang?: string | null; source?: string; taskKind?: string | null }>) {
+      const ins = db.prepare('INSERT OR IGNORE INTO agent_examples(agent_id,text,lang,source,task_kind,created_at) VALUES(?,?,?,?,?,?)');
+      // an example already present without a label (seeded before the column existed) takes the label now
+      const label = db.prepare('UPDATE agent_examples SET task_kind=? WHERE agent_id=? AND text=? AND task_kind IS NULL');
+      let added = 0; let labelled = 0;
       db.transaction(() => {
         for (const item of items) {
           const text = item.text.trim().slice(0, 1000);
           if (text.length < 3) continue;
           const lang = item.lang ?? (/[가-힣]/.test(text) ? 'ko' : 'en');
-          added += ins.run(agentId, text, lang, item.source ?? 'user', Date.now()).changes;
+          const kind = item.taskKind && (TASK_KINDS as readonly string[]).includes(item.taskKind) ? item.taskKind : null;
+          const inserted = ins.run(agentId, text, lang, item.source ?? 'user', kind, Date.now()).changes;
+          added += inserted;
+          if (!inserted && kind) labelled += label.run(kind, agentId, text).changes;
         }
       })();
-      if (added) exampleVersion++;
+      if (added || labelled) exampleVersion++;
       return added;
     },
     removeExample(id: number) { const r = db.prepare('DELETE FROM agent_examples WHERE id=?').run(id); if (r.changes) exampleVersion++; return r.changes; },

@@ -115,10 +115,10 @@ export function createAidevApi(deps: AidevDeps) {
       }
       if (rest === '/route/eval' && m === 'POST') {
         const b = await readJson(req, 4 * 1024 * 1024);
-        let rows = Array.isArray(b.rows) ? (b.rows as Array<{ text: string; agent: string; lang?: string }>) : [];
+        let rows = Array.isArray(b.rows) ? (b.rows as Array<{ text: string; agent: string; lang?: string; task_kind?: string | null }>) : [];
         if (!rows.length) {
           const file = process.env.AIDEV_BENCH_FILE ?? '/srv/app/current/control/laya/bench/commands.jsonl';
-          rows = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line) as { text: string; agent: string; lang?: string });
+          rows = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line) as { text: string; agent: string; lang?: string; task_kind?: string | null });
         }
         return json(res, 200, await evaluateRouting(store, laya, uid, rows.slice(0, 2000))), true;
       }
@@ -244,7 +244,7 @@ export function createAidevApi(deps: AidevDeps) {
         if (outcome === 'success' && final.agent_id && final.decision_id && row.outcome !== 'success') {
           const decisionRow = store.db.prepare('SELECT command FROM decision_log WHERE id=?').get(final.decision_id) as { command: string } | undefined;
           const agent = store.agentById(final.agent_id);
-          if (decisionRow && agent && agent.name !== 'generalist' && agent.domain !== 'meta') store.addExamples(agent.id, [{ text: decisionRow.command, source: 'run' }]);
+          if (decisionRow && agent && agent.name !== 'generalist' && agent.domain !== 'meta') store.addExamples(agent.id, [{ text: decisionRow.command, source: 'run', taskKind: final.task_kind }]);   // a confirmed run also confirms its task kind
         }
         return json(res, 200, { run: final, classified }), true;
       }

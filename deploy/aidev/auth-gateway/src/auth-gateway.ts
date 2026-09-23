@@ -22,7 +22,7 @@ const store = openStore(process.env.DATABASE_PATH ?? '/data/auth.db');
 { // routing examples for the lexical prior (control/gateway/data/agent-examples.jsonl in a release)
   try {
     const file = process.env.AIDEV_EXAMPLES_FILE ?? new URL('../data/agent-examples.jsonl', import.meta.url).pathname;
-    const rows = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line) as { agent: string; text: string; lang?: string });
+    const rows = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line) as { agent: string; text: string; lang?: string; task_kind?: string | null });
     const added = store.seedExamples(rows); if (added) console.log(`[gateway] seeded ${added} routing examples (${store.exampleCount()} total)`);
   } catch (error) { console.warn('[gateway] routing examples not loaded:', error instanceof Error ? error.message : error); }
 }

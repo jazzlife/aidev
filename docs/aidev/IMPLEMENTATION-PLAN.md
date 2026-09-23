@@ -326,8 +326,10 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 - [~] 구현·typecheck/lint 통과, 서버 확인 대기 — B-12 프런트 `aidev-router/` api.ts, store.ts, useAidevRouting.ts(beforeSend, clarify), useAidevDecide.ts + `useChatComposerState.ts` 훅 연결 (bar 없이도 동작)
 - [ ] B-13 서버 검증: 한국어 React 명령 → `/route` → Claude 세션에서 `frontend-react` agent로 실행됨을 런타임 로그(`agents` 옵션)로 확인; Codex 세션에서 `developer_instructions` 적용 확인; agent가 `aidev_decide`를 호출한 로그 확인
 - [ ] B-14 Codex 전용 계정 시나리오: 테스트 계정 `engines=codex` → route가 Claude를 제외하는지, 실패 상향이 Codex 내부에 머무는지
-- [ ] B-15 `bulk_read` 명령("이 로그 5만 줄 분석해줘")이 두-엔진 계정에서 Codex로 가는지
-- [ ] B-16 벤치마크 세트(§3.9, decide kind 포함) + `bench.py` 작성, 기준선 측정 결과 기록
+- [~] B-15 `bulk_read` 명령("이 로그 5만 줄 분석해줘")이 두-엔진 계정에서 Codex로 가는지
+  - 서버(500d39e3, 실제 Laya): task_kind=debug(0.38)로 오판 → task_kind에도 어휘 prior 도입(`agent_examples.task_kind` 라벨 916건, NB, `LAYA_KIND_WEIGHT` 0.35 융합; 벤치 어휘 단독 0.62, bulk_read 재현율 4/4). 다음 verify에서 `kind.*` 수치 확인
+- [x] B-16 벤치마크 세트(§3.9, decide kind 포함) + `bench.py` 작성, 기준선 측정 결과 기록
+  - 기준선(서버 실제 Laya, 2026-09-23, 126 held-out): agent Laya 단독 0.429 / 어휘 NB 0.778 / 융합 0.833 (ko 0.859, en 0.806); α sweep 0→0.778, 0.2→0.833, 0.35→0.833, 0.5→0.802, 0.65→0.786, 0.8→0.651, 1→0.429 → `LAYA_WEIGHT` 기본 0.3(plateau 중앙)
 - [ ] B-17 릴리스 배포(`relay.sh deploy`) 후 `release.sh status` 정상, 롤백 1회 리허설, DB 백업 파일 확인
 
 **B 완료 기준**: B-13~B-16 서버 로그로 확인, 기준선 수치 기록, 롤백 성공.

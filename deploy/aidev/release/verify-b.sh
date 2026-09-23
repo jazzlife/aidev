@@ -1,10 +1,11 @@
 #!/usr/bin/env bash
 # Stage B server verification (IMPLEMENTATION-PLAN B-13 … B-17). Runs ON the AI-PC:
-#   verify-b.sh USERNAME PASSWORD [--bench] [--backup] [--experiments]
+#   AIDEV_PASS=… verify-b.sh USERNAME [--bench] [--backup] [--experiments]   (or USERNAME PASSWORD …, legacy)
 # Talks to the gateway over the proxy network exactly like the browser does, then reads
 # container logs. Prints PASS/FAIL per check; exit 1 when any check fails.
 set -uo pipefail
-user=${1:?username}; pass=${2:?password}; shift 2
+user=${1:?username}; shift
+if [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; then pass=$1; shift; else pass=${AIDEV_PASS:?password (AIDEV_PASS env or 2nd argument)}; fi
 bench=0; backup=0; experiments=0; for a in "$@"; do case "$a" in --bench) bench=1;; --backup) backup=1;; --experiments) experiments=1;; esac; done
 NET=${AIDEV_PROXY_NETWORK:-npm_bridge}
 GW=http://aidev-auth-gateway:8080
@@ -42,7 +43,7 @@ r=$(jpost /api/aidev/decide/remote.approve '{"state":{"command":"rm -rf ~/projec
 r=$(jpost /api/aidev/decide/agent.yesno '{"state":{"question":"Is the build green?","summary":"all 42 tests passed"}}'); check "$r" 'typeof j.answer==="number"' "decide agent.yesno → $(echo "$r" | sed -n 's/.*"answer":\([0-9.]*\).*/\1/p')"
 r=$(jget "/api/aidev/decisions?limit=5"); check "$r" 'j.decisions.length>=3' "decision_log written"
 echo "## routing eval on the held-out bench set (Laya-only vs lexical prior vs fused)"
-r=$(jpost /api/aidev/route/eval '{}'); echo "$r" | cut -c1-600; check "$r" 'j.fused>=0.75' "fused routing accuracy >= 0.75 (laya $(echo "$r" | sed -n 's/.*"laya_only":\([0-9.]*\).*/\1/p') nb $(echo "$r" | sed -n 's/.*"lexical_only":\([0-9.]*\).*/\1/p') fused $(echo "$r" | sed -n 's/.*"fused":\([0-9.]*\).*/\1/p') best α $(echo "$r" | sed -n 's/.*"best_alpha":\([0-9.]*\).*/\1/p'))"
+r=$(jpost /api/aidev/route/eval '{}'); echo "$r" | cut -c1-600; echo "task_kind: $(echo "$r" | sed -n 's/.*"kind":{\([^}]*}\).*/\1/p' | cut -c1-400)"; check "$r" 'j.kind && j.kind.bulk_read_recall>=0.75' "task_kind fusion: bulk_read recall >= 0.75 (laya $(echo "$r" | sed -n 's/.*"kind":{[^}]*"laya_only":\([0-9.]*\).*/\1/p') nb $(echo "$r" | sed -n 's/.*"kind":{[^}]*"lexical_only":\([0-9.]*\).*/\1/p') fused $(echo "$r" | sed -n 's/.*"kind":{[^}]*"fused":\([0-9.]*\).*/\1/p') best α $(echo "$r" | sed -n 's/.*"kind":{[^}]*"best_alpha":\([0-9.]*\).*/\1/p'))"; check "$r" 'j.fused>=0.75' "fused routing accuracy >= 0.75 (laya $(echo "$r" | sed -n 's/.*"laya_only":\([0-9.]*\).*/\1/p') nb $(echo "$r" | sed -n 's/.*"lexical_only":\([0-9.]*\).*/\1/p') fused $(echo "$r" | sed -n 's/.*"fused":\([0-9.]*\).*/\1/p') best α $(echo "$r" | sed -n 's/.*"best_alpha":\([0-9.]*\).*/\1/p'))"
 
 echo "## runtime logs: aidev routing applied (send a chat message first; B-13)"
 for c in $(docker ps --format '{{.Names}}' | grep '^aidev-cloudcli-'); do
