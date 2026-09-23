@@ -44,6 +44,23 @@ for dev in (["cuda"] if torch.cuda.is_available() else []) + ["cpu"]:
     print(dev, round((time.time()-t)*1000,1), "ms ->", r["answers"]["agent"]["choice"], r["answers"]["agent"]["probabilities"])
 PY
     ;;
+  gpu-diag)
+    echo "## host devices"; ls -la /dev/kfd /dev/dri; getent group video render
+    echo "## HIP init inside the image (no env override)"
+    docker run --rm "${GPU_ARGS[@]}" "$IMG:latest" python - <<'PY' || true
+import os, torch
+print("torch", torch.__version__, "hip", getattr(torch.version,"hip",None))
+print("HSA_OVERRIDE_GFX_VERSION=", repr(os.environ.get("HSA_OVERRIDE_GFX_VERSION")))
+print("compiled arch list:", torch.cuda.get_arch_list())
+print("cuda_available:", torch.cuda.is_available())
+try:
+    torch.cuda.init(); print("device_count", torch.cuda.device_count(), torch.cuda.get_device_name(0), torch.cuda.get_device_properties(0))
+except Exception as e: print("init error:", type(e).__name__, e)
+PY
+    echo "## /dev inside container"; docker run --rm "${GPU_ARGS[@]}" "$IMG:latest" sh -c 'id; ls -la /dev/kfd /dev/dri; ls /opt/rocm* 2>/dev/null | head -3; python -c "import torch,os; print(os.path.dirname(torch.__file__))"; ls $(python -c "import torch,os; print(os.path.dirname(torch.__file__))")/lib | grep -iE "hip|hsa|rocm|amdhip|rccl" | head'
+    echo "## retry with HSA_OVERRIDE_GFX_VERSION=11.5.0 then 11.0.0"
+    for v in 11.5.0 11.0.0; do echo "--- $v"; docker run --rm "${GPU_ARGS[@]}" -e HSA_OVERRIDE_GFX_VERSION=$v "$IMG:latest" python -c "import torch; print('available', torch.cuda.is_available()); print(torch.cuda.get_device_name(0) if torch.cuda.is_available() else '-'); x=torch.ones(1024,1024,device='cuda'); print('matmul ok', float((x@x)[0,0]))" 2>&1 | tail -3 || true; done
+    echo "## rocminfo via rocm/dev image (host driver check, pulls ~2GB once)"; docker run --rm "${GPU_ARGS[@]}" rocm/rocm-terminal:latest rocminfo 2>&1 | grep -E "Name:|gfx|Marketing|Error|error" | head -12 || true ;;
   setup)
     "$0" build; "$0" models; "$0" gpu || echo " ! gpu check failed — service will fall back to CPU (LAYA_DEVICE=auto)"
     echo "==> compose up laya"; compose up -d laya 2>&1 | tail -3
