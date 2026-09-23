@@ -101,6 +101,7 @@ aidev-cloudcli-<user> (cloudcli-runtime 이미지 + 볼륨 current)
 ## 3. 명세 (구현 시 그대로 따를 것)
 
 ### 3.1 Laya 판정 질문 (한 번의 `/route` 호출)
+**어휘 사전 분류기(실측 후 추가)**: Laya zero-shot의 13지선다 정확도는 힌트 후에도 44%(ko 38/en 52)였다(저자도 "zero-shot 엔진이 아니라 fine-tune용 base"라고 명시). 그래서 agent별 예시 명령(`agent_examples`, 시드 916건 = Claude가 생성한 agent당 한/영 35개씩, 벤치 세트와 분리)로 학습하는 나이브 베이즈 분류기(`classifier.ts`, 한글은 글자 2/3-gram)를 게이트웨이에 두고 Laya 확률과 로그공간에서 융합한다(`LAYA_WEIGHT` 기본 0.35, 예시가 10개 미만인 새 agent는 Laya 쪽 0.85). 홀드아웃 벤치에서 NB 단독 0.78(ko 0.81/en 0.74). 예시는 사용자 override(`PATCH /decisions`)와 agent-architect의 `examples`로 계속 늘어난다. Laya가 죽어도 NB만으로 agent는 라우팅된다. 평가: `POST /api/aidev/route/eval`(Laya/NB/융합 정확도 + α 스윕).
 **토큰 예산(실측)**: 선택지 전체가 `head_max_len`(기본 192) 토큰을 나눠 쓴다(선택지당 최대 48, 13개면 ~12). 따라서 agent 선택지는 `name: hint`(hint = 4~7 영단어, `agents.hint`)로만 보내고, 긴 description은 사람·LLM용이다. 질문 지시문은 상태 키를 백틱으로 가리킨다(예: "… in `command`?"). 상태(state)는 남는 예산(max_len 1024)에 들어간다.
 `state = {command, project_hint?, recent_files?, targets?}` (1024 토큰 예산 — command 우선, 나머지 잘라냄)
 

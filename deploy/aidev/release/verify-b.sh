@@ -41,6 +41,8 @@ r=$(jpost /api/aidev/route '{"text":"Unity 셰이더로 물 표면 굴절 효과
 r=$(jpost /api/aidev/decide/remote.approve '{"state":{"command":"rm -rf ~/projects && npm ci"}}'); check "$r" 'typeof j.answer==="number"' "decide remote.approve → $(echo "$r" | sed -n 's/.*"answer":\([0-9.]*\).*/\1/p')"
 r=$(jpost /api/aidev/decide/agent.yesno '{"state":{"question":"Is the build green?","summary":"all 42 tests passed"}}'); check "$r" 'typeof j.answer==="number"' "decide agent.yesno → $(echo "$r" | sed -n 's/.*"answer":\([0-9.]*\).*/\1/p')"
 r=$(jget "/api/aidev/decisions?limit=5"); check "$r" 'j.decisions.length>=3' "decision_log written"
+echo "## routing eval on the held-out bench set (Laya-only vs lexical prior vs fused)"
+r=$(jpost /api/aidev/route/eval '{}'); echo "$r" | cut -c1-600; check "$r" 'j.fused>=0.75' "fused routing accuracy >= 0.75 (laya $(echo "$r" | sed -n 's/.*"laya_only":\([0-9.]*\).*/\1/p') nb $(echo "$r" | sed -n 's/.*"lexical_only":\([0-9.]*\).*/\1/p') fused $(echo "$r" | sed -n 's/.*"fused":\([0-9.]*\).*/\1/p') best α $(echo "$r" | sed -n 's/.*"best_alpha":\([0-9.]*\).*/\1/p'))"
 
 echo "## runtime logs: aidev routing applied (send a chat message first; B-13)"
 for c in $(docker ps --format '{{.Names}}' | grep '^aidev-cloudcli-'); do

@@ -16,7 +16,7 @@ echo "==> control plane: tsc"
 for c in gateway:auth-gateway runtime-manager:runtime-manager; do
   name=${c%%:*}; dir=deploy/aidev/${c##*:}
   ( cd "$dir" && [ -d node_modules ] || npm ci --no-audit --no-fund --loglevel=error >/dev/null; npm run build >/dev/null )
-  cp -a "$dir/dist" "$dir/package.json" "$dir/package-lock.json" "$R/control/$name/"
+  cp -a "$dir/dist" "$dir/package.json" "$dir/package-lock.json" "$R/control/$name/"; [ -d "$dir/data" ] && cp -a "$dir/data" "$R/control/$name/"
 done
 cp -a deploy/aidev/runtime/entrypoint.mjs "$R/runtime/"
 mkdir -p "$R/control/laya" && cp -a deploy/aidev/laya/app/. "$R/control/laya/"   # python, no build step

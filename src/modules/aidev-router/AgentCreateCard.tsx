@@ -55,6 +55,7 @@ export function AgentCreateCard({ pending, onApprove, onSelfCheck, onDismiss, co
               </ul>
             </div>
           ) : null}
+          {draft.examples.length ? <div className="mt-2 text-muted-foreground">라우팅 예시 {draft.examples.length}개: {draft.examples.slice(0, 3).join(' · ')}{draft.examples.length > 3 ? ' …' : ''}</div> : null}
           {draft.self_check ? <div className="mt-2 text-muted-foreground">자가 검증 과제: {draft.self_check.task}</div> : null}
           <div className="flex gap-2 mt-3">
             <button type="button" onClick={() => onApprove(draft)} disabled={!draft.name || draft.prompt.length < 20 || draft.description.length < 10} className="h-8 px-3 rounded-md bg-primary text-primary-foreground font-medium disabled:opacity-50">승인하고 원래 명령 실행</button>

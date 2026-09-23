@@ -4,7 +4,8 @@ import type { openStore } from './store.js';
 import { ENGINES, type Engine } from './store-aidev.js';
 import type { LayaClient } from './laya.js';
 import { decide, listKinds } from './laya-questions.js';
-import { route, type EngineAvailability, type RouteInput } from './routing.js';
+import fs from 'node:fs';
+import { evaluateRouting, route, type EngineAvailability, type RouteInput } from './routing.js';
 
 /**
  * /api/aidev/* — routing, decisions, agent catalog, runs, lessons, knowledge, engines, targets
@@ -93,6 +94,15 @@ export function createAidevApi(deps: AidevDeps) {
         const engines = await engineAvailability(session);
         return json(res, 200, await route(store, laya, uid, engines, input)), true;
       }
+      if (rest === '/route/eval' && m === 'POST') {
+        const b = await readJson(req, 4 * 1024 * 1024);
+        let rows = Array.isArray(b.rows) ? (b.rows as Array<{ text: string; agent: string; lang?: string }>) : [];
+        if (!rows.length) {
+          const file = process.env.AIDEV_BENCH_FILE ?? '/srv/app/current/control/laya/bench/commands.jsonl';
+          rows = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line) as { text: string; agent: string; lang?: string });
+        }
+        return json(res, 200, await evaluateRouting(store, laya, uid, rows.slice(0, 2000))), true;
+      }
       const decideMatch = rest.match(/^\/decide\/([a-z][a-z0-9_.]*)$/);
       if (decideMatch && m === 'POST') {
         const b = await readJson(req);
@@ -110,7 +120,15 @@ export function createAidevApi(deps: AidevDeps) {
       const decMatch = rest.match(/^\/decisions\/(\d+)$/);
       if (decMatch && m === 'PATCH') {
         const b = await readJson(req);
-        store.overrideDecision(uid, Number(decMatch[1]), { finalAgent: optStr(b.final_agent, 60) ?? null, finalEngine: optStr(b.final_engine, 20) ?? null, finalModel: optStr(b.final_model, 100) ?? null, finalTarget: optStr(b.final_target, 60) ?? null, finalAnswer: b.final_answer });
+        const decisionId = Number(decMatch[1]);
+        store.overrideDecision(uid, decisionId, { finalAgent: optStr(b.final_agent, 60) ?? null, finalEngine: optStr(b.final_engine, 20) ?? null, finalModel: optStr(b.final_model, 100) ?? null, finalTarget: optStr(b.final_target, 60) ?? null, finalAnswer: b.final_answer });
+        // A user correction is the best routing example there is: feed it to the lexical prior.
+        const finalAgent = optStr(b.final_agent, 60);
+        if (finalAgent) {
+          const decisionRow = store.db.prepare('SELECT command FROM decision_log WHERE id=? AND user_id=?').get(decisionId, uid) as { command: string } | undefined;
+          const agent = store.agent(uid, finalAgent);
+          if (decisionRow && agent) store.addExamples(agent.id, [{ text: decisionRow.command, source: 'override' }]);
+        }
         return json(res, 200, { ok: true }), true;
       }
       if (rest === '/decisions' && m === 'GET') return json(res, 200, { decisions: store.decisions(uid, Number(url.searchParams.get('limit') ?? 100)) }), true;
@@ -137,10 +155,18 @@ export function createAidevApi(deps: AidevDeps) {
         const id = store.addAgent({ name: str(b.name, 'name', 41), domain: optStr(b.domain, 40) ?? '', description: str(b.description, 'description', 600), hint: optStr(b.hint, 60) ?? null, prompt: str(b.prompt, 'prompt'), tools: Array.isArray(b.tools) ? (b.tools as unknown[]).map(String) : null,
           model: optStr(b.model, 100) ?? null, maxTurns: b.maxTurns === undefined ? null : num(b.maxTurns, 'maxTurns'), skills: Array.isArray(b.skills) ? (b.skills as unknown[]).map(String) : null, mcpServers: b.mcpServers && typeof b.mcpServers === 'object' ? b.mcpServers as Record<string, unknown> : null,
           ownerId: b.global === true ? (requireAdmin(session), null) : uid, source: optStr(b.source, 20) ?? 'user' });
+        if (Array.isArray(b.examples)) store.addExamples(id, (b.examples as unknown[]).filter((e): e is string => typeof e === 'string').slice(0, 200).map((text) => ({ text, source: 'generated' })));
         if (Array.isArray(b.knowledge)) for (const k of b.knowledge as Array<Record<string, unknown>>) {
           if (typeof k?.title === 'string' && typeof k?.body === 'string') store.addKnowledge({ agentId: id, title: k.title, body: k.body, sourceUrl: optStr(k.source_url, 2000) ?? null, sourceDate: optStr(k.source_date, 40) ?? null, ownerId: uid });
         }
         return json(res, 201, { agent: agentView(store.agentById(id)!) }), true;
+      }
+      const exMatch = rest.match(/^\/agents\/(\d+)\/examples(?:\/(\d+))?$/);
+      if (exMatch) {
+        const id = Number(exMatch[1]); ownAgent(session, id);
+        if (m === 'GET') return json(res, 200, { examples: store.examples(id) }), true;
+        if (m === 'POST') { ownAgent(session, id, true); const b = await readJson(req); const items = Array.isArray(b.examples) ? (b.examples as unknown[]).filter((e): e is string => typeof e === 'string') : [str(b.text, 'text', 1000)]; return json(res, 201, { added: store.addExamples(id, items.map((text) => ({ text, source: 'user' }))) }), true; }
+        if (m === 'DELETE' && exMatch[2]) { ownAgent(session, id, true); return json(res, 200, { removed: store.removeExample(Number(exMatch[2])) }), true; }
       }
       const agentMatch = rest.match(/^\/agents\/(\d+)(\/promote|\/versions)?$/);
       if (agentMatch) {

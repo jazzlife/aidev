@@ -1,0 +1,916 @@
+{"text":"What's the difference between let and const in JS?","agent":"generalist","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Rename this variable across the file","agent":"generalist","lang":"en","depth":1,"task_kind":"refactor"}
+{"text":"Explain what this regex does: ^(?=.*[A-Z]).{8,}$","agent":"generalist","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Add a comment explaining this function","agent":"generalist","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Why is my for loop only running once?","agent":"generalist","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Set up a cron job that runs this script every night at 2am","agent":"generalist","lang":"en","depth":1,"task_kind":"ops"}
+{"text":"Got this error: TypeError: Cannot read properties of undefined (reading 'map')","agent":"generalist","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Write a quick script to rename all .txt files to .md in this folder","agent":"generalist","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"What does 'idempotent' mean in this context?","agent":"generalist","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Clean up this messy switch statement","agent":"generalist","lang":"en","depth":1,"task_kind":"refactor"}
+{"text":"Summarize what this 800-line utils.py file does","agent":"generalist","lang":"en","depth":2,"task_kind":"bulk_read"}
+{"text":"Can you go through all the log files in /var/log/app and find every OOM kill event?","agent":"generalist","lang":"en","depth":2,"task_kind":"bulk_read"}
+{"text":"Fix the indentation in this file, it's a mix of tabs and spaces","agent":"generalist","lang":"en","depth":1,"task_kind":"refactor"}
+{"text":"How do I set an environment variable permanently on Ubuntu?","agent":"generalist","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"I need a small CLI tool that converts CSV to JSON","agent":"generalist","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"This function is 200 lines long, help me figure out what it's actually doing","agent":"generalist","lang":"en","depth":2,"task_kind":"bulk_read"}
+{"text":"What's the best way to debounce a function in vanilla JS?","agent":"generalist","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Compare these two config files and tell me what changed","agent":"generalist","lang":"en","depth":1,"task_kind":"bulk_read"}
+{"text":"My script hangs forever and I don't know why","agent":"generalist","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Write a Makefile that builds and cleans this project","agent":"generalist","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Explain the CAP theorem in simple terms","agent":"generalist","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Add error handling around this file read call","agent":"generalist","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Help me design a plugin architecture for this app, no idea which language yet","agent":"generalist","lang":"en","depth":4,"task_kind":"design"}
+{"text":"Convert this bash script to Python","agent":"generalist","lang":"en","depth":2,"task_kind":"refactor"}
+{"text":"Why does this recursive function cause a stack overflow?","agent":"generalist","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Quick sanity check: is this base64 string valid?","agent":"generalist","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"I have three different logging formats across this repo, help me unify them","agent":"generalist","lang":"en","depth":3,"task_kind":"refactor"}
+{"text":"What's a good naming convention for constants here?","agent":"generalist","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Parse this weird log format into structured rows","agent":"generalist","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Go through these 15 markdown files and list every TODO left in them","agent":"generalist","lang":"en","depth":2,"task_kind":"bulk_read"}
+{"text":"This build fails intermittently and I can't reproduce it locally","agent":"generalist","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Explain what a race condition is with a simple example","agent":"generalist","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Help me sketch out the overall module boundaries for a new internal tool, still very early stage","agent":"generalist","lang":"en","depth":4,"task_kind":"design"}
+{"text":"Format this XML file so it's actually readable","agent":"generalist","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"What's the time complexity of this sort function?","agent":"generalist","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"let이랑 const 차이가 뭐야?","agent":"generalist","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"이 파일에서 변수명 전체 바꿔줘","agent":"generalist","lang":"ko","depth":1,"task_kind":"refactor"}
+{"text":"이 정규식이 뭘 하는지 설명해줘: ^\\d{3}-\\d{4}$","agent":"generalist","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"이 함수에 주석 좀 달아줘","agent":"generalist","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"for문이 왜 한 번만 도는지 모르겠어","agent":"generalist","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"이 스크립트 매일 새벽 2시에 실행되게 크론잡 설정해줘","agent":"generalist","lang":"ko","depth":1,"task_kind":"ops"}
+{"text":"이런 에러 떴는데: NullPointerException at line 42","agent":"generalist","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"이 폴더에 있는 txt 파일들 md로 확장자 바꾸는 스크립트 짜줘","agent":"generalist","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"여기서 '멱등성'이 무슨 뜻이야?","agent":"generalist","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"이 switch문 좀 정리해줘","agent":"generalist","lang":"ko","depth":1,"task_kind":"refactor"}
+{"text":"이 800줄짜리 utils.py 파일이 뭘 하는지 요약해줘","agent":"generalist","lang":"ko","depth":2,"task_kind":"bulk_read"}
+{"text":"/var/log/app 안에 있는 로그 파일들 다 훑어서 OOM 발생한 부분 찾아줘","agent":"generalist","lang":"ko","depth":2,"task_kind":"bulk_read"}
+{"text":"이 파일 들여쓰기가 탭이랑 스페이스 섞여있어서 고쳐줘","agent":"generalist","lang":"ko","depth":1,"task_kind":"refactor"}
+{"text":"우분투에서 환경변수 영구적으로 설정하는 방법 알려줘","agent":"generalist","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"CSV를 JSON으로 바꿔주는 간단한 CLI 툴 하나 만들어줘","agent":"generalist","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"이 함수 200줄짜리인데 뭘 하는건지 같이 파악 좀 해줘","agent":"generalist","lang":"ko","depth":2,"task_kind":"bulk_read"}
+{"text":"바닐라 JS에서 디바운스 구현하는 제일 좋은 방법이 뭐야?","agent":"generalist","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"이 두 설정 파일 비교해서 뭐가 바뀌었는지 알려줘","agent":"generalist","lang":"ko","depth":1,"task_kind":"bulk_read"}
+{"text":"내 스크립트가 계속 멈춰있는데 이유를 모르겠어","agent":"generalist","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"이 프로젝트 빌드하고 클린하는 Makefile 하나 짜줘","agent":"generalist","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"CAP 이론을 쉽게 설명해줘","agent":"generalist","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"이 파일 읽는 부분에 에러 핸들링 추가해줘","agent":"generalist","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"언어도 아직 안 정했는데 이 앱 플러그인 아키텍처 설계 좀 도와줘","agent":"generalist","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"이 bash 스크립트를 파이썬으로 바꿔줘","agent":"generalist","lang":"ko","depth":2,"task_kind":"refactor"}
+{"text":"이 재귀 함수가 왜 스택 오버플로우 나는지 모르겠어","agent":"generalist","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"이 base64 문자열 유효한지 빠르게 확인해줘","agent":"generalist","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"이 레포에 로깅 포맷이 세 가지나 섞여있어서 통일 좀 해줘","agent":"generalist","lang":"ko","depth":3,"task_kind":"refactor"}
+{"text":"여기 상수 이름 짓는 좋은 컨벤션 있을까?","agent":"generalist","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"이 이상한 로그 포맷을 구조화된 데이터로 파싱해줘","agent":"generalist","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"이 마크다운 파일 15개 훑어서 남아있는 TODO 다 뽑아줘","agent":"generalist","lang":"ko","depth":2,"task_kind":"bulk_read"}
+{"text":"빌드가 가끔씩 실패하는데 로컬에서는 재현이 안 돼","agent":"generalist","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"레이스 컨디션이 뭔지 간단한 예시로 설명해줘","agent":"generalist","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"아직 초기 단계인데 새 내부 툴 모듈 경계를 어떻게 나눌지 같이 스케치해줘","agent":"generalist","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"이 XML 파일 좀 읽기 편하게 포맷팅해줘","agent":"generalist","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"이 정렬 함수 시간복잡도가 어떻게 돼?","agent":"generalist","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"로그인 폼 컴포넌트 만들어줘","agent":"frontend-react","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"useEffect 클린업 함수가 왜 두 번 실행되는지 모르겠어","agent":"frontend-react","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"React Router로 대시보드 라우팅 구조 짜줘","agent":"frontend-react","lang":"ko","depth":2,"task_kind":"design"}
+{"text":"Tailwind로 카드 컴포넌트 반응형 스타일 적용해줘","agent":"frontend-react","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"Zustand로 상태관리 옮기는 게 나을까 Redux 유지하는 게 나을까?","agent":"frontend-react","lang":"ko","depth":3,"task_kind":"design"}
+{"text":"Uncaught Error: Objects are not valid as a React child (found: object with keys {id, name})","agent":"frontend-react","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"이 커스텀 훅 useDebounce 리팩토링해줘","agent":"frontend-react","lang":"ko","depth":1,"task_kind":"refactor"}
+{"text":"button 컴포넌트에 aria-label 없어서 접근성 검사 실패해","agent":"frontend-react","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"Vite 빌드 번들 사이즈 300KB 넘는데 코드 스플리팅 어떻게 해?","agent":"frontend-react","lang":"ko","depth":3,"task_kind":"refactor"}
+{"text":"react-hook-form이랑 zod로 폼 밸리데이션 붙여줘","agent":"frontend-react","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"리스트 렌더링할 때 key prop 관련 경고 떠","agent":"frontend-react","lang":"ko","depth":0,"task_kind":"debug"}
+{"text":"무한 스크롤 컴포넌트 구현 방법 알려줘","agent":"frontend-react","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"src/components 폴더 전체 훑어보고 중복 로직 있는지 찾아줘","agent":"frontend-react","lang":"ko","depth":3,"task_kind":"bulk_read"}
+{"text":"다크모드 토글 CSS 변수로 구현해줘","agent":"frontend-react","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"useMemo랑 useCallback 언제 써야 해?","agent":"frontend-react","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"모달 컴포넌트 포커스 트랩 안 걸려있어서 고쳐줘","agent":"frontend-react","lang":"ko","depth":1,"task_kind":"debug"}
+{"text":"React Query로 데이터 페칭 로직 전체 마이그레이션해줘","agent":"frontend-react","lang":"ko","depth":4,"task_kind":"refactor"}
+{"text":"이 컴포넌트 리렌더링이 너무 잦은데 원인 좀 찾아줘","agent":"frontend-react","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"Framer Motion으로 페이지 전환 애니메이션 추가해줘","agent":"frontend-react","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"CSS Grid로 대시보드 레이아웃 짜는 법 알려줘","agent":"frontend-react","lang":"ko","depth":1,"task_kind":"explain"}
+{"text":"Context API 쓰던 걸 Jotai로 바꾸는 게 맞을까?","agent":"frontend-react","lang":"ko","depth":3,"task_kind":"design"}
+{"text":"input 컴포넌트에 debounce 안 걸려서 API 요청 너무 많이 나가","agent":"frontend-react","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"TypeScript strict 모드 켰더니 props 타입 에러 쏟아져","agent":"frontend-react","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"Storybook 스토리 파일 추가해줘","agent":"frontend-react","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"드래그 앤 드롭 정렬 기능 dnd-kit으로 구현해줘","agent":"frontend-react","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"전체 컴포넌트 트리 구조를 atomic design으로 재설계하고 싶어","agent":"frontend-react","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"Hydration failed because the initial UI does not match what was rendered on the server","agent":"frontend-react","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"에러 바운더리 컴포넌트 하나 만들어줘","agent":"frontend-react","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"탭 컴포넌트 키보드 네비게이션 지원하도록 고쳐줘","agent":"frontend-react","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"styled-components에서 CSS Modules로 전환하는 계획 세워줘","agent":"frontend-react","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"이 셀렉트 박스 커스텀 컴포넌트 접근성 좀 검토해줘","agent":"frontend-react","lang":"ko","depth":2,"task_kind":"explain"}
+{"text":"React DevTools에서 프로파일링한 결과 좀 분석해줘","agent":"frontend-react","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"차트 컴포넌트 recharts로 만들고 반응형으로 리사이즈 되게 해줘","agent":"frontend-react","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"이 폼 컴포넌트 왜 submit 두 번 호출되는지 모르겠어","agent":"frontend-react","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"props drilling 심한 컴포넌트들 컨텍스트로 리팩토링해줘","agent":"frontend-react","lang":"ko","depth":2,"task_kind":"refactor"}
+{"text":"Build a reusable Button component with variant props","agent":"frontend-react","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Why does my useState value stay stale inside this closure?","agent":"frontend-react","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Set up React Router v6 nested routes for the settings page","agent":"frontend-react","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Warning: Can't perform a React state update on an unmounted component","agent":"frontend-react","lang":"en","depth":1,"task_kind":"debug"}
+{"text":"Should we move from Redux Toolkit to Zustand for this app?","agent":"frontend-react","lang":"en","depth":3,"task_kind":"design"}
+{"text":"Add Tailwind dark mode support across the app","agent":"frontend-react","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Refactor this useFetch hook to support request cancellation","agent":"frontend-react","lang":"en","depth":2,"task_kind":"refactor"}
+{"text":"What's the difference between useMemo and useCallback?","agent":"frontend-react","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"My bundle is 450KB after gzip, help me reduce it with code splitting","agent":"frontend-react","lang":"en","depth":3,"task_kind":"refactor"}
+{"text":"Implement infinite scroll with IntersectionObserver in this feed component","agent":"frontend-react","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Go through every component under src/features and flag ones missing prop types","agent":"frontend-react","lang":"en","depth":3,"task_kind":"bulk_read"}
+{"text":"Wire up react-hook-form with zod resolver on the signup form","agent":"frontend-react","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"This modal doesn't trap focus and screen readers skip past it","agent":"frontend-react","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Migrate all data fetching from useEffect to React Query","agent":"frontend-react","lang":"en","depth":4,"task_kind":"refactor"}
+{"text":"Investigate why this list component re-renders on every keystroke","agent":"frontend-react","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Add page transition animations using Framer Motion","agent":"frontend-react","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Explain how CSS Grid areas work for a dashboard layout","agent":"frontend-react","lang":"en","depth":1,"task_kind":"explain"}
+{"text":"Is it worth switching from Context API to Jotai here?","agent":"frontend-react","lang":"en","depth":3,"task_kind":"design"}
+{"text":"Search input is firing an API call on every keystroke, add debounce","agent":"frontend-react","lang":"en","depth":1,"task_kind":"debug"}
+{"text":"Enabling TypeScript strict mode broke prop types across a bunch of components","agent":"frontend-react","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Add Storybook stories for the new Avatar component","agent":"frontend-react","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Build drag-and-drop reordering with dnd-kit for this kanban board","agent":"frontend-react","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Redesign the component hierarchy following atomic design principles","agent":"frontend-react","lang":"en","depth":4,"task_kind":"design"}
+{"text":"Hydration mismatch error: text content does not match server-rendered HTML","agent":"frontend-react","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Write an ErrorBoundary component that falls back to a friendly message","agent":"frontend-react","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Add keyboard navigation support to this custom Tabs component","agent":"frontend-react","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Plan a migration from styled-components to CSS Modules for the whole app","agent":"frontend-react","lang":"en","depth":4,"task_kind":"design"}
+{"text":"Review this custom Select component for accessibility issues","agent":"frontend-react","lang":"en","depth":2,"task_kind":"explain"}
+{"text":"Help me interpret this React DevTools profiler flame graph","agent":"frontend-react","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Make the recharts chart component resize responsively inside its container","agent":"frontend-react","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Form submit handler is firing twice, can't figure out why","agent":"frontend-react","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Refactor these deeply prop-drilled components to use context instead","agent":"frontend-react","lang":"en","depth":2,"task_kind":"refactor"}
+{"text":"Extract this 500-line component into smaller composable pieces","agent":"frontend-react","lang":"en","depth":2,"task_kind":"refactor"}
+{"text":"Add a loading skeleton for the product grid while data fetches","agent":"frontend-react","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Why is my useLayoutEffect causing a flash of unstyled content?","agent":"frontend-react","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Express 라우터에 JWT 인증 미들웨어 추가해줘","agent":"backend-node","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"웹소켓 연결이 5분 후에 자꾸 끊기는데 원인 좀 찾아줘","agent":"backend-node","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"이 에러 로그 좀 봐줘: UnhandledPromiseRejectionWarning: TypeError: Cannot read properties of undefined (reading 'id') at authController.ts:42","agent":"backend-node","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"users 서비스에 페이지네이션 로직 추가","agent":"backend-node","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"이 컨트롤러 코드 리뷰해줘","agent":"backend-node","lang":"ko","depth":1,"task_kind":"explain"}
+{"text":"글로벌 에러 핸들러 미들웨어를 express-async-errors 쓰도록 리팩토링","agent":"backend-node","lang":"ko","depth":2,"task_kind":"refactor"}
+{"text":"refresh token 재발급 엔드포인트 설계해줘","agent":"backend-node","lang":"ko","depth":3,"task_kind":"design"}
+{"text":"multer로 파일 업로드 API 만들어줘","agent":"backend-node","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"rate limiter 미들웨어에 Redis store 붙이는 방법 알려줘","agent":"backend-node","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"서버 로그 전체 훑어보고 메모리 누수 패턴 찾아줘","agent":"backend-node","lang":"ko","depth":3,"task_kind":"bulk_read"}
+{"text":"zod로 요청 바디 유효성 검사 스키마 작성해줘","agent":"backend-node","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"express 앱을 모놀리식에서 모듈형 라우터 구조로 마이그레이션 설계해줘","agent":"backend-node","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"CORS 설정이 프리플라이트에서 자꾸 막히는데 왜 그런지 봐줘","agent":"backend-node","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"socket.io 룸 기능으로 채팅 브로드캐스트 구현해줘","agent":"backend-node","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"이 API 응답 스트리밍으로 바꿀 수 있어?","agent":"backend-node","lang":"ko","depth":2,"task_kind":"refactor"}
+{"text":"bcrypt 비밀번호 해싱 로직 짧게 알려줘","agent":"backend-node","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"health check 엔드포인트 하나 추가해줘","agent":"backend-node","lang":"ko","depth":0,"task_kind":"implement"}
+{"text":"미들웨어 실행 순서 때문에 인증이 검증 전에 통과되는 버그 고쳐줘","agent":"backend-node","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"서버 전체 500 에러가 간헐적으로 발생하는데 원인 불명이라 로그랑 코드 다 훑어봐야 할 것 같아","agent":"backend-node","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"node 서버에 graceful shutdown 로직 추가해줘","agent":"backend-node","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"express 미들웨어 체인이 정확히 뭔지 설명해줘","agent":"backend-node","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"passport.js 대신 직접 OAuth2 플로우 구현하고 싶어","agent":"backend-node","lang":"ko","depth":3,"task_kind":"implement"}
+{"text":"이 라우트 핸들러에서 try-catch 빠진 곳들 다 찾아서 고쳐줘","agent":"backend-node","lang":"ko","depth":2,"task_kind":"refactor"}
+{"text":"TypeScript strict 모드 켰더니 컨트롤러 타입 에러가 30개 넘게 나는데 하나씩 고쳐줘","agent":"backend-node","lang":"ko","depth":2,"task_kind":"bulk_read"}
+{"text":"API 버전 관리를 어떻게 설계하는 게 좋을까?","agent":"backend-node","lang":"ko","depth":3,"task_kind":"design"}
+{"text":"cron job으로 매일 새벽 데이터 정리하는 서비스 만들어줘","agent":"backend-node","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"express-validator에서 커스텀 밸리데이터 만드는 법","agent":"backend-node","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"서버가 부하 테스트 중에 EventEmitter 메모리 누수 경고를 내는데 원인 파악해줘","agent":"backend-node","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"REST API를 GraphQL로 전환하는 아키텍처 설계해줘","agent":"backend-node","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"로그인 실패 시 계정 잠금 로직 추가해줘","agent":"backend-node","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"axios 대신 node-fetch로 외부 API 호출 부분 리팩토링","agent":"backend-node","lang":"ko","depth":1,"task_kind":"refactor"}
+{"text":"WebSocket 인증을 어떻게 처리하는게 맞을까 고민중이야","agent":"backend-node","lang":"ko","depth":2,"task_kind":"design"}
+{"text":"이 서비스 레이어랑 리포지토리 레이어 분리 좀 해줘","agent":"backend-node","lang":"ko","depth":2,"task_kind":"refactor"}
+{"text":"express-session을 stateless JWT로 전환하는 마이그레이션 플랜 짜줘","agent":"backend-node","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"서버 시작할 때 env 변수 검증하는 로직 넣어줘","agent":"backend-node","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"Add a JWT refresh middleware to our Express auth routes","agent":"backend-node","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Why does our WebSocket server drop connections every few minutes under load?","agent":"backend-node","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Getting this on startup: Error: listen EADDRINUSE: address already in use :::4000","agent":"backend-node","lang":"en","depth":0,"task_kind":"debug"}
+{"text":"Implement rate limiting per API key using Redis","agent":"backend-node","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Explain how Express middleware chaining and next() work","agent":"backend-node","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Refactor the controllers to use async/await instead of callback hell","agent":"backend-node","lang":"en","depth":2,"task_kind":"refactor"}
+{"text":"Design a scalable notification service with WebSocket fanout and a message queue","agent":"backend-node","lang":"en","depth":4,"task_kind":"design"}
+{"text":"Add multipart file upload support using multer with size limits","agent":"backend-node","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Our TypeScript build fails with 40+ type errors after upgrading express types, can you go through the codebase and fix them","agent":"backend-node","lang":"en","depth":2,"task_kind":"bulk_read"}
+{"text":"Write a Zod schema to validate the incoming signup request body","agent":"backend-node","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Plan a migration from session-based auth to stateless JWT across the whole API","agent":"backend-node","lang":"en","depth":4,"task_kind":"design"}
+{"text":"CORS preflight keeps failing on our PATCH requests, can you investigate","agent":"backend-node","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Add graceful shutdown handling for open DB connections and in-flight requests","agent":"backend-node","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Stream large CSV exports from the API instead of buffering the whole response","agent":"backend-node","lang":"en","depth":2,"task_kind":"refactor"}
+{"text":"One-liner: how do I hash passwords with bcrypt in Node?","agent":"backend-node","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Add a simple /healthz endpoint that checks DB connectivity","agent":"backend-node","lang":"en","depth":0,"task_kind":"implement"}
+{"text":"There's a bug where auth middleware runs after the route handler already responded, fix it","agent":"backend-node","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"We're seeing sporadic 502s in production and I have no idea why, can you dig through the server logs and request handlers","agent":"backend-node","lang":"en","depth":3,"task_kind":"bulk_read"}
+{"text":"Implement OAuth2 authorization code flow manually without passport.js","agent":"backend-node","lang":"en","depth":3,"task_kind":"implement"}
+{"text":"Find every route handler missing try/catch and wrap them properly","agent":"backend-node","lang":"en","depth":2,"task_kind":"refactor"}
+{"text":"How should we version our REST API going forward?","agent":"backend-node","lang":"en","depth":3,"task_kind":"design"}
+{"text":"Build a cron job service that purges stale sessions nightly","agent":"backend-node","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"How do I write a custom validator with express-validator?","agent":"backend-node","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Under load testing we're getting MaxListenersExceededWarning, track down the root cause","agent":"backend-node","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Design an architecture to split this monolith Express app into modular services","agent":"backend-node","lang":"en","depth":4,"task_kind":"design"}
+{"text":"Add account lockout after repeated failed login attempts","agent":"backend-node","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Replace axios with native fetch in the external API client module","agent":"backend-node","lang":"en","depth":1,"task_kind":"refactor"}
+{"text":"Not sure how to handle auth for socket.io connections, thoughts?","agent":"backend-node","lang":"en","depth":2,"task_kind":"design"}
+{"text":"Split the fat controller into a proper service and repository layer","agent":"backend-node","lang":"en","depth":2,"task_kind":"refactor"}
+{"text":"Validate required environment variables on server boot and fail fast if missing","agent":"backend-node","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Set up Socket.IO rooms for a group chat feature with broadcast events","agent":"backend-node","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"TS2345 error when compiling middleware/errorHandler.ts, argument of type 'unknown' not assignable to type 'Error'","agent":"backend-node","lang":"en","depth":1,"task_kind":"debug"}
+{"text":"What's the cleanest way to structure error classes for consistent API error responses?","agent":"backend-node","lang":"en","depth":2,"task_kind":"design"}
+{"text":"Add request logging with correlation IDs across all middleware","agent":"backend-node","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"SQLite에서 인덱스가 안 타는 쿼리인데 EXPLAIN QUERY PLAN 좀 봐줘","agent":"database","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"users 테이블에 email unique 인덱스 추가하는 마이그레이션 작성해줘","agent":"database","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"PostgreSQL 파티셔닝을 도입해서 주문 테이블을 월별로 나누고 싶어","agent":"database","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"이 에러 원인이 뭘까: FOREIGN KEY constraint failed","agent":"database","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"트랜잭션 격리 수준을 REPEATABLE READ로 바꾸면 어떤 부작용이 있어?","agent":"database","lang":"ko","depth":2,"task_kind":"explain"}
+{"text":"게시글 검색 기능에 FTS5 가상 테이블 붙여줘","agent":"database","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"N+1 쿼리 문제 있는 것 같은데 로그 전체 분석해서 어디서 발생하는지 찾아줘","agent":"database","lang":"ko","depth":3,"task_kind":"bulk_read"}
+{"text":"orders 테이블 스키마 정규화 좀 다시 설계해줘, 3NF로","agent":"database","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"이 마이그레이션 롤백 스크립트도 같이 만들어줘","agent":"database","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"복합 인덱스 컬럼 순서 어떻게 잡아야 최적일까?","agent":"database","lang":"ko","depth":2,"task_kind":"explain"}
+{"text":"데드락 로그 붙여줄게, 원인 좀 찾아줘","agent":"database","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"PRAGMA foreign_keys가 왜 꺼져있는지 확인해줘","agent":"database","lang":"ko","depth":0,"task_kind":"debug"}
+{"text":"Prisma 스키마에 새 관계 추가하고 마이그레이션 생성해줘","agent":"database","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"슬로우 쿼리 로그 파일 전체를 분석해서 가장 느린 쿼리 top 10 뽑아줘","agent":"database","lang":"ko","depth":3,"task_kind":"bulk_read"}
+{"text":"VACUUM 실행하면 서비스에 영향 있어?","agent":"database","lang":"ko","depth":1,"task_kind":"ops"}
+{"text":"UUID를 PK로 쓰는 것과 auto increment 중 뭐가 나을까?","agent":"database","lang":"ko","depth":2,"task_kind":"explain"}
+{"text":"이 SELECT 쿼리 서브쿼리를 JOIN으로 리팩토링해줘","agent":"database","lang":"ko","depth":2,"task_kind":"refactor"}
+{"text":"백업 스크립트에서 pg_dump 옵션 뭘 써야 안전해?","agent":"database","lang":"ko","depth":1,"task_kind":"ops"}
+{"text":"멀티 테넌트 구조로 스키마 설계 바꾸고 싶은데 RLS 쓸지 스키마 분리할지 고민이야","agent":"database","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"이 테이블에 소프트 삭제 컬럼 추가하고 관련 쿼리 다 수정해줘","agent":"database","lang":"ko","depth":2,"task_kind":"refactor"}
+{"text":"커넥션 풀이 자꾸 고갈되는데 원인 파악해줘","agent":"database","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"JSONB 컬럼에 GIN 인덱스 걸어줘","agent":"database","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"이 쿼리 실행계획 캐시가 왜 자꾸 무효화되는지 설명해줘","agent":"database","lang":"ko","depth":2,"task_kind":"explain"}
+{"text":"댓글-대댓글 구조를 재귀 CTE로 조회하게 해줘","agent":"database","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"스키마 변경 시 다운타임 없이 배포하는 방법 알려줘","agent":"database","lang":"ko","depth":3,"task_kind":"design"}
+{"text":"이 데이터베이스 전체 마이그레이션 히스토리 파일들을 읽고 꼬인 부분 찾아줘","agent":"database","lang":"ko","depth":3,"task_kind":"bulk_read"}
+{"text":"unique constraint violation 에러 로그야, 원인 좀 봐줘","agent":"database","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"read replica로 읽기 쿼리 분산하려면 어떻게 설정해?","agent":"database","lang":"ko","depth":3,"task_kind":"ops"}
+{"text":"컬럼 타입을 VARCHAR에서 TEXT로 바꾸는 마이그레이션 짜줘","agent":"database","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"이 스토어드 프로시저 성능 개선 좀 해줘","agent":"database","lang":"ko","depth":2,"task_kind":"refactor"}
+{"text":"북마크 기능 위한 다대다 관계 테이블 설계해줘","agent":"database","lang":"ko","depth":1,"task_kind":"design"}
+{"text":"데이터베이스 시드 스크립트에 더미 데이터 10만건 넣게 해줘","agent":"database","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"트리거가 왜 두 번 실행되는지 디버깅해줘","agent":"database","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"샤딩 도입 전에 기존 스키마 어떻게 준비해야 할지 설계 좀 도와줘","agent":"database","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"이 쿼리에 LIMIT/OFFSET 대신 커서 기반 페이지네이션 적용해줘","agent":"database","lang":"ko","depth":2,"task_kind":"refactor"}
+{"text":"Write a migration to add a composite unique index on (user_id, sku)","agent":"database","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Why is this query doing a sequential scan instead of using the index?","agent":"database","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Design a schema for a multi-tenant SaaS app with row-level isolation","agent":"database","lang":"en","depth":4,"task_kind":"design"}
+{"text":"Here's the Postgres error: deadlock detected, please diagnose it","agent":"database","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Normalize this orders table, it has repeating groups","agent":"database","lang":"en","depth":2,"task_kind":"refactor"}
+{"text":"Set up an FTS5 virtual table for full-text search on articles","agent":"database","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Go through the slow query log and find the worst offenders","agent":"database","lang":"en","depth":3,"task_kind":"bulk_read"}
+{"text":"Explain the difference between REPEATABLE READ and SERIALIZABLE isolation","agent":"database","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Add a rollback for this Alembic migration","agent":"database","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Refactor this nested subquery into a JOIN for better performance","agent":"database","lang":"en","depth":2,"task_kind":"refactor"}
+{"text":"What's the safest way to run pg_dump without locking production tables?","agent":"database","lang":"en","depth":1,"task_kind":"ops"}
+{"text":"Should I use UUIDv7 or bigserial for primary keys here?","agent":"database","lang":"en","depth":1,"task_kind":"explain"}
+{"text":"Connection pool keeps exhausting under load, help me trace why","agent":"database","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Add a GIN index on this jsonb column for containment queries","agent":"database","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Plan a zero-downtime schema migration for renaming this column","agent":"database","lang":"en","depth":3,"task_kind":"design"}
+{"text":"Read through all the migration files in db/migrations and find where the schema drifted from prod","agent":"database","lang":"en","depth":3,"task_kind":"bulk_read"}
+{"text":"FOREIGN KEY constraint failed on delete, can you figure out why","agent":"database","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Set up a recursive CTE for the comment thread hierarchy","agent":"database","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Convert this table to use soft deletes and update all affected queries","agent":"database","lang":"en","depth":2,"task_kind":"refactor"}
+{"text":"How do I configure a read replica for read-heavy endpoints?","agent":"database","lang":"en","depth":3,"task_kind":"ops"}
+{"text":"Does VACUUM FULL block reads on this table?","agent":"database","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Design the sharding key strategy before we split this table","agent":"database","lang":"en","depth":4,"task_kind":"design"}
+{"text":"Switch this offset pagination to keyset pagination on created_at","agent":"database","lang":"en","depth":2,"task_kind":"refactor"}
+{"text":"unique constraint violated on email column, here's the stack trace","agent":"database","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Create a many-to-many join table for tags and posts with cascade rules","agent":"database","lang":"en","depth":1,"task_kind":"design"}
+{"text":"Write a seed script to generate 100k fake rows for load testing","agent":"database","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Trigger seems to fire twice on update, debug it","agent":"database","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Add a check constraint to enforce positive quantities","agent":"database","lang":"en","depth":0,"task_kind":"implement"}
+{"text":"Optimize this stored procedure, it's timing out on large batches","agent":"database","lang":"en","depth":2,"task_kind":"refactor"}
+{"text":"What indexes should I create for this multi-column WHERE clause with sorting?","agent":"database","lang":"en","depth":1,"task_kind":"explain"}
+{"text":"Investigate why our replication lag keeps spiking during peak hours","agent":"database","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Consolidate these three overlapping migration files into one clean baseline","agent":"database","lang":"en","depth":3,"task_kind":"refactor"}
+{"text":"Add a materialized view for the dashboard aggregate stats and a refresh schedule","agent":"database","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Explain how MVCC handles concurrent writes in Postgres","agent":"database","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Design an event sourcing table structure for the audit log","agent":"database","lang":"en","depth":4,"task_kind":"design"}
+{"text":"Query is returning duplicate rows after the JOIN, find out why","agent":"database","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"docker compose up 할 때 mongo 컨테이너가 계속 재시작 반복되는데 로그 좀 분석해줘","agent":"devops","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"nginx reverse proxy 설정 파일에 새 서비스 upstream 하나 추가해줘","agent":"devops","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"Let's Encrypt 인증서 자동 갱신 cron이 실패하고 있어, 원인 찾아줘","agent":"devops","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"systemd 서비스 유닛 파일 작성해서 앱을 부팅 시 자동 실행되게 해줘","agent":"devops","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"docker-compose.yml 멀티스테이지 빌드로 이미지 용량 줄이는 방법 알려줘","agent":"devops","lang":"ko","depth":1,"task_kind":"explain"}
+{"text":"배포 스크립트에 롤백 로직 추가해줘, 헬스체크 실패하면 이전 버전으로 되돌아가게","agent":"devops","lang":"ko","depth":3,"task_kind":"implement"}
+{"text":"전체 서버 로그 파일들 다 훑어서 지난주 5xx 에러 패턴 요약해줘","agent":"devops","lang":"ko","depth":2,"task_kind":"bulk_read"}
+{"text":"docker network 서로 다른 compose 프로젝트 컨테이너끼리 통신 안 되는데 왜 그래","agent":"devops","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"쉘 스크립트로 오래된 도커 이미지랑 볼륨 자동 정리하는 cron job 만들어줘","agent":"devops","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"blue-green 배포 구조로 CI/CD 파이프라인 다시 설계해줘","agent":"devops","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"nginx.conf gzip 압축 설정 어떻게 켜","agent":"devops","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"docker build 할 때 'no space left on device' 에러 뜨는데 해결해줘","agent":"devops","lang":"ko","depth":1,"task_kind":"debug"}
+{"text":"Prometheus + Grafana로 서버 모니터링 스택 처음부터 구축해줘","agent":"devops","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"docker-compose.override.yml 로컬 개발용으로 분리해줘","agent":"devops","lang":"ko","depth":1,"task_kind":"refactor"}
+{"text":"nginx 502 bad gateway 뜨는 원인이 뭔지 access log랑 error log 같이 봐줘","agent":"devops","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"서버 디스크 용량이 90% 넘었는데 뭐가 차지하고 있는지 확인해줘","agent":"devops","lang":"ko","depth":1,"task_kind":"ops"}
+{"text":"docker swarm에서 kubernetes로 마이그레이션하는 계획 세워줘","agent":"devops","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"github actions에서 SSH로 프로덕션 서버에 배포하는 워크플로우 만들어줘","agent":"devops","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"docker exec로 컨테이너 안에 들어가서 환경변수 확인하는 법","agent":"devops","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"compose 파일에서 healthcheck 옵션 추가해서 의존성 순서 제어해줘","agent":"devops","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"방금 배포하고 나서 메모리 사용량이 갑자기 치솟는데 원인 파악해줘","agent":"devops","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"nginx에서 http를 https로 강제 리다이렉트하는 설정 추가해줘","agent":"devops","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"logrotate 설정해서 애플리케이션 로그 파일 자동으로 압축 및 삭제되게 해줘","agent":"devops","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"docker compose ps에서 계속 unhealthy로 뜨는 컨테이너 디버깅해줘","agent":"devops","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"우분투 서버에 방화벽 ufw로 필요한 포트만 열어줘","agent":"devops","lang":"ko","depth":1,"task_kind":"ops"}
+{"text":"docker 이미지 태그 전략이랑 레지스트리 push 자동화 방식 설계해줘","agent":"devops","lang":"ko","depth":3,"task_kind":"design"}
+{"text":"nginx rate limiting 설정해서 특정 엔드포인트 DDoS 방어해줘","agent":"devops","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"이 systemd journalctl 로그 전체 붙여넣었는데 크래시 원인 찾아줘","agent":"devops","lang":"ko","depth":3,"task_kind":"bulk_read"}
+{"text":"docker compose에서 환경변수를 .env 파일로 분리하고 시크릿은 별도 관리하도록 리팩터링해줘","agent":"devops","lang":"ko","depth":2,"task_kind":"refactor"}
+{"text":"무중단 배포를 위한 nginx upstream 가중치 조정 방법 알려줘","agent":"devops","lang":"ko","depth":1,"task_kind":"explain"}
+{"text":"서버 재부팅 후 도커 컨테이너들이 자동으로 안 올라오는 문제 고쳐줘","agent":"devops","lang":"ko","depth":1,"task_kind":"debug"}
+{"text":"CI 파이프라인에서 도커 이미지 빌드 캐시 활용해서 빌드 시간 줄여줘","agent":"devops","lang":"ko","depth":2,"task_kind":"refactor"}
+{"text":"nginx와 certbot 연동해서 신규 도메인 인증서 발급 스크립트 짜줘","agent":"devops","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"배포 아키텍처를 단일 서버에서 로드밸런서 뒤에 여러 대로 확장하는 설계 짜줘","agent":"devops","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"docker-compose.yml 문법 오류 뭔지 봐줘","agent":"devops","lang":"ko","depth":0,"task_kind":"debug"}
+{"text":"Set up a docker compose stack for postgres, redis, and the app with proper networking","agent":"devops","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Our nginx reverse proxy keeps returning 504 gateway timeout under load, help debug it","agent":"devops","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Write a systemd timer that runs our backup script every night at 2am","agent":"devops","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Why does docker build fail with 'failed to solve: process did not complete successfully'","agent":"devops","lang":"en","depth":1,"task_kind":"debug"}
+{"text":"Renew our TLS cert setup, we're still on a manually issued cert that expires next week","agent":"devops","lang":"en","depth":2,"task_kind":"ops"}
+{"text":"Design a CI/CD pipeline with staging and production environments using GitHub Actions and docker registries","agent":"devops","lang":"en","depth":4,"task_kind":"design"}
+{"text":"quick one-liner to list all stopped docker containers","agent":"devops","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Refactor our shell deploy script into idempotent functions with proper error trapping","agent":"devops","lang":"en","depth":2,"task_kind":"refactor"}
+{"text":"Pasting our entire nginx error log from the last outage, find the root cause","agent":"devops","lang":"en","depth":3,"task_kind":"bulk_read"}
+{"text":"Add a healthcheck to the docker-compose service so it waits for postgres to be ready","agent":"devops","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Container keeps OOM killing, walk through the memory limits and cgroup settings","agent":"devops","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Set up log rotation for our app logs under /var/log so disk doesn't fill up","agent":"devops","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Migrate our deployment from a single VPS to a load-balanced multi-node setup","agent":"devops","lang":"en","depth":4,"task_kind":"design"}
+{"text":"What's the difference between COPY and ADD in a Dockerfile","agent":"devops","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Configure nginx to terminate TLS and proxy websocket connections to our backend","agent":"devops","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Every deploy leaves zombie processes on the server, figure out why and fix it","agent":"devops","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Write a bash script to prune unused docker images and volumes weekly via cron","agent":"devops","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Set up Prometheus node_exporter and a Grafana dashboard for our production hosts","agent":"devops","lang":"en","depth":3,"task_kind":"implement"}
+{"text":"Our blue-green deployment switch isn't draining old connections properly, debug it","agent":"devops","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Harden our SSH config on the production server, disable password auth and root login","agent":"devops","lang":"en","depth":1,"task_kind":"ops"}
+{"text":"Go through all our compose files across services and standardize the restart policies","agent":"devops","lang":"en","depth":2,"task_kind":"bulk_read"}
+{"text":"How do I check which process is using port 8080 on Linux","agent":"devops","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Add rate limiting and request size limits to the nginx config for the upload endpoint","agent":"devops","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Rethink our secrets management, we're currently putting API keys directly in docker-compose.yml","agent":"devops","lang":"en","depth":3,"task_kind":"design"}
+{"text":"After the last release, CPU usage on the server spiked and never came back down, investigate","agent":"devops","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Create a GitHub Actions workflow that builds, tags, and pushes our docker image to ECR on merge to main","agent":"devops","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Set up automatic certificate renewal with certbot and a systemd timer instead of cron","agent":"devops","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"docker compose logs -f shows nothing even though the container is running, why","agent":"devops","lang":"en","depth":1,"task_kind":"debug"}
+{"text":"Plan a migration from docker compose to a small k3s cluster for our services","agent":"devops","lang":"en","depth":4,"task_kind":"design"}
+{"text":"Split our monolithic nginx.conf into per-site config files under sites-available","agent":"devops","lang":"en","depth":1,"task_kind":"refactor"}
+{"text":"Server ran out of inodes, help me figure out what's eating them and clean it up","agent":"devops","lang":"en","depth":2,"task_kind":"ops"}
+{"text":"Explain what the docker-compose depends_on condition service_healthy actually does","agent":"devops","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Our deploy pipeline hangs randomly at the SSH step, dig through the CI logs to find a pattern","agent":"devops","lang":"en","depth":3,"task_kind":"bulk_read"}
+{"text":"Set up a canary release strategy behind nginx with weighted traffic splitting","agent":"devops","lang":"en","depth":3,"task_kind":"design"}
+{"text":"sdb connect 안돼요, 디바이스가 인식이 안 됩니다","agent":"tizen-device","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"갤럭시 워치용 타이젠 앱 패키징하는 법 알려줘","agent":"tizen-device","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"타이젠 인증서 프로파일 만료됐는데 재발급 절차 알려줘","agent":"tizen-device","lang":"ko","depth":1,"task_kind":"ops"}
+{"text":"Tizen Studio에서 .wgt 서명 에러 나는데 원인 좀 찾아줘","agent":"tizen-device","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"삼성 TV 앱 리모컨 키 이벤트 처리 코드 추가해줘","agent":"tizen-device","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"sdb shell로 들어가서 로그캣 비슷한 로그 보는 방법 있어?","agent":"tizen-device","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"타이젠 네이티브 앱 CMakeLists.txt 빌드 오류 디버깅해줘","agent":"tizen-device","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"config.xml에 tizen:privilege 태그 추가하는 방법 알려줘","agent":"tizen-device","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"워치 앱에서 rotary bezel 이벤트 리스너 구현해줘","agent":"tizen-device","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"타이젠 웹앱을 TV 디바이스에 무선으로 배포하는 스크립트 만들어줘","agent":"tizen-device","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"package-manager error: author certificate not found, 이거 해결해줘","agent":"tizen-device","lang":"ko","depth":1,"task_kind":"debug"}
+{"text":"Tizen Studio CLI로 여러 디바이스에 한번에 설치하는 방법?","agent":"tizen-device","lang":"ko","depth":1,"task_kind":"ops"}
+{"text":"타이젠 프로파일이랑 인증서 XML 파일들 전부 확인해서 어떤 게 만료됐는지 정리해줘","agent":"tizen-device","lang":"ko","depth":2,"task_kind":"bulk_read"}
+{"text":"삼성 TV 앱에서 메모리 릭이 의심되는데 원인 분석해줘","agent":"tizen-device","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"타이젠 웹뷰에서 CORS 에러 나는 거 해결해줘","agent":"tizen-device","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"기존 타이젠 4.0 프로젝트를 6.0으로 마이그레이션하는 계획 세워줘","agent":"tizen-device","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"sdb push로 파일 전송했는데 앱에서 못 읽어요","agent":"tizen-device","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"타이젠 IDE 프로젝트 구조 네이티브에서 하이브리드로 리팩토링해줘","agent":"tizen-device","lang":"ko","depth":3,"task_kind":"refactor"}
+{"text":"워치 앱 배터리 소모 줄이는 전략 설계해줘","agent":"tizen-device","lang":"ko","depth":3,"task_kind":"design"}
+{"text":"타이젠 tizen-web-ide 빌드 로그 전체 분석해서 실패 지점 찾아줘","agent":"tizen-device","lang":"ko","depth":2,"task_kind":"bulk_read"}
+{"text":"Tizen TV emulator 실행이 안 되는데 이유가 뭘까?","agent":"tizen-device","lang":"ko","depth":1,"task_kind":"debug"}
+{"text":"삼성 인증서 등록 프로그램에서 새 프로파일 만드는 순서 알려줘","agent":"tizen-device","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"타이젠 네이티브 앱에 블루투스 low energy 스캔 기능 추가해줘","agent":"tizen-device","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"sdb root 권한으로 디바이스 파일시스템 접근하는 법?","agent":"tizen-device","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"타이젠 웹앱 성능 프로파일링 도구 사용법 알려줘","agent":"tizen-device","lang":"ko","depth":1,"task_kind":"explain"}
+{"text":"Device Manager에서 워치 디바이스가 계속 unauthorized 상태로 뜹니다","agent":"tizen-device","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"타이젠 앱 아이콘이랑 스플래시 화면 여러 해상도로 대응하는 작업 해줘","agent":"tizen-device","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"타이젠 서비스 앱이 백그라운드에서 계속 죽는 문제 원인 분석해줘","agent":"tizen-device","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"타이젠 native API랑 web API 차이점 설명해줘","agent":"tizen-device","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"Tizen.NET 앱을 Xamarin에서 넘어온 코드로 리팩토링해줘","agent":"tizen-device","lang":"ko","depth":3,"task_kind":"refactor"}
+{"text":"타이젠 패키징 시 .tpk 서명 체인 검증 절차 정리해줘","agent":"tizen-device","lang":"ko","depth":1,"task_kind":"explain"}
+{"text":"워치 페이스 앱 전체 아키텍처를 컴패니언 앱과 연동되게 설계해줘","agent":"tizen-device","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"sdb forward로 포트 포워딩해서 디버깅하는 법 알려줘","agent":"tizen-device","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"타이젠 CI에 Jenkins로 자동 패키징 파이프라인 구축해줘","agent":"tizen-device","lang":"ko","depth":3,"task_kind":"ops"}
+{"text":"TV 앱에서 4K 해상도 대응 안 되는 레이아웃 버그 고쳐줘","agent":"tizen-device","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"How do I fix sdb device not found error on my Galaxy Watch?","agent":"tizen-device","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Set up certificate profile for Tizen TV app signing","agent":"tizen-device","lang":"en","depth":1,"task_kind":"ops"}
+{"text":"Add rotary input handling to my Tizen wearable app","agent":"tizen-device","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Getting 'author certificate expired' when packaging .wgt file","agent":"tizen-device","lang":"en","depth":1,"task_kind":"debug"}
+{"text":"Explain the difference between Tizen native and web app privileges","agent":"tizen-device","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Refactor this Tizen native service app to use event-driven architecture instead of polling","agent":"tizen-device","lang":"en","depth":3,"task_kind":"refactor"}
+{"text":"Design a migration plan from Tizen 5.5 to Tizen 7.0 for our smart TV app","agent":"tizen-device","lang":"en","depth":4,"task_kind":"design"}
+{"text":"Review these build logs from Tizen Studio and tell me why the CMake build keeps failing","agent":"tizen-device","lang":"en","depth":2,"task_kind":"bulk_read"}
+{"text":"sdb shell exits immediately after connecting, what's wrong?","agent":"tizen-device","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Implement Bluetooth LE peripheral scanning in a Tizen native app","agent":"tizen-device","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Write a script to push and install a .tpk to multiple Tizen devices via sdb","agent":"tizen-device","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Tizen emulator won't boot, stuck on splash screen","agent":"tizen-device","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"How do I add tizen:privilege entries to config.xml?","agent":"tizen-device","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Debug a memory leak in our Samsung TV app that only shows up after hours of playback","agent":"tizen-device","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Package this hybrid Tizen app so it passes Samsung Seller Office validation","agent":"tizen-device","lang":"en","depth":2,"task_kind":"ops"}
+{"text":"Go through all our certificate and profile XML files and list which ones are expired","agent":"tizen-device","lang":"en","depth":2,"task_kind":"bulk_read"}
+{"text":"Watch app battery drains fast, design a strategy to reduce power usage","agent":"tizen-device","lang":"en","depth":3,"task_kind":"design"}
+{"text":"CORS error in Tizen WebView when calling our API, fix it","agent":"tizen-device","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"What's the difference between sdb push and sdb forward?","agent":"tizen-device","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Set up a Jenkins pipeline to auto-package and sign Tizen apps on commit","agent":"tizen-device","lang":"en","depth":3,"task_kind":"ops"}
+{"text":"Fix layout bug where the TV app doesn't scale properly on 4K resolution","agent":"tizen-device","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Refactor this hybrid Tizen project structure into a cleaner native/web separation","agent":"tizen-device","lang":"en","depth":3,"task_kind":"refactor"}
+{"text":"How do I use the Tizen Web IDE performance profiler?","agent":"tizen-device","lang":"en","depth":1,"task_kind":"explain"}
+{"text":"Device Manager keeps showing my watch as unauthorized, how do I fix that?","agent":"tizen-device","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Add multi-resolution icon and splash screen support for our Tizen app","agent":"tizen-device","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Investigate why the Tizen background service keeps getting killed by the platform","agent":"tizen-device","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Explain the .tpk signing chain and how author/distributor certs relate","agent":"tizen-device","lang":"en","depth":1,"task_kind":"explain"}
+{"text":"Design the overall architecture for a watch face app that syncs with a companion phone app","agent":"tizen-device","lang":"en","depth":4,"task_kind":"design"}
+{"text":"package-manager returned error code -12, what does that mean?","agent":"tizen-device","lang":"en","depth":1,"task_kind":"debug"}
+{"text":"Add remote control key event handling for a Samsung TV app","agent":"tizen-device","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Tizen Studio CLI build fails with 'native compiler not found', help me fix it","agent":"tizen-device","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"How do I register a new certificate profile with the Samsung Certificate Extension?","agent":"tizen-device","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Migrate our Tizen.NET wearable app from .NET Core 2.1 to the latest Tizen.NET SDK","agent":"tizen-device","lang":"en","depth":4,"task_kind":"refactor"}
+{"text":"sdb install fails with INSTALL_FAILED_INVALID_PACKAGE, what's going on?","agent":"tizen-device","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Write unit-testable wrapper around Tizen native storage API","agent":"tizen-device","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Explain how Tizen application lifecycle differs between service apps and UI apps","agent":"tizen-device","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"adb devices 명령어로 기기가 안 잡히는데 원인 좀 찾아줘","agent":"android-device","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"Gradle sync가 계속 실패해. 에러 로그 붙여넣을게 봐줘","agent":"android-device","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"logcat에서 특정 태그만 필터링해서 보는 방법 알려줘","agent":"android-device","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"에뮬레이터에 새 AVD 만들고 API 34로 설정해줘","agent":"android-device","lang":"ko","depth":1,"task_kind":"ops"}
+{"text":"릴리즈 빌드에서 R8 난독화 때문에 크래시가 나는데 매핑 파일로 원인 분석해줘","agent":"android-device","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"앱이 특정 기기에서만 ANR이 발생해. 여러 로그 파일 모아서 원인 찾아줘","agent":"android-device","lang":"ko","depth":3,"task_kind":"bulk_read"}
+{"text":"카메라 권한 요청 로직을 런타임 퍼미션 API로 바꿔줘","agent":"android-device","lang":"ko","depth":2,"task_kind":"refactor"}
+{"text":"keystore로 APK 서명하는 절차 알려줘","agent":"android-device","lang":"ko","depth":1,"task_kind":"explain"}
+{"text":"Foreground service 타입을 Android 14 요구사항에 맞게 매니페스트에 추가해줘","agent":"android-device","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"WorkManager로 백그라운드 동기화 작업 구현해줘","agent":"android-device","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"Room 데이터베이스 마이그레이션 스크립트 작성해줘","agent":"android-device","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"SharedPreferences를 DataStore로 마이그레이션하는 작업 설계해줘","agent":"android-device","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"kapt를 KSP로 전환하려는데 어떻게 시작해야 해?","agent":"android-device","lang":"ko","depth":3,"task_kind":"refactor"}
+{"text":"Espresso UI 테스트가 가끔 플레이키하게 실패해. 원인 좀 찾아줘","agent":"android-device","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"multidex 64k 메서드 제한에 걸렸어. 해결해줘","agent":"android-device","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"adb로 기기에 파일 push/pull 하는 명령어 알려줘","agent":"android-device","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"dumpsys activity로 현재 실행 중인 액티비티 상태 확인하는 법 알려줘","agent":"android-device","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"native crash tombstone 로그 분석해서 JNI 쪽 문제인지 확인해줘","agent":"android-device","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"Bluetooth LE 스캔 기능을 Kotlin으로 구현해줘","agent":"android-device","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"Play Console 내부 테스트 트랙에 AAB 업로드하는 절차 알려줘","agent":"android-device","lang":"ko","depth":1,"task_kind":"ops"}
+{"text":"Firebase Crashlytics 연동해서 크래시 리포트 수집하도록 설정해줘","agent":"android-device","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"Hilt 의존성 주입을 앱 전체에 도입하는 아키텍처 설계해줘","agent":"android-device","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"딥링크 인텐트 필터가 특정 URL 스킴에서 동작 안 해. 매니페스트 확인해줘","agent":"android-device","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"무선 adb 연결 설정하는 법 알려줘","agent":"android-device","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"Doze 모드에서 백그라운드 작업이 지연되는 문제를 배터리 최적화 예외 처리로 해결해줘","agent":"android-device","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"scoped storage 정책 때문에 파일 접근이 막혔어. 코드 고쳐줘","agent":"android-device","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"gradle version catalog로 의존성 버전 관리 방식 리팩토링해줘","agent":"android-device","lang":"ko","depth":3,"task_kind":"refactor"}
+{"text":"targetSdk 34로 올렸더니 여러 기능이 깨졌어. 전체 로그와 매니페스트 다 살펴보고 정리해줘","agent":"android-device","lang":"ko","depth":3,"task_kind":"bulk_read"}
+{"text":"NFC 태그 읽기 기능 추가해줘","agent":"android-device","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"Android Studio Profiler로 메모리 누수 찾는 방법 알려줘","agent":"android-device","lang":"ko","depth":1,"task_kind":"explain"}
+{"text":"화면 회전 시 ViewModel 상태가 초기화되는 문제 고쳐줘","agent":"android-device","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"AccessibilityService 권한 요청과 구현 가이드 해줘","agent":"android-device","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"gradle 빌드 캐시가 자꾸 깨져서 clean build를 매번 해야 해. 원인 찾아줘","agent":"android-device","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"ExoPlayer로 동영상 스트리밍 재생 붙여줘","agent":"android-device","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"Layout Inspector로 RecyclerView 레이아웃 문제 디버깅하는 법 알려줘","agent":"android-device","lang":"ko","depth":1,"task_kind":"explain"}
+{"text":"install_failed_insufficient_storage 에러 메시지 봐줘: 붙여넣을게","agent":"android-device","lang":"ko","depth":1,"task_kind":"debug"}
+{"text":"Set up a wireless adb connection for on-device debugging","agent":"android-device","lang":"en","depth":0,"task_kind":"ops"}
+{"text":"Gradle sync keeps failing with a dependency resolution error, here's the stack trace","agent":"android-device","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Filter logcat output by tag and severity level","agent":"android-device","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Create a new AVD emulator targeting API level 34","agent":"android-device","lang":"en","depth":1,"task_kind":"ops"}
+{"text":"App crashes only on release builds after R8 minification, deobfuscate this stack trace and find the cause","agent":"android-device","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"App is showing ANR on some devices but not others. I'll paste several logcat dumps, help me find the common thread","agent":"android-device","lang":"en","depth":3,"task_kind":"bulk_read"}
+{"text":"Migrate camera permission handling to the runtime permissions API","agent":"android-device","lang":"en","depth":2,"task_kind":"refactor"}
+{"text":"Walk me through signing an APK with a keystore","agent":"android-device","lang":"en","depth":1,"task_kind":"explain"}
+{"text":"Add the correct foreground service type to the manifest for Android 14 compliance","agent":"android-device","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Implement background sync using WorkManager with network constraints","agent":"android-device","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Write a Room database migration script for the new schema version","agent":"android-device","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Design a migration plan from SharedPreferences to Jetpack DataStore across the app","agent":"android-device","lang":"en","depth":4,"task_kind":"design"}
+{"text":"How do I start converting kapt annotation processing to KSP?","agent":"android-device","lang":"en","depth":3,"task_kind":"refactor"}
+{"text":"Espresso UI tests fail intermittently in CI, track down the flakiness","agent":"android-device","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Hit the 64k method limit and multidex isn't configured right, fix the build","agent":"android-device","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Show me the adb command to push and pull files from a connected device","agent":"android-device","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"How do I check the current foreground activity using dumpsys?","agent":"android-device","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Analyze this native crash tombstone log and tell me if it's a JNI bridge issue","agent":"android-device","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Implement Bluetooth LE scanning in Kotlin with proper permission checks","agent":"android-device","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Walk me through uploading an AAB to the internal testing track in Play Console","agent":"android-device","lang":"en","depth":1,"task_kind":"ops"}
+{"text":"Wire up Firebase Crashlytics to collect crash reports from production","agent":"android-device","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Design an app-wide dependency injection architecture using Hilt","agent":"android-device","lang":"en","depth":4,"task_kind":"design"}
+{"text":"Deep link intent filter isn't matching for a custom URL scheme, check the manifest","agent":"android-device","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"emulator: process finished with exit code 1 and no window opens, here's the log","agent":"android-device","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Handle Doze mode battery optimization exceptions so background jobs aren't delayed","agent":"android-device","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Scoped storage is blocking file access on Android 11+, fix the file handling code","agent":"android-device","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Refactor dependency versions to use a Gradle version catalog","agent":"android-device","lang":"en","depth":3,"task_kind":"refactor"}
+{"text":"Bumped targetSdk to 34 and several features broke, go through the logs and manifest to sort out what changed","agent":"android-device","lang":"en","depth":3,"task_kind":"bulk_read"}
+{"text":"Add NFC tag reading support to the app","agent":"android-device","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"How do I use Android Studio Profiler to track down a memory leak?","agent":"android-device","lang":"en","depth":1,"task_kind":"explain"}
+{"text":"ViewModel state resets on screen rotation, fix the configuration change handling","agent":"android-device","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Guide me through requesting and implementing an AccessibilityService","agent":"android-device","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Gradle build cache keeps getting corrupted and forces clean builds every time, find out why","agent":"android-device","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Integrate ExoPlayer for video streaming playback","agent":"android-device","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"How do I debug a RecyclerView layout issue with Layout Inspector?","agent":"android-device","lang":"en","depth":1,"task_kind":"explain"}
+{"text":"Getting INSTALL_FAILED_INSUFFICIENT_STORAGE on device install, here's the full error","agent":"android-device","lang":"en","depth":1,"task_kind":"debug"}
+{"text":"WebView won't load local assets after switching to scoped storage, debug it","agent":"android-device","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Vitest로 UserProfile 컴포넌트 단위 테스트 작성해줘","agent":"testing","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"로그인 폼 e2e 테스트를 Playwright로 만들어줘","agent":"testing","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"이 테스트가 로컬에서는 통과하는데 CI에서만 계속 실패해. 왜 그런지 원인 좀 찾아줘","agent":"testing","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"payment.service.ts 테스트 커버리지가 왜 이렇게 낮은지 분석해줘","agent":"testing","lang":"ko","depth":2,"task_kind":"bulk_read"}
+{"text":"axios 호출 부분 mocking 어떻게 하는게 좋을까?","agent":"testing","lang":"ko","depth":1,"task_kind":"explain"}
+{"text":"flaky한 테스트 3개 고쳐줘, 아래 로그 첨부함","agent":"testing","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"Jest에서 스냅샷 테스트가 계속 깨지는데 원인 파악해줘","agent":"testing","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"장바구니 기능에 통합 테스트 추가해줘","agent":"testing","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"테스트 fixture 데이터 생성하는 헬퍼 함수 만들어줘","agent":"testing","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"이거 테스트 코드인데 뭘 검증하는건지 설명해줘","agent":"testing","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"Playwright 테스트 실행 시 타임아웃 에러가 나. 에러 로그 붙여넣을게","agent":"testing","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"describe/it 블록 네이밍 컨벤션 알려줘","agent":"testing","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"전체 테스트 스위트를 리팩토링해서 중복되는 setup 코드 줄여줘","agent":"testing","lang":"ko","depth":3,"task_kind":"refactor"}
+{"text":"이 함수 단위 테스트 케이스 뭐가 빠졌는지 검토해줘","agent":"testing","lang":"ko","depth":1,"task_kind":"explain"}
+{"text":"React Testing Library로 모달 컴포넌트 테스트 짜줘","agent":"testing","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"API 응답 mock 서버를 msw로 구축해줘","agent":"testing","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"커버리지 리포트 80% 이상으로 끌어올리는 전략 설계해줘","agent":"testing","lang":"ko","depth":3,"task_kind":"design"}
+{"text":"npm test 실행하면 이런 에러가 나와: TypeError: Cannot read properties of undefined","agent":"testing","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"테스트 파일 30개 훑어보고 안 쓰는 mock 정리해줘","agent":"testing","lang":"ko","depth":2,"task_kind":"bulk_read"}
+{"text":"비동기 함수 테스트할 때 waitFor 쓰는 법 알려줘","agent":"testing","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"결제 모듈 전체에 대한 테스트 아키텍처 새로 설계해줘","agent":"testing","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"Cypress에서 Playwright로 마이그레이션하는 계획 세워줘","agent":"testing","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"이 테스트 왜 자꾸 간헐적으로 실패하는지 로그 100줄 분석해줘","agent":"testing","lang":"ko","depth":3,"task_kind":"bulk_read"}
+{"text":"useDebounce 훅 테스트 작성해줘","agent":"testing","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"스냅샷 테스트 업데이트하는 명령어가 뭐야?","agent":"testing","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"테스트 더블(stub, spy, mock) 차이가 뭐야?","agent":"testing","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"백엔드 API 엔드포인트에 대한 통합 테스트 셋업해줘","agent":"testing","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"회귀 버그 재현하는 테스트 케이스 먼저 작성해줘","agent":"testing","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"테스트 실행 속도가 너무 느려. 병목 찾아서 개선해줘","agent":"testing","lang":"ko","depth":3,"task_kind":"refactor"}
+{"text":"이 컴포넌트 테스트에서 act() 경고가 계속 떠","agent":"testing","lang":"ko","depth":1,"task_kind":"debug"}
+{"text":"vitest.config.ts 설정 파일 검토해줘","agent":"testing","lang":"ko","depth":1,"task_kind":"explain"}
+{"text":"E2E 테스트 전체를 병렬 실행하도록 구조 바꿔줘","agent":"testing","lang":"ko","depth":3,"task_kind":"refactor"}
+{"text":"로그인 실패 케이스, 토큰 만료 케이스 등 엣지 케이스 테스트 추가해줘","agent":"testing","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"테스트 격리가 잘 안 되는 것 같은데 원인 조사해줘","agent":"testing","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"GitHub Actions에서 테스트 실행 로그 전체를 분석해서 실패 원인 요약해줘","agent":"testing","lang":"ko","depth":3,"task_kind":"bulk_read"}
+{"text":"write unit tests for the UserProfile component using Vitest","agent":"testing","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"set up an e2e test for the checkout flow with Playwright","agent":"testing","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"this test passes locally but fails in CI every time, here's the log, help me figure out why","agent":"testing","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"why is coverage on payment.service.ts so low?","agent":"testing","lang":"en","depth":2,"task_kind":"bulk_read"}
+{"text":"what's the best way to mock an axios call in Jest?","agent":"testing","lang":"en","depth":1,"task_kind":"explain"}
+{"text":"fix these three flaky tests, log attached below","agent":"testing","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"our snapshot tests keep breaking on unrelated changes, find the root cause","agent":"testing","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"add integration tests for the shopping cart feature","agent":"testing","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"write a helper function to generate test fixture data","agent":"testing","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"explain what this test file is actually verifying","agent":"testing","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"getting a timeout error running Playwright tests, pasting the stack trace here","agent":"testing","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"what naming convention should I use for describe/it blocks?","agent":"testing","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"refactor the whole test suite to remove duplicated setup boilerplate","agent":"testing","lang":"en","depth":3,"task_kind":"refactor"}
+{"text":"review this function and tell me which test cases are missing","agent":"testing","lang":"en","depth":1,"task_kind":"explain"}
+{"text":"write a test for the modal component using React Testing Library","agent":"testing","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"stand up a mock API server with msw for our tests","agent":"testing","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"design a strategy to push test coverage above 80%","agent":"testing","lang":"en","depth":3,"task_kind":"design"}
+{"text":"npm test throws: TypeError: Cannot read properties of undefined (reading 'map')","agent":"testing","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"go through all 30 test files and clean up unused mocks","agent":"testing","lang":"en","depth":2,"task_kind":"bulk_read"}
+{"text":"how do I use waitFor for testing async code?","agent":"testing","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"design a full test architecture for the payments module","agent":"testing","lang":"en","depth":4,"task_kind":"design"}
+{"text":"plan a migration from Cypress to Playwright for the whole repo","agent":"testing","lang":"en","depth":4,"task_kind":"design"}
+{"text":"here's 100 lines of test logs, figure out why this test intermittently fails","agent":"testing","lang":"en","depth":3,"task_kind":"bulk_read"}
+{"text":"write tests for the useDebounce hook","agent":"testing","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"what's the command to update snapshot tests?","agent":"testing","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"what's the difference between a stub, a spy, and a mock?","agent":"testing","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"set up integration tests for the backend API endpoints","agent":"testing","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"write a regression test that reproduces this bug before we fix it","agent":"testing","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"our test suite is really slow, find the bottleneck and speed it up","agent":"testing","lang":"en","depth":3,"task_kind":"refactor"}
+{"text":"I keep getting act() warnings in this component test","agent":"testing","lang":"en","depth":1,"task_kind":"debug"}
+{"text":"review our vitest.config.ts setup","agent":"testing","lang":"en","depth":1,"task_kind":"explain"}
+{"text":"restructure our e2e tests to run in parallel","agent":"testing","lang":"en","depth":3,"task_kind":"refactor"}
+{"text":"add edge case tests for login failure and expired tokens","agent":"testing","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"tests seem to be leaking state between each other, investigate the cause","agent":"testing","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"pull the full CI test run logs and summarize why the build failed","agent":"testing","lang":"en","depth":3,"task_kind":"bulk_read"}
+{"text":"What's the difference between a changelog and release notes?","agent":"docs","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Write a README for this repo including setup instructions","agent":"docs","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Add JSDoc comments to src/utils/formatDate.js","agent":"docs","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Generate API reference docs from our OpenAPI 3.0 spec","agent":"docs","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Draft a CONTRIBUTING.md for first-time open source contributors","agent":"docs","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Write the release notes for v2.3.0 based on these merged PR titles","agent":"docs","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Translate the README from English to Korean, keep the tone casual","agent":"docs","lang":"en","depth":1,"task_kind":"refactor"}
+{"text":"Read through these 40 changelog entries and write one clean release summary","agent":"docs","lang":"en","depth":2,"task_kind":"bulk_read"}
+{"text":"Update the architecture doc now that we've split the monolith into microservices","agent":"docs","lang":"en","depth":3,"task_kind":"design"}
+{"text":"The markdown table in docs/setup.md is rendering broken, can you fix it?","agent":"docs","lang":"en","depth":0,"task_kind":"debug"}
+{"text":"Write a migration guide walking users from our v1 REST API to the new v2 API","agent":"docs","lang":"en","depth":3,"task_kind":"design"}
+{"text":"Go through these Docker build logs and write a troubleshooting doc for the common errors","agent":"docs","lang":"en","depth":2,"task_kind":"bulk_read"}
+{"text":"Create a getting-started guide for the onboarding flow, note where screenshots go","agent":"docs","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Sphinx build failing with 'WARNING: document isn't included in any toctree', can you fix the docs structure?","agent":"docs","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Write a docstring for this Python class explaining its constructor args","agent":"docs","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Document every environment variable used across the codebase, I don't know where they're all defined","agent":"docs","lang":"en","depth":2,"task_kind":"bulk_read"}
+{"text":"Add an inline comment explaining what this regex is matching","agent":"docs","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Draft a design doc proposing the new plugin architecture, include tradeoffs and alternatives considered","agent":"docs","lang":"en","depth":4,"task_kind":"design"}
+{"text":"We exported our Confluence wiki to HTML, convert it into clean markdown docs for the repo","agent":"docs","lang":"en","depth":3,"task_kind":"refactor"}
+{"text":"Add a FAQ section to the docs site covering install issues","agent":"docs","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Write a glossary of domain terms for new engineers joining the team","agent":"docs","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Proofread this API reference page and tighten up the wording","agent":"docs","lang":"en","depth":1,"task_kind":"refactor"}
+{"text":"Generate a changelog from the git commit history since the last tagged release","agent":"docs","lang":"en","depth":2,"task_kind":"bulk_read"}
+{"text":"Explain the difference between our REST and GraphQL endpoints for the docs page","agent":"docs","lang":"en","depth":1,"task_kind":"explain"}
+{"text":"Write a one-line docstring for this helper function","agent":"docs","lang":"en","depth":0,"task_kind":"implement"}
+{"text":"Crawl the docs folder and find every broken internal link","agent":"docs","lang":"en","depth":2,"task_kind":"bulk_read"}
+{"text":"Write a deployment runbook doc so the on-call engineer can follow it step by step","agent":"docs","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Add usage examples to the SDK README showing auth and a basic request","agent":"docs","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"What's the standard format for a Keep a Changelog entry?","agent":"docs","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Write an ADR documenting why we chose Postgres over DynamoDB","agent":"docs","lang":"en","depth":3,"task_kind":"design"}
+{"text":"Write a SECURITY.md describing how to report vulnerabilities responsibly","agent":"docs","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Our docs site uses inconsistent terminology across pages, standardize it and note the changes","agent":"docs","lang":"en","depth":2,"task_kind":"refactor"}
+{"text":"Write --help text for this new CLI subcommand","agent":"docs","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Summarize these three RFC design docs into a one-page comparison for the team","agent":"docs","lang":"en","depth":2,"task_kind":"bulk_read"}
+{"text":"Explain what a JSDoc @typedef is and give an example for our config object","agent":"docs","lang":"en","depth":1,"task_kind":"explain"}
+{"text":"이 프로젝트 README 파일 작성해줘, 설치 방법부터 포함해서","agent":"docs","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"체인지로그랑 릴리즈 노트 차이가 뭐야?","agent":"docs","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"utils/formatDate.js 함수에 JSDoc 주석 추가해줘","agent":"docs","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"OpenAPI 스펙 기반으로 API 레퍼런스 문서 생성해줘","agent":"docs","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"오픈소스 초보 기여자를 위한 CONTRIBUTING.md 작성해줘","agent":"docs","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"이 PR 제목들 보고 v2.3.0 릴리즈 노트 써줘","agent":"docs","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"README 영어를 한국어로 번역해줘, 톤은 캐주얼하게","agent":"docs","lang":"ko","depth":1,"task_kind":"refactor"}
+{"text":"이 체인지로그 40개 항목 다 읽고 하나의 릴리즈 요약으로 정리해줘","agent":"docs","lang":"ko","depth":2,"task_kind":"bulk_read"}
+{"text":"모놀리스를 마이크로서비스로 쪼갠 뒤로 아키텍처 문서 업데이트해줘","agent":"docs","lang":"ko","depth":3,"task_kind":"design"}
+{"text":"docs/setup.md 안에 마크다운 표가 깨져서 나오는데 고쳐줄 수 있어?","agent":"docs","lang":"ko","depth":0,"task_kind":"debug"}
+{"text":"v1 REST API에서 v2로 넘어가는 마이그레이션 가이드 작성해줘","agent":"docs","lang":"ko","depth":3,"task_kind":"design"}
+{"text":"이 도커 빌드 로그들 보고 자주 나오는 에러 정리해서 트러블슈팅 문서 만들어줘","agent":"docs","lang":"ko","depth":2,"task_kind":"bulk_read"}
+{"text":"온보딩 플로우용 시작 가이드 작성해줘, 스크린샷 넣을 자리도 표시해주고","agent":"docs","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"Sphinx 빌드할 때 'WARNING: document isn't included in any toctree' 에러 나는데 문서 구조 좀 고쳐줘","agent":"docs","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"이 파이썬 클래스 생성자 인자 설명하는 docstring 써줘","agent":"docs","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"코드 전체에서 쓰이는 환경변수들 다 찾아서 문서로 정리해줘, 어디 정의돼있는지 모르겠어","agent":"docs","lang":"ko","depth":2,"task_kind":"bulk_read"}
+{"text":"이 정규식이 뭘 매칭하는지 설명하는 주석 달아줘","agent":"docs","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"새 플러그인 아키텍처 제안하는 설계 문서 작성해줘, 대안이랑 트레이드오프도 포함해서","agent":"docs","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"컨플루언스 위키를 HTML로 내보냈는데 이거 깔끔한 마크다운 문서로 변환해줘","agent":"docs","lang":"ko","depth":3,"task_kind":"refactor"}
+{"text":"문서 사이트에 설치 이슈 관련 FAQ 섹션 추가해줘","agent":"docs","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"새로 합류하는 엔지니어를 위한 도메인 용어집 작성해줘","agent":"docs","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"이 API 레퍼런스 페이지 교정 좀 보고 문장 다듬어줘","agent":"docs","lang":"ko","depth":1,"task_kind":"refactor"}
+{"text":"마지막 태그된 릴리즈 이후 커밋 히스토리 보고 체인지로그 생성해줘","agent":"docs","lang":"ko","depth":2,"task_kind":"bulk_read"}
+{"text":"문서 페이지에 REST랑 GraphQL 엔드포인트 차이 설명해줘","agent":"docs","lang":"ko","depth":1,"task_kind":"explain"}
+{"text":"이 헬퍼 함수에 한 줄짜리 docstring 써줘","agent":"docs","lang":"ko","depth":0,"task_kind":"implement"}
+{"text":"docs 폴더 전체 훑어서 깨진 내부 링크 찾아줘","agent":"docs","lang":"ko","depth":2,"task_kind":"bulk_read"}
+{"text":"온콜 엔지니어가 따라할 수 있게 배포 런북 문서 작성해줘","agent":"docs","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"SDK README에 인증이랑 기본 요청 예제 추가해줘","agent":"docs","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"Keep a Changelog 포맷의 표준 형식이 어떻게 돼?","agent":"docs","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"DynamoDB 대신 Postgres 선택한 이유를 ADR로 문서화해줘","agent":"docs","lang":"ko","depth":3,"task_kind":"design"}
+{"text":"취약점 신고 방법 설명하는 SECURITY.md 작성해줘","agent":"docs","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"문서 사이트 페이지마다 용어가 제각각인데 통일하고 뭐 바꿨는지 정리해줘","agent":"docs","lang":"ko","depth":2,"task_kind":"refactor"}
+{"text":"새로 만든 CLI 서브커맨드 --help 텍스트 작성해줘","agent":"docs","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"이 RFC 설계 문서 3개 요약해서 팀용 한 페이지 비교표로 만들어줘","agent":"docs","lang":"ko","depth":2,"task_kind":"bulk_read"}
+{"text":"JSDoc @typedef가 뭔지 설명해주고 우리 config 객체 예시로 보여줘","agent":"docs","lang":"ko","depth":1,"task_kind":"explain"}
+{"text":"Fix the 100vh bug on iOS Safari where the address bar cuts off content","agent":"mobile-responsive","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Add safe-area-inset padding for the iPhone notch","agent":"mobile-responsive","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Why does double-tap zoom trigger on our buttons on Android Chrome?","agent":"mobile-responsive","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Set up a PWA manifest with icons and splash screens","agent":"mobile-responsive","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Investigate why scroll feels janky on iPhone 12 but smooth on desktop","agent":"mobile-responsive","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Add touch-action: manipulation to remove the 300ms tap delay","agent":"mobile-responsive","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Design a responsive breakpoint system for mobile, tablet, and desktop","agent":"mobile-responsive","lang":"en","depth":3,"task_kind":"design"}
+{"text":"Register a service worker for offline caching","agent":"mobile-responsive","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Input field zooms the page when focused on iOS, how do I prevent it?","agent":"mobile-responsive","lang":"en","depth":1,"task_kind":"debug"}
+{"text":"Audit these 40 component files for missing responsive breakpoints","agent":"mobile-responsive","lang":"en","depth":3,"task_kind":"bulk_read"}
+{"text":"Explain how container queries differ from media queries","agent":"mobile-responsive","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Implement pull-to-refresh gesture for the mobile feed","agent":"mobile-responsive","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Sticky header jumps when the keyboard opens on Android","agent":"mobile-responsive","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Refactor the layout to use CSS clamp() instead of fixed breakpoints","agent":"mobile-responsive","lang":"en","depth":2,"task_kind":"refactor"}
+{"text":"Why is our Lighthouse mobile performance score stuck at 42?","agent":"mobile-responsive","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Add momentum scrolling for the horizontal carousel on iOS","agent":"mobile-responsive","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Paste error: Uncaught (in promise) InvalidStateError from service worker registration","agent":"mobile-responsive","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Reduce CLS caused by web font loading on mobile","agent":"mobile-responsive","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Build a bottom sheet component with swipe-to-dismiss","agent":"mobile-responsive","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"What's the difference between svh, lvh, and dvh units?","agent":"mobile-responsive","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Test the app under 3G network throttling and report issues","agent":"mobile-responsive","lang":"en","depth":2,"task_kind":"ops"}
+{"text":"Migrate the whole app to a mobile-first responsive architecture","agent":"mobile-responsive","lang":"en","depth":4,"task_kind":"design"}
+{"text":"Hamburger menu overlay doesn't close on orientation change","agent":"mobile-responsive","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Add haptic feedback using the Vibration API on button tap","agent":"mobile-responsive","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Why does the app icon look blurry when added to home screen on Android?","agent":"mobile-responsive","lang":"en","depth":1,"task_kind":"debug"}
+{"text":"Review all touch event handlers for passive listener performance issues","agent":"mobile-responsive","lang":"en","depth":3,"task_kind":"bulk_read"}
+{"text":"Handle the virtual keyboard covering the input in mobile forms","agent":"mobile-responsive","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Set up responsive image srcset for different device pixel ratios","agent":"mobile-responsive","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Long tasks are blocking the main thread during scroll on low-end Android phones","agent":"mobile-responsive","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Explain what 'safe area inset' means for notched devices","agent":"mobile-responsive","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Swipe gesture conflicts with the browser's back-swipe navigation","agent":"mobile-responsive","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Redesign the tab bar for one-handed thumb reach on large phones","agent":"mobile-responsive","lang":"en","depth":2,"task_kind":"design"}
+{"text":"Fix tap highlight color flashing gray on all mobile buttons","agent":"mobile-responsive","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Add-to-home-screen prompt isn't showing on Android Chrome","agent":"mobile-responsive","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Profile why hydration causes a visible jank on mobile right after page load","agent":"mobile-responsive","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"iOS 사파리에서 100vh 버그 때문에 주소창이 콘텐츠를 가리는 문제 고쳐줘","agent":"mobile-responsive","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"아이폰 노치 대응해서 safe-area-inset 패딩 추가해줘","agent":"mobile-responsive","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"안드로이드 크롬에서 버튼 더블탭하면 확대되는 이유가 뭐야?","agent":"mobile-responsive","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"PWA 매니페스트랑 아이콘, 스플래시 스크린 설정해줘","agent":"mobile-responsive","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"아이폰12에서만 스크롤이 버벅이는 원인 찾아줘, 데스크탑은 멀쩡함","agent":"mobile-responsive","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"탭 딜레이 300ms 없애게 touch-action manipulation 적용해줘","agent":"mobile-responsive","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"모바일, 태블릿, 데스크탑용 반응형 브레이크포인트 체계 설계해줘","agent":"mobile-responsive","lang":"ko","depth":3,"task_kind":"design"}
+{"text":"오프라인 캐싱용 서비스워커 등록해줘","agent":"mobile-responsive","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"iOS에서 인풋 포커스하면 화면이 확대되는데 막는 방법 알려줘","agent":"mobile-responsive","lang":"ko","depth":1,"task_kind":"debug"}
+{"text":"컴포넌트 파일 40개 반응형 브레이크포인트 빠진 곳 있는지 전수조사해줘","agent":"mobile-responsive","lang":"ko","depth":3,"task_kind":"bulk_read"}
+{"text":"컨테이너 쿼리랑 미디어 쿼리 차이 설명해줘","agent":"mobile-responsive","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"모바일 피드에 pull-to-refresh 제스처 구현해줘","agent":"mobile-responsive","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"안드로이드에서 키보드 올라올 때 헤더가 튀는 문제 있어","agent":"mobile-responsive","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"고정 브레이크포인트 대신 CSS clamp() 쓰도록 레이아웃 리팩토링해줘","agent":"mobile-responsive","lang":"ko","depth":2,"task_kind":"refactor"}
+{"text":"Lighthouse 모바일 성능 점수가 42점에서 안 올라가는데 원인이 뭘까?","agent":"mobile-responsive","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"iOS 가로 캐러셀에 모멘텀 스크롤 추가해줘","agent":"mobile-responsive","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"서비스워커 등록할 때 InvalidStateError 에러 나는데 원인 좀 봐줘","agent":"mobile-responsive","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"모바일에서 웹폰트 로딩 때문에 생기는 CLS 줄여줘","agent":"mobile-responsive","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"스와이프로 닫히는 바텀시트 컴포넌트 만들어줘","agent":"mobile-responsive","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"svh, lvh, dvh 단위 차이가 뭐야?","agent":"mobile-responsive","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"3G 네트워크 스로틀링 상태에서 앱 테스트하고 이슈 정리해줘","agent":"mobile-responsive","lang":"ko","depth":2,"task_kind":"ops"}
+{"text":"앱 전체를 모바일 퍼스트 반응형 아키텍처로 마이그레이션해줘","agent":"mobile-responsive","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"화면 회전하면 햄버거 메뉴 오버레이가 안 닫히는 버그 있어","agent":"mobile-responsive","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"버튼 탭할 때 Vibration API로 햅틱 피드백 넣어줘","agent":"mobile-responsive","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"안드로이드 홈화면에 추가하면 앱 아이콘이 흐리게 나오는데 왜그래?","agent":"mobile-responsive","lang":"ko","depth":1,"task_kind":"debug"}
+{"text":"터치 이벤트 핸들러 전부 passive 리스너 최적화됐는지 리뷰해줘","agent":"mobile-responsive","lang":"ko","depth":3,"task_kind":"bulk_read"}
+{"text":"모바일 폼에서 가상 키보드가 인풋 가리는 문제 처리해줘","agent":"mobile-responsive","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"디바이스 픽셀 비율별로 반응형 이미지 srcset 설정해줘","agent":"mobile-responsive","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"저사양 안드로이드에서 스크롤할 때 메인스레드 막히는 롱태스크 문제 있어","agent":"mobile-responsive","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"노치 디바이스용 safe area inset이 뭔지 설명해줘","agent":"mobile-responsive","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"스와이프 제스처가 브라우저 뒤로가기 스와이프랑 충돌하는데 해결해줘","agent":"mobile-responsive","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"큰 폰에서 한손 엄지로 닿기 편하게 탭바 재설계해줘","agent":"mobile-responsive","lang":"ko","depth":2,"task_kind":"design"}
+{"text":"모바일 버튼 탭하면 회색 하이라이트 깜빡이는거 고쳐줘","agent":"mobile-responsive","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"안드로이드 크롬에서 홈화면 추가 프롬프트가 안 뜨는데 확인해줘","agent":"mobile-responsive","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"페이지 로드 후 하이드레이션 때문에 모바일에서 눈에 띄는 끊김 생기는데 프로파일링해줘","agent":"mobile-responsive","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"JWT 토큰 검증 로직에 서명 알고리즘 우회 취약점 있는지 점검해줘","agent":"security-review","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"로그인 세션 쿠키에 Secure, HttpOnly 플래그 빠진 거 다 고쳐줘","agent":"security-review","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":".env 파일이 실수로 git 히스토리에 커밋됐는데 시크릿 노출 범위 확인하고 회전 절차 알려줘","agent":"security-review","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"이 SQL 쿼리 문자열 이어붙이기 방식인데 인젝션 위험 있어?","agent":"security-review","lang":"ko","depth":1,"task_kind":"explain"}
+{"text":"파일 업로드 API에 경로 순회(path traversal) 취약점 있는지 검토해줘","agent":"security-review","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"CSRF 토큰 검증이 빠진 엔드포인트 전체 찾아서 목록 뽑아줘","agent":"security-review","lang":"ko","depth":2,"task_kind":"bulk_read"}
+{"text":"CORS 설정에서 Access-Control-Allow-Origin이 와일드카드로 되어있는데 이거 위험한가요?","agent":"security-review","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"npm audit 결과 critical 취약점 12개 나왔는데 어떤 것부터 손봐야 해?","agent":"security-review","lang":"ko","depth":2,"task_kind":"ops"}
+{"text":"비밀번호 해싱을 bcrypt에서 argon2로 마이그레이션하는 계획 세워줘","agent":"security-review","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"보안 헤더(CSP, HSTS, X-Frame-Options) 전부 설정 안 되어 있는데 추가해줘","agent":"security-review","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"관리자 API에 권한 검사(authorization) 누락된 라우트 있는지 전수 조사해줘","agent":"security-review","lang":"ko","depth":3,"task_kind":"bulk_read"}
+{"text":"리프레시 토큰 탈취 시나리오에 대한 방어 설계 검토해줘","agent":"security-review","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"이 정규식 백트래킹 때문에 ReDoS 공격 가능해 보이는데 맞아?","agent":"security-review","lang":"ko","depth":1,"task_kind":"debug"}
+{"text":"Docker 컨테이너가 root로 실행되고 있는데 권한 최소화해줘","agent":"security-review","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"OAuth 콜백 URL 검증 로직에 오픈 리다이렉트 취약점 있는지 봐줘","agent":"security-review","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"API 키를 프론트엔드 코드에 하드코딩했는데 이거 어떻게 옮겨야 해?","agent":"security-review","lang":"ko","depth":1,"task_kind":"refactor"}
+{"text":"레이트 리미팅 없는 로그인 엔드포인트에 브루트포스 방지 로직 넣어줘","agent":"security-review","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"\"TypeError: jwt malformed\" 에러 나면서 인증 우회되는 것 같은데 원인 찾아줘","agent":"security-review","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"세션 고정(session fixation) 공격에 취약한지 로그인 플로우 검토해줘","agent":"security-review","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"의존성 패키지 중 알려진 CVE 있는 버전들 스캔해서 보고서 만들어줘","agent":"security-review","lang":"ko","depth":2,"task_kind":"bulk_read"}
+{"text":"XSS 방지를 위해 사용자 입력값 sanitize 처리 추가해줘","agent":"security-review","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"마이크로서비스 간 통신에 mTLS 도입하는 아키텍처 설계해줘","agent":"security-review","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"이 코드에서 eval() 쓰는 부분 있는데 임의 코드 실행 위험 있는지 확인해줘","agent":"security-review","lang":"ko","depth":1,"task_kind":"debug"}
+{"text":"환경변수로 관리하던 DB 비밀번호를 Vault나 시크릿 매니저로 옮기고 싶어","agent":"security-review","lang":"ko","depth":3,"task_kind":"refactor"}
+{"text":"GraphQL 스키마에 depth limiting 없어서 DoS 취약점 우려되는데 검토해줘","agent":"security-review","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"비밀번호 재설정 토큰이 예측 가능한 값으로 생성되고 있는데 안전한 랜덤값으로 바꿔줘","agent":"security-review","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"컨테이너 이미지에 불필요한 setuid 바이너리들 있는지 스캔해줘","agent":"security-review","lang":"ko","depth":2,"task_kind":"ops"}
+{"text":"이 로그인 API 페이로드 예시인데 SQL 인젝션 테스트 케이스 만들어서 검증해줘","agent":"security-review","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"전체 코드베이스에서 하드코딩된 API 키나 시크릿 패턴 찾아서 목록화해줘","agent":"security-review","lang":"ko","depth":3,"task_kind":"bulk_read"}
+{"text":"IDOR 취약점 때문에 다른 사용자 주문 정보 조회되는 버그 고쳐줘","agent":"security-review","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"쿠버네티스 파드 시큐리티 컨텍스트에 privileged 모드 켜져 있는데 이거 필요한 설정이야?","agent":"security-review","lang":"ko","depth":1,"task_kind":"explain"}
+{"text":"제로 트러스트 아키텍처로 인증 시스템 전면 재설계하고 싶은데 로드맵 짜줘","agent":"security-review","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"SSRF 공격 벡터가 될 수 있는 외부 URL fetch 로직 전부 점검해줘","agent":"security-review","lang":"ko","depth":3,"task_kind":"bulk_read"}
+{"text":"서드파티 라이브러리 supply chain 공격 대응해서 lockfile 무결성 검증 추가해줘","agent":"security-review","lang":"ko","depth":3,"task_kind":"implement"}
+{"text":"admin 페이지 로그인 없이 직접 URL로 접근되는 취약점 재현하고 원인 파악해줘","agent":"security-review","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"click-jacking 방지용 헤더 설정 방법 알려줘","agent":"security-review","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"Add rate limiting and account lockout to prevent brute-force login attempts","agent":"security-review","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Review this PR for SQL injection risks before we merge","agent":"security-review","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Why is our CSP header still allowing unsafe-inline scripts?","agent":"security-review","lang":"en","depth":1,"task_kind":"debug"}
+{"text":"Audit all API routes for missing authorization checks","agent":"security-review","lang":"en","depth":3,"task_kind":"bulk_read"}
+{"text":"We just found an API key committed in plaintext in the repo history, walk me through rotating it and scrubbing the history","agent":"security-review","lang":"en","depth":3,"task_kind":"ops"}
+{"text":"harden JWT validation against alg=none bypass","agent":"security-review","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Is this file upload endpoint vulnerable to path traversal via '../' sequences?","agent":"security-review","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"design a zero-trust auth architecture for our microservices","agent":"security-review","lang":"en","depth":4,"task_kind":"design"}
+{"text":"npm audit shows 8 high severity CVEs, prioritize and fix them","agent":"security-review","lang":"en","depth":2,"task_kind":"ops"}
+{"text":"Getting 'Invalid signature' errors intermittently, could this be a token replay attack?","agent":"security-review","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"migrate password hashing from md5 to argon2id","agent":"security-review","lang":"en","depth":3,"task_kind":"refactor"}
+{"text":"check if our CORS config with wildcard origin plus credentials:true is exploitable","agent":"security-review","lang":"en","depth":1,"task_kind":"debug"}
+{"text":"add CSRF tokens to all state-changing form submissions","agent":"security-review","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"scan the container image for known vulnerabilities and unnecessary root privileges","agent":"security-review","lang":"en","depth":2,"task_kind":"ops"}
+{"text":"explain what HSTS preload actually protects against","agent":"security-review","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"our OAuth redirect_uri isn't strictly validated, could this lead to an open redirect exploit?","agent":"security-review","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"find every place we log sensitive PII or credentials in plaintext","agent":"security-review","lang":"en","depth":3,"task_kind":"bulk_read"}
+{"text":"secure the docker-compose setup so services don't run as root","agent":"security-review","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"plan a full secrets management migration to HashiCorp Vault","agent":"security-review","lang":"en","depth":4,"task_kind":"design"}
+{"text":"is this regex vulnerable to catastrophic backtracking / ReDoS?","agent":"security-review","lang":"en","depth":1,"task_kind":"debug"}
+{"text":"users can view other users' invoices by changing the id in the URL, fix the IDOR","agent":"security-review","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"review our session management for fixation and hijacking risks","agent":"security-review","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"sanitize all user-generated HTML input to prevent stored XSS","agent":"security-review","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"we're using eval() on user input in this handler, is arbitrary code execution possible here?","agent":"security-review","lang":"en","depth":1,"task_kind":"debug"}
+{"text":"add depth and complexity limiting to our GraphQL schema to prevent DoS","agent":"security-review","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"here's the traceback: 'jwt.exceptions.DecodeError: Signature verification failed' but auth still succeeded, investigate why","agent":"security-review","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"generate cryptographically secure password reset tokens instead of the current sequential ones","agent":"security-review","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"check whether our S3 bucket policy allows public write access","agent":"security-review","lang":"en","depth":1,"task_kind":"ops"}
+{"text":"trace every outbound fetch/axios call for potential SSRF against internal metadata endpoints","agent":"security-review","lang":"en","depth":3,"task_kind":"bulk_read"}
+{"text":"verify lockfile integrity to defend against a supply-chain compromise of a dependency","agent":"security-review","lang":"en","depth":3,"task_kind":"implement"}
+{"text":"reproduce and root-cause the bug where the admin dashboard loads without a login check","agent":"security-review","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"what does clickjacking protection via X-Frame-Options actually prevent?","agent":"security-review","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"set the Kubernetes pod security context to drop unnecessary capabilities instead of running privileged","agent":"security-review","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"audit our dependency tree for typosquatted or malicious packages","agent":"security-review","lang":"en","depth":3,"task_kind":"bulk_read"}
+{"text":"redesign the entire authentication system with mTLS between internal services","agent":"security-review","lang":"en","depth":4,"task_kind":"design"}
+{"text":"double check the timing of our password comparison, could it leak info via a timing attack?","agent":"security-review","lang":"en","depth":1,"task_kind":"debug"}
+{"text":"main에서 새 브랜치 파서 안 봐지는데 rebase 충돌 해결 좀 도와줘","agent":"git-workflow","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"어제 커밋 세 개를 하나로 squash 하고 메시지 다시 써줘","agent":"git-workflow","lang":"ko","depth":1,"task_kind":"refactor"}
+{"text":"git bisect로 이 회귀 버그 어느 커밋에서 생겼는지 찾아줘","agent":"git-workflow","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"CONFLICT (content): Merge conflict in src/api/user.ts 이거 해결해줘","agent":"git-workflow","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"origin/main 이랑 로컬 브랜치가 많이 벌어졌는데 정리하는 법 알려줘","agent":"git-workflow","lang":"ko","depth":2,"task_kind":"ops"}
+{"text":"태그 v2.3.1 만들고 원격에 푸시해줘","agent":"git-workflow","lang":"ko","depth":0,"task_kind":"ops"}
+{"text":"feature/login 브랜치에서 특정 커밋만 develop으로 cherry-pick 해줘","agent":"git-workflow","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"git reflog 보고 실수로 지운 브랜치 복구할 수 있을까?","agent":"git-workflow","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"커밋 히스토리에 들어간 .env 파일 완전히 지우고 싶어, filter-repo 써야 하나?","agent":"git-workflow","lang":"ko","depth":3,"task_kind":"refactor"}
+{"text":"이 PR 브랜치 리베이스 하다가 충돌 20개 넘게 났어, 하나씩 같이 봐줘","agent":"git-workflow","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"submodule 업데이트하고 커밋에 반영하는 방법 알려줘","agent":"git-workflow","lang":"ko","depth":1,"task_kind":"explain"}
+{"text":"fatal: refusing to merge unrelated histories 에러 뜨는데 왜 이러는거야","agent":"git-workflow","lang":"ko","depth":1,"task_kind":"debug"}
+{"text":"커밋 메시지 컨벤션(conventional commits)에 맞게 최근 10개 커밋 정리해줘","agent":"git-workflow","lang":"ko","depth":2,"task_kind":"refactor"}
+{"text":"detached HEAD 상태인데 이거 작업 내용 브랜치로 살릴 수 있어?","agent":"git-workflow","lang":"ko","depth":1,"task_kind":"debug"}
+{"text":"git worktree로 hotfix 브랜치 따로 작업 환경 만들어줘","agent":"git-workflow","lang":"ko","depth":1,"task_kind":"ops"}
+{"text":".gitignore에 빠졌던 node_modules가 이미 추적되고 있어, 히스토리는 남기고 지금부터만 무시하게 해줘","agent":"git-workflow","lang":"ko","depth":1,"task_kind":"ops"}
+{"text":"팀원이 force push 해서 제 커밋이 날아갔어요, 복구 가능한가요?","agent":"git-workflow","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"릴리즈 브랜치 만들고 semver 태그 규칙 정해서 적용해줘","agent":"git-workflow","lang":"ko","depth":2,"task_kind":"design"}
+{"text":"git bundle로 오프라인 저장소 백업 만드는 방법 알려줘","agent":"git-workflow","lang":"ko","depth":1,"task_kind":"ops"}
+{"text":"main과 develop 브랜치 전략을 git-flow로 전환하고 싶어, 설계 좀 도와줘","agent":"git-workflow","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"이 커밋 작성자 이메일이 잘못 설정돼서 히스토리 전체 고쳐야 해","agent":"git-workflow","lang":"ko","depth":3,"task_kind":"refactor"}
+{"text":"rebase -i로 커밋 순서 바꾸고 중간 커밋 하나 drop 해줘","agent":"git-workflow","lang":"ko","depth":1,"task_kind":"refactor"}
+{"text":"git log --graph 결과 좀 봐주고 브랜치 구조 설명해줘","agent":"git-workflow","lang":"ko","depth":2,"task_kind":"bulk_read"}
+{"text":"stash 여러 개 쌓였는데 어떤 게 뭔지 구분해서 정리해줘","agent":"git-workflow","lang":"ko","depth":1,"task_kind":"ops"}
+{"text":"업스트림 fork 동기화하다가 계속 diverged 뜨는데 해결법 알려줘","agent":"git-workflow","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"pre-commit 훅에서 lint 실패했는데 커밋이 계속 걸려요","agent":"git-workflow","lang":"ko","depth":1,"task_kind":"debug"}
+{"text":"두 개의 원격 저장소(origin, upstream)를 관리하는 방법 세팅해줘","agent":"git-workflow","lang":"ko","depth":1,"task_kind":"ops"}
+{"text":"이 레포 전체 히스토리에서 대용량 바이너리 파일 찾아서 제거해줘","agent":"git-workflow","lang":"ko","depth":3,"task_kind":"refactor"}
+{"text":"git blame으로 이 함수 누가 언제 왜 바꿨는지 추적해줘","agent":"git-workflow","lang":"ko","depth":1,"task_kind":"bulk_read"}
+{"text":"모노레포 전환하면서 여러 저장소 히스토리 합치는 전략 짜줘","agent":"git-workflow","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"release-1.4 브랜치에 핫픽스 백포트하는 절차 만들어줘","agent":"git-workflow","lang":"ko","depth":2,"task_kind":"ops"}
+{"text":"rebase 도중 'error: could not apply' 뜨는데 다음 스텝이 뭐야","agent":"git-workflow","lang":"ko","depth":1,"task_kind":"debug"}
+{"text":"커밋 서명(GPG) 설정하고 기존 커밋도 검증되게 해줘","agent":"git-workflow","lang":"ko","depth":2,"task_kind":"ops"}
+{"text":"브랜치 보호 규칙 우회하려고 --no-verify 쓰던데 이거 괜찮은 방법이야?","agent":"git-workflow","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"PR 머지 전에 커밋들 fixup으로 정리해서 히스토리 깔끔하게 만들어줘","agent":"git-workflow","lang":"ko","depth":1,"task_kind":"refactor"}
+{"text":"Resolve the merge conflict in package-lock.json after rebasing onto main.","agent":"git-workflow","lang":"en","depth":1,"task_kind":"debug"}
+{"text":"Squash the last five commits into one with a clean message.","agent":"git-workflow","lang":"en","depth":1,"task_kind":"refactor"}
+{"text":"Use git bisect to find which commit introduced this flaky test failure.","agent":"git-workflow","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"error: failed to push some refs to origin, non-fast-forward — what do I do?","agent":"git-workflow","lang":"en","depth":1,"task_kind":"debug"}
+{"text":"Cherry-pick commit a3f9c21 from hotfix onto the release branch.","agent":"git-workflow","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"I accidentally deleted a branch with unmerged work, can you recover it from reflog?","agent":"git-workflow","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Create an annotated tag v3.0.0 and push it to the remote.","agent":"git-workflow","lang":"en","depth":0,"task_kind":"ops"}
+{"text":"Rewrite commit history to remove a leaked API key from an old commit using filter-repo.","agent":"git-workflow","lang":"en","depth":3,"task_kind":"refactor"}
+{"text":"My local branch and origin/main have diverged badly, walk me through reconciling them.","agent":"git-workflow","lang":"en","depth":2,"task_kind":"ops"}
+{"text":"Set up a git worktree so I can work on a hotfix without switching out of my current branch.","agent":"git-workflow","lang":"en","depth":1,"task_kind":"ops"}
+{"text":"I'm stuck in detached HEAD after checking out a tag, how do I turn this into a branch?","agent":"git-workflow","lang":"en","depth":1,"task_kind":"debug"}
+{"text":"Interactive rebase the feature branch to reorder and drop two WIP commits before opening the PR.","agent":"git-workflow","lang":"en","depth":1,"task_kind":"refactor"}
+{"text":"fatal: refusing to merge unrelated histories — explain why this happens and how to fix it.","agent":"git-workflow","lang":"en","depth":1,"task_kind":"explain"}
+{"text":"Design a branching strategy for our team moving from trunk-based dev to git-flow with release branches.","agent":"git-workflow","lang":"en","depth":4,"task_kind":"design"}
+{"text":"Someone force-pushed over main and wiped three commits, can we get them back?","agent":"git-workflow","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Add fixup commits and autosquash them before merging this PR so the history stays clean.","agent":"git-workflow","lang":"en","depth":1,"task_kind":"refactor"}
+{"text":"Update the git submodule pointer and commit the change in the parent repo.","agent":"git-workflow","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Walk through this git log --graph --oneline output and explain the branch topology.","agent":"git-workflow","lang":"en","depth":2,"task_kind":"bulk_read"}
+{"text":"I have a dozen stashes and don't remember what's in most of them, help me sort through and clean up.","agent":"git-workflow","lang":"en","depth":2,"task_kind":"bulk_read"}
+{"text":"Set up dual remotes (origin and upstream) and configure the sync workflow for keeping our fork current.","agent":"git-workflow","lang":"en","depth":2,"task_kind":"ops"}
+{"text":"Purge a large binary asset from the entire repo history without breaking existing tags.","agent":"git-workflow","lang":"en","depth":3,"task_kind":"refactor"}
+{"text":"Use git blame to trace when and why this validation logic was changed.","agent":"git-workflow","lang":"en","depth":1,"task_kind":"bulk_read"}
+{"text":"Plan a strategy for merging three separate repo histories into one monorepo while preserving commit history.","agent":"git-workflow","lang":"en","depth":4,"task_kind":"design"}
+{"text":"Backport this hotfix commit to the release-2.1 branch and open the cherry-pick.","agent":"git-workflow","lang":"en","depth":2,"task_kind":"ops"}
+{"text":"rebase in progress: error: could not apply 4fa21b — what's the next step?","agent":"git-workflow","lang":"en","depth":1,"task_kind":"debug"}
+{"text":"Configure GPG commit signing and verify our existing commit history against it.","agent":"git-workflow","lang":"en","depth":2,"task_kind":"ops"}
+{"text":"Untrack node_modules from git history going forward without deleting the files locally.","agent":"git-workflow","lang":"en","depth":1,"task_kind":"ops"}
+{"text":"Bulk review the last 40 commits and group them into a changelog by feature area.","agent":"git-workflow","lang":"en","depth":2,"task_kind":"bulk_read"}
+{"text":"Set up branch protection rules requiring signed commits and linear history on main.","agent":"git-workflow","lang":"en","depth":2,"task_kind":"ops"}
+{"text":"Split one bloated commit into three smaller logical commits using git add -p.","agent":"git-workflow","lang":"en","depth":1,"task_kind":"refactor"}
+{"text":"Compare two long-lived branches and summarize what diverged between them over the past month.","agent":"git-workflow","lang":"en","depth":2,"task_kind":"bulk_read"}
+{"text":"How do I amend the author name and email across the entire commit history?","agent":"git-workflow","lang":"en","depth":2,"task_kind":"refactor"}
+{"text":"Merge conflict keeps reappearing every time I rebase this branch, something's off with our merge strategy, can you diagnose it?","agent":"git-workflow","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Create a shallow clone bundle of this repo for an offline environment.","agent":"git-workflow","lang":"en","depth":1,"task_kind":"ops"}
+{"text":"git push rejected because tip of your current branch is behind, explain the fix in one line.","agent":"git-workflow","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Untangle this octopus merge that broke the build and figure out which parent branch caused it.","agent":"git-workflow","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Claude Agent SDK로 만든 서브에이전트가 스트리밍 응답 중간에 끊기는데 원인 찾아줘","agent":"ai-integration","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"MCP 서버에 새 tool 하나 등록하는 방법 알려줘","agent":"ai-integration","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"프롬프트에 few-shot 예제 넣었더니 토큰 예산 초과함, 압축 전략 설계해줘","agent":"ai-integration","lang":"ko","depth":3,"task_kind":"design"}
+{"text":"tool calling 스키마에서 required 필드 빠졌다고 에러남","agent":"ai-integration","lang":"ko","depth":1,"task_kind":"debug"}
+{"text":"Codex SDK와 Claude Agent SDK 두 개를 동시에 오케스트레이션하는 라우터 구조 설계해줘","agent":"ai-integration","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"SKILL.md 파일에 frontmatter 어떻게 작성하는지 알려줘","agent":"ai-integration","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"에이전트가 도구 호출 루프에서 무한반복 도는 로그 500줄 분석해서 원인 찾아줘","agent":"ai-integration","lang":"ko","depth":3,"task_kind":"bulk_read"}
+{"text":"스트리밍 응답 파싱할 때 partial JSON 처리 로직 리팩토링 해줘","agent":"ai-integration","lang":"ko","depth":2,"task_kind":"refactor"}
+{"text":"MCP 서버 여러 개 붙였을 때 tool 이름 충돌 방지하는 네이밍 컨벤션 정해줘","agent":"ai-integration","lang":"ko","depth":2,"task_kind":"design"}
+{"text":"이 에이전트 라우팅 확률 분석 모델 어떤 구조로 짜야 할지 아키텍처 설계 부탁해","agent":"ai-integration","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"function calling 결과를 다시 모델에 넣는 부분에서 role 순서가 꼬이는 버그 있어","agent":"ai-integration","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"프롬프트 캐싱 적용해서 비용 줄이는 방법 설명해줘","agent":"ai-integration","lang":"ko","depth":1,"task_kind":"explain"}
+{"text":"Claude API 호출 시 rate limit 429 에러 재시도 로직 구현해줘","agent":"ai-integration","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"system prompt와 tool description이 서로 모순되는 부분 있는지 점검해줘","agent":"ai-integration","lang":"ko","depth":2,"task_kind":"explain"}
+{"text":"에이전트 SDK 업그레이드했더니 hook 콜백이 더 이상 안 불림","agent":"ai-integration","lang":"ko","depth":2,"task_kind":"debug"}
+{"text":"멀티 에이전트 워크플로우에서 각 에이전트 컨텍스트 윈도우 어떻게 분리할지 설계해줘","agent":"ai-integration","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"MCP 서버 연결이 간헐적으로 timeout 나는데 로그 분석해서 패턴 찾아줘","agent":"ai-integration","lang":"ko","depth":3,"task_kind":"bulk_read"}
+{"text":"Claude 응답에서 tool_use 블록만 추출하는 파서 짜줘","agent":"ai-integration","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"agent decision model 짤 때 confidence threshold 기본값 뭐가 적당해?","agent":"ai-integration","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"기존 프롬프트 템플릿을 모듈화해서 재사용 가능하게 리팩토링해줘","agent":"ai-integration","lang":"ko","depth":2,"task_kind":"refactor"}
+{"text":"MCP 리소스와 tool의 차이가 뭔지 설명해줘","agent":"ai-integration","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"에이전트가 자기 자신을 재귀호출하면서 토큰을 계속 소모하는 문제 원인 파악해줘","agent":"ai-integration","lang":"ko","depth":3,"task_kind":"debug"}
+{"text":"새로운 전문 agent를 동적으로 생성하는 시스템 설계해줘, 기존 agent pool에 없을 때만","agent":"ai-integration","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"Claude Agent SDK에서 subagent 간 메시지 전달 프로토콜 구현해줘","agent":"ai-integration","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"스트리밍 이벤트 타입별로 핸들러 나눠서 구조 잡아줘","agent":"ai-integration","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"이 에러 메시지 봐줘: 'tool_result block must immediately follow tool_use block'","agent":"ai-integration","lang":"ko","depth":1,"task_kind":"debug"}
+{"text":"프롬프트 엔지니어링으로 환각 줄이는 방법 알려줘","agent":"ai-integration","lang":"ko","depth":1,"task_kind":"explain"}
+{"text":"에이전트 라우터가 잘못된 전문 에이전트를 고르는 케이스들을 수집한 로그 분석해서 패턴 찾아줘","agent":"ai-integration","lang":"ko","depth":3,"task_kind":"bulk_read"}
+{"text":"MCP 서버를 stdio에서 SSE 방식으로 마이그레이션하는 작업 설계해줘","agent":"ai-integration","lang":"ko","depth":4,"task_kind":"design"}
+{"text":"tool 호출 결과가 너무 길어서 컨텍스트 초과되는데 요약 전략 짜줘","agent":"ai-integration","lang":"ko","depth":2,"task_kind":"design"}
+{"text":"Claude Agent SDK의 permission mode 옵션들 차이 설명해줘","agent":"ai-integration","lang":"ko","depth":0,"task_kind":"explain"}
+{"text":"에이전트 skill 파일 여러 개를 하나의 워크플로우로 체이닝하는 기능 구현해줘","agent":"ai-integration","lang":"ko","depth":2,"task_kind":"implement"}
+{"text":"토큰 사용량 급증 원인을 최근 커밋 diff 여러 개 훑어서 찾아줘","agent":"ai-integration","lang":"ko","depth":3,"task_kind":"bulk_read"}
+{"text":"agent registry 스키마에 confidence score 필드 추가해줘","agent":"ai-integration","lang":"ko","depth":1,"task_kind":"implement"}
+{"text":"멀티턴 대화에서 프롬프트 히스토리 관리 전략을 아키텍처 수준에서 재설계해줘","agent":"ai-integration","lang":"ko","depth":4,"task_kind":"refactor"}
+{"text":"Debug why my Claude Agent SDK subprocess hangs after the first tool call completes.","agent":"ai-integration","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Add a new MCP tool for querying our internal metrics API.","agent":"ai-integration","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Design a token budget allocation scheme across parallel subagents so none of them starve.","agent":"ai-integration","lang":"en","depth":4,"task_kind":"design"}
+{"text":"What's the difference between MCP resources and MCP tools?","agent":"ai-integration","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Getting this error: 'Unexpected tool_use_id: no matching tool_use block found'","agent":"ai-integration","lang":"en","depth":1,"task_kind":"debug"}
+{"text":"Refactor the streaming response handler to properly buffer partial JSON chunks.","agent":"ai-integration","lang":"en","depth":2,"task_kind":"refactor"}
+{"text":"Explain how prompt caching cache breakpoints actually work under the hood.","agent":"ai-integration","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Our router keeps misclassifying backend tasks as frontend, go through the last 300 lines of routing logs and find the pattern.","agent":"ai-integration","lang":"en","depth":3,"task_kind":"bulk_read"}
+{"text":"Implement exponential backoff retry logic for Claude API 429 rate limit responses.","agent":"ai-integration","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Design the architecture for dynamically spawning a new specialist agent when none of the existing ones match the intent.","agent":"ai-integration","lang":"en","depth":4,"task_kind":"design"}
+{"text":"Write a parser that extracts only the tool_use blocks from a Claude response stream.","agent":"ai-integration","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Why does my MCP server connection randomly time out? Look through the connection logs and figure out what's going wrong.","agent":"ai-integration","lang":"en","depth":3,"task_kind":"bulk_read"}
+{"text":"Fix the role ordering bug where tool results get appended before the assistant's tool_use message.","agent":"ai-integration","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Set a sane default confidence threshold for the agent decision model.","agent":"ai-integration","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Modularize our prompt templates so they can be composed and reused across agents.","agent":"ai-integration","lang":"en","depth":2,"task_kind":"refactor"}
+{"text":"My agent keeps recursively calling itself and burning through tokens, find the root cause.","agent":"ai-integration","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Implement a message-passing protocol for subagent-to-subagent communication in the Agent SDK.","agent":"ai-integration","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Migrate our MCP server transport from stdio to SSE without breaking existing tool registrations.","agent":"ai-integration","lang":"en","depth":4,"task_kind":"refactor"}
+{"text":"Tool call results are blowing past our context window, design a summarization/truncation strategy.","agent":"ai-integration","lang":"en","depth":2,"task_kind":"design"}
+{"text":"What do the different permission modes in Claude Agent SDK actually control?","agent":"ai-integration","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Build a skill-chaining feature that lets multiple SKILL.md files run as one workflow.","agent":"ai-integration","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"Token usage spiked last week, go through the recent commit diffs touching the agent loop and find what changed.","agent":"ai-integration","lang":"en","depth":3,"task_kind":"bulk_read"}
+{"text":"Add a confidence_score field to the agent registry schema.","agent":"ai-integration","lang":"en","depth":1,"task_kind":"implement"}
+{"text":"Redesign our multi-turn conversation history management at the architecture level, it's getting unwieldy.","agent":"ai-integration","lang":"en","depth":4,"task_kind":"refactor"}
+{"text":"Check whether our system prompt contradicts any of the tool descriptions we registered.","agent":"ai-integration","lang":"en","depth":2,"task_kind":"explain"}
+{"text":"After upgrading the Agent SDK, our hook callbacks stopped firing entirely.","agent":"ai-integration","lang":"en","depth":2,"task_kind":"debug"}
+{"text":"Design how to isolate context windows per agent in a multi-agent workflow so they don't leak state.","agent":"ai-integration","lang":"en","depth":4,"task_kind":"design"}
+{"text":"Reduce hallucination rate through better prompt engineering, what techniques should I use?","agent":"ai-integration","lang":"en","depth":1,"task_kind":"explain"}
+{"text":"Prevent naming collisions when we mount several MCP servers that expose overlapping tool names.","agent":"ai-integration","lang":"en","depth":2,"task_kind":"design"}
+{"text":"This tool schema is missing the required field and throwing a validation error.","agent":"ai-integration","lang":"en","depth":1,"task_kind":"debug"}
+{"text":"Design the overall architecture for a router that probabilistically dispatches user commands to specialist agents.","agent":"ai-integration","lang":"en","depth":4,"task_kind":"design"}
+{"text":"Streaming responses cut off mid-sentence when the connection is under load, investigate why.","agent":"ai-integration","lang":"en","depth":3,"task_kind":"debug"}
+{"text":"Split the streaming event handler into separate cases per event type instead of one giant switch.","agent":"ai-integration","lang":"en","depth":2,"task_kind":"implement"}
+{"text":"How do I write the frontmatter for a SKILL.md file correctly?","agent":"ai-integration","lang":"en","depth":0,"task_kind":"explain"}
+{"text":"Trace through 400 lines of agent loop logs to find where the infinite tool-call loop starts.","agent":"ai-integration","lang":"en","depth":3,"task_kind":"bulk_read"}

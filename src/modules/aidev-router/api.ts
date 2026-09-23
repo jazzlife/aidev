@@ -112,6 +112,7 @@ export type AgentDraft = {
   description: string;
   prompt: string;
   tools: string[] | null;
+  examples: string[];
   knowledge: Array<{ title: string; body: string; source_url?: string; source_date?: string }>;
   self_check: { task: string; expected: string } | null;
 };
@@ -130,6 +131,7 @@ export function parseAgentDraft(text: string): AgentDraft | null {
       description: typeof raw.description === 'string' ? raw.description.slice(0, 600) : '',
       prompt: raw.prompt,
       tools: Array.isArray(raw.tools) ? raw.tools.map(String) : null,
+      examples: Array.isArray(raw.examples) ? raw.examples.filter((e): e is string => typeof e === 'string' && e.trim().length > 3).slice(0, 50) : [],
       knowledge: Array.isArray(raw.knowledge) ? raw.knowledge.filter((k): k is Record<string, string> => Boolean(k && typeof k === 'object' && typeof (k as Record<string, unknown>).title === 'string' && typeof (k as Record<string, unknown>).body === 'string')).map((k) => ({ title: k.title, body: k.body, source_url: k.source_url, source_date: k.source_date })) : [],
       self_check: raw.self_check && typeof raw.self_check === 'object' && typeof (raw.self_check as Record<string, unknown>).task === 'string' ? { task: String((raw.self_check as Record<string, unknown>).task), expected: String((raw.self_check as Record<string, unknown>).expected ?? '') } : null,
     };

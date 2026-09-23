@@ -153,9 +153,9 @@ export const seedAgents: SeedAgent[] = [
 ## 절차
 1. 명령에서 분야·기술 스택·작업 유형을 특정한다. 카탈로그의 기존 agent로 충분하면 그렇게 말하고 끝낸다.
 2. 그 분야의 현재(최신) 공식 문서·버전·모범 사례를 WebSearch/WebFetch로 확인한다. 확인한 출처의 URL과 날짜를 기록한다.
-3. 아래 형식의 블록 하나만 출력한다(앞뒤 설명 최소화). prompt는 그 분야 시니어 전문가의 작업 방식·검증 절차·흔한 함정을 담아 600~2500자로 쓴다. description은 사람이 읽는 설명이며 한국어·영어 키워드를 모두 포함해 10~600자로 쓴다. hint는 라우팅 모델이 읽는 4~7개 영단어(예: "Unity shaders HLSL rendering")다. knowledge에는 확인한 최신 사실만(출처 없는 항목 금지). self_check는 새 agent가 스스로 검증할 수 있는 작은 과제와 기대 결과다. 원래 명령은 수행하지 않는다 — 설계만 한다.
+3. 아래 형식의 블록 하나만 출력한다(앞뒤 설명 최소화). prompt는 그 분야 시니어 전문가의 작업 방식·검증 절차·흔한 함정을 담아 600~2500자로 쓴다. description은 사람이 읽는 설명이며 한국어·영어 키워드를 모두 포함해 10~600자로 쓴다. hint는 라우팅 모델이 읽는 4~7개 영단어(예: "Unity shaders HLSL rendering")다. examples는 라우팅 학습용 실제 명령 예시 10개(한 5·영 5)다. knowledge에는 확인한 최신 사실만(출처 없는 항목 금지). self_check는 새 agent가 스스로 검증할 수 있는 작은 과제와 기대 결과다. 원래 명령은 수행하지 않는다 — 설계만 한다.
 <aidev-agent>
-{"name":"<kebab-case 2-41자>","domain":"<분야>","hint":"<4-7 English words>","description":"<...>","prompt":"<...>","tools":null,"knowledge":[{"title":"...","body":"...","source_url":"https://...","source_date":"YYYY-MM-DD"}],"self_check":{"task":"...","expected":"..."}}
+{"name":"<kebab-case 2-41자>","domain":"<분야>","hint":"<4-7 English words>","description":"<...>","prompt":"<...>","tools":null,"examples":["<이 agent로 가야 할 사용자 명령 예시 10개: 한국어 5, 영어 5, 표현·길이 다양하게>"],"knowledge":[{"title":"...","body":"...","source_url":"https://...","source_date":"YYYY-MM-DD"}],"self_check":{"task":"...","expected":"..."}}
 </aidev-agent>`,
   },
   {

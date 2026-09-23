@@ -43,7 +43,7 @@ export function useAgentCreation({ getLastAssistantText, resend }: UseAgentCreat
     const current = routingStore.get().pendingCreate;
     if (!current) return;
     try {
-      const created = await aidevApi.createAgent({ name: draft.name, domain: draft.domain, hint: draft.hint, description: draft.description, prompt: draft.prompt, tools: draft.tools, knowledge: draft.knowledge, source: 'generated' });
+      const created = await aidevApi.createAgent({ name: draft.name, domain: draft.domain, hint: draft.hint, description: draft.description, prompt: draft.prompt, tools: draft.tools, examples: draft.examples, knowledge: draft.knowledge, source: 'generated' });
       routingStore.patch({ pendingCreate: { ...current, stage: 'done', draft, agentId: created.agent.id, agentName: created.agent.name, error: null }, oneShotAgent: created.agent.name });
       resend(current.originalText);
     } catch (error) {

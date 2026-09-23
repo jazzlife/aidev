@@ -60,6 +60,7 @@ export function openStore(filename: string) {
       const r = db.prepare('INSERT INTO agents(name,domain,description,prompt,tools,model,max_turns,owner_id,source,created_at,updated_at,skills,mcp_servers,hint) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
         .run(a.name, a.domain ?? '', a.description, a.prompt, a.tools ? JSON.stringify(a.tools) : null, a.model ?? null, a.maxTurns ?? null, a.ownerId, a.source, now, now, a.skills ? JSON.stringify(a.skills) : null, a.mcpServers ? JSON.stringify(a.mcpServers) : null, a.hint?.trim() || null);
       const id = Number(r.lastInsertRowid);
+      aidev.bumpExamplesVersion();
       db.prepare('INSERT INTO agent_versions(agent_id,version,prompt,tools,model,skills,mcp_servers,changelog,created_at) VALUES(?,?,?,?,?,?,?,?,?)')
         .run(id, 1, a.prompt, a.tools ? JSON.stringify(a.tools) : null, a.model ?? null, a.skills ? JSON.stringify(a.skills) : null, a.mcpServers ? JSON.stringify(a.mcpServers) : null, 'initial', now);
       return id;
@@ -72,8 +73,20 @@ export function openStore(filename: string) {
         max_turns: patch.maxTurns === undefined ? cur.max_turns : patch.maxTurns, active: patch.active ?? cur.active, hint: patch.hint === undefined ? cur.hint : (patch.hint?.trim() || null) };
       db.prepare('UPDATE agents SET domain=?,description=?,prompt=?,tools=?,model=?,max_turns=?,active=?,hint=?,updated_at=? WHERE id=?')
         .run(next.domain, next.description, next.prompt, next.tools, next.model, next.max_turns, next.active, next.hint, Date.now(), id);
+      aidev.bumpExamplesVersion();
     },
     bumpAgentUse(userId: number, name: string) { db.prepare('UPDATE agents SET uses=uses+1 WHERE name=? AND (owner_id=? OR owner_id IS NULL)').run(name, userId); },
+    /** Seed routing examples for global agents (idempotent: (agent,text) unique). Returns rows added. */
+    seedExamples(rows: Array<{ agent: string; text: string; lang?: string | null }>) {
+      let added = 0;
+      const byAgent = new Map<string, Array<{ text: string; lang?: string | null; source: string }>>();
+      for (const row of rows) { const list = byAgent.get(row.agent) ?? []; list.push({ text: row.text, lang: row.lang ?? null, source: 'seed' }); byAgent.set(row.agent, list); }
+      for (const [name, items] of byAgent) {
+        const agent = db.prepare('SELECT id FROM agents WHERE name=? AND owner_id IS NULL').get(name) as { id: number } | undefined;
+        if (agent) added += aidev.addExamples(agent.id, items);
+      }
+      return added;
+    },
     /** Insert every seed agent whose name is not yet a global agent (existing rows are never overwritten). */
     seedAgents(seed: Array<{ name: string; domain: string; description: string; hint?: string; prompt: string; tools?: string[]; model?: string; maxTurns?: number; skills?: string[] }>) {
       let added = 0;

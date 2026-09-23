@@ -2,6 +2,20 @@ import type { openStore } from './store.js';
 import { routingHint, type Engine } from './store-aidev.js';
 import { budgetState, topChoice, type LayaClient, type Question } from './laya.js';
 import { DEPTH_LEVELS, REMOTE_ACTIONS, RISK_LEVELS, TASK_KIND_CRITERIA, decide } from './laya-questions.js';
+import { NaiveBayesRouter, fuse } from './classifier.js';
+
+/** Weight of Laya vs the lexical prior in the fused agent choice (tuned on the bench set; env LAYA_WEIGHT). */
+export const LAYA_WEIGHT = Math.max(0, Math.min(1, Number(process.env.LAYA_WEIGHT ?? 0.35)));
+const nb = new NaiveBayesRouter();
+let nbVersion = -1;
+/** Lexical prior over the caller's catalog; retrained lazily when examples change. */
+export function lexicalPrior(store: Store, text: string, names: string[]) {
+  if (nbVersion !== store.examplesVersion() || nb.size === 0) { nb.train(store.allExamples()); nbVersion = store.examplesVersion(); }
+  return nb.predict(text, names);
+}
+const MIN_EXAMPLES = 10;
+/** Per-agent fusion weight: well-exemplified agents use LAYA_WEIGHT, sparse ones lean on Laya. */
+export const alphaFor = (name: string) => (nb.count(name) >= MIN_EXAMPLES ? LAYA_WEIGHT : 0.85);
 
 /**
  * Send-time composite decision (IMPLEMENTATION-PLAN §3.1, §3.4): scope → agent → engine → model/effort,
@@ -23,6 +37,41 @@ const PROMPT_BUDGET_CHARS = [2000 * 4, 4000 * 4, 8000 * 4, Infinity, Infinity];
 const KNOWLEDGE_DIGEST_CHARS = [0, 0, 2000 * 4, 8000 * 4, 8000 * 4];
 
 function clampDepth(d: number) { return Math.max(0, Math.min(4, Math.round(d))); }
+
+/**
+ * Routing evaluation on a labelled command set (admin): Laya-only, lexical-only and fused agent
+ * accuracy plus the best fusion weight. Used by /api/aidev/route/eval and verify-b.sh.
+ */
+export async function evaluateRouting(store: Store, laya: LayaClient, userId: number, rows: Array<{ text: string; agent: string; lang?: string }>) {
+  const all = store.agents(userId).filter((a) => a.domain !== 'meta');
+  const criteria: Record<string, string> = Object.fromEntries(all.map((a) => [a.name, routingHint(a)]));
+  const names = Object.keys(criteria);
+  const t0 = Date.now();
+  const items: Array<{ text: string; agent: string; lang?: string; laya: Record<string, number> | null; nb: Record<string, number> }> = [];
+  let layaFailures = 0;
+  for (const row of rows) {
+    const nbP = lexicalPrior(store, row.text, names);
+    let layaP: Record<string, number> | null = null;
+    try { const r = await laya.predict({ command: row.text }, { agent: { type: 'choice', instructions: 'Which specialist should handle the developer request in `command`?', criteria } }); layaP = r.answers.agent?.probabilities ?? null; }
+    catch { layaFailures++; }
+    items.push({ text: row.text, agent: row.agent, lang: row.lang, laya: layaP, nb: nbP });
+  }
+  const top = (p: Record<string, number>) => Object.entries(p).sort((a, b) => b[1] - a[1])[0]?.[0];
+  const acc = (pick: (item: typeof items[number]) => string | undefined, filter?: (item: typeof items[number]) => boolean) => {
+    const subset = filter ? items.filter(filter) : items; if (!subset.length) return null;
+    return Number((subset.filter((item) => pick(item) === item.agent).length / subset.length).toFixed(3));
+  };
+  const sweep = [0, 0.2, 0.35, 0.5, 0.65, 0.8, 1].map((alpha) => ({ alpha, accuracy: acc((item) => top(fuse(item.laya, item.nb, alpha, (name) => (nb.count(name) >= MIN_EXAMPLES ? alpha : 0.85)))) }));
+  const best = sweep.reduce((a, b) => ((b.accuracy ?? 0) > (a.accuracy ?? 0) ? b : a));
+  return {
+    n: items.length, catalog: names.length, examples: store.exampleCount(), laya_failures: layaFailures, laya_weight: LAYA_WEIGHT,
+    laya_only: acc((item) => (item.laya ? top(item.laya) : undefined)), lexical_only: acc((item) => top(item.nb)),
+    fused: acc((item) => top(fuse(item.laya, item.nb, LAYA_WEIGHT, alphaFor))),
+    fused_ko: acc((item) => top(fuse(item.laya, item.nb, LAYA_WEIGHT, alphaFor)), (item) => item.lang === 'ko'),
+    fused_en: acc((item) => top(fuse(item.laya, item.nb, LAYA_WEIGHT, alphaFor)), (item) => item.lang === 'en'),
+    sweep, best_alpha: best.alpha, ms: Date.now() - t0,
+  };
+}
 
 export async function route(store: Store, laya: LayaClient, userId: number, engines: EngineAvailability, input: RouteInput) {
   const t0 = Date.now();
@@ -62,10 +111,15 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   let agentTop = { choice: 'generalist' as string | null, probability: 0, confidence: 0, ranked: [] as Array<[string, number]> };
   let needsNew = 0, depthRaw = 1, risk = 1, multiDomain = 0, clarify = 0, taskKind = 'implement', taskKindP = 0, remoteAction = 'none', remoteActionP = 0;
   let probabilities: Record<string, unknown> = {};
+  const nbProbs = lexicalPrior(store, text, Object.keys(criteria));
+  let layaProbs: Record<string, number> | null = null;
   try {
     const r = await laya.predict(state, questions);
     latency = r.latency_ms ?? null; device = r.device ?? null;
-    agentTop = topChoice(r.answers.agent);
+    layaProbs = r.answers.agent?.probabilities ?? null;
+    // Laya zero-shot is weak on 13-way agent choice; the lexical prior over agent examples carries
+    // most of the signal (bench: NB 0.78 vs Laya 0.44) — fused in log space, weight LAYA_WEIGHT.
+    agentTop = topChoice({ probabilities: fuse(layaProbs, nbProbs, LAYA_WEIGHT, alphaFor) });
     needsNew = r.answers.needs_new?.noul ?? 0;
     depthRaw = r.answers.depth?.score ?? 1;
     risk = r.answers.risk?.score ?? 1;
@@ -73,10 +127,12 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     clarify = r.answers.clarify?.noul ?? 0;
     const tk = topChoice(r.answers.task_kind); taskKind = tk.choice ?? 'implement'; taskKindP = tk.probability;
     if (r.answers.remote_action) { const ra = topChoice(r.answers.remote_action); remoteAction = ra.choice ?? 'none'; remoteActionP = ra.probability; }
-    probabilities = { agent: r.answers.agent?.probabilities, task_kind: r.answers.task_kind?.probabilities, depth: r.answers.depth?.probabilities, risk: r.answers.risk?.probabilities, remote_action: r.answers.remote_action?.probabilities, needs_new: needsNew, multi_domain: multiDomain, clarify };
+    probabilities = { agent: fuse(layaProbs, nbProbs, LAYA_WEIGHT, alphaFor), agent_laya: layaProbs, agent_nb: nbProbs, task_kind: r.answers.task_kind?.probabilities, depth: r.answers.depth?.probabilities, risk: r.answers.risk?.probabilities, remote_action: r.answers.remote_action?.probabilities, needs_new: needsNew, multi_domain: multiDomain, clarify };
   } catch (error) {
     fallback = true; layaError = error instanceof Error ? error.message : String(error);
-    reason.push(`Laya unavailable (${layaError}); fallback generalist/D1`);
+    // Laya down: the lexical prior alone still routes (agent only); scope falls back to D1/implement.
+    if (Object.keys(nbProbs).length) { agentTop = topChoice({ probabilities: nbProbs }); probabilities = { agent: nbProbs, agent_nb: nbProbs }; }
+    reason.push(`Laya unavailable (${layaError}); lexical prior only, depth D1`);
   }
   if (!fallback && remoteActionP < 0.6) remoteAction = 'none';
 
@@ -85,7 +141,8 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   if (risk >= 1.5) reason.push(`risk ${risk.toFixed(1)} → depth +1`);
   let agentName = agentTop.choice && catalog[agentTop.choice] ? agentTop.choice : 'generalist';
   let decision: 'use' | 'generalist' | 'create' | 'create_background' = 'use';
-  if (fallback) { agentName = 'generalist'; decision = 'generalist'; }
+  if (fallback && agentTop.probability < 0.5) { agentName = 'generalist'; decision = 'generalist'; }
+  else if (fallback) { reason.push(`lexical prior ${agentName} ${(agentTop.probability * 100).toFixed(0)}%`); }
   else if (needsNew >= 0.5 && agentTop.probability < 0.7) {
     decision = depth >= 2 ? 'create' : 'create_background';
     agentName = 'generalist';

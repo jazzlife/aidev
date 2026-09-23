@@ -75,6 +75,11 @@ export function migrateAidev(db: Database.Database) {
       cost_tokens INTEGER, escalated_from_run INTEGER, outcome TEXT);
     CREATE INDEX IF NOT EXISTS runs_user ON runs(user_id, started_at);
     CREATE INDEX IF NOT EXISTS runs_agent ON runs(agent_id, outcome);
+    CREATE TABLE IF NOT EXISTS agent_examples (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, agent_id INTEGER NOT NULL REFERENCES agents(id) ON DELETE CASCADE,
+      text TEXT NOT NULL, lang TEXT, source TEXT NOT NULL DEFAULT 'seed', created_at INTEGER NOT NULL);
+    CREATE INDEX IF NOT EXISTS agent_examples_agent ON agent_examples(agent_id);
+    CREATE UNIQUE INDEX IF NOT EXISTS agent_examples_unique ON agent_examples(agent_id, text);
     CREATE TABLE IF NOT EXISTS engine_status (
       user_id INTEGER NOT NULL, engine TEXT NOT NULL, authenticated INTEGER NOT NULL, checked_at INTEGER NOT NULL,
       last_error TEXT, PRIMARY KEY(user_id, engine));
@@ -105,6 +110,7 @@ export function migrateAidev(db: Database.Database) {
 }
 
 export function aidevMethods(db: Database.Database) {
+  let exampleVersion = 1;
   const m = {
     // ---- account engines --------------------------------------------------
     accountEngines(userId: number): { engines: Engine[]; defaultEngine: Engine | null; role: string } {
@@ -174,6 +180,7 @@ export function aidevMethods(db: Database.Database) {
       })();
       return version;
     },
+    bumpExamplesVersion() { exampleVersion++; },
     setAgentVerified(agentId: number, verified: boolean) { db.prepare('UPDATE agents SET verified=?, updated_at=? WHERE id=?').run(verified ? 1 : 0, Date.now(), agentId); },
     promoteAgent(agentId: number) {
       const cur = db.prepare('SELECT * FROM agents WHERE id=?').get(agentId) as AgentRow | undefined;
@@ -182,6 +189,33 @@ export function aidevMethods(db: Database.Database) {
       if (db.prepare('SELECT 1 FROM agents WHERE name=? AND owner_id IS NULL').get(cur.name)) throw new Error('A global agent with this name already exists');
       db.prepare('UPDATE agents SET owner_id=NULL, source=?, updated_at=? WHERE id=?').run('promoted', Date.now(), agentId);
     },
+    // ---- routing examples (lexical prior) ---------------------------------
+    /** Bumped whenever examples or agents change; the lexical prior retrains lazily on change. */
+    examplesVersion() { return exampleVersion; },
+    /** Examples plus one pseudo-example per active agent (name + hint + description) so agents without examples still have a lexical footprint. */
+    allExamples() {
+      const rows = db.prepare('SELECT e.text, a.name AS agent FROM agent_examples e JOIN agents a ON a.id=e.agent_id WHERE a.active=1').all() as Array<{ text: string; agent: string }>;
+      const pseudo = (db.prepare("SELECT name, hint, description FROM agents WHERE active=1 AND domain!='meta'").all() as Array<{ name: string; hint: string | null; description: string }>)
+        .map((a) => ({ text: `${a.name.replace(/-/g, ' ')} ${a.hint ?? ''} ${a.description}`, agent: a.name }));
+      return [...rows, ...pseudo];
+    },
+    examples(agentId: number, limit = 200) { return db.prepare('SELECT id, text, lang, source, created_at FROM agent_examples WHERE agent_id=? ORDER BY id DESC LIMIT ?').all(agentId, limit) as Array<{ id: number; text: string; lang: string | null; source: string; created_at: number }>; },
+    addExamples(agentId: number, items: Array<{ text: string; lang?: string | null; source?: string }>) {
+      const ins = db.prepare('INSERT OR IGNORE INTO agent_examples(agent_id,text,lang,source,created_at) VALUES(?,?,?,?,?)');
+      let added = 0;
+      db.transaction(() => {
+        for (const item of items) {
+          const text = item.text.trim().slice(0, 1000);
+          if (text.length < 3) continue;
+          const lang = item.lang ?? (/[가-힣]/.test(text) ? 'ko' : 'en');
+          added += ins.run(agentId, text, lang, item.source ?? 'user', Date.now()).changes;
+        }
+      })();
+      if (added) exampleVersion++;
+      return added;
+    },
+    removeExample(id: number) { const r = db.prepare('DELETE FROM agent_examples WHERE id=?').run(id); if (r.changes) exampleVersion++; return r.changes; },
+    exampleCount() { return (db.prepare('SELECT COUNT(*) AS n FROM agent_examples').get() as { n: number }).n; },
     agentStats(agentId: number) {
       return db.prepare(`SELECT COUNT(*) AS runs, SUM(outcome='success') AS success, SUM(outcome='fail') AS fail,
         AVG(CASE WHEN finished_at IS NOT NULL THEN finished_at-started_at END) AS avg_ms FROM runs WHERE agent_id=?`).get(agentId) as { runs: number; success: number | null; fail: number | null; avg_ms: number | null };

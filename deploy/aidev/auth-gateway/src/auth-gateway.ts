@@ -19,6 +19,13 @@ const managerUrl = process.env.RUNTIME_MANAGER_URL ?? 'http://runtime-manager:80
 const layaUrl = process.env.LAYA_URL ?? 'http://laya:8095';
 const store = openStore(process.env.DATABASE_PATH ?? '/data/auth.db');
 { const added = store.seedAgents(seedAgents); if (added) console.log(`[gateway] seeded ${added} agents`); }
+{ // routing examples for the lexical prior (control/gateway/data/agent-examples.jsonl in a release)
+  try {
+    const file = process.env.AIDEV_EXAMPLES_FILE ?? new URL('../data/agent-examples.jsonl', import.meta.url).pathname;
+    const rows = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line) as { agent: string; text: string; lang?: string });
+    const added = store.seedExamples(rows); if (added) console.log(`[gateway] seeded ${added} routing examples (${store.exampleCount()} total)`);
+  } catch (error) { console.warn('[gateway] routing examples not loaded:', error instanceof Error ? error.message : error); }
+}
 const laya = new LayaClient(layaUrl);
 const cookieName = '__Host-aidev-session';
 const ttl = 8 * 3600;

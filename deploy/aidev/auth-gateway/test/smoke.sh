@@ -51,6 +51,8 @@ r=$(get "$B" "/api/aidev/agents/$AID"); check "$r" 'j.error' "private agent hidd
 r=$(post "$A" /api/aidev/lessons "{\"agent_id\":$AID,\"trigger\":\"shader compiles but renders black\",\"rule\":\"check the render queue and pass tags first\",\"status\":\"verified\"}"); check "$r" 'j.lesson.status==="verified"' "lesson added"
 r=$(post "$A" /api/aidev/route '{"text":"Unity 셰이더로 물 표면 굴절 효과를 구현해줘"}'); check "$r" 'j.lessons.length===1' "verified lesson injected at D>=1"
 r=$(post "$A" /api/aidev/targets '{"name":"mac-studio","platform":"macos","tags":["xcode","node"],"description":"개발용 맥 스튜디오"}'); check "$r" 'j.target.pairing_code.length===8' "target registered with pairing code"
+r=$(post "$ADM" /api/aidev/route/eval '{"rows":[{"text":"React 컴포넌트에 다크모드 토글 훅을 추가해줘","agent":"frontend-react","lang":"ko"},{"text":"Write a migration adding a unique index on (user_id, name)","agent":"database","lang":"en"},{"text":"docker compose에 헬스체크와 재시작 정책을 추가해줘","agent":"devops","lang":"ko"},{"text":"adb logcat에서 이 크래시 스택트레이스의 원인을 찾아줘","agent":"android-device","lang":"ko"}]}'); check "$r" 'j.n===4 && j.lexical_only>=0.75 && j.examples>800' "route eval: lexical prior $(echo "$r" | node -pe 'const j=JSON.parse(require("fs").readFileSync(0)); "laya "+j.laya_only+" nb "+j.lexical_only+" fused "+j.fused+" best α "+j.best_alpha')"
+r=$(get "$A" "/api/aidev/agents/2/examples"); check "$r" 'j.examples.length>=60' "seed examples per agent ($(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).examples.length'))"
 r=$(get "$ADM" /api/aidev/stats); check "$r" 'j.decisions_24h.some(d=>d.kind==="route")' "admin stats"
 r=$(get "$A" /api/aidev/stats); check "$r" 'j.error' "non-admin stats rejected"
 r=$(curl -s "$G/api/aidev/export/decisions?kind=route" -H "authorization: Bearer $ADM" | head -1); check "$r" 'j.command && j.label' "export decisions JSONL"
@@ -65,6 +67,6 @@ r=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' -H 'accept: text/html
 r=$(curl -s -H 'accept: text/html' -H 'user-agent: Mozilla/5.0 (Macintosh)' "$G/"); check "{\"body\":\"$r\"}" 'j.body.includes("workbench")' "desktop at / gets the workbench"
 # Laya outage → fallback, service keeps answering
 kill %1; sleep 0.3
-r=$(post "$A" /api/aidev/route '{"text":"React 컴포넌트에 다크모드 토글 훅을 추가해줘"}'); check "$r" 'j.fallback===true && j.agent.name==="generalist" && j.plan.engine' "laya down → generalist fallback, engine still chosen"
+r=$(post "$A" /api/aidev/route '{"text":"React 컴포넌트에 다크모드 토글 훅을 추가해줘"}'); check "$r" 'j.fallback===true && j.agent.name==="frontend-react" && j.plan.engine' "laya down → lexical prior still routes (frontend-react), engine still chosen"
 r=$(post "$A" /api/aidev/decide/ui.focus '{"state":{"event":"test failed"}}'); check "$r" 'j.fallback===true && j.answer==="none"' "laya down → kind fallback"
 [ $fail -eq 0 ] && echo "ALL PASS" || { echo "--- gateway log"; tail -20 "$T/gw.log"; exit 1; }
