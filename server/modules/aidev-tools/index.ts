@@ -8,3 +8,5 @@ export { aidevToolsService, sanitizeAidevOptions, composeAgentInstructions } fro
 export type { AidevTurnOptions } from './aidev-tools.service.js';
 // aidevToolsMcpRoutes: mounted by server/index.ts at /api/aidev-tools-mcp (local token protected).
 export { default as aidevToolsMcpRoutes } from './aidev-tools-mcp.routes.js';
+// aidevToolsRoutes: mounted by server/index.ts at /api/aidev-tools (user-authenticated; called by the gateway for lesson curation).
+export { default as aidevToolsRoutes } from './aidev-tools.routes.js';

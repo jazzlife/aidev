@@ -16,7 +16,7 @@ type Session = { user: { id: number; username: string; runtime: string }; sid: s
 export type AidevDeps = {
   store: Store; laya: LayaClient;
   /** Authenticated fetch against the caller's CloudCLI runtime (path starts with /api/...). */
-  runtimeFetch: (session: Session, path: string, init?: RequestInit) => Promise<Response>;
+  runtimeFetch: (session: Session, path: string, init?: RequestInit, timeoutMs?: number) => Promise<Response>;
   json: (res: ServerResponse, status: number, body: unknown, headers?: Record<string, string>) => void;
 };
 
@@ -36,6 +36,7 @@ async function readJson(req: IncomingMessage, limit = 256 * 1024): Promise<Recor
 export function createAidevApi(deps: AidevDeps) {
   const { store, laya, json } = deps;
   const ENGINE_CACHE_MS = 60_000;
+  const CURATE_TIMEOUT_MS = 180_000;
 
   async function engineAvailability(session: Session): Promise<EngineAvailability> {
     const acct = store.accountEngines(session.user.id);
@@ -59,6 +60,24 @@ export function createAidevApi(deps: AidevDeps) {
       }
     }));
     return out;
+  }
+
+  /** Asks the user's runtime to curate a failed run, judges the candidate with Laya, stores it as a candidate lesson. */
+  async function curateFailure(session: Session, run: { id: number; session_id: string | null; agent_id: number | null; engine: string | null; decision_id: number | null; exit_code: number | null; tool_errors: number; user_feedback: string | null; reverted: number; test_result: string | null }) {
+    const agent = run.agent_id ? store.agentById(run.agent_id) : undefined;
+    if (!agent || agent.domain === 'meta' || !run.session_id) return;
+    const decisionRow = run.decision_id ? store.db.prepare('SELECT command FROM decision_log WHERE id=?').get(run.decision_id) as { command: string } | undefined : undefined;
+    const signals = { exit_code: run.exit_code, tool_errors: run.tool_errors, user_feedback: run.user_feedback, reverted: run.reverted, test_result: run.test_result };
+    const response = await deps.runtimeFetch(session, '/api/aidev-tools/curate', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ session_id: run.session_id, run_id: run.id, agent: agent.name, engine: run.engine, command: decisionRow?.command ?? null, signals }) }, CURATE_TIMEOUT_MS);   // a headless model turn: well beyond the 10 s status-probe budget
+    const body = await response.json() as { data?: { candidate?: { trigger: string; rule: string; engine: string | null; generalizable: boolean } | null } };
+    const candidate = body.data?.candidate;
+    if (!candidate) return;
+    const judged = await decide(laya, 'lesson.accept', { state: { command: decisionRow?.command ?? '', trigger: candidate.trigger, rule: candidate.rule } });
+    store.logKindDecision({ userId: session.user.id, kind: judged.kind, command: `${candidate.trigger} → ${candidate.rule}`, answer: judged.answer, confidence: judged.confidence, probabilities: judged.probabilities, latencyMs: judged.latency_ms, device: judged.device, fallback: judged.fallback });
+    const accepted = typeof judged.answer === 'number' ? judged.answer >= 0.6 : false;
+    // Rejected-by-Laya candidates are still kept (status rejected) so the catalog can show what was learned and why.
+    const id = store.addLesson({ agentId: agent.id, engine: candidate.engine, trigger: candidate.trigger, rule: candidate.rule, evidenceRunId: run.id, ownerId: session.user.id, status: accepted ? 'candidate' : 'rejected' });
+    console.log(`[aidev] lesson ${id} for ${agent.name} (${accepted ? 'candidate' : 'rejected'} p=${typeof judged.answer === 'number' ? judged.answer.toFixed(2) : '-'}): ${candidate.trigger} → ${candidate.rule}`);
   }
 
   function requireAdmin(session: Session) { if (store.accountEngines(session.user.id).role !== 'admin') throw new HttpError(403, 'Administrator only'); }
@@ -203,7 +222,7 @@ export function createAidevApi(deps: AidevDeps) {
         const id = Number(runMatch[1]);
         const fb = b.user_feedback; if (fb !== undefined && fb !== null && fb !== 'up' && fb !== 'down') throw new HttpError(400, 'user_feedback must be up|down|null');
         const tr = b.test_result; if (tr !== undefined && tr !== null && tr !== 'pass' && tr !== 'fail') throw new HttpError(400, 'test_result must be pass|fail|null');
-        const row = store.updateRun(uid, id, { finishedAt: b.finished === false ? undefined : Date.now(), exitCode: b.exit_code === undefined ? undefined : (b.exit_code === null ? null : num(b.exit_code, 'exit_code')), toolErrors: b.tool_errors === undefined ? undefined : num(b.tool_errors, 'tool_errors'),
+        const row = store.updateRun(uid, id, { sessionId: optStr(b.session_id, 200) ?? undefined, finishedAt: b.finished === false ? undefined : Date.now(), exitCode: b.exit_code === undefined ? undefined : (b.exit_code === null ? null : num(b.exit_code, 'exit_code')), toolErrors: b.tool_errors === undefined ? undefined : num(b.tool_errors, 'tool_errors'),
           userFeedback: fb as string | null | undefined, reverted: b.reverted === undefined ? undefined : (b.reverted ? 1 : 0), reasked: b.reasked === undefined ? undefined : (b.reasked ? 1 : 0), testResult: tr as string | null | undefined, costTokens: b.cost_tokens === undefined ? undefined : num(b.cost_tokens, 'cost_tokens') });
         // §3.8 outcome rule; explicit signals first, then Laya on a summary, else unknown
         let outcome: string = 'unknown'; let classified: unknown = null;
@@ -218,6 +237,10 @@ export function createAidevApi(deps: AidevDeps) {
         if (final.decision_id) store.finalizeDecision(uid, final.decision_id, null, outcome);
         // Learning loop (§3.8): a successful run with a specialist confirms the routing — the command
         // becomes an example for that agent, so the lexical prior sharpens with real usage.
+        // Learning loop (§3.8 / E-01): a fresh failure is curated out of band into a lesson candidate.
+        if (outcome === 'fail' && final.agent_id && row.outcome !== 'fail' && final.session_id) {
+          void curateFailure(session, final).catch((error) => console.warn('[aidev] lesson curation failed:', error instanceof Error ? error.message : error));
+        }
         if (outcome === 'success' && final.agent_id && final.decision_id && row.outcome !== 'success') {
           const decisionRow = store.db.prepare('SELECT command FROM decision_log WHERE id=?').get(final.decision_id) as { command: string } | undefined;
           const agent = store.agentById(final.agent_id);

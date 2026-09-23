@@ -92,7 +92,7 @@ export function ChatScreen() {
   useEffect(() => subscribe((event) => {
     if (event.kind !== 'complete' || (event.sessionId && event.sessionId !== sessionId)) return;
     const exitCode = typeof event.exitCode === 'number' ? event.exitCode : (event.isError ? 1 : 0);
-    void reportOutcome({ exit_code: exitCode });
+    void reportOutcome({ exit_code: exitCode, session_id: event.sessionId ?? sessionId });
     setLastRunFinished(Date.now());
     setTimeout(() => { void agentCreationRef.current.onRunComplete(); }, 400);
   }), [subscribe, sessionId, reportOutcome]);

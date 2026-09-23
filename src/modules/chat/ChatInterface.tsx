@@ -87,7 +87,7 @@ function ChatInterface({
     if (event.kind !== 'complete') return;
     if (event.sessionId && selectedSession?.id && event.sessionId !== selectedSession.id) return;
     const exitCode = typeof event.exitCode === 'number' ? event.exitCode : (event.isError ? 1 : 0);
-    void reportAidevOutcome({ exit_code: exitCode });
+    void reportAidevOutcome({ exit_code: exitCode, session_id: event.sessionId ?? selectedSession?.id ?? null });
     // the store applies the final assistant text on the same tick; read it after React commits
     setTimeout(() => { void agentCreationRef.current.onRunComplete(); }, 400);
   }), [reportAidevOutcome, selectedSession?.id, subscribe]);

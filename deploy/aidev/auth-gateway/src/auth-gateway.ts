@@ -154,9 +154,9 @@ async function proxyHttp(req: IncomingMessage, res: ServerResponse, session: Ses
 // consulted for provider auth status. See aidev-api.ts.
 const aidev = createAidevApi({
   store, laya, json,
-  async runtimeFetch(session, path, init) {
+  async runtimeFetch(session, path, init, timeoutMs = 10_000) {
     const runtime = await ready(session.user.runtime);
-    return fetch(`${runtime.target}${path}`, { ...init, headers: { ...(init?.headers as Record<string, string> | undefined), authorization: `Bearer ${runtime.token}` }, signal: AbortSignal.timeout(10_000) });
+    return fetch(`${runtime.target}${path}`, { ...init, headers: { ...(init?.headers as Record<string, string> | undefined), authorization: `Bearer ${runtime.token}` }, signal: AbortSignal.timeout(timeoutMs) });
   },
 });
 // The SPA is served by the gateway for every user, signed in or not, from STATIC_ROOT.

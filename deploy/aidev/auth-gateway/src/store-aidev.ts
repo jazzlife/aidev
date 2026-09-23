@@ -283,10 +283,11 @@ export function aidevMethods(db: Database.Database) {
       return db.prepare(`SELECT * FROM runs WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT ?`).all(...args) as RunRow[];
     },
     /** Merge outcome signals; returns the row after the update so the caller can classify. */
-    updateRun(userId: number, id: number, p: Partial<{ finishedAt: number; exitCode: number | null; toolErrors: number; userFeedback: string | null; reverted: number; reasked: number; testResult: string | null; costTokens: number | null; outcome: string | null }>) {
+    updateRun(userId: number, id: number, p: Partial<{ sessionId: string | null; finishedAt: number; exitCode: number | null; toolErrors: number; userFeedback: string | null; reverted: number; reasked: number; testResult: string | null; costTokens: number | null; outcome: string | null }>) {
       const cur = m.run(userId, id); if (!cur) throw new Error('Run not found');
-      db.prepare('UPDATE runs SET finished_at=?, exit_code=?, tool_errors=?, user_feedback=?, reverted=?, reasked=?, test_result=?, cost_tokens=?, outcome=? WHERE id=?')
-        .run(p.finishedAt ?? cur.finished_at, p.exitCode === undefined ? cur.exit_code : p.exitCode, p.toolErrors ?? cur.tool_errors, p.userFeedback === undefined ? cur.user_feedback : p.userFeedback,
+      // session_id is only filled in later for runs routed before their session existed (first message of a new chat)
+      db.prepare('UPDATE runs SET session_id=?, finished_at=?, exit_code=?, tool_errors=?, user_feedback=?, reverted=?, reasked=?, test_result=?, cost_tokens=?, outcome=? WHERE id=?')
+        .run(cur.session_id ?? p.sessionId ?? null, p.finishedAt ?? cur.finished_at, p.exitCode === undefined ? cur.exit_code : p.exitCode, p.toolErrors ?? cur.tool_errors, p.userFeedback === undefined ? cur.user_feedback : p.userFeedback,
           p.reverted ?? cur.reverted, p.reasked ?? cur.reasked, p.testResult === undefined ? cur.test_result : p.testResult, p.costTokens === undefined ? cur.cost_tokens : p.costTokens, p.outcome === undefined ? cur.outcome : p.outcome, id);
       return m.run(userId, id)!;
     },

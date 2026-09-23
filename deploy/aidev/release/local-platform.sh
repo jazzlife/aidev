@@ -30,6 +30,9 @@ process.env.JWT_SECRET = '$SECRET';
 process.env.AIDEV_RUNTIME = '$RUNTIME';
 process.env.AIDEV_GATEWAY_URL = 'http://127.0.0.1:18080';
 process.env.HOME = '$W/home';
+// The sandbox authenticates Claude through ANTHROPIC_BASE_URL; a placeholder token makes the runtime's
+// auth probe report what is actually true (otherwise the router sees "no engine available").
+if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN && process.env.ANTHROPIC_BASE_URL) process.env.ANTHROPIC_AUTH_TOKEN = 'local-platform';
 process.env.DATABASE_PATH = '$W/home/.cloudcli/auth.db';
 process.env.SERVER_PORT = '3001'; process.env.HOST = '127.0.0.1'; process.env.VITE_IS_PLATFORM = 'false';
 const { initializeDatabase, userDb, closeConnection } = await import('$ROOT/dist-server/server/modules/database/index.js');

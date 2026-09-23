@@ -121,7 +121,17 @@ export function AgentCatalog() {
           </section>
           <section>
             <div className="text-muted-foreground mb-1">교훈 {detail.lessons.length}</div>
-            <ul className="text-muted-foreground">{detail.lessons.map((lesson) => <li key={lesson.id}>· [{lesson.status}] {lesson.trigger} → {lesson.rule}</li>)}</ul>
+            <ul className="text-muted-foreground space-y-1">{detail.lessons.map((lesson) => (
+              <li key={lesson.id}>
+                <span className={lesson.status === 'verified' ? 'text-emerald-600' : lesson.status === 'candidate' ? 'text-amber-600' : ''}>[{lesson.status}]</span> {lesson.trigger} → {lesson.rule}
+                {lesson.status === 'candidate' ? (
+                  <span className="ml-1 inline-flex gap-1">
+                    <button type="button" className="px-1 rounded border border-border hover:bg-accent" onClick={() => { void aidevApi.updateLesson(lesson.id, { status: 'verified' }).then(() => loadDetail(detail.agent.id)); }}>승인</button>
+                    <button type="button" className="px-1 rounded border border-border hover:bg-accent" onClick={() => { void aidevApi.updateLesson(lesson.id, { status: 'rejected' }).then(() => loadDetail(detail.agent.id)); }}>거절</button>
+                  </span>
+                ) : null}
+              </li>
+            ))}</ul>
           </section>
           <section>
             <div className="text-muted-foreground mb-1">버전</div>

@@ -374,8 +374,9 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 **D 완료 기준**: D-06 e2e 로그, 생성된 agent가 다음 명령에서 Laya에 의해 선택됨.
 
 ### E. 축적·학습 (목표: 실패가 줄고 지식이 최신으로 유지된다)
-- [ ] E-01 `runs.outcome` 결정 로직(3.8) + `outcome.classify` + `lesson-curator` 후보 생성 + `lesson.accept`
-- [ ] E-02 교훈 검증 게이트(자동 재성공 / 수동 승인), 3회 이상 → 프롬프트 승격(새 버전); `inject.select` 주입 선택
+- [x] E-01 `runs.outcome` 결정 로직(3.8) + `outcome.classify` + `lesson-curator` 후보 생성 + `lesson.accept`
+  - 로컬 검증(2026-09-23): 모바일 👎 → runtime `POST /api/aidev-tools/curate`(haiku, 도구 없음, ~40s) → `lesson.accept` 0.70 → 후보 → 카탈로그 승인 → 다음 라우팅에 주입. 새 세션 첫 명령의 run은 `complete` 시점에 `session_id`를 채운다(큐레이션에 필요). 게이트웨이 runtimeFetch 큐레이션 타임아웃 180s.
+- [~] E-02 교훈 검증 게이트(자동 재성공 / 수동 승인), 3회 이상 → 프롬프트 승격(새 버전); `inject.select` 주입 선택
 - [ ] E-03 `escalate`·`handoff` 연결: fail → 다음 행동 자동 결정, 엔진 전환 시 요약 handoff 새 세션
 - [ ] E-04 `knowledge-refresher` 주기 작업(서버 cron: 주 1회) + `knowledge.stale` + superseded 처리
 - [ ] E-05 `tier_policy` 집계 작업(일 1회) + route에 반영, 변경 로그
