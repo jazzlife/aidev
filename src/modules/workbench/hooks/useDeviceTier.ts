@@ -56,3 +56,15 @@ export function pinDeviceTier(tier: DeviceTier | 'auto') {
     // per-viewer convenience only
   }
 }
+
+/**
+ * Used by project-workspace (shell, sidebar region, main region) to decide whether the IDE workbench
+ * owns the screen. When it does, the workbench hosts project/session navigation itself (activity bar
+ * "세션" view on desktop, drawer on tablet), so the docked CloudCLI sidebar and the floating
+ * quick-settings handle must not render. `localStorage['aidev.legacy_layout']='1'` restores upstream.
+ */
+export function useWorkbenchActive(isMobile: boolean): { active: boolean; tier: DeviceTier } {
+  const tier = useDeviceTier();
+  const legacyLayout = (() => { try { return localStorage.getItem('aidev.legacy_layout') === '1'; } catch { return false; } })();
+  return { active: !isMobile && tier !== 'mobile' && !legacyLayout, tier };
+}

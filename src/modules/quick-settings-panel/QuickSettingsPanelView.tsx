@@ -1,18 +1,24 @@
-import { memo, useCallback, useMemo, useState } from 'react';
+import { memo, useCallback, useMemo } from 'react';
 import type { MouseEvent as ReactMouseEvent } from 'react';
 
 import { useDeviceSettings } from '@/shared/hooks/useDeviceSettings';
 import { useUiPreferences, useSetUiPreference } from '@/shared/context/UiPreferencesContext';
 import { useTheme } from '@/shared/context/ThemeContext';
 import { useQuickSettingsDrag } from '@/modules/quick-settings-panel/hooks/useQuickSettingsDrag';
+import { useQuickSettingsOpen } from '@/modules/quick-settings-panel/hooks/useQuickSettingsOpen';
 import type { PreferenceToggleKey, QuickSettingsPreferences } from '@/shared/types';
 import QuickSettingsContent from '@/modules/quick-settings-panel/QuickSettingsContent';
 import QuickSettingsHandle from '@/modules/quick-settings-panel/QuickSettingsHandle';
 import QuickSettingsPanelHeader from '@/modules/quick-settings-panel/QuickSettingsPanelHeader';
 
+type QuickSettingsPanelViewProps = {
+  /** false when the workbench activity bar provides the toggle (the floating edge handle overlaps its chat pane). */
+  showHandle?: boolean;
+};
+
 /** Exported as QuickSettingsPanel and rendered by the project-workspace module as its slide-out quick settings drawer. */
-function QuickSettingsPanelView() {
-  const [isOpen, setIsOpen] = useState(false);
+function QuickSettingsPanelView({ showHandle = true }: QuickSettingsPanelViewProps) {
+  const [isOpen, setIsOpen] = useQuickSettingsOpen();
   const { isMobile } = useDeviceSettings({ trackPWA: false });
   const { isDarkMode } = useTheme();
   const preferences = useUiPreferences();
@@ -51,21 +57,23 @@ function QuickSettingsPanelView() {
         return;
       }
 
-      setIsOpen((previous) => !previous);
+      setIsOpen(!isOpen);
     },
-    [consumeSuppressedClick],
+    [consumeSuppressedClick, isOpen, setIsOpen],
   );
 
   return (
     <>
-      <QuickSettingsHandle
-        isOpen={isOpen}
-        isDragging={isDragging}
-        style={handleStyle}
-        onClick={handleToggleFromHandle}
-        onMouseDown={startDrag}
-        onTouchStart={startDrag}
-      />
+      {showHandle ? (
+        <QuickSettingsHandle
+          isOpen={isOpen}
+          isDragging={isDragging}
+          style={handleStyle}
+          onClick={handleToggleFromHandle}
+          onMouseDown={startDrag}
+          onTouchStart={startDrag}
+        />
+      ) : null}
 
       <div
         className={`fixed right-0 top-0 z-[9999] h-full w-64 transform border-l border-border bg-background shadow-xl transition-transform duration-150 ease-out ${isOpen ? 'translate-x-0' : 'translate-x-full'} ${isMobile ? 'h-screen' : ''}`}

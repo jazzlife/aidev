@@ -34,6 +34,11 @@ type SidebarProps = {
   settingsInitialTab: string;
   onCloseSettings: () => void;
   isMobile: boolean;
+  /**
+   * Nado AI Dev workbench: rendered inside the workbench's "세션" view / tablet drawer instead of as
+   * the docked app sidebar — no product branding or footer, fills its container, never collapses.
+   */
+  embedded?: boolean;
 };
 
 type TaskMasterSidebarContext = {
@@ -61,6 +66,7 @@ function Sidebar({
   settingsInitialTab,
   onCloseSettings,
   isMobile,
+  embedded = false,
 }: SidebarProps) {
   const { t } = useTranslation(['sidebar', 'common']);
   const { isPWA } = useDeviceSettings({ trackMobile: false });
@@ -245,7 +251,7 @@ function Sidebar({
         t={t}
       />
 
-      {isSidebarCollapsed ? (
+      {isSidebarCollapsed && !embedded ? (
         <SidebarCollapsed
           onExpand={handleExpandSidebar}
           onShowSettings={onShowSettings}
@@ -259,6 +265,7 @@ function Sidebar({
         <SidebarContent
             isPWA={isPWA}
             isMobile={isMobile}
+            embedded={embedded}
             isLoading={isLoading}
             projects={projects}
             runningSessionsCount={runningSessionsCount}

@@ -13,6 +13,8 @@ const MOD_KEY =
 type SidebarHeaderProps = {
   isPWA: boolean;
   isMobile: boolean;
+  /** Workbench-embedded variant: no logo / GitHub badge / collapse button (the workbench owns them). */
+  embedded: boolean;
   isLoading: boolean;
   projectsCount: number;
   runningSessionsCount: number;
@@ -53,6 +55,7 @@ function LogoBlock({ t }: { t: TFunction }) {
 export default function SidebarHeader({
   isPWA,
   isMobile,
+  embedded,
   isLoading,
   projectsCount,
   runningSessionsCount,
@@ -87,7 +90,7 @@ export default function SidebarHeader({
         style={{}}
       >
         <div className="flex items-center justify-between gap-2">
-          {IS_PLATFORM ? (
+          {embedded ? <span className="min-w-0 truncate text-[11px] uppercase tracking-wide text-muted-foreground">세션</span> : IS_PLATFORM ? (
             <a
               href="https://cloudcli.ai/dashboard"
               className="flex min-w-0 items-center gap-2.5 transition-opacity hover:opacity-80"
@@ -123,19 +126,21 @@ export default function SidebarHeader({
             >
               <Plus className="h-3.5 w-3.5" />
             </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 w-7 rounded-lg p-0 text-muted-foreground hover:bg-accent/80 hover:text-foreground"
-              onClick={onCollapseSidebar}
-              title={t('tooltips.hideSidebar')}
-            >
-              <PanelLeftClose className="h-3.5 w-3.5" />
-            </Button>
+            {embedded ? null : (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 rounded-lg p-0 text-muted-foreground hover:bg-accent/80 hover:text-foreground"
+                onClick={onCollapseSidebar}
+                title={t('tooltips.hideSidebar')}
+              >
+                <PanelLeftClose className="h-3.5 w-3.5" />
+              </Button>
+            )}
           </div>
         </div>
 
-        <GitHubStarBadge />
+        {embedded ? null : <GitHubStarBadge />}
 
         {/* Search bar */}
         {showSearchTools && (

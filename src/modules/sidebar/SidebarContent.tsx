@@ -84,6 +84,8 @@ function groupArchivedSessionsByProject(sessions: ArchivedSessionListItem[]): Ar
 type SidebarContentProps = {
   isPWA: boolean;
   isMobile: boolean;
+  /** Workbench-embedded variant (see Sidebar): full width, no footer. */
+  embedded: boolean;
   isLoading: boolean;
   projects: Project[];
   runningSessionsCount: number;
@@ -133,6 +135,7 @@ type SidebarContentProps = {
 export default function SidebarContent({
   isPWA,
   isMobile,
+  embedded,
   isLoading,
   projects,
   runningSessionsCount,
@@ -186,12 +189,13 @@ export default function SidebarContent({
 
   return (
     <div
-      className="flex h-full flex-col bg-background/80 backdrop-blur-sm md:w-72 md:select-none"
+      className={`flex h-full flex-col md:select-none ${embedded ? 'w-full bg-background' : 'bg-background/80 backdrop-blur-sm md:w-72'}`}
       style={{}}
     >
       <SidebarHeader
         isPWA={isPWA}
         isMobile={isMobile}
+        embedded={embedded}
         isLoading={isLoading}
         projectsCount={projects.length}
         runningSessionsCount={runningSessionsCount}
@@ -685,7 +689,7 @@ export default function SidebarContent({
         )}
       </ScrollArea>
 
-      {!isRenamingOnMobile && (
+      {!isRenamingOnMobile && !embedded && (
         <SidebarFooter
           updateAvailable={updateAvailable}
           restartRequired={restartRequired}

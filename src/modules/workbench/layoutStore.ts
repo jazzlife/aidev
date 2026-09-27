@@ -7,7 +7,7 @@ import type { DeviceTier } from '@/modules/workbench/hooks/useDeviceTier';
  * which side view is open, pane sizes, bottom panel tab, and the tablet's single tool pane.
  * localStorage only (per viewer); every read/write is guarded.
  */
-export type SideView = 'explorer' | 'git' | 'targets' | 'catalog';
+export type SideView = 'sessions' | 'explorer' | 'git' | 'targets' | 'catalog';
 export type BottomTab = 'terminal' | 'browser' | 'tasks' | 'run_output' | 'preview' | 'screen' | 'debug';
 export type TabletPane = 'files' | 'terminal' | 'browser' | 'git';
 
@@ -25,7 +25,7 @@ export type WorkbenchLayoutState = {
 };
 
 const DEFAULTS: Record<Exclude<DeviceTier, 'mobile'>, WorkbenchLayoutState> = {
-  desktop: { sideView: 'explorer', sideWidth: 280, chatOpen: true, chatWidth: 440, bottomOpen: true, bottomHeight: 260, bottomTab: 'terminal', tabletPane: 'files', tabletShowChat: true },
+  desktop: { sideView: 'sessions', sideWidth: 280, chatOpen: true, chatWidth: 440, bottomOpen: true, bottomHeight: 260, bottomTab: 'terminal', tabletPane: 'files', tabletShowChat: true },
   tablet: { sideView: null, sideWidth: 260, chatOpen: true, chatWidth: 380, bottomOpen: false, bottomHeight: 240, bottomTab: 'terminal', tabletPane: 'files', tabletShowChat: true },
 };
 

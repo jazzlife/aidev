@@ -1,9 +1,10 @@
 import { memo, useCallback } from 'react';
 
-import { useProjectMainState } from '@/modules/project-workspace/context/ProjectsStateContext';
+import { useProjectMainState, useProjectSidebarState } from '@/modules/project-workspace/context/ProjectsStateContext';
 import type { SessionEstablishedContext, SessionNavigationOptions,ProjectWorkspaceShellProps } from '@/shared/types';
 import WorkspaceMain from '@/modules/project-workspace/WorkspaceMain';
-import { WorkbenchLayout, useDeviceTier } from '@/modules/workbench';
+import { WorkbenchLayout, useWorkbenchActive } from '@/modules/workbench';
+import { Sidebar } from '@/modules/sidebar';
 
 /** Rendered by ProjectWorkspaceShell to bind this module's project state to WorkspaceMain. */
 function ProjectMainRegion({
@@ -51,12 +52,15 @@ function ProjectMainRegion({
 
   // Nado AI Dev: tablets and desktops get the IDE workbench (IMPLEMENTATION-PLAN §3.11); the tabbed
   // layout below stays for the mobile tier and for the `legacy_layout` escape hatch.
-  const tier = useDeviceTier();
-  const legacyLayout = (() => { try { return localStorage.getItem('aidev.legacy_layout') === '1'; } catch { return false; } })();
-  if (!isMobile && tier !== 'mobile' && !legacyLayout) {
+  const { active: workbenchActive, tier } = useWorkbenchActive(isMobile);
+  const { sidebarSharedProps } = useProjectSidebarState();
+  if (workbenchActive && tier !== 'mobile') {
     return (
       <WorkbenchLayout
         tier={tier}
+        // The one Sidebar instance while the workbench is active (the shell skips the docked one); it
+        // also hosts the settings / new-project modals, so the workbench keeps it mounted at all times.
+        sessionsPanel={<Sidebar {...sidebarSharedProps} isMobile={false} embedded />}
         selectedProject={selectedProject}
         selectedSession={selectedSession}
         activeTab={activeTab}
