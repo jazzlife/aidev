@@ -10,7 +10,7 @@ echo "## subscriptions / Claude login state (DB)"
 docker exec -e NM=$NODE_MODULES $GW node -e '
 const Database = require(process.env.NM + "/better-sqlite3");
 const db = new Database(process.env.DATABASE_PATH || "/data/auth.db", { readonly: true });
-const has = (t) => db.prepare("SELECT name FROM sqlite_master WHERE type=\"table\" AND name=?").get(t);
+const has = (t) => db.prepare("SELECT name FROM sqlite_master WHERE type=? AND name=?").get("table", t);
 if (!has("push_subscriptions")) { console.log("push_subscriptions table missing (gateway not on the push release?)"); process.exit(0); }
 const subs = db.prepare("SELECT a.username, s.endpoint, s.user_agent, s.created_at, s.last_ok, s.failures FROM push_subscriptions s JOIN accounts a ON a.id=s.user_id").all();
 console.log("subscriptions:", subs.length);
