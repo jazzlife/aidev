@@ -1,6 +1,6 @@
 import { useRef } from 'react';
 import type { ChangeEvent } from 'react';
-import { ChevronDown, Eye, FileText, FolderPlus, List, Loader2, RefreshCw, Search, TableProperties, Upload, X } from 'lucide-react';
+import { ChevronsDownUp, Eye, FileText, FolderPlus, List, Loader2, RefreshCw, Search, TableProperties, Upload, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { Button, Input } from '@/shared/ui';
@@ -155,7 +155,7 @@ export default function FileTreeHeader({
               title={t('fileTree.collapseAll', 'Collapse All')}
               aria-label={t('fileTree.collapseAll', 'Collapse All')}
             >
-              <ChevronDown className="h-3.5 w-3.5" />
+              <ChevronsDownUp className="h-3.5 w-3.5" />
             </Button>
           )}
           {/* Divider */}

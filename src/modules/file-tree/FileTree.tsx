@@ -221,7 +221,8 @@ export default function FileTree({ selectedProject, onFileOpen, revealDirectory,
         onNewFile={() => operations.handleStartCreate('', 'file')}
         onNewFolder={() => operations.handleStartCreate('', 'directory')}
         onRefresh={refreshFiles}
-        onCollapseAll={collapseAll}
+        // only offered while something is expanded; with every folder closed the button would do nothing
+        onCollapseAll={expandedDirs.size > 0 ? collapseAll : undefined}
         loading={loading}
         operationLoading={operationLoading}
         isUploading={upload.uploadProgress?.status === 'uploading'}
