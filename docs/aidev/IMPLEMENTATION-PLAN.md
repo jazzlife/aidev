@@ -187,8 +187,9 @@ CREATE TABLE remote_runs (id PK, run_id INT NULL, target_id INT REF targets, use
 | 0 | haiku / low | gpt-5.6-luna / low | 프롬프트만 |
 | 1 | sonnet / medium | gpt-5.6-terra / medium | + 교훈 top-3 |
 | 2 | sonnet / high | gpt-5.6-terra / high | + 지식 요약(≤2k 토큰) |
-| 3 | opus / high (fable 가능 시 fable) | gpt-5.6-sol / high | + 지식 전체, 교훈 전부, 교차 검토 |
-| 4 | opusplan 또는 fable / xhigh | gpt-6-astra / xhigh | + 다중 agent |
+| 3 | opus / high | gpt-5.6-sol / high | + 지식 전체, 교훈 전부, 교차 검토 |
+| 4 | best(= Fable 5.1, 없으면 최신 Opus) / xhigh | gpt-6-astra / xhigh | + 다중 agent |
+- 두 엔진 모두 D4에서 최상위 모델, D3에서 차상위 모델(대칭). `opusplan`(Opus 계획 → Sonnet 실행)은 최상위 등급에서 제외(2026-09-28 수정: 이전 코드는 D4=opusplan이라 Fable 미사용).
 - `risk ≥ 1.5` → depth +1. 사용자 지정 model/effort/engine → 그대로.
 - 엔진 점수: `w(task_kind, engine)` + `tier_policy 성공률 보정(±0.2)` − `패널티(최근 1h 오류 0.3, 인증 없음 → 제외)`. 동점 → `accounts.default_engine` → claude.
 - 세션이 이미 provider를 가지면 엔진은 그 provider로 고정(점수 무시), 모델/effort만 결정.

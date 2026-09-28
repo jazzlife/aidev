@@ -36,12 +36,15 @@ type Store = ReturnType<typeof openStore>;
 export type EngineAvailability = Record<Engine, { allowed: boolean; authenticated: boolean; error?: string | null }>;
 export type RouteInput = { text: string; sessionId?: string | null; sessionEngine?: Engine | null; preferEngine?: Engine | null; targetId?: number | null; projectHint?: string | null; recentFiles?: string[] | null; model?: string | null; effort?: string | null; /** user override: use this agent regardless of Laya's pick */ forceAgent?: string | null };
 
+// Each engine's ladder ends on its strongest model: Codex gpt-6-astra, Claude 'best' (= Fable when the
+// subscription has it, else the latest Opus — resolved by the Claude CLI). 'opusplan' is not used at
+// the top: it plans with Opus but executes with Sonnet, i.e. weaker than D3 on the hardest tasks.
 export const TIER_TABLE: Record<number, Record<Engine, { model: string; effort: string }>> = {
   0: { claude: { model: 'haiku', effort: 'low' }, codex: { model: 'gpt-5.6-luna', effort: 'low' } },
   1: { claude: { model: 'sonnet', effort: 'medium' }, codex: { model: 'gpt-5.6-terra', effort: 'medium' } },
   2: { claude: { model: 'sonnet', effort: 'high' }, codex: { model: 'gpt-5.6-terra', effort: 'high' } },
   3: { claude: { model: 'opus', effort: 'high' }, codex: { model: 'gpt-5.6-sol', effort: 'high' } },
-  4: { claude: { model: 'opusplan', effort: 'xhigh' }, codex: { model: 'gpt-6-astra', effort: 'xhigh' } },
+  4: { claude: { model: 'best', effort: 'xhigh' }, codex: { model: 'gpt-6-astra', effort: 'xhigh' } },
 };
 const LESSON_TOPK = [0, 3, 5, Infinity, Infinity];
 const PROMPT_BUDGET_CHARS = [2000 * 4, 4000 * 4, 8000 * 4, Infinity, Infinity];
