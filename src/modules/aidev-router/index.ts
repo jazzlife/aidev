@@ -26,3 +26,6 @@ export { ClaudeLoginPanel, ClaudeLoginDialog } from '@/modules/aidev-router/Clau
 export { useEscalation } from '@/modules/aidev-router/hooks/useEscalation';
 export { EscalationCard } from '@/modules/aidev-router/EscalationCard';
 export type { NextAction } from '@/modules/aidev-router/api';
+// E-04: knowledge re-check and review (workbench catalog + mobile settings).
+export { useKnowledgeRefresh, knowledgeLabel, refreshSummary } from '@/modules/aidev-router/hooks/useKnowledgeRefresh';
+export type { KnowledgeItem, KnowledgeProposal, KnowledgeRefreshJob } from '@/modules/aidev-router/api';

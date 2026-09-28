@@ -5,6 +5,7 @@ import { ENGINES, type Engine } from './store-aidev.js';
 import type { LayaClient } from './laya.js';
 import type { Push } from './push.js';
 import { applyLessonOutcome, promote } from './lesson-loop.js';
+import { createKnowledgeRefresher, decideProposal } from './knowledge-refresh.js';
 import { decideNext, type NextAction } from './escalation.js';
 import { decide, listKinds } from './laya-questions.js';
 import fs from 'node:fs';
@@ -66,6 +67,15 @@ export function createAidevApi(deps: AidevDeps) {
     }));
     return out;
   }
+
+  // E-04: weekly knowledge re-check on the owner's runtime (and on demand from the catalog).
+  const asSession = (account: { id: number; username: string; runtime: string }): Session => ({ user: { id: account.id, username: account.username, runtime: account.runtime }, sid: 'knowledge-refresh' });
+  const knowledgeRefresher = createKnowledgeRefresher({
+    store, laya,
+    runtimeFetch: (account, path, init, timeoutMs) => deps.runtimeFetch(asSession(account), path, init, timeoutMs),
+    engines: (account) => engineAvailability(asSession(account)),
+    notify: (userId, payload) => deps.push.sendToUser(userId, payload),
+  });
 
   /** Asks the user's runtime to curate a failed run, judges the candidate with Laya, stores it as a candidate lesson. */
   async function curateFailure(session: Session, run: { id: number; session_id: string | null; agent_id: number | null; engine: string | null; decision_id: number | null; exit_code: number | null; tool_errors: number; user_feedback: string | null; reverted: number; test_result: string | null }) {
@@ -230,7 +240,7 @@ export function createAidevApi(deps: AidevDeps) {
         if (agentMatch[2] === '/versions' && m === 'GET') { ownAgent(session, id); return json(res, 200, { versions: store.agentVersions(id) }), true; }
         if (!agentMatch[2] && m === 'GET') {
           const a = ownAgent(session, id);
-          return json(res, 200, { agent: agentView(a), knowledge: store.knowledge(id, ['verified', 'sourced', 'unverified']), lessons: store.lessons(id, uid, ['verified', 'candidate']), stats: store.agentStats(id), versions: store.agentVersions(id).map((v) => ({ version: v.version, changelog: v.changelog, createdAt: v.created_at })) }), true;
+          return json(res, 200, { agent: agentView(a), knowledge: store.knowledge(id, ['verified', 'sourced', 'unverified', 'proposed'], uid), lessons: store.lessons(id, uid, ['verified', 'candidate']), stats: store.agentStats(id), versions: store.agentVersions(id).map((v) => ({ version: v.version, changelog: v.changelog, createdAt: v.created_at })) }), true;
         }
         if (!agentMatch[2] && m === 'PUT') {
           ownAgent(session, id, true);
@@ -330,13 +340,34 @@ export function createAidevApi(deps: AidevDeps) {
       if (rest === '/knowledge' && m === 'GET') {
         const q = url.searchParams.get('q'); const agentId = url.searchParams.has('agent') ? Number(url.searchParams.get('agent')) : undefined;
         if (agentId) ownAgent(session, agentId);
-        return json(res, 200, { knowledge: q ? store.searchKnowledge(q, agentId) : (agentId ? store.knowledge(agentId, ['verified', 'sourced', 'unverified']) : []) }), true;
+        return json(res, 200, { knowledge: q ? store.searchKnowledge(q, agentId, uid) : (agentId ? store.knowledge(agentId, ['verified', 'sourced', 'unverified', 'proposed'], uid) : []) }), true;
       }
       if (rest === '/knowledge' && m === 'POST') {
         const b = await readJson(req);
         const agentId = num(b.agent_id, 'agent_id'); ownAgent(session, agentId);
         const id = store.addKnowledge({ agentId, title: str(b.title, 'title', 200), body: str(b.body, 'body', 60000), sourceUrl: optStr(b.source_url, 2000) ?? null, sourceDate: optStr(b.source_date, 40) ?? null, status: optStr(b.status, 20), ownerId: uid });
         return json(res, 201, { knowledge: store.knowledgeById(id) }), true;
+      }
+      // E-04: re-check against sources (runs in the background on the caller's runtime; poll GET)
+      if (rest === '/knowledge/refresh' && m === 'POST') {
+        const b = await readJson(req);
+        const admin = store.accountEngines(uid).role === 'admin';
+        try {
+          const job = knowledgeRefresher.start(session.user, { itemId: b.id === undefined ? undefined : num(b.id, 'id'), includeGlobal: admin });
+          return json(res, 202, { job }), true;
+        } catch (error) { throw new HttpError(error instanceof Error && error.message === 'Knowledge not found' ? 404 : 400, error instanceof Error ? error.message : 'refresh failed'); }
+      }
+      if (rest === '/knowledge/refresh' && m === 'GET') return json(res, 200, { job: knowledgeRefresher.status(uid) }), true;
+      if (rest === '/knowledge/proposals' && m === 'GET') return json(res, 200, { proposals: store.knowledgeProposals(uid, store.accountEngines(uid).role === 'admin').map((p) => ({ ...p, replaces_item: p.replaces ? store.knowledgeById(p.replaces) ?? null : null })) }), true;
+      const proposalMatch = rest.match(/^\/knowledge\/(\d+)\/decide$/);
+      if (proposalMatch && m === 'POST') {
+        const b = await readJson(req); const id = Number(proposalMatch[1]);
+        const k = store.knowledgeById(id);
+        const mayDecide = k && (k.owner_id === uid || (k.owner_id === null && store.accountEngines(uid).role === 'admin'));
+        if (!k || !mayDecide || k.status !== 'proposed') throw new HttpError(404, 'Proposal not found');
+        const result = decideProposal(store, id, b.accept === true);
+        console.log(`[aidev] knowledge proposal #${id} ${b.accept === true ? 'accepted' : 'rejected'} by ${session.user.username}`);
+        return json(res, 200, result), true;
       }
       const knowledgeMatch = rest.match(/^\/knowledge\/(\d+)$/);
       if (knowledgeMatch && m === 'PATCH') {
@@ -379,5 +410,5 @@ export function createAidevApi(deps: AidevDeps) {
       return json(res, status, { error: error instanceof Error ? error.message : 'Request failed' }), true;
     }
   }
-  return { handle, engineAvailability };
+  return { handle, engineAvailability, knowledgeRefresher };
 }

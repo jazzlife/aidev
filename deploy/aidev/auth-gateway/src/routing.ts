@@ -275,7 +275,7 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   let knowledgeDigest = '';
   const kBudget = KNOWLEDGE_DIGEST_CHARS[depth];
   if (kBudget > 0) {
-    const items = store.knowledge(agent.id);
+    const items = store.knowledge(agent.id, undefined, userId);
     const parts: string[] = [];
     let used = 0;
     for (const k of items) {

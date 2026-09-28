@@ -3,6 +3,7 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '@/modules/chat-core';
 import { aidevApi, claudeAuth, routingStore, useClaudeAuth, useRoutingState, type EnginesResult, type RoutingMode } from '@/modules/aidev-router';
 import { ClaudeLoginSheet } from '@m/components/ClaudeLoginSheet';
+import { KnowledgeSection } from '@m/components/KnowledgeSection';
 import { disablePush, enablePush, pushState, type PushState } from '@m/lib/push';
 
 const PUSH_LABEL: Record<PushState, string> = { on: '켜짐', off: '꺼짐', denied: '브라우저에서 차단됨 (설정에서 허용)', needs_install: '홈 화면에 추가한 앱에서 켤 수 있습니다', unsupported: '이 브라우저는 지원하지 않습니다' };
@@ -75,7 +76,7 @@ export function SettingsScreen() {
           <div className="text-[12px] uppercase tracking-wide text-muted mb-2">알림</div>
           <div className="rounded-xl2 border border-line bg-surface divide-y divide-line">
             <div className="px-4 py-3 flex items-center gap-3">
-              <span className="flex-1"><div className="text-[15px]">푸시 알림</div><div className="text-[12px] text-muted">Claude 로그인 만료 30·7·1일 전과 만료 시 알려드립니다</div></span>
+              <span className="flex-1"><div className="text-[15px]">푸시 알림</div><div className="text-[12px] text-muted">Claude 로그인 만료 30·7·1일 전·만료 시, 지식 갱신 결과</div></span>
               {push === 'on' || push === 'off'
                 ? <button type="button" role="switch" aria-checked={push === 'on'} aria-label="푸시 알림" disabled={pushBusy} onClick={() => { void togglePush(); }} className={`w-12 h-7 rounded-full p-0.5 transition-colors ${push === 'on' ? 'bg-accent' : 'bg-line'}`}><span className={`block w-6 h-6 rounded-full bg-surface shadow transition-transform ${push === 'on' ? 'translate-x-5' : ''}`} /></button>
                 : <span className="text-[12px] text-muted text-right max-w-[45%]">{push ? PUSH_LABEL[push] : '…'}</span>}
@@ -84,6 +85,7 @@ export function SettingsScreen() {
           </div>
           {pushNote ? <div className="text-[12px] text-muted mt-2">{pushNote}</div> : null}
         </section>
+        <KnowledgeSection />
         <section>
           <div className="text-[12px] uppercase tracking-wide text-muted mb-2">화면</div>
           <button type="button" onClick={switchToWorkbench} className="w-full rounded-xl2 border border-line bg-surface px-4 py-3 text-left text-[15px]">데스크탑 작업대(IDE)로 전환</button>

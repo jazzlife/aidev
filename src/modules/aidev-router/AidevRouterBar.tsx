@@ -40,10 +40,10 @@ export function AidevRouterBar() {
     : claudeAuthState.renewSoon ? { tone: 'text-amber-600 border-amber-300', label: `Claude 로그인 D-${claudeAuthState.daysLeft} · 갱신` } : null;
 
   return (
-    <div className="aidev-chrome flex items-center gap-1.5 px-3 py-1 border-t border-border/60 bg-muted/20 text-[11px] overflow-x-auto" data-testid="aidev-router-bar">
+    <div className="aidev-chrome flex items-center gap-1.5 overflow-x-auto border-t border-border/60 bg-muted/20 px-3 py-1 text-[11px]" data-testid="aidev-router-bar">
       <ClaudeLoginDialog />
       {authNotice ? <button type="button" className={`${chip} ${authNotice.tone}`} onClick={(event) => { event.stopPropagation(); claudeAuth.openDialog(); }}>{authNotice.label}</button> : null}
-      <Sparkles size={13} className={`shrink-0 ${state.busy ? 'text-primary animate-pulse' : 'text-primary/80'}`} />
+      <Sparkles size={13} className={`shrink-0 ${state.busy ? 'animate-pulse text-primary' : 'text-primary/80'}`} />
       {state.mode === 'off' ? <span className="text-muted-foreground">라우팅 꺼짐</span> : !last ? <span className="text-muted-foreground">{state.busy ? '판정 중…' : '명령을 보내면 전문 agent·엔진·모델을 고릅니다'}</span> : (
         <>
           <span className={chip} title={`깊이 ${last.scope.depth_raw.toFixed(2)} · 작업 ${last.scope.task_kind} (${Math.round(last.scope.task_kind_probability * 100)}%) · 위험 ${last.scope.risk.toFixed(1)}`}>
@@ -62,11 +62,11 @@ export function AidevRouterBar() {
                 : <span className={`${chip} border-red-300 text-red-600`} title={last.plan.engine_error}>{last.plan.engine}: 로그인 필요 (설정 → Agents)</span>
             ) : null}
             {open === 'agent' ? (
-              <div className="absolute left-0 top-7 z-30 w-72 rounded-md border border-border bg-popover shadow-md p-1" onClick={(event) => event.stopPropagation()}>
+              <div className="absolute left-0 top-7 z-30 w-72 rounded-md border border-border bg-popover p-1 shadow-md" onClick={(event) => event.stopPropagation()}>
                 {[{ name: last.agent.name, probability: last.agent.probability, description: last.agent.description }, ...last.alternatives].map((alternative) => (
-                  <button key={alternative.name} type="button" onClick={() => overrideAgent(alternative.name)} className="w-full text-left px-2 py-1.5 rounded hover:bg-accent">
+                  <button key={alternative.name} type="button" onClick={() => overrideAgent(alternative.name)} className="w-full rounded px-2 py-1.5 text-left hover:bg-accent">
                     <div className="flex justify-between"><span className="font-medium">{alternative.name}</span><span className="text-muted-foreground">{Math.round(alternative.probability * 100)}%</span></div>
-                    <div className="text-muted-foreground line-clamp-2">{alternative.description}</div>
+                    <div className="line-clamp-2 text-muted-foreground">{alternative.description}</div>
                   </button>
                 ))}
                 {last.decision === 'create' || last.decision === 'create_background' ? <div className="px-2 py-1 text-amber-700">맞는 전문 agent가 없습니다 — 생성 흐름(단계 D)</div> : null}
@@ -81,13 +81,13 @@ export function AidevRouterBar() {
               {!last.plan.engine_locked ? <ChevronDown size={11} /> : null}
             </button>
             {open === 'engine' ? (
-              <div className="absolute left-0 top-7 z-30 w-64 rounded-md border border-border bg-popover shadow-md p-1" onClick={(event) => event.stopPropagation()}>
+              <div className="absolute left-0 top-7 z-30 w-64 rounded-md border border-border bg-popover p-1 shadow-md" onClick={(event) => event.stopPropagation()}>
                 {(['claude', 'codex'] as Engine[]).map((engine) => {
                   const info = engines?.engines[engine] ?? last.engines[engine];
                   const usable = info.allowed && info.authenticated;
                   return (
-                    <button key={engine} type="button" disabled={!usable} onClick={() => overrideEngine(engine)} className="w-full text-left px-2 py-1.5 rounded hover:bg-accent disabled:opacity-50">
-                      <div className="flex justify-between"><span className="capitalize font-medium">{engine}</span><span className="text-muted-foreground">{last.engines[engine].score !== null ? `점수 ${last.engines[engine].score?.toFixed(2)}` : ''}</span></div>
+                    <button key={engine} type="button" disabled={!usable} onClick={() => overrideEngine(engine)} className="w-full rounded px-2 py-1.5 text-left hover:bg-accent disabled:opacity-50">
+                      <div className="flex justify-between"><span className="font-medium capitalize">{engine}</span><span className="text-muted-foreground">{last.engines[engine].score !== null ? `점수 ${last.engines[engine].score?.toFixed(2)}` : ''}</span></div>
                       <div className="text-muted-foreground">{!info.allowed ? '이 계정에서 사용 불가' : !info.authenticated ? (info.error || '로그인 필요') : '사용 가능'}</div>
                     </button>
                   );
@@ -100,19 +100,19 @@ export function AidevRouterBar() {
           {state.runFinishedAt && state.runId ? (
             <span className="inline-flex items-center gap-0.5 text-muted-foreground" title="이 실행 결과를 평가하면 다음 라우팅과 교훈 학습에 반영됩니다">
               <span className="mr-0.5">결과</span>
-              <button type="button" aria-label="좋아요" disabled={Boolean(state.runFeedback)} onClick={() => { void reportOutcome({ user_feedback: 'up' }); }} className={`p-1 rounded hover:bg-accent disabled:opacity-60 ${state.runFeedback === 'up' ? 'text-emerald-600' : ''}`}><ThumbsUp size={12} /></button>
-              <button type="button" aria-label="별로예요" disabled={Boolean(state.runFeedback)} onClick={() => { void reportOutcome({ user_feedback: 'down' }); }} className={`p-1 rounded hover:bg-accent disabled:opacity-60 ${state.runFeedback === 'down' ? 'text-red-600' : ''}`}><ThumbsDown size={12} /></button>
+              <button type="button" aria-label="좋아요" disabled={Boolean(state.runFeedback)} onClick={() => { void reportOutcome({ user_feedback: 'up' }); }} className={`rounded p-1 hover:bg-accent disabled:opacity-60 ${state.runFeedback === 'up' ? 'text-emerald-600' : ''}`}><ThumbsUp size={12} /></button>
+              <button type="button" aria-label="별로예요" disabled={Boolean(state.runFeedback)} onClick={() => { void reportOutcome({ user_feedback: 'down' }); }} className={`rounded p-1 hover:bg-accent disabled:opacity-60 ${state.runFeedback === 'down' ? 'text-red-600' : ''}`}><ThumbsDown size={12} /></button>
             </span>
           ) : null}
-          <span className="text-muted-foreground ml-auto whitespace-nowrap">{last.latency_ms ?? '-'}ms{last.device ? ` · ${last.device}` : ''}</span>
+          <span className="ml-auto whitespace-nowrap text-muted-foreground">{last.latency_ms ?? '-'}ms{last.device ? ` · ${last.device}` : ''}</span>
         </>
       )}
       <span className="relative ml-auto">
         <button type="button" className={chip} onClick={(event) => { event.stopPropagation(); setOpen(open === 'mode' ? null : 'mode'); }}>{MODES.find((mode) => mode.value === state.mode)?.label}<ChevronDown size={11} /></button>
         {open === 'mode' ? (
-          <div className="absolute right-0 top-7 z-30 w-40 rounded-md border border-border bg-popover shadow-md p-1" onClick={(event) => event.stopPropagation()}>
-            {MODES.map((mode) => <button key={mode.value} type="button" onClick={() => { routingStore.setMode(mode.value); setOpen(null); }} className={`w-full text-left px-2 py-1.5 rounded hover:bg-accent ${state.mode === mode.value ? 'font-medium' : ''}`}>{mode.label}</button>)}
-            {Object.keys(state.overrides).length ? <button type="button" onClick={() => { routingStore.clearOverrides(); setOpen(null); }} className="w-full text-left px-2 py-1.5 rounded hover:bg-accent text-muted-foreground">override 지우기</button> : null}
+          <div className="absolute right-0 top-7 z-30 w-40 rounded-md border border-border bg-popover p-1 shadow-md" onClick={(event) => event.stopPropagation()}>
+            {MODES.map((mode) => <button key={mode.value} type="button" onClick={() => { routingStore.setMode(mode.value); setOpen(null); }} className={`w-full rounded px-2 py-1.5 text-left hover:bg-accent ${state.mode === mode.value ? 'font-medium' : ''}`}>{mode.label}</button>)}
+            {Object.keys(state.overrides).length ? <button type="button" onClick={() => { routingStore.clearOverrides(); setOpen(null); }} className="w-full rounded px-2 py-1.5 text-left text-muted-foreground hover:bg-accent">override 지우기</button> : null}
           </div>
         ) : null}
       </span>

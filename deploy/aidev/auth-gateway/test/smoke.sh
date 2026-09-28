@@ -50,6 +50,13 @@ r=$(get "$A" "/api/aidev/knowledge?q=Blit"); check "$r" 'j.knowledge.length===1'
 r=$(post "$A" "/api/aidev/agents/$AID" '{"prompt":"You are a Unity rendering engineer (v2). Always profile with the Frame Debugger before optimizing.","changelog":"add profiling rule"}' PUT); check "$r" 'j.version===2' "agent new version"
 r=$(get "$A" "/api/aidev/agents/$AID"); check "$r" 'j.versions.length===2 && j.knowledge.length===1' "agent detail versions+knowledge"
 r=$(get "$B" "/api/aidev/agents/$AID"); check "$r" 'j.error' "private agent hidden from other user"
+# E-04: re-check a sourced item on the owner's runtime → Laya judges the replacement → old superseded
+KID=$(get "$A" "/api/aidev/agents/$AID" | node -pe 'JSON.parse(require("fs").readFileSync(0)).knowledge[0].id')
+r=$(post "$A" /api/aidev/knowledge/refresh "{\"id\":$KID}"); check "$r" 'j.job && j.job.total===1' "knowledge refresh started"
+for i in 1 2 3 4 5 6 7 8 9 10; do r=$(get "$A" /api/aidev/knowledge/refresh); echo "$r" | grep -q '"running":false' && break; sleep 0.3; done
+check "$r" 'j.job.done===1 && j.job.results[0].outcome==="superseded" && j.job.results[0].newId>0' "knowledge refresh: changed source → superseded ($(echo "$r" | node -pe 'const j=JSON.parse(require("fs").readFileSync(0)); j.job.results.map(x=>x.outcome+" #"+x.newId).join()'))"
+r=$(get "$A" "/api/aidev/agents/$AID"); check "$r" 'j.knowledge.length===1 && j.knowledge[0].title==="URP 17.1 shader API"' "agent now carries the refreshed item"
+r=$(post "$B" /api/aidev/knowledge/refresh "{\"id\":$KID}"); check "$r" 'j.error' "someone else's knowledge cannot be refreshed"
 r=$(post "$A" /api/aidev/lessons "{\"agent_id\":$AID,\"trigger\":\"shader compiles but renders black\",\"rule\":\"check the render queue and pass tags first\",\"status\":\"verified\"}"); check "$r" 'j.lesson.status==="verified"' "lesson added"
 r=$(post "$A" /api/aidev/route '{"text":"Unity 셰이더로 물 표면 굴절 효과를 구현해줘"}'); check "$r" 'j.lessons.length===1' "verified lesson injected at D>=1"
 r=$(post "$A" /api/aidev/targets '{"name":"mac-studio","platform":"macos","tags":["xcode","node"],"description":"개발용 맥 스튜디오"}'); check "$r" 'j.target.pairing_code.length===8' "target registered with pairing code"

@@ -4,6 +4,7 @@ import { asyncHandler, createApiSuccessResponse } from '@/shared/utils.js';
 import { lessonCuratorService } from '@/modules/aidev-tools/lesson-curator.service.js';
 import { claudeLoginService } from '@/modules/aidev-tools/claude-login.service.js';
 import { handoffService } from '@/modules/aidev-tools/handoff.service.js';
+import { knowledgeCheckService } from '@/modules/aidev-tools/knowledge-check.service.js';
 
 /**
  * Gateway → runtime calls made on behalf of the user (mounted at /api/aidev-tools behind
@@ -39,6 +40,19 @@ router.post('/handoff', asyncHandler(async (req: Request, res: Response) => {
   }
   const str = (v: unknown) => (typeof v === 'string' ? v.slice(0, 300) : null);
   res.json(createApiSuccessResponse(await handoffService.build({ sessionId, fromEngine: str(body.from_engine), toEngine: str(body.to_engine), reason: str(body.reason) })));
+}));
+
+// Knowledge refresh (E-04): the gateway's weekly job re-checks one stored item per call.
+router.post('/knowledge-check', asyncHandler(async (req: Request, res: Response) => {
+  const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
+  const text = (v: unknown, max: number) => (typeof v === 'string' && v.trim() ? v.slice(0, max) : null);
+  const title = text(body.title, 200); const content = text(body.body, 60000);
+  if (!title || !content) {
+    res.status(400).json({ success: false, error: 'title and body are required.' });
+    return;
+  }
+  const engine = body.engine === 'codex' ? 'codex' : 'claude';
+  res.json(createApiSuccessResponse(await knowledgeCheckService.check({ title, body: content, sourceUrl: text(body.source_url, 2000), sourceDate: text(body.source_date, 40), agent: text(body.agent, 100), engine, model: text(body.model, 100), prompt: text(body.prompt, 20000) })));
 }));
 
 // ---- in-app Claude subscription login (workbench and mobile app) -----------------------------

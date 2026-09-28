@@ -12,7 +12,9 @@ export type TaskKind = typeof TASK_KINDS[number];
 
 export type AgentRow = { id: number; name: string; domain: string; description: string; hint: string | null; verified: number; prompt: string; tools: string | null; model: string | null; max_turns: number | null; owner_id: number | null; source: string; active: number; uses: number; created_at: number; updated_at: number; version: number; skills: string | null; mcp_servers: string | null };
 export type AgentVersionRow = { id: number; agent_id: number; version: number; prompt: string; tools: string | null; model: string | null; skills: string | null; mcp_servers: string | null; changelog: string | null; created_at: number };
-export type KnowledgeRow = { id: number; agent_id: number; title: string; body: string; source_url: string | null; source_date: string | null; status: string; superseded_by: number | null; expires_at: number | null; owner_id: number | null; created_at: number; updated_at: number };
+/** Default life of a sourced knowledge item before it is re-checked against its source (§3.8). */
+export const KNOWLEDGE_TTL_MS = 90 * 86400_000;
+export type KnowledgeRow = { id: number; agent_id: number; title: string; body: string; source_url: string | null; source_date: string | null; status: string; superseded_by: number | null; expires_at: number | null; owner_id: number | null; created_at: number; updated_at: number; checked_at: number | null; check_fails: number; check_note: string | null; replaces: number | null };
 export type LessonRow = { id: number; agent_id: number; engine: string | null; trigger: string; rule: string; evidence_run_id: number | null; status: string; hits: number; owner_id: number | null; promoted_to_prompt: number; fails: number; verified_by: string | null; promoted_version: number | null; created_at: number };
 export type RunRow = { id: number; user_id: number; session_id: string | null; decision_id: number | null; agent_id: number | null; agent_version: number | null; engine: string | null; model: string | null; effort: string | null; depth: number | null; task_kind: string | null; risk: number | null; target_id: number | null; started_at: number; finished_at: number | null; exit_code: number | null; tool_errors: number; user_feedback: string | null; reverted: number; reasked: number; test_result: string | null; cost_tokens: number | null; escalated_from_run: number | null; outcome: string | null };
 export type TargetRow = { id: number; user_id: number; name: string; platform: string | null; arch: string | null; tags: string | null; description: string; token_hash: string | null; pairing_code: string | null; pairing_expires: number | null; policy: string; allowed_roots: string | null; capabilities: string | null; status: string; last_seen: number | null; created_at: number };
@@ -120,6 +122,12 @@ export function migrateAidev(db: Database.Database) {
   addColumn(db, 'accounts', 'claude_token_expires_at', 'INTEGER');   // reported by the runtime after an in-app login
   addColumn(db, 'accounts', 'claude_auth_failure_at', 'INTEGER');    // reported by the runtime when a turn is refused
   addColumn(db, 'accounts', 'claude_notice', 'TEXT');                // last reminder sent ("<expiresAt>:<days>" or "fail:<at>")
+  // Knowledge refresh (§3.8 / E-04): last check, consecutive unreachable checks, the check's note,
+  // and — for a replacement Laya was not sure about — the item a 'proposed' row would replace.
+  addColumn(db, 'knowledge', 'checked_at', 'INTEGER');
+  addColumn(db, 'knowledge', 'check_fails', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(db, 'knowledge', 'check_note', 'TEXT');
+  addColumn(db, 'knowledge', 'replaces', 'INTEGER');
   // engine_weights seed: bulk reading/analysis prefers Codex, everything else neutral (§0 decisions)
   const n = (db.prepare('SELECT COUNT(*) AS n FROM engine_weights').get() as { n: number }).n;
   if (n === 0) {
@@ -284,34 +292,58 @@ export function aidevMethods(db: Database.Database) {
         AVG(CASE WHEN finished_at IS NOT NULL THEN finished_at-started_at END) AS avg_ms FROM runs WHERE agent_id=?`).get(agentId) as { runs: number; success: number | null; fail: number | null; avg_ms: number | null };
     },
     // ---- knowledge ----------------------------------------------------------
-    knowledge(agentId: number, status?: string[]) {
+    /** Items of an agent visible to `userId` (global + their own); without a user, only global items. */
+    knowledge(agentId: number, status?: string[], userId?: number | null) {
       const st = status?.length ? status : ['verified', 'sourced'];
-      return db.prepare(`SELECT * FROM knowledge WHERE agent_id=? AND status IN (${st.map(() => '?').join(',')}) ORDER BY status='verified' DESC, updated_at DESC`).all(agentId, ...st) as KnowledgeRow[];
+      return db.prepare(`SELECT * FROM knowledge WHERE agent_id=? AND status IN (${st.map(() => '?').join(',')}) AND (owner_id IS NULL OR owner_id=?) ORDER BY status='verified' DESC, updated_at DESC`).all(agentId, ...st, userId ?? -1) as KnowledgeRow[];
     },
     knowledgeById(id: number) { return db.prepare('SELECT * FROM knowledge WHERE id=?').get(id) as KnowledgeRow | undefined; },
-    searchKnowledge(query: string, agentId?: number, limit = 20) {
+    searchKnowledge(query: string, agentId: number | undefined, userId: number, limit = 20) {
       const q = query.replace(/["*^]/g, ' ').trim().split(/\s+/).filter(Boolean).map((t) => `"${t}"`).join(' OR ');
       if (!q) return [] as KnowledgeRow[];
-      return db.prepare(`SELECT k.* FROM knowledge_fts f JOIN knowledge k ON k.id=f.rowid WHERE knowledge_fts MATCH ? ${agentId ? 'AND k.agent_id=?' : ''} AND k.status!='superseded' ORDER BY bm25(knowledge_fts) LIMIT ?`)
-        .all(...(agentId ? [q, agentId, limit] : [q, limit])) as KnowledgeRow[];
+      return db.prepare(`SELECT k.* FROM knowledge_fts f JOIN knowledge k ON k.id=f.rowid WHERE knowledge_fts MATCH ? ${agentId ? 'AND k.agent_id=?' : ''} AND k.status NOT IN ('superseded','proposed') AND (k.owner_id IS NULL OR k.owner_id=?) ORDER BY bm25(knowledge_fts) LIMIT ?`)
+        .all(...(agentId ? [q, agentId, userId, limit] : [q, userId, limit])) as KnowledgeRow[];
     },
-    addKnowledge(k: { agentId: number; title: string; body: string; sourceUrl?: string | null; sourceDate?: string | null; status?: string; ownerId: number | null; expiresAt?: number | null }) {
+    addKnowledge(k: { agentId: number; title: string; body: string; sourceUrl?: string | null; sourceDate?: string | null; status?: string; ownerId: number | null; expiresAt?: number | null; replaces?: number | null; checkNote?: string | null }) {
       if (k.title.length < 3 || k.title.length > 200) throw new Error('title must be 3-200 characters');
       if (k.body.length < 10 || k.body.length > 60000) throw new Error('body must be 10-60000 characters');
       const status = k.status ?? (k.sourceUrl ? 'sourced' : 'unverified');
-      if (!['verified', 'sourced', 'unverified'].includes(status)) throw new Error('invalid status');
+      if (!['verified', 'sourced', 'unverified', 'proposed'].includes(status)) throw new Error('invalid status');
       const now = Date.now();
-      const r = db.prepare('INSERT INTO knowledge(agent_id,title,body,source_url,source_date,status,expires_at,owner_id,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?)')
-        .run(k.agentId, k.title, k.body, k.sourceUrl ?? null, k.sourceDate ?? null, status, k.expiresAt === undefined ? now + 90 * 86400_000 : k.expiresAt, k.ownerId, now, now);
+      const r = db.prepare('INSERT INTO knowledge(agent_id,title,body,source_url,source_date,status,expires_at,owner_id,created_at,updated_at,replaces,check_note,checked_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)')
+        .run(k.agentId, k.title, k.body, k.sourceUrl ?? null, k.sourceDate ?? null, status, k.expiresAt === undefined ? now + KNOWLEDGE_TTL_MS : k.expiresAt, k.ownerId, now, now, k.replaces ?? null, k.checkNote ?? null, k.replaces ? now : null);
       return Number(r.lastInsertRowid);
     },
-    updateKnowledge(id: number, patch: Partial<{ status: string; supersededBy: number | null; title: string; body: string; expiresAt: number | null }>) {
+    updateKnowledge(id: number, patch: Partial<{ status: string; supersededBy: number | null; title: string; body: string; expiresAt: number | null; checkedAt: number | null; checkFails: number; checkNote: string | null }>) {
       const cur = m.knowledgeById(id); if (!cur) throw new Error('Knowledge not found');
-      if (patch.status && !['verified', 'sourced', 'unverified', 'superseded'].includes(patch.status)) throw new Error('invalid status');
-      db.prepare('UPDATE knowledge SET status=?, superseded_by=?, title=?, body=?, expires_at=?, updated_at=? WHERE id=?')
-        .run(patch.status ?? cur.status, patch.supersededBy === undefined ? cur.superseded_by : patch.supersededBy, patch.title ?? cur.title, patch.body ?? cur.body, patch.expiresAt === undefined ? cur.expires_at : patch.expiresAt, Date.now(), id);
+      if (patch.status && !['verified', 'sourced', 'unverified', 'superseded', 'proposed'].includes(patch.status)) throw new Error('invalid status');
+      db.prepare('UPDATE knowledge SET status=?, superseded_by=?, title=?, body=?, expires_at=?, checked_at=?, check_fails=?, check_note=?, updated_at=? WHERE id=?')
+        .run(patch.status ?? cur.status, patch.supersededBy === undefined ? cur.superseded_by : patch.supersededBy, patch.title ?? cur.title, patch.body ?? cur.body, patch.expiresAt === undefined ? cur.expires_at : patch.expiresAt,
+          patch.checkedAt === undefined ? cur.checked_at : patch.checkedAt, patch.checkFails ?? cur.check_fails, patch.checkNote === undefined ? cur.check_note : patch.checkNote, Date.now(), id);
     },
-    expiredKnowledge(limit = 50) { return db.prepare('SELECT * FROM knowledge WHERE status IN (\'sourced\',\'verified\') AND expires_at IS NOT NULL AND expires_at < ? ORDER BY expires_at LIMIT ?').all(Date.now(), limit) as KnowledgeRow[]; },
+    deleteKnowledge(id: number) { db.prepare('DELETE FROM knowledge WHERE id=?').run(id); },
+    /**
+     * Items whose re-check is due: sourced/verified with a source URL, past `expires_at`, and no
+     * replacement already waiting for review. `ownerId` narrows to one owner (null = global items).
+     */
+    dueKnowledge(limit = 50, ownerId?: number | null) {
+      const owner = ownerId === undefined ? '' : ownerId === null ? 'AND k.owner_id IS NULL' : 'AND k.owner_id=?';
+      return db.prepare(`SELECT k.* FROM knowledge k WHERE k.status IN ('sourced','verified') AND k.source_url IS NOT NULL AND k.expires_at IS NOT NULL AND k.expires_at < ? ${owner}
+        AND NOT EXISTS (SELECT 1 FROM knowledge p WHERE p.replaces=k.id AND p.status='proposed') ORDER BY k.expires_at LIMIT ?`)
+        .all(...(ownerId === undefined || ownerId === null ? [Date.now(), limit] : [Date.now(), ownerId, limit])) as KnowledgeRow[];
+    },
+    /** Replacements waiting for a person (Laya was unsure): the user's own, plus global ones for admins. */
+    knowledgeProposals(userId: number, includeGlobal: boolean) {
+      return db.prepare(`SELECT p.*, a.name AS agent_name FROM knowledge p JOIN agents a ON a.id=p.agent_id WHERE p.status='proposed' AND (p.owner_id=? ${includeGlobal ? 'OR p.owner_id IS NULL' : ''}) ORDER BY p.created_at DESC`)
+        .all(userId) as Array<KnowledgeRow & { agent_name: string }>;
+    },
+    /** Owners with due items (null = global items), for the scheduled refresh. */
+    dueKnowledgeOwners() {
+      return (db.prepare(`SELECT DISTINCT k.owner_id AS owner FROM knowledge k WHERE k.status IN ('sourced','verified') AND k.source_url IS NOT NULL AND k.expires_at IS NOT NULL AND k.expires_at < ?
+        AND NOT EXISTS (SELECT 1 FROM knowledge p WHERE p.replaces=k.id AND p.status='proposed')`).all(Date.now()) as Array<{ owner: number | null }>).map((r) => r.owner);
+    },
+    firstAdmin() { return db.prepare("SELECT id, username, runtime FROM accounts WHERE role='admin' AND active=1 ORDER BY id LIMIT 1").get() as { id: number; username: string; runtime: string } | undefined; },
+    accountById(id: number) { return db.prepare('SELECT id, username, runtime, active FROM accounts WHERE id=?').get(id) as { id: number; username: string; runtime: string; active: number } | undefined; },
     // ---- lessons --------------------------------------------------------------
     lessons(agentId: number, userId: number, status: string[] = ['verified']) {
       return db.prepare(`SELECT * FROM lessons WHERE agent_id=? AND (owner_id IS NULL OR owner_id=?) AND status IN (${status.map(() => '?').join(',')}) ORDER BY hits DESC, created_at DESC`).all(agentId, userId, ...status) as LessonRow[];

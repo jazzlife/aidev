@@ -34,7 +34,7 @@ export function ClaudeLoginPanel({ onClose, onDone }: { onClose?: () => void; on
       {flow.stage === 'starting' ? <div className="flex items-center gap-2 text-muted-foreground"><Loader2 size={14} className="animate-spin" /> 로그인 준비 중…</div> : null}
 
       {flow.stage === 'awaiting_code' || flow.stage === 'submitting' ? (
-        <ol className="space-y-3 list-decimal pl-5">
+        <ol className="list-decimal space-y-3 pl-5">
           <li>
             <a href={flow.url ?? '#'} target="_blank" rel="noreferrer" className={`${button} border border-border hover:bg-accent`}>
               <ExternalLink size={13} /> Claude 로그인 페이지 열기
@@ -44,7 +44,7 @@ export function ClaudeLoginPanel({ onClose, onDone }: { onClose?: () => void; on
           <li>
             <div className="flex gap-2">
               <input value={code} onChange={(event) => setCode(event.target.value)} placeholder="인증 코드 붙여넣기" autoComplete="off" spellCheck={false}
-                className="flex-1 min-w-0 h-8 rounded-md border border-border bg-background px-2 font-mono text-[12px] outline-none focus:border-primary"
+                className="h-8 min-w-0 flex-1 rounded-md border border-border bg-background px-2 font-mono text-[12px] outline-none focus:border-primary"
                 onKeyDown={(event) => { if (event.key === 'Enter') void flow.submit(code); }} />
               <button type="button" className={`${button} bg-primary text-primary-foreground`} disabled={!code.trim() || flow.stage === 'submitting'} onClick={() => { void flow.submit(code); }}>
                 {flow.stage === 'submitting' ? <Loader2 size={13} className="animate-spin" /> : null} 확인

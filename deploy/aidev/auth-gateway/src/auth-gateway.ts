@@ -163,6 +163,7 @@ const aidev = createAidevApi({
     return fetch(`${runtime.target}${path}`, { ...init, headers: { ...(init?.headers as Record<string, string> | undefined), authorization: `Bearer ${runtime.token}` }, signal: AbortSignal.timeout(timeoutMs) });
   },
 });
+aidev.knowledgeRefresher.startSchedule();
 // The SPA is served by the gateway for every user, signed in or not, from STATIC_ROOT.
 // STATIC_ROOT is a shared volume whose `current` entry is swapped atomically by the
 // release tooling, so a frontend release never rebuilds or restarts any container.

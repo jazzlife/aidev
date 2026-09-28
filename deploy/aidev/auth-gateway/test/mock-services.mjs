@@ -65,6 +65,7 @@ function noul(state, q) {
     const shared = [...trig].filter((g) => cmd.has(g)).length;
     return { noul: shared >= 2 ? 0.85 : 0.1 };
   }
+  if (ins.includes('stored knowledge item')) return { noul: /deprecated|renamed|changed/i.test(text) ? 0.9 : 0.5 };
   if (ins.includes('sufficient')) return { noul: 0.6 };
   if (ins.includes('satisfy')) return { noul: /pass|ok|success/.test(text) ? 0.9 : 0.2 };
   return { noul: 0.3 };
@@ -91,6 +92,12 @@ const manager = http.createServer(async (req, res) => {
   if (r) {
     const [, name, path] = r;
     if (path === '/api/auth/user') return send(res, 200, { user: { id: 1, username: name } });
+    if (path === '/api/aidev-tools/knowledge-check') {
+      const b = await read(req);
+      return /URP/.test(b.title || '')
+        ? send(res, 200, { success: true, data: { status: 'changed', summary: 'Blit API renamed in URP 17.1', engine: b.engine, replacement: { title: 'URP 17.1 shader API', body: 'URP 17.1: Blitter.BlitCameraTexture replaced by Blitter.BlitTexture for camera targets.', source_url: 'https://docs.unity3d.com/urp17', source_date: '2026-09-01' } } })
+        : send(res, 200, { success: true, data: { status: 'current', summary: 'still valid', replacement: null, engine: b.engine } });
+    }
     const a = path.match(/^\/api\/providers\/(\w+)\/auth\/status$/);
     if (a) { const authed = !(a[1] === 'claude' && codexOnly.has(name)); return send(res, 200, { success: true, data: { installed: true, provider: a[1], authenticated: authed, email: authed ? 'x@y' : null, method: authed ? 'oauth' : null } }); }
   }

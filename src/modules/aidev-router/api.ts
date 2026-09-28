@@ -166,6 +166,11 @@ export type NextAction = {
   from_run: number; chain: number; reason: string;
 };
 
+/** A stored knowledge item as the catalog shows it (E-04 adds the re-check fields). */
+export type KnowledgeItem = { id: number; agent_id: number; title: string; body: string; source_url: string | null; source_date: string | null; status: string; expires_at: number | null; checked_at: number | null; check_fails: number; check_note: string | null; replaces: number | null; owner_id: number | null };
+export type KnowledgeProposal = KnowledgeItem & { agent_name: string; replaces_item: KnowledgeItem | null };
+export type KnowledgeRefreshJob = { running: boolean; total: number; done: number; results: Array<{ id: number; title: string; outcome: string; note: string; newId?: number }>; startedAt: number; finishedAt: number | null; error: string | null };
+
 /** Platform-managed Claude subscription login state (runtime `/api/aidev-tools/claude-login`). */
 export type ClaudeLoginStatus = { token: { issuedAt: number; expiresAt: number } | null; failure: { at: number; message: string } | null };
 
@@ -196,5 +201,10 @@ export const aidevApi = {
   pushSubscribe: (subscription: PushSubscriptionJSON) => post('/api/aidev/push/subscribe', { subscription }).then((response) => readJson<{ ok: boolean }>(response)),
   pushUnsubscribe: (endpoint: string) => post('/api/aidev/push/unsubscribe', { endpoint }).then((response) => readJson<{ removed: number }>(response)),
   pushTest: () => post('/api/aidev/push/test', {}).then((response) => readJson<{ subscriptions: number; delivered: number }>(response)),
+  // E-04 knowledge refresh: start (one item or the caller's due items), progress, review proposals
+  knowledgeRefresh: (id?: number) => post('/api/aidev/knowledge/refresh', id === undefined ? {} : { id }).then((response) => readJson<{ job: KnowledgeRefreshJob }>(response)),
+  knowledgeRefreshStatus: () => authenticatedFetch('/api/aidev/knowledge/refresh').then((response) => readJson<{ job: KnowledgeRefreshJob | null }>(response)),
+  knowledgeProposals: () => authenticatedFetch('/api/aidev/knowledge/proposals').then((response) => readJson<{ proposals: KnowledgeProposal[] }>(response)),
+  decideKnowledge: (id: number, accept: boolean) => post(`/api/aidev/knowledge/${id}/decide`, { accept }).then((response) => readJson<{ accepted: number | null; superseded: number | null }>(response)),
   routeEval: () => post('/api/aidev/route/eval', {}).then((response) => readJson<Record<string, unknown>>(response)),
 };

@@ -67,6 +67,14 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
   }, [drawerOpen]);
+  // Deep link from a notification (`/?view=catalog`, e.g. knowledge waiting for review): open that side view once.
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('view') !== 'catalog') return;
+    layoutStore.patch(tier, { sideView: 'catalog' });
+    params.delete('view');
+    window.history.replaceState(window.history.state, '', `${window.location.pathname}${params.size ? `?${params}` : ''}${window.location.hash}`);
+  }, [tier]);
   const noProject = isLoading || !selectedProject;
   const openSessions = useCallback(() => {
     if (tier === 'tablet') setDrawerOpen(true);
