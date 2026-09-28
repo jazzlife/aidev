@@ -3,6 +3,7 @@ import express, { type Request, type Response } from 'express';
 import { asyncHandler, createApiSuccessResponse } from '@/shared/utils.js';
 import { lessonCuratorService } from '@/modules/aidev-tools/lesson-curator.service.js';
 import { claudeLoginService } from '@/modules/aidev-tools/claude-login.service.js';
+import { handoffService } from '@/modules/aidev-tools/handoff.service.js';
 
 /**
  * Gateway → runtime calls made on behalf of the user (mounted at /api/aidev-tools behind
@@ -26,6 +27,18 @@ router.post('/curate', asyncHandler(async (req: Request, res: Response) => {
     signals: body.signals && typeof body.signals === 'object' ? body.signals as Record<string, unknown> : {},
   });
   res.json(createApiSuccessResponse(result));
+}));
+
+// Engine handoff brief for a failed run moving to the other engine (E-03).
+router.post('/handoff', asyncHandler(async (req: Request, res: Response) => {
+  const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
+  const sessionId = typeof body.session_id === 'string' ? body.session_id : '';
+  if (!sessionId) {
+    res.status(400).json({ success: false, error: 'session_id is required.' });
+    return;
+  }
+  const str = (v: unknown) => (typeof v === 'string' ? v.slice(0, 300) : null);
+  res.json(createApiSuccessResponse(await handoffService.build({ sessionId, fromEngine: str(body.from_engine), toEngine: str(body.to_engine), reason: str(body.reason) })));
 }));
 
 // ---- in-app Claude subscription login (workbench and mobile app) -----------------------------

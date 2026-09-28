@@ -26,7 +26,7 @@ import {
 } from '@/shared/context/SessionProtectionContext';
 import ChatMessagesPane from '@/modules/chat/transcript/ChatMessagesPane';
 import ChatComposer from '@/modules/chat/composer/ChatComposer';
-import { AgentCreateCard, AidevRouterBar, useAgentCreation, useAidevRouting } from '@/modules/aidev-router';
+import { AgentCreateCard, AidevRouterBar, EscalationCard, useAgentCreation, useAidevRouting, useEscalation } from '@/modules/aidev-router';
 import CommandResultModal from '@/modules/chat/modals/CommandResultModal';
 
 type ChatInterfaceProps = {
@@ -277,6 +277,26 @@ function ChatInterface({
     resolvePermissionModeForProvider,
   });
   useEffect(() => { chatMessagesRef.current = chatMessages; handleVoiceTranscriptRef.current = handleVoiceTranscript; });
+
+  // E-03: one-tap follow-up for a failed run. A handoff opens a new session on the other engine in
+  // this project; its brief is sent once that session is selected and the composer's provider has
+  // caught up with it (so routing sees the right engine).
+  const escalation = useEscalation({
+    resend: (text) => { handleVoiceTranscriptRef.current?.(text, true); },
+    openSession: (sessionId, engine, title) => {
+      if (!selectedProject) return;
+      handleSessionEstablished(sessionId, { provider: engine, project: selectedProject, summary: title });
+    },
+    getProjectPath: () => selectedProject?.fullPath || selectedProject?.path || null,
+  });
+  const takeHandoffRef = useRef(escalation.takeHandoff);
+  useEffect(() => { takeHandoffRef.current = escalation.takeHandoff; });
+  useEffect(() => {
+    const id = selectedSession?.id;
+    if (!id || (selectedSession?.__provider && selectedSession.__provider !== provider)) return;
+    const brief = takeHandoffRef.current(id);
+    if (brief) setTimeout(() => { handleVoiceTranscriptRef.current?.(brief, true); }, 0);
+  }, [provider, selectedSession?.id, selectedSession?.__provider]);
 
   // On WebSocket reconnect, request a bounded persisted-tail sync (deferred
   // while Chat is hidden), then re-subscribe — the
@@ -587,6 +607,7 @@ function ChatInterface({
           isTextareaExpanded={isTextareaExpanded}
           sendByCtrlEnter={sendByCtrlEnter}
         />
+          {escalation.escalation ? <EscalationCard next={escalation.escalation.next} label={escalation.label} busy={escalation.busy} error={escalation.error} onRun={() => { void escalation.run(); }} onDismiss={escalation.dismiss} /> : null}
           {agentCreation.pending ? <AgentCreateCard pending={agentCreation.pending} onApprove={(draft) => { void agentCreation.approve(draft); }} onSelfCheck={agentCreation.runSelfCheck} onDismiss={agentCreation.dismiss} /> : null}
           <AidevRouterBar />
         </div>

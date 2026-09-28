@@ -22,3 +22,7 @@ export { claudeAuth, useClaudeAuth } from '@/modules/aidev-router/hooks/useClaud
 export { useClaudeLoginFlow } from '@/modules/aidev-router/hooks/useClaudeLoginFlow';
 export type { ClaudeLoginStage } from '@/modules/aidev-router/hooks/useClaudeLoginFlow';
 export { ClaudeLoginPanel, ClaudeLoginDialog } from '@/modules/aidev-router/ClaudeLoginPanel';
+// E-03: follow-up for a failed run (retry / stronger model / engine handoff).
+export { useEscalation } from '@/modules/aidev-router/hooks/useEscalation';
+export { EscalationCard } from '@/modules/aidev-router/EscalationCard';
+export type { NextAction } from '@/modules/aidev-router/api';

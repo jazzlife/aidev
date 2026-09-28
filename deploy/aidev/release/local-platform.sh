@@ -30,6 +30,8 @@ process.env.JWT_SECRET = '$SECRET';
 process.env.AIDEV_RUNTIME = '$RUNTIME';
 process.env.AIDEV_GATEWAY_URL = 'http://127.0.0.1:18080';
 process.env.HOME = '$W/home';
+// a Claude session id inherited from the shell that launched this would make every chat resume one transcript
+delete process.env.CLAUDE_CODE_SESSION_ID;
 // The sandbox authenticates Claude through ANTHROPIC_BASE_URL; a placeholder token makes the runtime's
 // auth probe report what is actually true (otherwise the router sees "no engine available").
 if (!process.env.ANTHROPIC_API_KEY && !process.env.ANTHROPIC_AUTH_TOKEN && process.env.ANTHROPIC_BASE_URL) process.env.ANTHROPIC_AUTH_TOKEN = 'local-platform';

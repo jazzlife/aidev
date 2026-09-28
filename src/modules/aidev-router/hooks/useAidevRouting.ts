@@ -69,21 +69,25 @@ export function useAidevRouting() {
     if (current.mode === 'off' || !text.trim()) {
       return null;
     }
-    routingStore.patch({ busy: true, error: null });
+    // a new send supersedes any follow-up still offered for the previous run
+    routingStore.patch({ busy: true, error: null, escalation: null });
     try {
       const overrides = current.overrides;
       // A self-check turn or an explicit agent pick bypasses Laya's agent choice (§3.7, C-07).
       const forceAgent = current.oneShotAgent || overrides.agent || null;
       if (current.oneShotAgent) routingStore.patch({ oneShotAgent: null });
+      // E-03: an escalated retry / handoff pins engine, model and effort for this one send.
+      const oneShot = current.oneShotPlan;
+      if (oneShot) routingStore.patch({ oneShotPlan: null });
       const route = await aidevApi.route({
         text,
         sessionId: context.sessionId,
         sessionEngine: context.isNewSession ? null : asEngine(context.provider),
-        preferEngine: overrides.engine ?? (context.isNewSession ? null : asEngine(context.provider)),
+        preferEngine: oneShot?.engine ?? overrides.engine ?? (context.isNewSession ? null : asEngine(context.provider)),
         targetId: overrides.targetId ?? null,
         projectHint: context.projectHint ?? null,
-        model: overrides.model ?? null,
-        effort: overrides.effort ?? null,
+        model: oneShot?.model ?? overrides.model ?? null,
+        effort: oneShot?.effort ?? overrides.effort ?? null,
         forceAgent,
       });
       let runId: number | null = null;
@@ -96,16 +100,18 @@ export function useAidevRouting() {
           engine: route.plan.engine,
           model: route.plan.model,
           effort: route.plan.effort,
-          depth: route.scope.depth,
+          // an escalated attempt is recorded at the tier it runs at, so a further failure climbs from there
+          depth: oneShot?.depth ?? route.scope.depth,
           task_kind: route.scope.task_kind,
           risk: route.scope.risk,
           target_id: route.plan.target?.id ?? null,
+          ...(oneShot?.escalatedFromRun ? { escalated_from_run: oneShot.escalatedFromRun } : {}),
         });
         runId = run.run_id;
       } catch {
         runId = null; // a missing run row only loses learning signal for this turn
       }
-      routingStore.patch({ busy: false, last: route, lastText: text, runId, runFinishedAt: null, runFeedback: null });
+      routingStore.patch({ busy: false, last: route, lastText: text, runId, runSessionId: context.sessionId, runFinishedAt: null, runFeedback: null });
       if (current.mode === 'manual' && !current.overrides.agent && !current.overrides.model) {
         // Manual mode: show the plan, but send without it until the user applies it from the bar.
         return null;
@@ -139,11 +145,15 @@ export function useAidevRouting() {
     const id = runId ?? routingStore.get().runId;
     if (outcome.exit_code !== undefined) routingStore.patch({ runFinishedAt: Date.now() });
     if (outcome.user_feedback) routingStore.patch({ runFeedback: outcome.user_feedback });
+    if (outcome.session_id) routingStore.patch({ runSessionId: outcome.session_id });
     if (!id) {
       return null;
     }
     try {
-      return await aidevApi.runOutcome(id, outcome);
+      const result = await aidevApi.runOutcome(id, outcome);
+      // E-03: a failed run comes back with a proposed next step (retry / stronger model / other engine)
+      if (result.next) routingStore.patch({ escalation: { next: result.next, text: routingStore.get().lastText ?? '', sessionId: outcome.session_id ?? routingStore.get().runSessionId } });
+      return result;
     } catch {
       return null;
     }

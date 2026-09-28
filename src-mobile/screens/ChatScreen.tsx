@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
 import { api, useChatRealtimeHandlers, useSessionStore, useWebSocket, type LLMProvider, type NormalizedMessage, type PendingPermissionRequest, type ProjectSession } from '@/modules/chat-core';
-import { AgentCreateCard, useAgentCreation, useAidevRouting, type Engine } from '@/modules/aidev-router';
+import { AgentCreateCard, useAgentCreation, useAidevRouting, useEscalation, type Engine } from '@/modules/aidev-router';
 import { Composer } from '@m/components/Composer';
 import { MessageList } from '@m/components/MessageList';
 import { PermissionSheet } from '@m/components/PermissionSheet';
@@ -10,6 +10,7 @@ import { RouterChip } from '@m/components/RouterChip';
 import { RunFeedback } from '@m/components/RunFeedback';
 import { TopBar } from '@m/components/TopBar';
 import { BottomSheet } from '@m/components/BottomSheet';
+import { EscalationPrompt } from '@m/components/EscalationPrompt';
 import { ProjectPicker, readLastProject, type PickedProject } from '@m/components/ProjectPicker';
 
 type SessionMeta = { id: string; provider: LLMProvider; projectPath: string; projectName: string; title: string };
@@ -150,6 +151,20 @@ export function ChatScreen() {
   }, [beforeSend, busy, meta, navigate, project, provider, sendMessage, sessionStore]);
 
   useEffect(() => { sendRef.current = (text) => { void send(text); }; }, [send]);
+  // E-03: one-tap follow-up for a failed run; a handoff opens the new session on the other engine
+  // and its brief is sent there once the screen has resolved that session.
+  const escalation = useEscalation({
+    resend: (text) => sendRef.current(text),
+    openSession: (id) => navigate(`/session/${encodeURIComponent(id)}`),
+    getProjectPath: () => meta?.projectPath || project?.fullPath || null,
+  });
+  const takeHandoffRef = useRef(escalation.takeHandoff);
+  useEffect(() => { takeHandoffRef.current = escalation.takeHandoff; });
+  useEffect(() => {
+    if (!meta?.id || meta.id !== routeSessionId) return;
+    const brief = takeHandoffRef.current(meta.id);
+    if (brief) setTimeout(() => sendRef.current(brief), 0);
+  }, [meta?.id, routeSessionId]);
   const abort = useCallback(() => { if (sessionId) sendMessage({ type: 'chat.abort', sessionId }); }, [sendMessage, sessionId]);
   const decidePermission = useCallback((requestId: string, allow: boolean) => {
     sendMessage({ type: 'chat.permission-response', requestId, allow });
@@ -172,6 +187,7 @@ export function ChatScreen() {
         <button type="button" className="w-full h-12 rounded-xl bg-accent text-accent-ink text-[15px] font-medium" onClick={() => { void copyMessage(); }}>{copied ? '복사했습니다' : '복사'}</button>
       </BottomSheet>
       {agentCreation.pending ? <div className="m-scroll max-h-[45dvh]"><AgentCreateCard compact pending={agentCreation.pending} onApprove={(draft) => { void agentCreation.approve(draft); }} onSelfCheck={agentCreation.runSelfCheck} onDismiss={agentCreation.dismiss} /></div> : null}
+      {escalation.escalation && !busy ? <EscalationPrompt next={escalation.escalation.next} label={escalation.label} busy={escalation.busy} error={escalation.error} onRun={() => { void escalation.run(); }} onDismiss={escalation.dismiss} /> : null}
       {lastRunFinished && !busy ? <RunFeedback key={lastRunFinished} onFeedback={(value) => { void reportOutcome({ user_feedback: value }); }} /> : null}
       <RouterChip />
       <Composer busy={busy} disabled={!isConnected} onSend={(text) => { void send(text); }} onAbort={abort} placeholder={meta ? undefined : '무엇을 만들까요?'} />

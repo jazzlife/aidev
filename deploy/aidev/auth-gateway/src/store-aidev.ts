@@ -110,6 +110,7 @@ export function migrateAidev(db: Database.Database) {
   `);
   // Lesson verification loop (§3.8 / E-02): which lessons each routed command carried, and how
   // the runs that carried them ended.
+  addColumn(db, 'runs', 'next_action', 'TEXT');   // E-03: what the gateway proposed after this run failed (JSON)
   addColumn(db, 'lessons', 'fails', 'INTEGER NOT NULL DEFAULT 0');          // failed runs that carried the lesson
   addColumn(db, 'lessons', 'verified_by', 'TEXT');                          // 'auto' (a trial run succeeded) | 'user'
   addColumn(db, 'lessons', 'promoted_version', 'INTEGER');                  // agent version the rule was merged into

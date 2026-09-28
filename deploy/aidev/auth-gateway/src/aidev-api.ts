@@ -5,6 +5,7 @@ import { ENGINES, type Engine } from './store-aidev.js';
 import type { LayaClient } from './laya.js';
 import type { Push } from './push.js';
 import { applyLessonOutcome, promote } from './lesson-loop.js';
+import { decideNext, type NextAction } from './escalation.js';
 import { decide, listKinds } from './laya-questions.js';
 import fs from 'node:fs';
 import { evaluateRouting, route, type EngineAvailability, type RouteInput } from './routing.js';
@@ -272,6 +273,15 @@ export function createAidevApi(deps: AidevDeps) {
         if (final.decision_id) store.finalizeDecision(uid, final.decision_id, null, outcome);
         // Learning loop (§3.8): a successful run with a specialist confirms the routing — the command
         // becomes an example for that agent, so the lexical prior sharpens with real usage.
+        // E-03: a fresh failure gets a proposed next step (offered to the user as a one-tap card).
+        let next: NextAction | null = null;
+        if (outcome === 'fail' && row.outcome !== 'fail' && final.agent_id) {
+          try {
+            next = await decideNext(store, laya, final, await engineAvailability(session));
+            store.db.prepare('UPDATE runs SET next_action=? WHERE id=?').run(JSON.stringify(next), final.id);
+            console.log(`[aidev] run ${final.id} failed → ${next.action}${next.model ? ` (${next.engine} ${next.model}/${next.effort})` : ''}: ${next.reason}`);
+          } catch (error) { console.warn('[aidev] escalation failed:', error instanceof Error ? error.message : error); }
+        }
         // Learning loop (§3.8 / E-02): the lessons this command carried learn from how it ended.
         if (final.decision_id && (outcome === 'success' || outcome === 'fail') && row.outcome !== outcome) {
           for (const line of applyLessonOutcome(store, final.decision_id, outcome)) console.log(`[aidev] ${line}`);
@@ -285,7 +295,7 @@ export function createAidevApi(deps: AidevDeps) {
           const agent = store.agentById(final.agent_id);
           if (decisionRow && agent && agent.name !== 'generalist' && agent.domain !== 'meta') store.addExamples(agent.id, [{ text: decisionRow.command, source: 'run', taskKind: final.task_kind }]);   // a confirmed run also confirms its task kind
         }
-        return json(res, 200, { run: final, classified }), true;
+        return json(res, 200, { run: final, classified, next }), true;
       }
 
       // ---- lessons --------------------------------------------------------------------------

@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
-import type { AgentDraft, Engine, RouteResult } from '@/modules/aidev-router/api';
+import type { AgentDraft, Engine, NextAction, RouteResult } from '@/modules/aidev-router/api';
 
 /**
  * Small external store for routing state shared between the composer hook and the
@@ -46,8 +46,16 @@ export type RoutingState = {
   runId: number | null;
   /** when the last routed run completed (null while running / before any run) */
   runFinishedAt: number | null;
+  /** session the last routed run belongs to (known once the run completes; new chats get their id late) */
+  runSessionId: string | null;
   /** feedback already given for the finished run */
   runFeedback: 'up' | 'down' | null;
+  /** E-03: settings forced for exactly the next send (escalated retry or engine handoff); consumed by beforeSend. */
+  oneShotPlan: { engine?: Engine; model?: string | null; effort?: string | null; depth?: number | null; escalatedFromRun?: number } | null;
+  /** E-03: the proposal for the last failed run, shown as a card until acted on or dismissed. */
+  escalation: { next: NextAction; text: string; sessionId: string | null } | null;
+  /** E-03: a handoff brief waiting to be sent once the new session (other engine) is open. */
+  pendingHandoff: { sessionId: string; text: string } | null;
 };
 
 const MODE_KEY = 'aidev.routing.mode';
@@ -61,7 +69,7 @@ function readMode(): RoutingMode {
   }
 }
 
-let state: RoutingState = { mode: readMode(), pendingCreate: null, oneShotAgent: null, busy: false, last: null, lastText: null, error: null, overrides: {}, runId: null, runFinishedAt: null, runFeedback: null };
+let state: RoutingState = { mode: readMode(), pendingCreate: null, oneShotAgent: null, busy: false, last: null, lastText: null, error: null, overrides: {}, runId: null, runSessionId: null, runFinishedAt: null, runFeedback: null, oneShotPlan: null, escalation: null, pendingHandoff: null };
 const listeners = new Set<() => void>();
 
 function emit() {
