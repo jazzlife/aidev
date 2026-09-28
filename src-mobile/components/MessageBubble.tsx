@@ -4,6 +4,7 @@ import { AlertTriangle, ChevronDown, ChevronRight, Wrench } from 'lucide-react';
 import { parseToolPayload, type NormalizedMessage } from '@/modules/chat-core';
 import { Prose } from '@m/lib/markdown';
 import { clampText } from '@m/lib/format';
+import { useLongPress } from '@m/lib/useLongPress';
 
 function summarizeInput(input: unknown): string {
   const parsed = parseToolPayload(input);
@@ -17,18 +18,20 @@ function summarizeInput(input: unknown): string {
 }
 
 /** Used by MessageList: one transcript row — user bubble, assistant prose, or a collapsible tool/thinking card. */
-export function MessageBubble({ message, result }: { message: NormalizedMessage; result?: NormalizedMessage | null }) {
+export function MessageBubble({ message, result, onLongPress }: { message: NormalizedMessage; result?: NormalizedMessage | null; /** text messages: long-press opens the copy sheet (text selection is off in the app) */ onLongPress?: (text: string) => void }) {
   const [open, setOpen] = useState(false);
+  const text = message.kind === 'text' || message.kind === 'stream_delta' ? String((message.role === 'user' ? message.displayText || message.content : message.content) ?? '') : '';
+  const press = useLongPress(() => { if (text) onLongPress?.(text); });
   if (message.kind === 'text' && message.role === 'user') {
     return (
       <div className="flex justify-end px-3 py-1">
-        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-accent text-accent-ink px-3.5 py-2 text-[15px] whitespace-pre-wrap break-words">{message.displayText || message.content}</div>
+        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-accent text-accent-ink px-3.5 py-2 text-[15px] whitespace-pre-wrap break-words" {...press}>{text}</div>
       </div>
     );
   }
   if (message.kind === 'text' || message.kind === 'stream_delta') {
     return (
-      <div className="px-3 py-1">
+      <div className="px-3 py-1" {...press}>
         <Prose text={message.content ?? ''} />
         {message.kind === 'stream_delta' ? <span className="inline-block w-2 h-4 bg-accent/70 m-pulse align-middle ml-0.5 rounded-sm" /> : null}
       </div>

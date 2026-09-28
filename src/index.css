@@ -1014,3 +1014,32 @@
     }
   }
 }
+
+/* Nado AI Dev workbench: navigation chrome (activity bar, side views, tab bars, router bar, session
+   drawer) never selects text or shows the long-press callout when dragged or touched. */
+.aidev-chrome {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+.aidev-chrome input, .aidev-chrome textarea, .aidev-chrome [contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+/* Touch devices (tablets): the same everywhere except where text is the point — fields, the code
+   editor and the terminal. Chat text is copied with the message copy buttons. */
+@media (pointer: coarse) {
+  body {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+    -webkit-tap-highlight-color: transparent;
+  }
+  input, textarea, [contenteditable="true"], .cm-editor, .cm-content, .xterm, .xterm * {
+    -webkit-user-select: text;
+    user-select: text;
+    -webkit-touch-callout: default;
+  }
+  img, a { -webkit-user-drag: none; }
+}

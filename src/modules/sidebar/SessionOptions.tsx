@@ -1,5 +1,5 @@
 import { useEffect, useRef } from 'react';
-import { Check, Edit2, GitBranch, MoreHorizontal, Trash2, X } from 'lucide-react';
+import { Check, Edit2, EyeOff, GitBranch, MoreHorizontal, Trash2, X } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
 import { ActionMenu } from '@/shared/ui';
@@ -26,7 +26,8 @@ type SessionOptionsProps = {
   onStartEditingSession: (projectId: string, sessionId: string, initialName: string) => void;
   onCancelEditingSession: () => void;
   onSaveEditingSession: (projectId: string, sessionId: string, summary: string, provider: LLMProvider) => void;
-  onDeleteSession: (sessionId: string, sessionTitle: string) => void;
+  /** `archiveNow` hides (archives) the session at once; without it the archive-or-delete dialog opens. */
+  onDeleteSession: (sessionId: string, sessionTitle: string, options?: { archiveNow?: boolean }) => void;
   /** Bound by the caller, which owns the session object the fork needs. */
   onFork?: () => void;
   /** Withheld where the row has nowhere to send a delete. */
@@ -183,11 +184,18 @@ export default function SessionOptions({
               onSelect: onFork,
             }] : []),
             ...(canDelete && !isProcessing ? [{
+              key: 'hide',
+              label: '숨기기',
+              description: '목록에서 숨깁니다. 보관함 필터에서 다시 꺼낼 수 있습니다.',
+              icon: EyeOff,
+              showDividerBefore: true,
+              onSelect: () => onDeleteSession(sessionId, sessionName, { archiveNow: true }),
+            }, {
               key: 'delete',
-              label: 'Archive or delete session',
+              label: '삭제…',
+              description: '대화 기록까지 영구 삭제 (확인 후)',
               icon: Trash2,
               isDanger: true,
-              showDividerBefore: true,
               onSelect: () => onDeleteSession(sessionId, sessionName),
             }] : []),
           ]}

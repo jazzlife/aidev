@@ -9,6 +9,7 @@ import { PermissionSheet } from '@m/components/PermissionSheet';
 import { RouterChip } from '@m/components/RouterChip';
 import { RunFeedback } from '@m/components/RunFeedback';
 import { TopBar } from '@m/components/TopBar';
+import { BottomSheet } from '@m/components/BottomSheet';
 import { ProjectPicker, readLastProject, type PickedProject } from '@m/components/ProjectPicker';
 
 type SessionMeta = { id: string; provider: LLMProvider; projectPath: string; projectName: string; title: string };
@@ -35,6 +36,17 @@ export function ChatScreen() {
   const [pendingPermissionRequests, setPendingPermissionRequests] = useState<PendingPermissionRequest[]>([]);
   const [, setTokenBudget] = useState<Record<string, unknown> | null>(null);
   const [lastRunFinished, setLastRunFinished] = useState<number | null>(null);
+  const [copyText, setCopyText] = useState<string | null>(null);
+  const [copied, setCopied] = useState(false);
+  const copyMessage = async () => {
+    if (!copyText) return;
+    try { await navigator.clipboard.writeText(copyText); }
+    catch {
+      // older WebViews: a temporary textarea (selection is allowed in text fields)
+      const area = document.createElement('textarea'); area.value = copyText; document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove();
+    }
+    setCopied(true); setTimeout(() => { setCopied(false); setCopyText(null); }, 700);
+  };
   const streamTimerRef = useRef<number | null>(null);
   const accumulatedStreamRef = useRef('');
   const lastSeqRef = useRef(new Map<string, number>());
@@ -154,7 +166,11 @@ export function ChatScreen() {
       <TopBar title={title} subtitle={subtitle} back="/" right={!meta ? <button type="button" className="text-[13px] text-accent px-3 m-touch" onClick={() => setPickingProject(true)}>프로젝트</button> : null} />
       {loadError ? <div className="px-4 py-2 text-danger text-sm">{loadError}</div> : null}
       {!isConnected ? <div className="px-4 py-1 text-[12px] text-warn bg-warn/10">연결 중…</div> : null}
-      <MessageList messages={messages} loading={slot?.status === 'loading'} />
+      <MessageList messages={messages} loading={slot?.status === 'loading'} onMessageLongPress={(text) => { setCopied(false); setCopyText(text); }} />
+      <BottomSheet open={copyText !== null} onClose={() => setCopyText(null)} title="메시지">
+        <div className="text-[13px] text-muted line-clamp-4 whitespace-pre-wrap mb-3">{copyText}</div>
+        <button type="button" className="w-full h-12 rounded-xl bg-accent text-accent-ink text-[15px] font-medium" onClick={() => { void copyMessage(); }}>{copied ? '복사했습니다' : '복사'}</button>
+      </BottomSheet>
       {agentCreation.pending ? <div className="m-scroll max-h-[45dvh]"><AgentCreateCard compact pending={agentCreation.pending} onApprove={(draft) => { void agentCreation.approve(draft); }} onSelfCheck={agentCreation.runSelfCheck} onDismiss={agentCreation.dismiss} /></div> : null}
       {lastRunFinished && !busy ? <RunFeedback key={lastRunFinished} onFeedback={(value) => { void reportOutcome({ user_feedback: value }); }} /> : null}
       <RouterChip />

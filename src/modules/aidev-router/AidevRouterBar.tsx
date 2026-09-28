@@ -40,7 +40,7 @@ export function AidevRouterBar() {
     : claudeAuthState.renewSoon ? { tone: 'text-amber-600 border-amber-300', label: `Claude 로그인 D-${claudeAuthState.daysLeft} · 갱신` } : null;
 
   return (
-    <div className="flex items-center gap-1.5 px-3 py-1 border-t border-border/60 bg-muted/20 text-[11px] overflow-x-auto" data-testid="aidev-router-bar">
+    <div className="aidev-chrome flex items-center gap-1.5 px-3 py-1 border-t border-border/60 bg-muted/20 text-[11px] overflow-x-auto" data-testid="aidev-router-bar">
       <ClaudeLoginDialog />
       {authNotice ? <button type="button" className={`${chip} ${authNotice.tone}`} onClick={(event) => { event.stopPropagation(); claudeAuth.openDialog(); }}>{authNotice.label}</button> : null}
       <Sparkles size={13} className={`shrink-0 ${state.busy ? 'text-primary animate-pulse' : 'text-primary/80'}`} />

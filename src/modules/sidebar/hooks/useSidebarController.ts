@@ -793,30 +793,8 @@ export function useSidebarController({
     [paletteOps],
   );
 
-  const showDeleteSessionConfirmation = useCallback(
-    (
-      sessionId: string,
-      sessionTitle: string,
-      options: { isArchived?: boolean } = {},
-    ) => {
-      setPendingDeletion({
-        kind: 'session',
-        sessionId,
-        sessionTitle,
-        isArchived: Boolean(options.isArchived),
-      });
-    },
-    [],
-  );
-
-  const confirmDeleteSession = useCallback(async (hardDelete = false) => {
-    if (pendingDeletion?.kind !== 'session') {
-      return;
-    }
-
-    const { sessionId } = pendingDeletion;
-    setPendingDeletion(null);
-
+  // Archive (hardDelete=false) or permanently delete one session, then drop it from the lists.
+  const removeSession = useCallback(async (sessionId: string, hardDelete: boolean) => {
     try {
       const response = await api.deleteSession(sessionId, hardDelete);
 
@@ -845,7 +823,37 @@ export function useSidebarController({
       console.error('[Sidebar] Error deleting session:', error);
       alert(t('messages.deleteSessionError'));
     }
-  }, [fetchArchivedSessions, onSessionDelete, pendingDeletion, t]);
+  }, [fetchArchivedSessions, onSessionDelete, t]);
+
+  const showDeleteSessionConfirmation = useCallback(
+    (
+      sessionId: string,
+      sessionTitle: string,
+      options: { isArchived?: boolean; archiveNow?: boolean } = {},
+    ) => {
+      // "숨기기" is reversible (the archive filter restores it), so it needs no dialog.
+      if (options.archiveNow) {
+        void removeSession(sessionId, false);
+        return;
+      }
+      setPendingDeletion({
+        kind: 'session',
+        sessionId,
+        sessionTitle,
+        isArchived: Boolean(options.isArchived),
+      });
+    },
+    [removeSession],
+  );
+
+  const confirmDeleteSession = useCallback(async (hardDelete = false) => {
+    if (pendingDeletion?.kind !== 'session') {
+      return;
+    }
+    const { sessionId } = pendingDeletion;
+    setPendingDeletion(null);
+    await removeSession(sessionId, hardDelete);
+  }, [pendingDeletion, removeSession]);
 
   const requestProjectDelete = useCallback(
     (project: Project) => {

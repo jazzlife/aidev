@@ -8,6 +8,12 @@ if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/m/sw.js', { scope: '/m/' }).catch((error) => console.warn('SW registration failed', error));
 }
 
+// The browser's own context menu (long-press on Android, right-click) never opens outside text fields;
+// the app's long-press sheets take its place.
+document.addEventListener('contextmenu', (event) => {
+  if (!(event.target instanceof Element) || !event.target.closest('input, textarea, [contenteditable="true"]')) event.preventDefault();
+});
+
 const root = document.getElementById('root');
 if (!root) {
   throw new Error('#root missing');

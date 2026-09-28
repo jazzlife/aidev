@@ -1307,7 +1307,8 @@ export type SessionRowActions = {
   onStartEditingSession: (projectId: string, sessionId: string, initialName: string) => void;
   onCancelEditingSession: () => void;
   onSaveEditingSession: (projectId: string, sessionId: string, summary: string, provider: LLMProvider) => void;
-  onDeleteSession: (sessionId: string, sessionTitle: string) => void;
+  /** `archiveNow` hides (archives) the session at once; without it the archive-or-delete dialog opens. */
+  onDeleteSession: (sessionId: string, sessionTitle: string, options?: { archiveNow?: boolean }) => void;
   /** Branches a session into an independent one. Rows hide it for providers that cannot. */
   onForkSession?: (session: SessionWithProvider) => void;
 };

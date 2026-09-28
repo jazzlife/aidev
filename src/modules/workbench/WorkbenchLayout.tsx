@@ -102,7 +102,7 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
     // No project yet: the sessions list is the only useful thing on screen, so it is always shown.
     return (
       <div className="flex h-full min-h-0">
-        <div className="shrink-0 border-r border-border overflow-hidden" style={{ width: isTablet ? 300 : layout.sideWidth }}>{sessionsPanel}</div>
+        <div className="aidev-chrome shrink-0 border-r border-border overflow-hidden" style={{ width: isTablet ? 300 : layout.sideWidth }}>{sessionsPanel}</div>
         <div className="flex-1 min-w-0">{stateView}</div>
       </div>
     );
@@ -140,7 +140,7 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
     const pane = layout.tabletPane;
     return (
       <div className="relative flex h-full flex-col">
-        <div className="flex items-center gap-1 px-2 h-10 border-b border-border bg-muted/30 shrink-0">
+        <div className="aidev-chrome flex items-center gap-1 px-2 h-10 border-b border-border bg-muted/30 shrink-0">
           <button type="button" onClick={() => setDrawerOpen(true)} aria-label="세션" title="세션" className="p-2 rounded hover:bg-muted"><PanelLeft size={16} /></button>
           <div className="flex-1 min-w-0 truncate text-sm font-medium">{selectedProject.displayName}{selectedSession?.summary ? ` · ${selectedSession.summary}` : ''}</div>
           <div className="flex rounded-md border border-border overflow-hidden text-xs">
@@ -155,7 +155,7 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
         {/* sessions drawer: slides over the panes instead of docking beside them */}
         <div className={`absolute inset-0 z-40 ${drawerOpen ? '' : 'pointer-events-none'}`} aria-hidden={!drawerOpen}>
           <button type="button" aria-label="세션 닫기" tabIndex={drawerOpen ? 0 : -1} onClick={() => setDrawerOpen(false)} className={`absolute inset-0 bg-background/60 backdrop-blur-[1px] transition-opacity duration-150 ${drawerOpen ? 'opacity-100' : 'opacity-0'}`} />
-          <div className={`absolute left-0 top-0 bottom-0 w-[320px] max-w-[85vw] border-r border-border bg-background shadow-xl transition-transform duration-150 ease-out flex flex-col ${drawerOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+          <div className={`aidev-chrome absolute left-0 top-0 bottom-0 w-[320px] max-w-[85vw] border-r border-border bg-background shadow-xl transition-transform duration-150 ease-out flex flex-col ${drawerOpen ? 'translate-x-0' : '-translate-x-full'}`}>
             {/* closes on backdrop tap, Escape, or once a session is picked */}
             <div className="flex-1 min-h-0">{sessionsPanel}</div>
           </div>
@@ -180,7 +180,7 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
   return (
     <div className="flex h-full min-h-0">
       {/* activity bar */}
-      <div className="w-11 shrink-0 flex flex-col items-center gap-1 py-2 border-r border-border bg-muted/40">
+      <div className="aidev-chrome w-11 shrink-0 flex flex-col items-center gap-1 py-2 border-r border-border bg-muted/40">
         {SIDE_VIEWS.map((view) => (
           <button key={view.id} type="button" title={view.title} aria-label={view.title} aria-pressed={sideView === view.id} onClick={() => layoutStore.patch('desktop', { sideView: sideView === view.id ? null : view.id })}
             className={`p-2 rounded ${sideView === view.id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}><view.icon size={18} /></button>
@@ -192,7 +192,7 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
         {settingsButton}
       </div>
       {/* side view */}
-      <div className={`shrink-0 min-w-[200px] overflow-hidden border-r border-border flex flex-col ${sideView ? '' : 'hidden'}`} style={{ width: layout.sideWidth }}>
+      <div className={`aidev-chrome shrink-0 min-w-[200px] overflow-hidden border-r border-border flex flex-col ${sideView ? '' : 'hidden'}`} style={{ width: layout.sideWidth }}>
         {sideView && sideView !== 'sessions' ? <div className="h-8 px-3 flex items-center text-[11px] uppercase tracking-wide text-muted-foreground border-b border-border shrink-0">{SIDE_VIEWS.find((view) => view.id === sideView)?.title}</div> : null}
         {/* the sessions panel stays mounted across view switches (it owns the settings / new-project modals) */}
         <div className={`flex-1 min-h-0 overflow-hidden ${sideView === 'sessions' ? '' : 'hidden'}`}>{sessionsPanel}</div>
@@ -210,7 +210,7 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
           <>
             <SplitHandle edge="top" size={layout.bottomHeight} min={120} max={800} onSize={(size) => layoutStore.patch('desktop', { bottomHeight: size })} />
             <div className="shrink-0 flex flex-col border-t border-border" style={{ height: layout.bottomHeight }}>
-              <div className="h-8 flex items-center gap-1 px-2 border-b border-border bg-muted/30 text-xs shrink-0" role="tablist">
+              <div className="aidev-chrome h-8 flex items-center gap-1 px-2 border-b border-border bg-muted/30 text-xs shrink-0" role="tablist">
                 {bottomTabs.map((tab) => (
                   <button key={tab.id} type="button" role="tab" aria-selected={bottomTab === tab.id} onClick={() => layoutStore.patch('desktop', { bottomTab: tab.id })} className={`flex items-center gap-1 px-2 h-6 rounded ${bottomTab === tab.id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}><tab.icon size={13} />{tab.title}</button>
                 ))}

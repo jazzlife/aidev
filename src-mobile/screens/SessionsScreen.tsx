@@ -1,55 +1,151 @@
-import { useEffect, useState } from 'react';
-import { Plus, Settings } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { Archive, ArrowLeft, EyeOff, MoreHorizontal, Plus, RotateCcw, Settings, Trash2 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import { api } from '@/modules/chat-core';
+import { BottomSheet } from '@m/components/BottomSheet';
 import { TopBar } from '@m/components/TopBar';
 import { relativeTime } from '@m/lib/format';
+import { useLongPress } from '@m/lib/useLongPress';
 
-type Conversation = { sessionId: string; provider?: string; projectId?: string; projectDisplayName?: string; sessionTitle?: string; lastActivity?: string | null };
+type Conversation = { sessionId: string; provider?: string; projectId?: string | null; projectDisplayName?: string; sessionTitle?: string; lastActivity?: string | null };
+type View = 'active' | 'hidden';
+type Toast = { text: string; undo?: () => void };
 
-/** Mobile home: recent conversations across projects, newest first. */
+async function readList(response: Response, key: 'conversations' | 'sessions') {
+  const payload = await response.json() as { data?: Record<string, Conversation[] | undefined> };
+  if (!response.ok) throw new Error(`목록을 불러오지 못했습니다 (${response.status})`);
+  return payload.data?.[key] ?? [];
+}
+
+/** One row: tap opens the conversation; long-press or ⋯ opens its actions. */
+function ConversationRow({ item, onOpen, onActions }: { item: Conversation; onOpen: () => void; onActions: () => void }) {
+  const press = useLongPress(onActions);
+  return (
+    <li className="border-b border-line flex items-stretch">
+      <button type="button" className="flex-1 min-w-0 text-left pl-4 pr-1 py-3 active:bg-elevated" onClick={onOpen} {...press}>
+        <div className="flex items-baseline gap-2">
+          <span className="flex-1 min-w-0 truncate text-[15px]">{item.sessionTitle || '(제목 없음)'}</span>
+          <span className="text-[11px] text-muted shrink-0">{relativeTime(item.lastActivity)}</span>
+        </div>
+        <div className="text-[12px] text-muted truncate mt-0.5">
+          <span className="uppercase tracking-wide">{item.provider ?? ''}</span>{item.projectDisplayName ? ` · ${item.projectDisplayName}` : ''}
+        </div>
+      </button>
+      <button type="button" aria-label="대화 메뉴" onClick={onActions} className="m-touch shrink-0 flex items-center justify-center px-2 text-muted active:bg-elevated"><MoreHorizontal size={18} /></button>
+    </li>
+  );
+}
+
+/**
+ * Mobile home: recent conversations across projects, newest first. Long-press (or ⋯) a row to hide
+ * it (archive — reversible, with undo) or delete it for good after a confirmation; the archive
+ * button in the top bar lists hidden conversations to restore or delete.
+ */
 export function SessionsScreen() {
   const navigate = useNavigate();
+  const [view, setView] = useState<View>('active');
   const [items, setItems] = useState<Conversation[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  useEffect(() => {
-    let cancelled = false;
-    api.recentConversations({ limit: 60 })
-      .then(async (response) => {
-        const payload = await response.json() as { data?: { conversations?: Conversation[] } };
-        if (!response.ok) throw new Error(`목록을 불러오지 못했습니다 (${response.status})`);
-        if (!cancelled) setItems(payload.data?.conversations ?? []);
-      })
-      .catch((err: Error) => { if (!cancelled) setError(err.message); });
-    return () => { cancelled = true; };
+  const [target, setTarget] = useState<Conversation | null>(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState<Toast | null>(null);
+  const toastTimer = useRef<number | null>(null);
+
+  const load = useCallback((which: View) => {
+    setItems(null); setError(null);
+    const request = which === 'active' ? api.recentConversations({ limit: 60 }).then((r) => readList(r, 'conversations')) : api.getArchivedSessions().then((r) => readList(r, 'sessions'));
+    request.then(setItems).catch((err: Error) => setError(err.message));
   }, []);
+  useEffect(() => { load(view); }, [load, view]);
+
+  const showToast = (next: Toast) => {
+    if (toastTimer.current) window.clearTimeout(toastTimer.current);
+    setToast(next);
+    toastTimer.current = window.setTimeout(() => setToast(null), 5000);
+  };
+  const closeSheet = () => { setTarget(null); setConfirmDelete(false); };
+  const drop = (sessionId: string) => setItems((list) => list?.filter((entry) => entry.sessionId !== sessionId) ?? null);
+
+  const act = async (action: 'hide' | 'restore' | 'delete') => {
+    if (!target) return;
+    const item = target;
+    setBusy(true);
+    try {
+      const response = action === 'hide' ? await api.deleteSession(item.sessionId, false)
+        : action === 'restore' ? await api.restoreSession(item.sessionId)
+          : await api.deleteSession(item.sessionId, true);
+      if (!response.ok) throw new Error(`실패했습니다 (${response.status})`);
+      drop(item.sessionId);
+      closeSheet();
+      if (action === 'hide') {
+        showToast({ text: '대화를 숨겼습니다', undo: () => { void api.restoreSession(item.sessionId).then(() => { setToast(null); load('active'); }); } });
+      } else {
+        showToast({ text: action === 'restore' ? '대화를 다시 표시합니다' : '대화를 삭제했습니다' });
+      }
+    } catch (err) {
+      showToast({ text: err instanceof Error ? err.message : '실패했습니다' });
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const hidden = view === 'hidden';
+  const sheetButton = 'w-full h-12 rounded-xl flex items-center gap-3 px-4 text-[15px] active:bg-elevated disabled:opacity-50';
   return (
     <div className="m-app">
-      <TopBar title="대화" right={<Link to="/settings" className="m-touch flex items-center justify-center rounded-full text-muted" aria-label="설정"><Settings size={20} /></Link>} />
+      <TopBar
+        title={hidden ? '숨긴 대화' : '대화'}
+        left={hidden ? <button type="button" aria-label="대화 목록" onClick={() => setView('active')} className="m-touch flex items-center justify-center rounded-full"><ArrowLeft size={20} /></button> : undefined}
+        right={hidden ? null : (
+          <div className="flex items-center">
+            <button type="button" aria-label="숨긴 대화" onClick={() => setView('hidden')} className="m-touch flex items-center justify-center rounded-full text-muted"><Archive size={19} /></button>
+            <Link to="/settings" className="m-touch flex items-center justify-center rounded-full text-muted" aria-label="설정"><Settings size={20} /></Link>
+          </div>
+        )}
+      />
       <main className="m-scroll flex-1 pb-24">
         {error ? <div className="p-4 text-danger text-sm">{error}</div> : null}
         {items === null && !error ? <div className="p-4 text-muted text-sm m-pulse">불러오는 중…</div> : null}
-        {items && items.length === 0 ? <div className="p-6 text-center text-muted text-sm">아직 대화가 없습니다. 아래 + 로 시작하세요.</div> : null}
+        {items && items.length === 0 ? <div className="p-6 text-center text-muted text-sm">{hidden ? '숨긴 대화가 없습니다.' : '아직 대화가 없습니다. 아래 + 로 시작하세요.'}</div> : null}
+        {items && items.length > 0 && !hidden ? <div className="px-4 pt-2 pb-1 text-[11px] text-muted">길게 누르면 숨기기·삭제</div> : null}
         <ul>
           {items?.map((item) => (
-            <li key={item.sessionId} className="border-b border-line">
-              <button type="button" className="w-full text-left px-4 py-3 active:bg-elevated" onClick={() => navigate(`/session/${encodeURIComponent(item.sessionId)}`)}>
-                <div className="flex items-baseline gap-2">
-                  <span className="flex-1 min-w-0 truncate text-[15px]">{item.sessionTitle || '(제목 없음)'}</span>
-                  <span className="text-[11px] text-muted shrink-0">{relativeTime(item.lastActivity)}</span>
-                </div>
-                <div className="text-[12px] text-muted truncate mt-0.5">
-                  <span className="uppercase tracking-wide">{item.provider ?? ''}</span>{item.projectDisplayName ? ` · ${item.projectDisplayName}` : ''}
-                </div>
-              </button>
-            </li>
+            <ConversationRow key={item.sessionId} item={item} onOpen={() => navigate(`/session/${encodeURIComponent(item.sessionId)}`)} onActions={() => { setConfirmDelete(false); setTarget(item); }} />
           ))}
         </ul>
       </main>
-      <Link to="/new" aria-label="새 대화" className="fixed right-5 bottom-[calc(env(safe-area-inset-bottom)+20px)] w-14 h-14 rounded-full bg-accent text-accent-ink shadow-lg flex items-center justify-center">
-        <Plus size={26} />
-      </Link>
+
+      <BottomSheet open={Boolean(target)} onClose={closeSheet} title={<span className="block truncate">{target?.sessionTitle || '(제목 없음)'}</span>}>
+        {!confirmDelete ? (
+          <div className="space-y-1">
+            {hidden
+              ? <button type="button" className={sheetButton} disabled={busy} onClick={() => { void act('restore'); }}><RotateCcw size={18} /> 다시 표시</button>
+              : <button type="button" className={sheetButton} disabled={busy} onClick={() => { void act('hide'); }}><EyeOff size={18} /> 숨기기<span className="ml-auto text-[12px] text-muted">되돌릴 수 있음</span></button>}
+            <button type="button" className={`${sheetButton} text-danger`} disabled={busy} onClick={() => setConfirmDelete(true)}><Trash2 size={18} /> 삭제</button>
+          </div>
+        ) : (
+          <div className="space-y-3">
+            <p className="text-[14px] text-muted">대화 기록까지 영구 삭제합니다. 되돌릴 수 없습니다.</p>
+            <button type="button" className="w-full h-12 rounded-xl bg-danger text-white text-[15px] font-medium disabled:opacity-50" disabled={busy} onClick={() => { void act('delete'); }}>{busy ? '삭제 중…' : '영구 삭제'}</button>
+            <button type="button" className="w-full h-12 rounded-xl border border-line text-[15px]" onClick={() => setConfirmDelete(false)}>취소</button>
+          </div>
+        )}
+      </BottomSheet>
+
+      {toast ? (
+        <div className="fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+88px)] z-30 flex items-center gap-3 rounded-xl bg-ink text-bg px-4 py-3 text-[14px] shadow-lg" role="status">
+          <span className="flex-1">{toast.text}</span>
+          {toast.undo ? <button type="button" className="font-semibold text-accent" onClick={toast.undo}>되돌리기</button> : null}
+        </div>
+      ) : null}
+
+      {!hidden ? (
+        <Link to="/new" aria-label="새 대화" className="fixed right-5 bottom-[calc(env(safe-area-inset-bottom)+20px)] w-14 h-14 rounded-full bg-accent text-accent-ink shadow-lg flex items-center justify-center">
+          <Plus size={26} />
+        </Link>
+      ) : null}
     </div>
   );
 }

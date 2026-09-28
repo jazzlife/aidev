@@ -26,7 +26,8 @@ type SidebarSessionItemProps = {
   onSaveEditingSession: (projectName: string, sessionId: string, summary: string, provider: LLMProvider) => void;
   onProjectSelect: (project: Project) => void;
   onSessionSelect: (session: SessionWithProvider, projectName: string) => void;
-  onDeleteSession: (sessionId: string, sessionTitle: string) => void;
+  /** `archiveNow` hides (archives) the session at once; without it the archive-or-delete dialog opens. */
+  onDeleteSession: (sessionId: string, sessionTitle: string, options?: { archiveNow?: boolean }) => void;
   /** Branches this session into an independent one; absent when its provider cannot. */
   onForkSession?: (session: SessionWithProvider) => void;
   t: TFunction;

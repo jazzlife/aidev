@@ -56,3 +56,19 @@ body {
 .m-prose td, .m-prose th { border: 1px solid rgb(var(--m-line)); padding: 3px 8px; }
 @keyframes m-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
 .m-pulse { animation: m-pulse 1.2s ease-in-out infinite; }
+
+/* Native-app feel: no text selection, long-press callout (copy/look up/share) or image/link drag on
+   the chrome and transcript. Text fields stay editable; message text is copied from the long-press
+   sheet instead (ChatScreen). */
+html, body {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+  -webkit-tap-highlight-color: transparent;
+}
+img, a, svg { -webkit-user-drag: none; }
+input, textarea, [contenteditable="true"] {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}

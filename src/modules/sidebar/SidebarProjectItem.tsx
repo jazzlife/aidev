@@ -38,7 +38,8 @@ type SidebarProjectItemProps = {
   onSaveProjectName: (projectId: string, nextName: string) => void;
   onDeleteProject: (project: Project) => void;
   onSessionSelect: (session: SessionWithProvider, projectName: string) => void;
-  onDeleteSession: (sessionId: string, sessionTitle: string) => void;
+  /** `archiveNow` hides (archives) the session at once; without it the archive-or-delete dialog opens. */
+  onDeleteSession: (sessionId: string, sessionTitle: string, options?: { archiveNow?: boolean }) => void;
   onForkSession?: (session: SessionWithProvider) => void;
   onLoadMoreSessions: (projectId: string) => void;
   activeSessions: ReadonlySet<string>;
