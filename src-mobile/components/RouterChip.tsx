@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Sparkles } from 'lucide-react';
 
-import { useRoutingState, routingStore, aidevApi, type Engine } from '@/modules/aidev-router';
+import { useRoutingState, routingStore, aidevApi, claudeAuth, useClaudeAuth, type Engine } from '@/modules/aidev-router';
+import { ClaudeLoginSheet } from '@m/components/ClaudeLoginSheet';
 import { BottomSheet } from '@m/components/BottomSheet';
 
 const DEPTH_LABEL = ['즉답', '한 파일', '기능', '심층', '설계'];
@@ -10,16 +11,21 @@ const DEPTH_LABEL = ['즉답', '한 파일', '기능', '심층', '설계'];
 export function RouterChip() {
   const state = useRoutingState();
   const [open, setOpen] = useState(false);
+  const auth = useClaudeAuth();
   const last = state.last;
-  if (state.mode === 'off') return null;
+  // expired (from a route or the runtime) or due within 30 days: a tappable login notice above the chip
+  const needsLogin = (last?.plan.engine_error && last.plan.engine === 'claude') || auth.expired;
+  const loginNotice = needsLogin ? 'Claude 로그인 만료 · 다시 로그인' : auth.renewSoon ? `Claude 로그인 D-${auth.daysLeft} · 갱신` : null;
+  if (state.mode === 'off') return <ClaudeLoginSheet />;
   const label = state.busy ? '판정 중…' : last ? `${last.agent.name} · ${last.plan.engine ?? '-'} ${last.plan.model ?? ''} · D${last.scope.depth}` : '자동 라우팅';
   return (
     <>
+      <ClaudeLoginSheet />
+      {loginNotice ? <button type="button" onClick={() => claudeAuth.openDialog()} className={`mx-3 mb-1 self-start rounded-full border px-3 h-8 text-[12px] ${needsLogin ? 'border-danger/40 text-danger' : 'border-warn/40 text-warn'}`}>{loginNotice}</button> : null}
       <button type="button" onClick={() => setOpen(true)} className="mx-3 mb-1 self-start max-w-[calc(100%-24px)] flex items-center gap-1.5 rounded-full border border-line bg-surface px-3 h-8 text-[12px] text-muted">
         <Sparkles size={13} className={state.busy ? 'm-pulse text-accent' : 'text-accent'} />
         <span className="truncate">{label}</span>
         {last?.fallback ? <span className="text-warn">· fallback</span> : null}
-        {last?.plan.engine_error ? <span className="text-danger">· {last.plan.engine} 인증 만료</span> : null}
       </button>
       <BottomSheet open={open} onClose={() => setOpen(false)} title="라우팅">
         {!last ? <div className="text-muted">아직 판정된 명령이 없습니다. 명령을 보내면 Laya가 전문 agent·엔진·모델을 고릅니다.</div> : (

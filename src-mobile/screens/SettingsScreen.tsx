@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 
 import { useAuth } from '@/modules/chat-core';
-import { aidevApi, routingStore, useRoutingState, type EnginesResult, type RoutingMode } from '@/modules/aidev-router';
+import { aidevApi, claudeAuth, routingStore, useClaudeAuth, useRoutingState, type EnginesResult, type RoutingMode } from '@/modules/aidev-router';
+import { ClaudeLoginSheet } from '@m/components/ClaudeLoginSheet';
 import { TopBar } from '@m/components/TopBar';
 
 const MODES: Array<{ value: RoutingMode; label: string; hint: string }> = [
@@ -15,13 +16,16 @@ export function SettingsScreen() {
   const { user, logout } = useAuth();
   const routing = useRoutingState();
   const [engines, setEngines] = useState<EnginesResult | null>(null);
-  useEffect(() => { aidevApi.engines().then(setEngines).catch(() => setEngines(null)); }, []);
+  const auth = useClaudeAuth();
+  // re-probe after a login finished in the sheet (the dialog closes on completion)
+  useEffect(() => { if (!auth.dialogOpen) aidevApi.engines(true).then(setEngines).catch(() => setEngines(null)); }, [auth.dialogOpen]);
   const switchToWorkbench = () => {
     document.cookie = 'aidev_ui=workbench; Path=/; Max-Age=31536000; SameSite=Lax; Secure';
     window.location.href = '/';
   };
   return (
     <div className="m-app">
+      <ClaudeLoginSheet />
       <TopBar title="설정" back="/" />
       <main className="m-scroll flex-1 px-4 py-4 space-y-6 pb-safe-b">
         <section>
@@ -44,7 +48,8 @@ export function SettingsScreen() {
                 <div key={engine} className="px-4 py-3 flex items-center gap-3">
                   <span className={`w-2.5 h-2.5 rounded-full ${!state ? 'bg-line' : !state.allowed ? 'bg-line' : state.authenticated ? 'bg-ok' : 'bg-warn'}`} />
                   <span className="flex-1 text-[15px] capitalize">{engine}</span>
-                  <span className="text-[12px] text-muted">{!state ? '…' : !state.allowed ? '이 계정에 없음' : state.authenticated ? '연결됨' : (state.error || '로그인 필요')}</span>
+                  <span className="text-[12px] text-muted">{!state ? '…' : !state.allowed ? '이 계정에 없음' : state.authenticated ? (engine === 'claude' && auth.daysLeft !== null ? `연결됨 · D-${auth.daysLeft}` : '연결됨') : (state.error || '로그인 필요')}</span>
+                  {engine === 'claude' && state?.allowed ? <button type="button" onClick={() => claudeAuth.openDialog()} className="text-[13px] text-accent">{state.authenticated && !auth.expired ? '다시 로그인' : '로그인'}</button> : null}
                 </div>
               );
             })}

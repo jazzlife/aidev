@@ -2,6 +2,7 @@ import { useTranslation } from 'react-i18next';
 import { X } from 'lucide-react';
 
 import { StandaloneShell } from '@/modules/standalone-shell';
+import { ClaudeLoginPanel } from '@/modules/aidev-router';
 import { IS_PLATFORM } from '@/shared/utils';
 import type { LLMProvider } from '@/shared/types';
 
@@ -66,7 +67,7 @@ const getProviderCommand = ({
 };
 
 const getProviderTitle = (provider: LLMProvider) => {
-  if (provider === 'claude') return 'Claude CLI Login';
+  if (provider === 'claude') return 'Claude 로그인';
   if (provider === 'cursor') return 'Cursor CLI Login';
   if (provider === 'codex') return 'Codex CLI Login';
   if (provider === 'opencode') return 'OpenCode CLI Login';
@@ -112,9 +113,15 @@ export default function ProviderLoginModal({
           </button>
         </div>
 
-        <div className="flex-1 overflow-hidden">
-          <StandaloneShell project={DEFAULT_PROJECT_FOR_EMPTY_SHELL} command={command} onComplete={handleComplete} minimal={true} />
-        </div>
+        {/* Nado AI Dev: Claude signs in through the in-app subscription login (1-year token stored by
+            the runtime) instead of `claude /login` in a terminal, whose refresh-based login expires. */}
+        {provider === 'claude' && !customCommand ? (
+          <div className="flex-1 overflow-auto p-4"><ClaudeLoginPanel onClose={onClose} onDone={() => handleComplete(0)} /></div>
+        ) : (
+          <div className="flex-1 overflow-hidden">
+            <StandaloneShell project={DEFAULT_PROJECT_FOR_EMPTY_SHELL} command={command} onComplete={handleComplete} minimal={true} />
+          </div>
+        )}
       </div>
     </div>
   );

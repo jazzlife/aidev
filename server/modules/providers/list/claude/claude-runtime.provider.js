@@ -30,6 +30,7 @@ import {
 } from '@/modules/providers/list/claude/claude-models.provider.js';
 import { resolveClaudeCodeExecutablePath } from '@/shared/claude-cli-path.js';
 import { aidevToolsService, composeAgentInstructions, sanitizeAidevOptions } from '@/modules/aidev-tools/index.js';
+import { claudeAuthStore, isClaudeAuthFailure } from '@/modules/providers/services/claude-auth-store.service.js';
 import {
   createNotificationEvent,
   notifyBackgroundWorkCompleted,
@@ -1132,6 +1133,8 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
     const errorContent = !installed
       ? 'Claude Code is not installed. Please install it first: https://docs.anthropic.com/en/docs/claude-code'
       : error.message;
+    // Nado AI Dev: an auth refusal flips the engine to "expired" so routing and the UI offer re-login.
+    if (installed && isClaudeAuthFailure(String(error?.message ?? ''))) claudeAuthStore.recordFailure(String(error.message));
 
     // Send error to WebSocket, then the terminal complete. A run that already
     // reported completion and then failed during its post-turn hold still

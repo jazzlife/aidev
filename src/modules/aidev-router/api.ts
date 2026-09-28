@@ -152,6 +152,16 @@ async function readJson<T>(response: Response): Promise<T> {
 
 const post = (url: string, body: unknown, method = 'POST') => authenticatedFetch(url, { method, body: JSON.stringify(body) });
 
+/** Runtime endpoints answer `{success, data}`; the gateway's aidev endpoints answer the payload itself. */
+async function readRuntimeData<T>(response: Response): Promise<T> {
+  const body = await readJson<{ success?: boolean; data?: T; error?: string }>(response);
+  if (body.success === false) throw new Error(body.error || 'request failed');
+  return body.data as T;
+}
+
+/** Platform-managed Claude subscription login state (runtime `/api/aidev-tools/claude-login`). */
+export type ClaudeLoginStatus = { token: { issuedAt: number; expiresAt: number } | null; failure: { at: number; message: string } | null };
+
 /** Used by the aidev-router hooks, the workbench router bar and the mobile router chip. */
 export const aidevApi = {
   route: (input: RouteRequest) => post('/api/aidev/route', input).then((response) => readJson<RouteResult>(response)),
@@ -159,7 +169,11 @@ export const aidevApi = {
     post(`/api/aidev/decide/${encodeURIComponent(kind)}`, { state, options }).then((response) => readJson<DecideResult>(response)),
   overrideDecision: (id: number, patch: { final_agent?: string; final_engine?: Engine; final_model?: string; final_target?: string; final_answer?: unknown }) =>
     post(`/api/aidev/decisions/${id}`, patch, 'PATCH').then((response) => readJson<{ ok: boolean }>(response)),
-  engines: () => authenticatedFetch('/api/aidev/engines').then((response) => readJson<EnginesResult>(response)),
+  engines: (refresh = false) => authenticatedFetch(`/api/aidev/engines${refresh ? '?refresh=1' : ''}`).then((response) => readJson<EnginesResult>(response)),
+  claudeLoginStatus: () => authenticatedFetch('/api/aidev-tools/claude-login').then((response) => readRuntimeData<ClaudeLoginStatus>(response)),
+  claudeLoginStart: () => post('/api/aidev-tools/claude-login/start', {}).then((response) => readRuntimeData<{ loginId: string; url: string }>(response)),
+  claudeLoginCode: (loginId: string, code: string) => post('/api/aidev-tools/claude-login/code', { login_id: loginId, code }).then((response) => readRuntimeData<{ issuedAt: number; expiresAt: number }>(response)),
+  claudeLoginCancel: (loginId: string) => post('/api/aidev-tools/claude-login/cancel', { login_id: loginId }).then(() => undefined),
   agents: () => authenticatedFetch('/api/aidev/agents').then((response) => readJson<{ agents: CatalogAgent[] }>(response)),
   agent: (id: number) => authenticatedFetch(`/api/aidev/agents/${id}`).then((response) => readJson<Record<string, unknown>>(response)),
   createAgent: (input: Record<string, unknown>) => post('/api/aidev/agents', input).then((response) => readJson<{ agent: CatalogAgent }>(response)),

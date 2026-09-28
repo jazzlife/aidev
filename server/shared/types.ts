@@ -700,6 +700,8 @@ export type ProviderAuthStatus = {
   email: string | null;
   method: string | null;
   error?: string;
+  /** Epoch ms when the credential stops working, when known (platform-managed subscription token). */
+  expiresAt?: number;
 };
 
 // ---------------------------

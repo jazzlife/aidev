@@ -38,7 +38,7 @@ export function createAidevApi(deps: AidevDeps) {
   const ENGINE_CACHE_MS = 60_000;
   const CURATE_TIMEOUT_MS = 180_000;
 
-  async function engineAvailability(session: Session): Promise<EngineAvailability> {
+  async function engineAvailability(session: Session, force = false): Promise<EngineAvailability> {
     const acct = store.accountEngines(session.user.id);
     const cached = Object.fromEntries(store.engineStatus(session.user.id).map((r) => [r.engine, r]));
     const out = { claude: { allowed: false, authenticated: false, error: null }, codex: { allowed: false, authenticated: false, error: null } } as EngineAvailability;
@@ -46,7 +46,7 @@ export function createAidevApi(deps: AidevDeps) {
       out[engine].allowed = acct.engines.includes(engine);
       if (!out[engine].allowed) return;
       const c = cached[engine];
-      if (c && Date.now() - c.checked_at < ENGINE_CACHE_MS) { out[engine].authenticated = Boolean(c.authenticated); out[engine].error = c.last_error; return; }
+      if (c && !force && Date.now() - c.checked_at < ENGINE_CACHE_MS) { out[engine].authenticated = Boolean(c.authenticated); out[engine].error = c.last_error; return; }
       try {
         const r = await deps.runtimeFetch(session, `/api/providers/${engine}/auth/status`);
         const body = await r.json() as { data?: { authenticated?: boolean; installed?: boolean; error?: string } };
@@ -155,7 +155,8 @@ export function createAidevApi(deps: AidevDeps) {
       // ---- engines --------------------------------------------------------------------------
       if (rest === '/engines' && m === 'GET') {
         const acct = store.accountEngines(uid);
-        return json(res, 200, { engines: await engineAvailability(session), default_engine: acct.defaultEngine, role: acct.role, weights: store.engineWeights() }), true;
+        // ?refresh=1 right after an in-app login, so the next route sees the engine at once
+        return json(res, 200, { engines: await engineAvailability(session, url.searchParams.get('refresh') === '1'), default_engine: acct.defaultEngine, role: acct.role, weights: store.engineWeights() }), true;
       }
       if (rest === '/engines/weights' && m === 'PUT') {
         requireAdmin(session);

@@ -53,6 +53,11 @@ import { fileTreeRoutes } from './modules/file-tree/index.js';
 import { worktreesRoutes } from './modules/worktrees/index.js';
 import browserUseMcpRoutes from './modules/browser-use/browser-use-mcp.routes.js';
 import { aidevToolsMcpRoutes, aidevToolsRoutes } from './modules/aidev-tools/index.js';
+import { claudeAuthStore } from './modules/providers/index.js';
+
+// Nado AI Dev: the platform-managed Claude subscription token (in-app login) applies to every
+// Claude process this server starts, so it must be in process.env before any provider runs.
+claudeAuthStore.loadIntoEnv();
 import { browserUseService } from './modules/browser-use/browser-use.service.js';
 import { initializeDatabase, sessionsDb } from './modules/database/index.js';
 import { configureWebPush } from './modules/notifications/index.js';

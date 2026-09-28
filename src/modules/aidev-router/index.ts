@@ -17,3 +17,8 @@ export { parseAgentDraft } from '@/modules/aidev-router/api';
 export type { AgentDraft } from '@/modules/aidev-router/api';
 export type { PendingCreate } from '@/modules/aidev-router/store';
 export { AgentCatalog } from '@/modules/aidev-router/AgentCatalog';
+// Claude subscription login (in-app, both apps): state + flow hooks, workbench panel/dialog.
+export { claudeAuth, useClaudeAuth } from '@/modules/aidev-router/hooks/useClaudeAuth';
+export { useClaudeLoginFlow } from '@/modules/aidev-router/hooks/useClaudeLoginFlow';
+export type { ClaudeLoginStage } from '@/modules/aidev-router/hooks/useClaudeLoginFlow';
+export { ClaudeLoginPanel, ClaudeLoginDialog } from '@/modules/aidev-router/ClaudeLoginPanel';

@@ -4,6 +4,8 @@ import { ChevronDown, Sparkles, ThumbsDown, ThumbsUp } from 'lucide-react';
 import { aidevApi, type Engine, type EnginesResult } from '@/modules/aidev-router/api';
 import { routingStore, useRoutingState, type RoutingMode } from '@/modules/aidev-router/store';
 import { useAidevRouting } from '@/modules/aidev-router/hooks/useAidevRouting';
+import { claudeAuth, useClaudeAuth } from '@/modules/aidev-router/hooks/useClaudeAuth';
+import { ClaudeLoginDialog } from '@/modules/aidev-router/ClaudeLoginPanel';
 
 const DEPTH_LABEL = ['즉답', '한 파일', '기능', '심층', '설계'];
 const MODES: Array<{ value: RoutingMode; label: string }> = [{ value: 'auto', label: '자동' }, { value: 'manual', label: '확인 후' }, { value: 'off', label: '끄기' }];
@@ -19,6 +21,7 @@ export function AidevRouterBar() {
   const { reportOutcome } = useAidevRouting();
   const [engines, setEngines] = useState<EnginesResult | null>(null);
   const [open, setOpen] = useState<'agent' | 'engine' | 'mode' | null>(null);
+  const claudeAuthState = useClaudeAuth();
   useEffect(() => { aidevApi.engines().then(setEngines).catch(() => setEngines(null)); }, [state.last?.decision_id]);
   useEffect(() => {
     if (!open) return undefined;
@@ -31,8 +34,15 @@ export function AidevRouterBar() {
   const overrideAgent = (name: string) => { routingStore.setOverrides({ agent: name }); if (last) void aidevApi.overrideDecision(last.decision_id, { final_agent: name }); setOpen(null); };
   const overrideEngine = (engine: Engine) => { routingStore.setOverrides({ engine }); if (last) void aidevApi.overrideDecision(last.decision_id, { final_engine: engine }); setOpen(null); };
 
+  // Expired (before any route has said so) or due for renewal within 30 days: offer the login here.
+  const authNotice = !last?.plan.engine_error && claudeAuthState.expired
+    ? { tone: 'text-red-600 border-red-300', label: 'Claude 로그인 만료 · 다시 로그인' }
+    : claudeAuthState.renewSoon ? { tone: 'text-amber-600 border-amber-300', label: `Claude 로그인 D-${claudeAuthState.daysLeft} · 갱신` } : null;
+
   return (
     <div className="flex items-center gap-1.5 px-3 py-1 border-t border-border/60 bg-muted/20 text-[11px] overflow-x-auto" data-testid="aidev-router-bar">
+      <ClaudeLoginDialog />
+      {authNotice ? <button type="button" className={`${chip} ${authNotice.tone}`} onClick={(event) => { event.stopPropagation(); claudeAuth.openDialog(); }}>{authNotice.label}</button> : null}
       <Sparkles size={13} className={`shrink-0 ${state.busy ? 'text-primary animate-pulse' : 'text-primary/80'}`} />
       {state.mode === 'off' ? <span className="text-muted-foreground">라우팅 꺼짐</span> : !last ? <span className="text-muted-foreground">{state.busy ? '판정 중…' : '명령을 보내면 전문 agent·엔진·모델을 고릅니다'}</span> : (
         <>
@@ -46,7 +56,11 @@ export function AidevRouterBar() {
               {last.fallback ? <span className="text-amber-600">fallback</span> : null}
               <ChevronDown size={11} />
             </button>
-            {last.plan.engine_error ? <span className={`${chip} border-red-300 text-red-600`} title={last.plan.engine_error}>{last.plan.engine}: 인증 만료 — 이 세션은 실행되지 않습니다 (관리자: 런타임에서 다시 로그인)</span> : null}
+            {last.plan.engine_error ? (
+              last.plan.engine === 'claude'
+                ? <button type="button" className={`${chip} border-red-300 text-red-600 hover:bg-red-50`} title={last.plan.engine_error} onClick={(event) => { event.stopPropagation(); claudeAuth.openDialog(); }}>Claude 로그인 만료 · 다시 로그인</button>
+                : <span className={`${chip} border-red-300 text-red-600`} title={last.plan.engine_error}>{last.plan.engine}: 로그인 필요 (설정 → Agents)</span>
+            ) : null}
             {open === 'agent' ? (
               <div className="absolute left-0 top-7 z-30 w-72 rounded-md border border-border bg-popover shadow-md p-1" onClick={(event) => event.stopPropagation()}>
                 {[{ name: last.agent.name, probability: last.agent.probability, description: last.agent.description }, ...last.alternatives].map((alternative) => (

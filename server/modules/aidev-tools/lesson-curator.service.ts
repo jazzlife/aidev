@@ -2,7 +2,6 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { Codex } from '@openai/codex-sdk';
 
 import { sessionsDb } from '@/modules/database/index.js';
-import { sessionsService } from '@/modules/providers/index.js';
 
 /**
  * Lesson curation for failed runs (IMPLEMENTATION-PLAN §3.8 / E-01): summarises the session's
@@ -35,6 +34,9 @@ function clip(value: unknown, max: number): string {
 }
 
 async function buildSummary(input: CurateInput): Promise<string> {
+  // Lazy: the providers module imports this module's barrel (runtime providers), so a top-level
+  // import would close a cycle and break module initialisation order.
+  const { sessionsService } = await import('@/modules/providers/index.js');
   const history = await sessionsService.fetchHistory(input.sessionId, { limit: 40, offset: 0 });
   const lines: string[] = [];
   for (const message of history.messages.slice(-40)) {

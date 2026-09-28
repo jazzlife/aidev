@@ -8,12 +8,14 @@ import { resolveClaudeCodeExecutablePath } from '@/shared/claude-cli-path.js';
 import type { IProviderAuth } from '@/shared/interfaces.js';
 import type { ProviderAuthStatus } from '@/shared/types.js';
 import { readObjectRecord, readOptionalString } from '@/shared/utils.js';
+import { claudeAuthStore } from '@/modules/providers/services/claude-auth-store.service.js';
 
 type ClaudeCredentialsStatus = {
   authenticated: boolean;
   email: string | null;
   method: string | null;
   error?: string;
+  expiresAt?: number;
 };
 
 const hasErrorCode = (error: unknown, code: string): boolean => (
@@ -62,6 +64,7 @@ export class ClaudeProviderAuth implements IProviderAuth {
       email: credentials.authenticated ? credentials.email || 'Authenticated' : credentials.email,
       method: credentials.method,
       error: credentials.authenticated ? undefined : credentials.error || 'Not authenticated',
+      ...(credentials.expiresAt ? { expiresAt: credentials.expiresAt } : {}),
     };
   }
 
@@ -84,6 +87,20 @@ export class ClaudeProviderAuth implements IProviderAuth {
    */
   private async checkCredentials(): Promise<ClaudeCredentialsStatus> {
     const missingCredentialsError = 'Claude CLI is not authenticated. Run claude /login or configure ANTHROPIC_API_KEY.';
+
+    // A real turn was refused for authentication since the last login: the stored credentials look
+    // fine on disk but no longer work, so report it instead of a stale "connected".
+    const failure = claudeAuthStore.currentFailure();
+    if (failure) {
+      return { authenticated: false, email: null, method: null, error: `Claude login has expired (${failure.message}). Sign in again.` };
+    }
+
+    // Platform-managed subscription token from the in-app login (1-year lifetime).
+    const managed = claudeAuthStore.info();
+    if (managed) {
+      if (Date.now() >= managed.expiresAt) return { authenticated: false, email: null, method: null, error: 'Claude subscription token has expired. Sign in again.' };
+      return { authenticated: true, email: 'Subscription token', method: 'oauth_token', expiresAt: managed.expiresAt };
+    }
 
     if (process.env.ANTHROPIC_AUTH_TOKEN?.trim()) {
       return { authenticated: true, email: 'Auth Token', method: 'api_key' };
