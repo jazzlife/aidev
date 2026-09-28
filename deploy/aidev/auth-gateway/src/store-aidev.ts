@@ -15,6 +15,10 @@ export type AgentVersionRow = { id: number; agent_id: number; version: number; p
 /** Default life of a sourced knowledge item before it is re-checked against its source (§3.8). */
 export const KNOWLEDGE_TTL_MS = 90 * 86400_000;
 export type KnowledgeRow = { id: number; agent_id: number; title: string; body: string; source_url: string | null; source_date: string | null; status: string; superseded_by: number | null; expires_at: number | null; owner_id: number | null; created_at: number; updated_at: number; checked_at: number | null; check_fails: number; check_note: string | null; replaces: number | null };
+/** Reasoning-effort levels each engine accepts, weakest first (the runtime model catalogs; Claude's
+ * 'ultracode' is a session mode, not a level). The user's ceiling is one of these. */
+export const EFFORT_LADDER: Record<Engine, string[]> = { claude: ['low', 'medium', 'high', 'xhigh', 'max'], codex: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] };
+export const DEFAULT_EFFORT_CAP: Record<Engine, string> = { claude: 'xhigh', codex: 'xhigh' };
 export type TierPolicyRow = { domain: string; depth: number; engine: string; model: string | null; effort: string | null; success_n: number; fail_n: number; avg_ms: number | null; level: number | null; pinned: number; updated_at: number | null };
 export type LessonRow = { id: number; agent_id: number; engine: string | null; trigger: string; rule: string; evidence_run_id: number | null; status: string; hits: number; owner_id: number | null; promoted_to_prompt: number; fails: number; verified_by: string | null; promoted_version: number | null; created_at: number };
 export type RunRow = { id: number; user_id: number; session_id: string | null; decision_id: number | null; agent_id: number | null; agent_version: number | null; engine: string | null; model: string | null; effort: string | null; depth: number | null; task_kind: string | null; risk: number | null; target_id: number | null; started_at: number; finished_at: number | null; exit_code: number | null; tool_errors: number; user_feedback: string | null; reverted: number; reasked: number; test_result: string | null; cost_tokens: number | null; escalated_from_run: number | null; outcome: string | null };
@@ -122,7 +126,8 @@ export function migrateAidev(db: Database.Database) {
     PRIMARY KEY(decision_id, lesson_id));`);
   addColumn(db, 'accounts', 'claude_token_expires_at', 'INTEGER');   // reported by the runtime after an in-app login
   addColumn(db, 'accounts', 'claude_auth_failure_at', 'INTEGER');    // reported by the runtime when a turn is refused
-  addColumn(db, 'accounts', 'claude_notice', 'TEXT');                // last reminder sent ("<expiresAt>:<days>" or "fail:<at>")
+  addColumn(db, 'accounts', 'claude_notice', 'TEXT');
+  addColumn(db, 'accounts', 'effort_cap', 'TEXT');                  // per-engine effort ceiling chosen by the user (JSON), see routing EFFORT_LADDER                // last reminder sent ("<expiresAt>:<days>" or "fail:<at>")
   // Knowledge refresh (§3.8 / E-04): last check, consecutive unreachable checks, the check's note,
   // and — for a replacement Laya was not sure about — the item a 'proposed' row would replace.
   addColumn(db, 'knowledge', 'checked_at', 'INTEGER');
@@ -200,6 +205,24 @@ export function aidevMethods(db: Database.Database) {
       const r = db.prepare('UPDATE accounts SET engines=? WHERE username=?').run(list.join(','), username);
       if (!r.changes) throw new Error('User not found');
     },
+    /** The user's effort ceiling per engine (routing uses it for the top tier and never goes above it). */
+    effortCap(userId: number): Record<Engine, string> {
+      const row = db.prepare('SELECT effort_cap FROM accounts WHERE id=?').get(userId) as { effort_cap: string | null } | undefined;
+      let saved: Partial<Record<Engine, string>> = {};
+      try { saved = row?.effort_cap ? JSON.parse(row.effort_cap) as Partial<Record<Engine, string>> : {}; } catch { saved = {}; }
+      return { claude: EFFORT_LADDER.claude.includes(saved.claude ?? '') ? saved.claude! : DEFAULT_EFFORT_CAP.claude, codex: EFFORT_LADDER.codex.includes(saved.codex ?? '') ? saved.codex! : DEFAULT_EFFORT_CAP.codex };
+    },
+    setEffortCap(userId: number, cap: Partial<Record<Engine, string>>) {
+      const next = { ...m.effortCap(userId) };
+      for (const engine of ENGINES) {
+        const value = cap[engine];
+        if (value === undefined) continue;
+        if (!EFFORT_LADDER[engine].includes(value)) throw new Error(`${engine} effort must be one of ${EFFORT_LADDER[engine].join('|')}`);
+        next[engine] = value;
+      }
+      db.prepare('UPDATE accounts SET effort_cap=? WHERE id=?').run(JSON.stringify(next), userId);
+      return next;
+    },
     setDefaultEngine(username: string, engine: Engine | null) {
       if (engine && !ENGINES.includes(engine)) throw new Error(`engine must be one of ${ENGINES.join(',')}`);
       const r = db.prepare('UPDATE accounts SET default_engine=? WHERE username=?').run(engine, username);
@@ -246,7 +269,7 @@ export function aidevMethods(db: Database.Database) {
       return db.prepare("SELECT task_kind, engine, outcome, started_at, finished_at FROM runs WHERE started_at >= ? AND outcome IN ('success','fail') AND task_kind IS NOT NULL AND engine IN ('claude','codex')").all(since) as Array<{ task_kind: string; engine: Engine; outcome: string; started_at: number; finished_at: number | null }>;
     },
     tierPolicy(domain: string, depth: number, engine: Engine) {
-      return db.prepare('SELECT * FROM tier_policy WHERE domain IN (?, \'*\') AND depth=? AND engine=? ORDER BY domain=\'*\' LIMIT 1').get(domain, depth, engine) as { model: string | null; effort: string | null; success_n: number; fail_n: number; avg_ms: number | null } | undefined;
+      return db.prepare('SELECT * FROM tier_policy WHERE domain IN (?, \'*\') AND depth=? AND engine=? ORDER BY domain=\'*\' LIMIT 1').get(domain, depth, engine) as { model: string | null; effort: string | null; success_n: number; fail_n: number; avg_ms: number | null; level: number | null } | undefined;
     },
     tierPolicyRows() {
       return db.prepare('SELECT * FROM tier_policy ORDER BY domain, depth, engine').all() as TierPolicyRow[];

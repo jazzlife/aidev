@@ -191,6 +191,7 @@ CREATE TABLE remote_runs (id PK, run_id INT NULL, target_id INT REF targets, use
 | 4 | best(= Fable 5.1, 없으면 최신 Opus) / xhigh | gpt-6-astra / xhigh | + 다중 agent |
 - 두 엔진 모두 D4에서 최상위 모델, D3에서 차상위 모델(대칭). `opusplan`(Opus 계획 → Sonnet 실행)은 최상위 등급에서 제외(2026-09-28 수정: 이전 코드는 D4=opusplan이라 Fable 미사용).
 - `risk ≥ 1.5` → depth +1. 사용자 지정 model/effort/engine → 그대로.
+- **추론 강도(effort) 상한**(2026-09-29, 계정별 `accounts.effort_cap`): 엔진별로 사용자가 고른다(Claude low~max, Codex low~ultra, 기본 xhigh). D4(실제 적용 등급 기준, tier_policy 반영)는 상한 값으로 실행하고, 다른 등급은 상한을 넘으면 상한으로 낮춘다. 실패 후 escalate는 D4에서 effort를 한 단계씩 상한까지 올린 뒤에 다른 엔진으로 넘긴다(인계 계획도 상한 적용). 사용자가 명령에 직접 지정한 effort는 제한하지 않는다. 설정: 작업대 라우터 바 모드 메뉴, 모바일 설정, `PUT /api/aidev/settings/effort-cap`, `manage-users effort-cap USER claude=max,codex=ultra`.
 - 엔진 점수: `w(task_kind, engine)` + `tier_policy 성공률 보정(±0.2)` − `패널티(최근 1h 오류 0.3, 인증 없음 → 제외)`. 동점 → `accounts.default_engine` → claude.
 - 세션이 이미 provider를 가지면 엔진은 그 provider로 고정(점수 무시), 모델/effort만 결정.
 - `remote_action ≠ none` 이면 agent 프롬프트에 "원격 대상 `<name>`(`<platform>`, tags)에서 `remote_*` 도구로 실행·검증하라"는 지시와 대상 capabilities 요약을 덧붙인다.

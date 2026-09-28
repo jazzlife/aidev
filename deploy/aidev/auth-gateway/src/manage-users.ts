@@ -13,8 +13,8 @@ async function runtime(name: string, operation: 'provision' | 'delete') {
   if (!response.ok) throw new Error(`Runtime ${operation} failed; check runtime-manager logs and retry`);
 }
 try {
-  const usage = 'Usage: list | decisions [N] | tier-policy [run] | add USERNAME | delete USERNAME | disable USERNAME | engines USERNAME codex|claude|claude,codex | default-engine USERNAME claude|codex|none | role USERNAME user|admin';
-  const withExtra = ['engines', 'default-engine', 'role'].includes(action ?? '');
+  const usage = 'Usage: list | decisions [N] | tier-policy [run] | add USERNAME | delete USERNAME | disable USERNAME | engines USERNAME codex|claude|claude,codex | default-engine USERNAME claude|codex|none | role USERNAME user|admin | effort-cap USERNAME claude=xhigh|max,codex=xhigh|max|ultra';
+  const withExtra = ['engines', 'default-engine', 'role', 'effort-cap'].includes(action ?? '');
   if ((extra && !withExtra) || (withExtra && !extra) || (action === 'list' ? username : action === 'decisions' ? false : action === 'tier-policy' ? (username !== undefined && username !== 'run') : !/^[a-z0-9][a-z0-9_.-]{2,63}$/.test(username ?? ''))) throw new Error(usage);
   if (action === 'decisions') {
     // last routing decisions with the signals behind them (B-13 evidence / routing post-mortems)
@@ -36,6 +36,11 @@ try {
   } else if (action === 'list') console.log(JSON.stringify(store.db.prepare('SELECT id,username,runtime,active,engines,default_engine,role FROM accounts ORDER BY id').all(), null, 2));
   else if (action === 'engines') { store.setAccountEngines(username, extra.split(',').map((s) => s.trim()) as never); console.log(`${username}: engines=${extra}`); }
   else if (action === 'default-engine') { store.setDefaultEngine(username, extra === 'none' ? null : extra as never); console.log(`${username}: default_engine=${extra}`); }
+  else if (action === 'effort-cap') {
+    const account = store.account(username); if (!account) throw new Error('User not found');
+    const cap = Object.fromEntries(extra.split(',').map((pair) => pair.split('=').map((s) => s.trim())));
+    console.log(`${username}: effort ceiling ${JSON.stringify(store.setEffortCap(account.id, cap))}`);
+  }
   else if (action === 'role') { if (extra !== 'user' && extra !== 'admin') throw new Error(usage); store.setRole(username, extra); console.log(`${username}: role=${extra}`); }
   else if (action === 'add') {
     if (store.account(username)) throw new Error('User already exists');

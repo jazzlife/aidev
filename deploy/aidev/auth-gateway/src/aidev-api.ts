@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import crypto from 'node:crypto';
 import type { openStore } from './store.js';
-import { ENGINES, type Engine } from './store-aidev.js';
+import { EFFORT_LADDER, ENGINES, type Engine } from './store-aidev.js';
 import type { LayaClient } from './laya.js';
 import type { Push } from './push.js';
 import { applyLessonOutcome, promote } from './lesson-loop.js';
@@ -203,7 +203,13 @@ export function createAidevApi(deps: AidevDeps) {
       if (rest === '/engines' && m === 'GET') {
         const acct = store.accountEngines(uid);
         // ?refresh=1 right after an in-app login, so the next route sees the engine at once
-        return json(res, 200, { engines: await engineAvailability(session, url.searchParams.get('refresh') === '1'), default_engine: acct.defaultEngine, role: acct.role, weights: store.engineWeights() }), true;
+        return json(res, 200, { engines: await engineAvailability(session, url.searchParams.get('refresh') === '1'), default_engine: acct.defaultEngine, role: acct.role, weights: store.engineWeights(), effort_cap: store.effortCap(uid), effort_ladder: EFFORT_LADDER }), true;
+      }
+      // the user's effort ceiling per engine (own subscription usage, so every user sets their own)
+      if (rest === '/settings/effort-cap' && m === 'PUT') {
+        const b = await readJson(req);
+        try { return json(res, 200, { effort_cap: store.setEffortCap(uid, { claude: optStr(b.claude, 20), codex: optStr(b.codex, 20) }) }), true; }
+        catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid effort'); }
       }
       if (rest === '/engines/weights' && m === 'PUT') {
         requireAdmin(session);

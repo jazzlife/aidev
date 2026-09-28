@@ -68,6 +68,9 @@ export type EnginesResult = {
   engines: RouteResult['engines'];
   default_engine: Engine | null;
   role: string;
+  /** the user's reasoning-effort ceiling per engine and the levels each engine accepts (weakest first) */
+  effort_cap?: Record<Engine, string>;
+  effort_ladder?: Record<Engine, string[]>;
   weights: Record<string, Record<Engine, number>>;
 };
 
@@ -217,5 +220,6 @@ export const aidevApi = {
   engineWeights: () => authenticatedFetch('/api/aidev/engines/weights').then((response) => readJson<{ rows: EngineWeightRow[]; log: Array<{ id: number; at: number; task_kind: string; engine: string; from_weight: number | null; to_weight: number; reason: string; actor: string }> }>(response)),
   setEngineWeight: (row: { task_kind: string; engine: Engine; weight: number; pinned?: boolean }) => post('/api/aidev/engines/weights', row, 'PUT').then((response) => readJson<{ rows: EngineWeightRow[] }>(response)),
   setTierPolicy: (cell: { domain: string; depth: number; engine: string; level: number | null; pinned?: boolean }) => post('/api/aidev/tier-policy', cell, 'PUT').then((response) => readJson<{ cell: TierPolicyCell }>(response)),
+  setEffortCap: (cap: Partial<Record<Engine, string>>) => post('/api/aidev/settings/effort-cap', cap, 'PUT').then((response) => readJson<{ effort_cap: Record<Engine, string> }>(response)),
   routeEval: () => post('/api/aidev/route/eval', {}).then((response) => readJson<Record<string, unknown>>(response)),
 };

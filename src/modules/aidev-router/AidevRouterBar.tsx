@@ -1,10 +1,11 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type CSSProperties } from 'react';
 import { ChevronDown, Sparkles, ThumbsDown, ThumbsUp } from 'lucide-react';
 
 import { aidevApi, type Engine, type EnginesResult } from '@/modules/aidev-router/api';
 import { routingStore, useRoutingState, type RoutingMode } from '@/modules/aidev-router/store';
 import { useAidevRouting } from '@/modules/aidev-router/hooks/useAidevRouting';
 import { claudeAuth, useClaudeAuth } from '@/modules/aidev-router/hooks/useClaudeAuth';
+import { EFFORT_LABEL, useEffortCap } from '@/modules/aidev-router/hooks/useEffortCap';
 import { ClaudeLoginDialog } from '@/modules/aidev-router/ClaudeLoginPanel';
 
 const DEPTH_LABEL = ['즉답', '한 파일', '기능', '심층', '설계'];
@@ -20,14 +21,25 @@ export function AidevRouterBar() {
   const state = useRoutingState();
   const { reportOutcome } = useAidevRouting();
   const [engines, setEngines] = useState<EnginesResult | null>(null);
-  const [open, setOpen] = useState<'agent' | 'engine' | 'mode' | null>(null);
+  const [open, setOpenState] = useState<'agent' | 'engine' | 'mode' | null>(null);
+  // Menus open upward from the bar as fixed layers: the bar scrolls horizontally, which would clip them.
+  const [anchor, setAnchor] = useState<DOMRect | null>(null);
+  const setOpen = (next: 'agent' | 'engine' | 'mode' | null, event?: { currentTarget: Element }) => { setOpenState(next); setAnchor(next && event ? event.currentTarget.getBoundingClientRect() : null); };
+  const menuStyle = (align: 'left' | 'right', width: number): CSSProperties => {
+    if (!anchor) return { display: 'none' };
+    const bottom = window.innerHeight - anchor.top + 4;
+    const left = align === 'left' ? Math.max(8, Math.min(anchor.left, window.innerWidth - width - 8)) : Math.max(8, anchor.right - width);
+    return { position: 'fixed', bottom, left, width, maxHeight: Math.max(160, anchor.top - 16), overflowY: 'auto' };
+  };
   const claudeAuthState = useClaudeAuth();
+  const effort = useEffortCap();
   useEffect(() => { aidevApi.engines().then(setEngines).catch(() => setEngines(null)); }, [state.last?.decision_id]);
   useEffect(() => {
     if (!open) return undefined;
     const close = () => setOpen(null);
     window.addEventListener('click', close);
-    return () => window.removeEventListener('click', close);
+    window.addEventListener('resize', close);
+    return () => { window.removeEventListener('click', close); window.removeEventListener('resize', close); };
   }, [open]);
   const last = state.last;
   const chip = 'inline-flex items-center gap-1 h-6 px-2 rounded-md border border-border bg-background text-[11px] text-muted-foreground whitespace-nowrap';
@@ -50,7 +62,7 @@ export function AidevRouterBar() {
             D{last.scope.depth} {DEPTH_LABEL[last.scope.depth]} · {last.scope.task_kind} · 위험 {last.scope.risk.toFixed(0)}
           </span>
           <span className="relative">
-            <button type="button" className={`${chip} text-foreground`} onClick={(event) => { event.stopPropagation(); setOpen(open === 'agent' ? null : 'agent'); }} title={last.agent.description}>
+            <button type="button" className={`${chip} text-foreground`} onClick={(event) => { event.stopPropagation(); setOpen(open === 'agent' ? null : 'agent', event); }} title={last.agent.description}>
               <span className="font-medium">{state.overrides.agent ?? last.agent.name}</span>
               <span className="text-muted-foreground">{Math.round(last.agent.probability * 100)}%</span>
               {last.fallback ? <span className="text-amber-600">fallback</span> : null}
@@ -62,7 +74,7 @@ export function AidevRouterBar() {
                 : <span className={`${chip} border-red-300 text-red-600`} title={last.plan.engine_error}>{last.plan.engine}: 로그인 필요 (설정 → Agents)</span>
             ) : null}
             {open === 'agent' ? (
-              <div className="absolute left-0 top-7 z-30 w-72 rounded-md border border-border bg-popover p-1 shadow-md" onClick={(event) => event.stopPropagation()}>
+              <div className="z-50 rounded-md border border-border bg-popover p-1 shadow-md" style={menuStyle('left', 288)} onClick={(event) => event.stopPropagation()}>
                 {[{ name: last.agent.name, probability: last.agent.probability, description: last.agent.description }, ...last.alternatives].map((alternative) => (
                   <button key={alternative.name} type="button" onClick={() => overrideAgent(alternative.name)} className="w-full rounded px-2 py-1.5 text-left hover:bg-accent">
                     <div className="flex justify-between"><span className="font-medium">{alternative.name}</span><span className="text-muted-foreground">{Math.round(alternative.probability * 100)}%</span></div>
@@ -74,14 +86,14 @@ export function AidevRouterBar() {
             ) : null}
           </span>
           <span className="relative">
-            <button type="button" className={`${chip} text-foreground`} disabled={last.plan.engine_locked} onClick={(event) => { event.stopPropagation(); setOpen(open === 'engine' ? null : 'engine'); }} title={last.plan.reason.join('\n')}>
+            <button type="button" className={`${chip} text-foreground`} disabled={last.plan.engine_locked} onClick={(event) => { event.stopPropagation(); setOpen(open === 'engine' ? null : 'engine', event); }} title={last.plan.reason.join('\n')}>
               <span className="capitalize">{state.overrides.engine ?? last.plan.engine ?? '엔진 없음'}</span>
               {last.plan.model ? <span className="text-muted-foreground">· {last.plan.model}/{last.plan.effort}</span> : null}
               {last.plan.target ? <span className="text-muted-foreground">· ⇢ {last.plan.target.name}</span> : null}
               {!last.plan.engine_locked ? <ChevronDown size={11} /> : null}
             </button>
             {open === 'engine' ? (
-              <div className="absolute left-0 top-7 z-30 w-64 rounded-md border border-border bg-popover p-1 shadow-md" onClick={(event) => event.stopPropagation()}>
+              <div className="z-50 rounded-md border border-border bg-popover p-1 shadow-md" style={menuStyle('left', 256)} onClick={(event) => event.stopPropagation()}>
                 {(['claude', 'codex'] as Engine[]).map((engine) => {
                   const info = engines?.engines[engine] ?? last.engines[engine];
                   const usable = info.allowed && info.authenticated;
@@ -108,11 +120,25 @@ export function AidevRouterBar() {
         </>
       )}
       <span className="relative ml-auto">
-        <button type="button" className={chip} onClick={(event) => { event.stopPropagation(); setOpen(open === 'mode' ? null : 'mode'); }}>{MODES.find((mode) => mode.value === state.mode)?.label}<ChevronDown size={11} /></button>
+        <button type="button" className={chip} onClick={(event) => { event.stopPropagation(); setOpen(open === 'mode' ? null : 'mode', event); }}>{MODES.find((mode) => mode.value === state.mode)?.label}<ChevronDown size={11} /></button>
         {open === 'mode' ? (
-          <div className="absolute right-0 top-7 z-30 w-40 rounded-md border border-border bg-popover p-1 shadow-md" onClick={(event) => event.stopPropagation()}>
+          <div className="z-50 rounded-md border border-border bg-popover p-1 shadow-md" style={menuStyle('right', 224)} onClick={(event) => event.stopPropagation()}>
             {MODES.map((mode) => <button key={mode.value} type="button" onClick={() => { routingStore.setMode(mode.value); setOpen(null); }} className={`w-full rounded px-2 py-1.5 text-left hover:bg-accent ${state.mode === mode.value ? 'font-medium' : ''}`}>{mode.label}</button>)}
             {Object.keys(state.overrides).length ? <button type="button" onClick={() => { routingStore.clearOverrides(); setOpen(null); }} className="w-full rounded px-2 py-1.5 text-left text-muted-foreground hover:bg-accent">override 지우기</button> : null}
+            {effort.cap && effort.ladder ? (
+              <div className="mt-1 border-t border-border px-2 pt-1.5" data-testid="effort-cap">
+                <div className="mb-1 text-[11px] text-muted-foreground" title="가장 어려운 작업(D4)은 이 강도로 실행하고, 다른 등급도 이 값을 넘지 않습니다. 실패 시 이어서 시도할 때도 여기까지 올립니다. 높을수록 구독 사용량이 많이 듭니다.">추론 강도(effort) 상한</div>
+                {(['claude', 'codex'] as const).map((engine) => (
+                  <label key={engine} className="mb-1 flex items-center gap-2">
+                    <span className="w-12 capitalize">{engine}</span>
+                    <select aria-label={`${engine} effort 상한`} value={effort.cap![engine]} onChange={(event) => { void effort.save(engine, event.target.value); }} className="h-6 flex-1 rounded border border-border bg-background px-1">
+                      {effort.ladder![engine].map((level) => <option key={level} value={level}>{level} · {EFFORT_LABEL[level] ?? level}</option>)}
+                    </select>
+                  </label>
+                ))}
+                {effort.error ? <div className="text-[11px] text-red-600">{effort.error}</div> : null}
+              </div>
+            ) : null}
           </div>
         ) : null}
       </span>

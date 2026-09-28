@@ -48,6 +48,12 @@ r=$(post "$A" /api/aidev/route '{"text":"React 컴포넌트에 다크모드 토�
 r=$(post "$A" /api/aidev/tier-policy "{\"domain\":\"$TDOM\",\"depth\":$TD,\"engine\":\"claude\",\"level\":4,\"pinned\":true}" PUT); check "$r" 'j.error' "tier policy edit is admin only"
 r=$(post "$ADM" /api/aidev/tier-policy "{\"domain\":\"$TDOM\",\"depth\":$TD,\"engine\":\"claude\",\"level\":4,\"pinned\":true}" PUT); check "$r" 'j.cell.level===4 && j.cell.model==="best" && j.cell.pinned===1' "admin pins $TDOM D$TD claude → D4"
 r=$(post "$A" /api/aidev/route '{"text":"React 컴포넌트에 다크모드 토글 훅을 추가해줘","preferEngine":"claude"}'); check "$r" 'j.plan.model==="best" && j.plan.effort==="xhigh"' "routing follows the tier policy ($(echo "$r" | node -pe 'const j=JSON.parse(require("fs").readFileSync(0)); j.plan.model+"/"+j.plan.effort'))"
+r=$(post "$A" /api/aidev/settings/effort-cap '{"claude":"max","codex":"ultra"}' PUT); check "$r" 'j.effort_cap.claude==="max" && j.effort_cap.codex==="ultra"' "effort ceiling saved"
+r=$(post "$A" /api/aidev/route '{"text":"React 컴포넌트에 다크모드 토글 훅을 추가해줘","preferEngine":"claude"}'); check "$r" 'j.plan.model==="best" && j.plan.effort==="max"' "top tier runs at the ceiling ($(echo "$r" | node -pe 'const j=JSON.parse(require("fs").readFileSync(0)); j.plan.model+"/"+j.plan.effort'))"
+r=$(post "$A" /api/aidev/settings/effort-cap '{"claude":"high"}' PUT); r=$(post "$A" /api/aidev/route '{"text":"React 컴포넌트에 다크모드 토글 훅을 추가해줘","preferEngine":"claude"}'); check "$r" 'j.plan.effort==="high"' "lower ceiling caps the top tier ($(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).plan.effort'))"
+r=$(post "$A" /api/aidev/settings/effort-cap '{"claude":"ultra"}' PUT); check "$r" 'j.error' "claude has no ultra"
+r=$(get "$A" /api/aidev/engines); check "$r" 'j.effort_cap.claude==="high" && j.effort_ladder.codex.includes("ultra")' "engines report ceiling + ladder"
+post "$A" /api/aidev/settings/effort-cap '{"claude":"xhigh","codex":"xhigh"}' PUT >/dev/null
 r=$(post "$ADM" /api/aidev/tier-policy/run '{}'); check "$r" 'typeof j.cells==="number" && Array.isArray(j.changes)' "tier policy pass ($(echo "$r" | node -pe 'const j=JSON.parse(require("fs").readFileSync(0)); j.cells+" cells, "+j.changes.length+" changes"'))"
 r=$(get "$ADM" /api/aidev/tier-policy); check "$r" 'j.log.length>=1 && j.log[0].actor==="admin" && j.last_run>0' "tier policy log"
 r=$(post "$ADM" /api/aidev/tier-policy "{\"domain\":\"$TDOM\",\"depth\":$TD,\"engine\":\"claude\",\"level\":null}" PUT); check "$r" 'j.cell.level===null && j.cell.model===null' "admin resets the cell"

@@ -1,5 +1,5 @@
 import type { openStore } from './store.js';
-import { routingHint, type Engine } from './store-aidev.js';
+import { EFFORT_LADDER, routingHint, type Engine } from './store-aidev.js';
 import { budgetState, topChoice, type LayaClient, type Question } from './laya.js';
 import { DEPTH_LEVELS, REMOTE_ACTIONS, RISK_LEVELS, TASK_KIND_CRITERIA, decide } from './laya-questions.js';
 import { NaiveBayesRouter, fuse } from './classifier.js';
@@ -49,6 +49,21 @@ export const TIER_TABLE: Record<number, Record<Engine, { model: string; effort: 
 const LESSON_TOPK = [0, 3, 5, Infinity, Infinity];
 const PROMPT_BUDGET_CHARS = [2000 * 4, 4000 * 4, 8000 * 4, Infinity, Infinity];
 const KNOWLEDGE_DIGEST_CHARS = [0, 0, 2000 * 4, 8000 * 4, 8000 * 4];
+
+/**
+ * The effort a tier runs at under the user's ceiling (§3.4): the top level (D4) uses the ceiling itself
+ * — so raising it to max/ultra is how the strongest runs get deeper reasoning — and every other level is
+ * lowered to the ceiling when it would exceed it. Used by route() and escalation.decideNext().
+ */
+export function applyEffortCap(effort: string | null, level: number, engine: Engine, cap: string): string | null {
+  if (!effort) return effort;
+  const ladder = EFFORT_LADDER[engine];
+  const capIndex = ladder.indexOf(cap);
+  if (capIndex < 0) return effort;
+  if (level >= 4) return cap;
+  const index = ladder.indexOf(effort);
+  return index > capIndex ? cap : effort;
+}
 
 function clampDepth(d: number) { return Math.max(0, Math.min(4, Math.round(d))); }
 
@@ -231,6 +246,9 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     const tp = store.tierPolicy(agent.domain, depth, engine);
     if (tp?.model) { tier.model = tp.model; tier.effort = tp.effort ?? tier.effort; reason.push(`tier_policy override ${tp.model}/${tp.effort}`); }
     if (agent.model && depth <= 2) { /* agent-pinned model only wins at shallow depth; deeper tasks follow the tier */ tier.model = agent.model; reason.push(`agent pins model ${agent.model}`); }
+    // the user's effort ceiling: the top tier runs at the ceiling, no tier goes above it
+    const capped = applyEffortCap(tier.effort, tp?.level ?? depth, engine, store.effortCap(userId)[engine]);
+    if (capped !== tier.effort) { reason.push(`effort ${tier.effort} → ${capped} (ceiling ${store.effortCap(userId)[engine]})`); tier.effort = capped; }
   }
   if (input.model) { tier.model = input.model; reason.push(`user model ${input.model}`); }
   if (input.effort) { tier.effort = input.effort; reason.push(`user effort ${input.effort}`); }

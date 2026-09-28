@@ -63,5 +63,28 @@ next = await decideNext(store, laya('escalate_tier'), third, both);
 assert.equal(next.chain, 2); assert.equal(next.action, 'ask_user');
 console.log('PASS chain of 2 escalations → ask_user');
 
+// effort ceiling: at the top tier the effort climbs one step per attempt until the ceiling, then the other engine
+const { applyEffortCap } = await import('../dist/routing.js');
+assert.equal(applyEffortCap('xhigh', 4, 'claude', 'max'), 'max');
+assert.equal(applyEffortCap('xhigh', 4, 'codex', 'ultra'), 'ultra');
+assert.equal(applyEffortCap('high', 3, 'claude', 'max'), 'high');
+assert.equal(applyEffortCap('high', 3, 'claude', 'medium'), 'medium');
+assert.equal(applyEffortCap('xhigh', 4, 'codex', 'high'), 'high');
+console.log('PASS applyEffortCap: top tier = ceiling, others clamped');
+store.setEffortCap(uid, { claude: 'max', codex: 'ultra' });
+const top = run('claude', 4);   // runs at D4 claude best/xhigh
+next = await decideNext(store, laya('escalate_tier'), top, both);
+assert.equal(next.action, 'escalate_tier'); assert.equal(next.model, 'best'); assert.equal(next.effort, 'max'); assert.equal(next.depth, 4);
+console.log('PASS D4 xhigh with ceiling max → same model at max:', next.reason);
+store.db.prepare("UPDATE runs SET effort='max' WHERE id=?").run(top.id);
+next = await decideNext(store, laya('escalate_tier'), store.run(uid, top.id), both);
+assert.equal(next.action, 'switch_engine'); assert.equal(next.engine, 'codex'); assert.equal(next.effort, 'ultra');
+console.log('PASS at the ceiling → other engine at its ceiling:', next.model, next.effort);
+next = await decideNext(store, laya('escalate_tier'), run('claude', 3), both);
+assert.equal(next.depth, 4); assert.equal(next.effort, 'max');
+console.log('PASS D3 → D4 plan uses the ceiling:', next.model, next.effort);
+assert.throws(() => store.setEffortCap(uid, { claude: 'ultra' }), /claude effort must be/);
+console.log('PASS invalid ceiling rejected (claude has no ultra)');
+
 fs.rmSync(dir, { recursive: true, force: true });
 console.log('escalation: all checks passed');
