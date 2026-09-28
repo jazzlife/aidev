@@ -89,7 +89,7 @@ export function AgentCatalog() {
                 {agent.verified ? <CheckCircle2 size={12} className="text-emerald-600" /> : null}
               </div>
               <div className="mt-0.5 line-clamp-2 text-muted-foreground">{agent.hint ? <span className="text-foreground/70">[{agent.hint}] </span> : null}{agent.description}</div>
-              <div className="mt-0.5 text-[10px] text-muted-foreground">{agent.domain} · 사용 {agent.uses}회</div>
+              <div className="mt-0.5 text-[10px] text-muted-foreground">{agent.domain} · 사용 {agent.uses}회{agent.minTier ? ` · D${agent.minTier} 이상` : ''}</div>
             </button>
           ))}
         </div>
@@ -126,7 +126,18 @@ export function AgentCatalog() {
             <div>
               <div className="text-muted-foreground">{agent!.hint ? `[${agent!.hint}] ` : ''}{agent!.description}</div>
               <pre className="mt-2 max-h-56 overflow-auto whitespace-pre-wrap rounded bg-muted/40 p-2 font-mono text-[11px]">{agent!.prompt}</pre>
-              <button type="button" onClick={() => setEditing({ prompt: agent!.prompt, description: agent!.description, hint: agent!.hint ?? '', changelog: '' })} className="mt-1 h-7 rounded border border-border px-2">편집 (새 버전)</button>
+              <div className="mt-1 flex flex-wrap items-center gap-2">
+                <button type="button" onClick={() => setEditing({ prompt: agent!.prompt, description: agent!.description, hint: agent!.hint ?? '', changelog: '' })} className="h-7 rounded border border-border px-2">편집 (새 버전)</button>
+                {agent!.domain !== 'meta' ? (
+                  <label className="inline-flex items-center gap-1 text-muted-foreground" title="명령이 짧아 보여도 이 agent는 이 깊이(모델 등급) 이상으로 실행합니다.">
+                    최소 등급
+                    <select aria-label="최소 등급" value={agent!.minTier ?? ''} onChange={(event) => { const value = event.target.value === '' ? null : Number(event.target.value); void aidevApi.updateAgent(agent!.id, { min_tier: value }).then(() => loadDetail(agent!.id)).catch((err: Error) => setError(err.message)); }} className="h-7 rounded border border-border bg-background px-1 text-foreground">
+                      <option value="">없음</option>
+                      {[1, 2, 3, 4].map((level) => <option key={level} value={level}>D{level} 이상</option>)}
+                    </select>
+                  </label>
+                ) : null}
+              </div>
             </div>
           )}
           <section>

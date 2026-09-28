@@ -34,7 +34,7 @@ import TokenUsageSummary from '@/modules/chat/composer/TokenUsageSummary';
 import QueuedMessageCard from '@/modules/chat/composer/QueuedMessageCard';
 import { ScheduleMessagePopover } from '@/modules/chat/composer/ScheduleMessagePopover';
 import { ScheduledMessageList } from '@/modules/chat/composer/ScheduledMessageList';
-import ComposerModelMenu from '@/modules/chat/composer/ComposerModelMenu';
+import ComposerModelMenu, { type ComposerModelRouting } from '@/modules/chat/composer/ComposerModelMenu';
 import ComposerPermissionMenu from '@/modules/chat/composer/ComposerPermissionMenu';
 
 type MentionableFile = {
@@ -62,6 +62,8 @@ type ChatComposerProps = {
   model: string;
   availableModelOptions: ProviderModelOption[];
   onSelectModel: (model: string) => void;
+  /** Nado AI Dev routing: what the router will use, shown instead of the provider default (null = routing off). */
+  modelRouting?: ComposerModelRouting | null;
   modelsLoading: boolean;
   tokenBudget: Record<string, unknown> | null;
   onShowTokenUsage: () => void;
@@ -137,6 +139,7 @@ export default function ChatComposer({
   model,
   availableModelOptions,
   onSelectModel,
+  modelRouting = null,
   modelsLoading,
   tokenBudget,
   onShowTokenUsage,
@@ -486,6 +489,7 @@ export default function ChatComposer({
               modelOptions={availableModelOptions}
               onSelectModel={onSelectModel}
               modelsLoading={modelsLoading}
+              routing={modelRouting}
             />
 
             <ComposerPermissionMenu

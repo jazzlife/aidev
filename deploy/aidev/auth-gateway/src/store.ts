@@ -88,17 +88,19 @@ export function openStore(filename: string) {
       return added;
     },
     /** Insert every seed agent whose name is not yet a global agent (existing rows are never overwritten). */
-    seedAgents(seed: Array<{ name: string; domain: string; description: string; hint?: string; prompt: string; tools?: string[]; model?: string; maxTurns?: number; skills?: string[] }>) {
+    seedAgents(seed: Array<{ name: string; domain: string; description: string; hint?: string; prompt: string; tools?: string[]; model?: string; maxTurns?: number; skills?: string[]; minTier?: number }>) {
       let added = 0;
       db.transaction(() => {
         for (const a of seed) {
-          const existing = db.prepare('SELECT id, hint FROM agents WHERE name=? AND owner_id IS NULL').get(a.name) as { id: number; hint: string | null } | undefined;
+          const existing = db.prepare('SELECT id, hint, min_tier FROM agents WHERE name=? AND owner_id IS NULL').get(a.name) as { id: number; hint: string | null; min_tier: number | null } | undefined;
           if (existing) {
-            // seeds may gain a routing hint after the row was created (migration from older releases)
+            // seeds may gain a routing hint / tier floor after the row was created (migration from older releases)
             if (!existing.hint && a.hint) db.prepare('UPDATE agents SET hint=? WHERE id=?').run(a.hint, existing.id);
+            if (existing.min_tier === null && a.minTier !== undefined) db.prepare('UPDATE agents SET min_tier=? WHERE id=?').run(a.minTier, existing.id);
             continue;
           }
-          this.addAgent({ ...a, ownerId: null, source: 'seed' }); added++;
+          const id = this.addAgent({ ...a, ownerId: null, source: 'seed' }); added++;
+          if (a.minTier !== undefined) db.prepare('UPDATE agents SET min_tier=? WHERE id=?').run(a.minTier, id);
         }
       })();
       return added;

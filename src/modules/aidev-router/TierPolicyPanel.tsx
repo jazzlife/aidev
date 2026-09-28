@@ -37,7 +37,11 @@ export function TierPolicyPanel() {
       </button>
       {open ? (
         <div className="mt-1.5 space-y-2">
-          <div className="text-[11px] text-muted-foreground">실행 결과로 분야×깊이×엔진마다 모델 등급을 조정합니다: 성공률 60% 미만(5회 이상) 상향, 90% 이상(10회 이상) 한 단계 하향, 하향 후 75% 미만이면 복귀. 매일 1회.</div>
+          <div className="text-[11px] text-muted-foreground">실행 결과로 분야×깊이×엔진마다 모델 등급을 조정합니다(매일 1회): 성공률 60% 미만(5회 이상)이면 상향. 하향은 켰을 때만 — 성공률 90% 이상(10회 이상)·👍 절반 이상·재요청 없음이면 한 단계, 하향 후 75% 미만이면 복귀.</div>
+          <label className="flex items-center gap-2" title="품질 우선 기본값은 꺼짐: 등급은 올라가기만 합니다.">
+            <input type="checkbox" checked={Boolean(view?.downgrade)} disabled={!view} onChange={(event) => { const on = event.target.checked; void act(() => aidevApi.setTierPolicySettings({ downgrade: on }), on ? '하향을 켰습니다' : '하향을 껐습니다 (품질 우선)'); }} />
+            <span>잘 되는 칸은 비용 절감을 위해 한 단계 하향 허용</span>
+          </label>
           <div className="flex gap-1.5">
             <button type="button" onClick={() => { void act(async () => { const result = await aidevApi.runTierPolicy(); setNote(`등급 ${result.cells}칸·변경 ${result.changes.length}건, 엔진 가중치 변경 ${result.weights?.changes.length ?? 0}건`); }); }} className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 hover:bg-accent"><RefreshCw size={11} /> 지금 집계</button>
           </div>

@@ -25,7 +25,11 @@ type ComposerModelMenuProps = {
   modelOptions: ProviderModelOption[];
   onSelectModel: (model: string) => void;
   modelsLoading: boolean;
+  /** When the router chooses model/effort per command: its label replaces the provider model, plus a reset to 자동. */
+  routing?: ComposerModelRouting | null;
 };
+
+export type ComposerModelRouting = { label: string; detail: string; pinned: boolean; onReset: () => void };
 
 /**
  * Rendered by chat's ChatComposer as the popover for choosing the active
@@ -39,6 +43,7 @@ function ComposerModelMenu({
   modelOptions,
   onSelectModel,
   modelsLoading,
+  routing = null,
 }: ComposerModelMenuProps) {
   const { t } = useTranslation('chat');
   const [isOpen, setIsOpen] = useState(false);
@@ -73,7 +78,7 @@ function ComposerModelMenu({
     return null;
   }
 
-  const triggerLabel = hasModelSection ? modelLabel : effortLabel;
+  const triggerLabel = routing ? routing.label : (hasModelSection ? modelLabel : effortLabel);
   const ariaLabel = t('composer.modelMenu', {
     defaultValue: 'Select model and reasoning effort',
   });
@@ -94,13 +99,27 @@ function ComposerModelMenu({
         title={ariaLabel}
       >
         <span className="truncate">{triggerLabel}</span>
-        {hasModelSection && hasEffortSection && effort !== DEFAULT_EFFORT_VALUE && (
+        {!routing && hasModelSection && hasEffortSection && effort !== DEFAULT_EFFORT_VALUE && (
           <span className="hidden shrink-0 capitalize text-muted-foreground sm:inline">· {effortLabel}</span>
         )}
       </button>
 
       {isOpen && anchor && createPortal(
         <ComposerMenuSurface anchor={anchor} menuRef={menuRef} ariaLabel={ariaLabel}>
+          {routing && (
+            <>
+              <ComposerMenuItem
+                label="자동 (라우터가 선택)"
+                description={routing.detail}
+                isSelected={!routing.pinned}
+                onSelect={() => {
+                  routing.onReset();
+                  setIsOpen(false);
+                }}
+              />
+              <ComposerMenuSeparator />
+            </>
+          )}
           {hasEffortSection && (
             <>
               <ComposerMenuHeading>
@@ -127,7 +146,7 @@ function ComposerModelMenu({
               {hasEffortSection && <ComposerMenuSeparator />}
               <ComposerMenuItem
                 role="menuitem"
-                label={modelLabel}
+                label={routing ? (model ? modelLabel : '모델 고정…') : modelLabel}
                 isSelected={false}
                 onSelect={() => setIsModelSectionOpen((current) => !current)}
                 trailing={

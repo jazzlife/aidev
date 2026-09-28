@@ -65,6 +65,20 @@ export function applyEffortCap(effort: string | null, level: number, engine: Eng
   return index > capIndex ? cap : effort;
 }
 
+/** Minimum depth per task kind: debugging, refactoring and design need a reasoning model even when the command is short. */
+export const KIND_MIN_DEPTH: Record<string, number> = { debug: 2, refactor: 2, design: 2, implement: 1, ops: 1, bulk_read: 1, explain: 0 };
+const DEPTH_ROUND_UP = 0.65;   // floor(x + 0.65): fractional part ≥ .35 rounds up
+const FALLBACK_DEPTH = 2;      // Laya unavailable: assume real work rather than a lookup
+
+/** Strength of a model on its engine's ladder (TIER_TABLE level of its first appearance; aliases included). */
+export function modelRank(engine: Engine, model: string | null): number {
+  if (!model) return -1;
+  const aliases: Record<string, string> = { fable: 'best', 'opus[1m]': 'opus', 'sonnet[1m]': 'sonnet' };
+  const name = aliases[model] ?? model;
+  for (let level = 0; level <= 4; level++) if (TIER_TABLE[level][engine].model === name) return level;
+  return 2;   // unknown model: treat as mid-tier
+}
+
 function clampDepth(d: number) { return Math.max(0, Math.min(4, Math.round(d))); }
 
 /**
@@ -184,12 +198,15 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     // Laya down: the lexical prior alone still routes (agent only); scope falls back to D1/implement.
     if (Object.keys(nbProbs).length) { agentTop = topChoice({ probabilities: nbProbs }); probabilities = { agent: nbProbs, agent_nb: nbProbs }; }
     if (Object.keys(kindProbs).length) { const tk = topChoice({ probabilities: kindProbs }); taskKind = tk.choice ?? 'implement'; taskKindP = tk.probability; probabilities.task_kind = kindProbs; }
-    reason.push(`Laya unavailable (${layaError}); lexical prior only, depth D1`);
+    depthRaw = FALLBACK_DEPTH;
+    reason.push(`Laya unavailable (${layaError}); lexical prior only, depth D${FALLBACK_DEPTH}`);
   }
   if (!fallback && remoteActionP < 0.6) remoteAction = 'none';
 
   // ---- agent decision (§0 expertise↔speed) ------------------------------------------------
-  const depth = clampDepth(depthRaw + (risk >= 1.5 ? 1 : 0));
+  // Quality first (§3.4): an in-between depth score rounds up from .35, not .5 — a too-weak model costs
+  // a failed run, a slightly stronger one only some usage.
+  const scoredDepth = clampDepth(Math.floor(depthRaw + (risk >= 1.5 ? 1 : 0) + DEPTH_ROUND_UP));
   if (risk >= 1.5) reason.push(`risk ${risk.toFixed(1)} → depth +1`);
   let agentName = agentTop.choice && catalog[agentTop.choice] ? agentTop.choice : 'generalist';
   let decision: 'use' | 'generalist' | 'create' | 'create_background' = 'use';
@@ -197,18 +214,23 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   else if (fallback) { reason.push(`lexical prior ${agentName} ${(agentTop.probability * 100).toFixed(0)}%`); }
   else if (needsNew >= 0.5 && agentTop.probability < 0.7 && nbTop.probability < 0.6) {
     // Laya's needs_new is noisy; a confident lexical match ("react로 todo 앱" → frontend-react) vetoes creation.
-    decision = depth >= 2 ? 'create' : 'create_background';
+    decision = scoredDepth >= 2 ? 'create' : 'create_background';
     agentName = 'generalist';
     reason.push(`no fitting agent (needs_new ${needsNew.toFixed(2)}, best ${agentTop.choice} ${agentTop.probability.toFixed(2)}) → ${decision}`);
   } else if (agentTop.probability < 0.5) {
-    if (depth <= 1) { decision = 'generalist'; agentName = 'generalist'; reason.push(`ambiguous agent (${agentTop.probability.toFixed(2)}) and shallow → generalist fast path`); }
+    if (scoredDepth <= 1) { decision = 'generalist'; agentName = 'generalist'; reason.push(`ambiguous agent (${agentTop.probability.toFixed(2)}) and shallow → generalist fast path`); }
     else reason.push(`ambiguous agent (${agentTop.probability.toFixed(2)}); using best match, LLM review suggested`);
   } else reason.push(`agent ${agentName} ${(agentTop.probability * 100).toFixed(0)}%`);
   if (input.forceAgent && store.agent(userId, input.forceAgent)) { agentName = input.forceAgent; decision = 'use'; reason.push(`user override → ${agentName}`); }
   const needsLlmAnalysis = !fallback && (agentTop.probability < 0.5 || depthRaw >= 2.5 || multiDomain > 0.6);
-  const askClarify = !fallback && clarify > 0.7 && depth >= 2;
+  const askClarify = !fallback && clarify > 0.7 && scoredDepth >= 2;
   const agent = store.agent(userId, agentName) ?? store.agent(userId, 'generalist') ?? all[0];
   if (!agent) throw new Error('Agent catalog is empty');
+  // floors: the kind of work and the specialist itself set a minimum depth (model tier, lessons, knowledge)
+  const kindFloor = KIND_MIN_DEPTH[taskKind] ?? 0;
+  const agentFloor = agent.name === 'generalist' ? 0 : (agent.min_tier ?? 0);
+  const depth = Math.max(scoredDepth, kindFloor, agentFloor);
+  if (depth > scoredDepth) reason.push(`depth D${scoredDepth} → D${depth} (${[kindFloor > scoredDepth ? `${taskKind} ≥ D${kindFloor}` : null, agentFloor > scoredDepth ? `${agent.name} ≥ D${agentFloor}` : null].filter(Boolean).join(', ')})`);
 
   // ---- engine (§3.4) ------------------------------------------------------------------------
   const weights = store.engineWeights();
@@ -245,7 +267,9 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   if (engine) {
     const tp = store.tierPolicy(agent.domain, depth, engine);
     if (tp?.model) { tier.model = tp.model; tier.effort = tp.effort ?? tier.effort; reason.push(`tier_policy override ${tp.model}/${tp.effort}`); }
-    if (agent.model && depth <= 2) { /* agent-pinned model only wins at shallow depth; deeper tasks follow the tier */ tier.model = agent.model; reason.push(`agent pins model ${agent.model}`); }
+    // an agent-pinned model applies only when it is at least as strong as the tier's (it never weakens a run)
+    if (agent.model && modelRank(engine, agent.model) >= modelRank(engine, tier.model)) { if (agent.model !== tier.model) reason.push(`agent pins model ${agent.model}`); tier.model = agent.model; }
+    else if (agent.model) reason.push(`agent model ${agent.model} ignored (weaker than ${tier.model})`);
     // the user's effort ceiling: the top tier runs at the ceiling, no tier goes above it
     const capped = applyEffortCap(tier.effort, tp?.level ?? depth, engine, store.effortCap(userId)[engine]);
     if (capped !== tier.effort) { reason.push(`effort ${tier.effort} → ${capped} (ceiling ${store.effortCap(userId)[engine]})`); tier.effort = capped; }

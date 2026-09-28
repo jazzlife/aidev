@@ -5,7 +5,7 @@ import { EFFORT_LADDER, ENGINES, type Engine } from './store-aidev.js';
 import type { LayaClient } from './laya.js';
 import type { Push } from './push.js';
 import { applyLessonOutcome, promote } from './lesson-loop.js';
-import { runTierPolicy, setTierPolicy } from './tier-policy.js';
+import { downgradeEnabled, runTierPolicy, setTierPolicy } from './tier-policy.js';
 import { runEngineWeights } from './engine-weights.js';
 import { createKnowledgeRefresher, decideProposal } from './knowledge-refresh.js';
 import { decideNext, type NextAction } from './escalation.js';
@@ -104,7 +104,7 @@ export function createAidevApi(deps: AidevDeps) {
     if (write && a.owner_id === null && store.accountEngines(session.user.id).role !== 'admin') throw new HttpError(403, 'Global agents are edited by administrators; create a private copy instead');
     return a;
   }
-  const agentView = (a: ReturnType<Store['agentById']> & object) => ({ id: a.id, name: a.name, domain: a.domain, description: a.description, hint: a.hint, verified: Boolean(a.verified), prompt: a.prompt, tools: a.tools ? JSON.parse(a.tools) : null, model: a.model, maxTurns: a.max_turns, skills: a.skills ? JSON.parse(a.skills) : null, mcpServers: a.mcp_servers ? JSON.parse(a.mcp_servers) : null, ownerId: a.owner_id, source: a.source, active: Boolean(a.active), uses: a.uses, version: a.version, createdAt: a.created_at, updatedAt: a.updated_at });
+  const agentView = (a: ReturnType<Store['agentById']> & object) => ({ id: a.id, name: a.name, domain: a.domain, description: a.description, hint: a.hint, verified: Boolean(a.verified), prompt: a.prompt, tools: a.tools ? JSON.parse(a.tools) : null, model: a.model, maxTurns: a.max_turns, skills: a.skills ? JSON.parse(a.skills) : null, mcpServers: a.mcp_servers ? JSON.parse(a.mcp_servers) : null, ownerId: a.owner_id, source: a.source, active: Boolean(a.active), uses: a.uses, version: a.version, minTier: a.min_tier ?? null, createdAt: a.created_at, updatedAt: a.updated_at });
 
   /** Returns true when the request was handled. */
   async function handle(req: IncomingMessage, res: ServerResponse, url: URL, session: Session | null): Promise<boolean> {
@@ -231,6 +231,7 @@ export function createAidevApi(deps: AidevDeps) {
         const id = store.addAgent({ name: str(b.name, 'name', 41), domain: optStr(b.domain, 40) ?? '', description: str(b.description, 'description', 600), hint: optStr(b.hint, 60) ?? null, prompt: str(b.prompt, 'prompt'), tools: Array.isArray(b.tools) ? (b.tools as unknown[]).map(String) : null,
           model: optStr(b.model, 100) ?? null, maxTurns: b.maxTurns === undefined ? null : num(b.maxTurns, 'maxTurns'), skills: Array.isArray(b.skills) ? (b.skills as unknown[]).map(String) : null, mcpServers: b.mcpServers && typeof b.mcpServers === 'object' ? b.mcpServers as Record<string, unknown> : null,
           ownerId: b.global === true ? (requireAdmin(session), null) : uid, source: optStr(b.source, 20) ?? 'user' });
+        if (b.min_tier !== undefined && b.min_tier !== null) store.setAgentMinTier(id, num(b.min_tier, 'min_tier'));
         if (Array.isArray(b.examples)) store.addExamples(id, (b.examples as unknown[]).filter((e): e is string => typeof e === 'string').slice(0, 200).map((text) => ({ text, source: 'generated' })));
         if (Array.isArray(b.knowledge)) for (const k of b.knowledge as Array<Record<string, unknown>>) {
           if (typeof k?.title === 'string' && typeof k?.body === 'string') store.addKnowledge({ agentId: id, title: k.title, body: k.body, sourceUrl: optStr(k.source_url, 2000) ?? null, sourceDate: optStr(k.source_date, 40) ?? null, ownerId: uid });
@@ -256,10 +257,13 @@ export function createAidevApi(deps: AidevDeps) {
         if (!agentMatch[2] && m === 'PUT') {
           ownAgent(session, id, true);
           const b = await readJson(req);
-          const version = store.newAgentVersion(id, { prompt: optStr(b.prompt), description: optStr(b.description, 600), domain: optStr(b.domain, 40), tools: b.tools === undefined ? undefined : (Array.isArray(b.tools) ? (b.tools as unknown[]).map(String) : null), model: b.model === undefined ? undefined : (optStr(b.model, 100) ?? null),
+          // only definition changes make a new version; flags (active, hint, verified, min_tier) do not
+          const versioned = ['prompt', 'description', 'domain', 'tools', 'model', 'skills', 'mcpServers', 'maxTurns'].some((key) => b[key] !== undefined);
+          const version = !versioned ? store.agentById(id)!.version : store.newAgentVersion(id, { prompt: optStr(b.prompt), description: optStr(b.description, 600), domain: optStr(b.domain, 40), tools: b.tools === undefined ? undefined : (Array.isArray(b.tools) ? (b.tools as unknown[]).map(String) : null), model: b.model === undefined ? undefined : (optStr(b.model, 100) ?? null),
             skills: b.skills === undefined ? undefined : (Array.isArray(b.skills) ? (b.skills as unknown[]).map(String) : null), mcpServers: b.mcpServers === undefined ? undefined : (b.mcpServers && typeof b.mcpServers === 'object' ? b.mcpServers as Record<string, unknown> : null), maxTurns: b.maxTurns === undefined ? undefined : (b.maxTurns === null ? null : num(b.maxTurns, 'maxTurns')) }, optStr(b.changelog, 2000) ?? 'edited');
           if (typeof b.active === 'boolean' || b.hint !== undefined) store.updateAgent(id, { ...(typeof b.active === 'boolean' ? { active: b.active ? 1 : 0 } : {}), ...(b.hint !== undefined ? { hint: optStr(b.hint, 60) ?? null } : {}) });
           if (typeof b.verified === 'boolean') store.setAgentVerified(id, b.verified);
+          if (b.min_tier !== undefined) { try { store.setAgentMinTier(id, b.min_tier === null ? null : num(b.min_tier, 'min_tier')); } catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid min_tier'); } }
           return json(res, 200, { agent: agentView(store.agentById(id)!), version }), true;
         }
         if (!agentMatch[2] && m === 'DELETE') { ownAgent(session, id, true); store.updateAgent(id, { active: 0 }); return json(res, 200, { ok: true }), true; }
@@ -417,7 +421,13 @@ export function createAidevApi(deps: AidevDeps) {
       // E-05: learned tier per (domain, depth, engine) + change log; run now / pin / reset (admin)
       if (rest === '/tier-policy' && m === 'GET') {
         requireAdmin(session);
-        return json(res, 200, { cells: store.tierPolicyRows(), log: store.tierPolicyLog(50), last_run: Number(store.kvGet('tier_policy_at') ?? 0) || null, table: TIER_TABLE }), true;
+        return json(res, 200, { cells: store.tierPolicyRows(), log: store.tierPolicyLog(50), last_run: Number(store.kvGet('tier_policy_at') ?? 0) || null, table: TIER_TABLE, downgrade: downgradeEnabled(store) }), true;
+      }
+      if (rest === '/tier-policy/settings' && m === 'PUT') {
+        requireAdmin(session);
+        const b = await readJson(req);
+        if (typeof b.downgrade === 'boolean') { store.kvSet('tier_policy_downgrade', b.downgrade ? 'on' : 'off'); console.log(`[aidev] tier policy downgrades ${b.downgrade ? 'on' : 'off'} (${session.user.username})`); }
+        return json(res, 200, { downgrade: downgradeEnabled(store) }), true;
       }
       if (rest === '/tier-policy/run' && m === 'POST') { requireAdmin(session); const tiers = runTierPolicy(store, { actor: session.user.username }); return json(res, 200, { ...tiers, weights: runEngineWeights(store, { actor: session.user.username }) }), true; }
       if (rest === '/tier-policy' && m === 'PUT') {

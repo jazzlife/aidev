@@ -92,6 +92,8 @@ export type CatalogAgent = {
   active: boolean;
   uses: number;
   version: number;
+  /** lowest depth (D0-D4) this specialist runs at; null = no floor */
+  minTier?: number | null;
   createdAt: number;
   updatedAt: number;
 };
@@ -177,7 +179,7 @@ export type KnowledgeRefreshJob = { running: boolean; total: number; done: numbe
 /** One learned tier cell (agent domain × depth × engine) and the change log (E-05). */
 export type TierPolicyCell = { domain: string; depth: number; engine: Engine; model: string | null; effort: string | null; success_n: number; fail_n: number; avg_ms: number | null; level: number | null; pinned: number; updated_at: number | null };
 export type EngineWeightRow = { task_kind: string; engine: Engine; weight: number; prior: number | null; pinned: number; success_n: number; fail_n: number; avg_ms: number | null; updated_at: number | null };
-export type TierPolicyView = { cells: TierPolicyCell[]; log: Array<{ id: number; at: number; domain: string; depth: number; engine: string; from_model: string; to_model: string; reason: string; actor: string }>; last_run: number | null; table: Record<number, Record<Engine, { model: string; effort: string }>> };
+export type TierPolicyView = { downgrade?: boolean; cells: TierPolicyCell[]; log: Array<{ id: number; at: number; domain: string; depth: number; engine: string; from_model: string; to_model: string; reason: string; actor: string }>; last_run: number | null; table: Record<number, Record<Engine, { model: string; effort: string }>> };
 
 /** Platform-managed Claude subscription login state (runtime `/api/aidev-tools/claude-login`). */
 export type ClaudeLoginStatus = { token: { issuedAt: number; expiresAt: number } | null; failure: { at: number; message: string } | null };
@@ -216,6 +218,7 @@ export const aidevApi = {
   decideKnowledge: (id: number, accept: boolean) => post(`/api/aidev/knowledge/${id}/decide`, { accept }).then((response) => readJson<{ accepted: number | null; superseded: number | null }>(response)),
   // E-05 learned tier policy (administrators)
   tierPolicy: () => authenticatedFetch('/api/aidev/tier-policy').then((response) => readJson<TierPolicyView>(response)),
+  setTierPolicySettings: (settings: { downgrade: boolean }) => post('/api/aidev/tier-policy/settings', settings, 'PUT').then((response) => readJson<{ downgrade: boolean }>(response)),
   runTierPolicy: () => post('/api/aidev/tier-policy/run', {}).then((response) => readJson<{ cells: number; changes: Array<{ domain: string; depth: number; engine: string; fromModel: string; toModel: string; reason: string }>; weights?: { kinds: number; changes: unknown[] } }>(response)),
   engineWeights: () => authenticatedFetch('/api/aidev/engines/weights').then((response) => readJson<{ rows: EngineWeightRow[]; log: Array<{ id: number; at: number; task_kind: string; engine: string; from_weight: number | null; to_weight: number; reason: string; actor: string }> }>(response)),
   setEngineWeight: (row: { task_kind: string; engine: Engine; weight: number; pinned?: boolean }) => post('/api/aidev/engines/weights', row, 'PUT').then((response) => readJson<{ rows: EngineWeightRow[] }>(response)),

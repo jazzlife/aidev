@@ -23,11 +23,26 @@ const runs = (agent, engine, depth, level, outcomes) => {
   for (const outcome of outcomes) {
     clock += 1000;
     const id = store.addRun({ userId: uid, agentId: agent.id, engine, model: tier.model, effort: tier.effort, depth });
-    store.db.prepare('UPDATE runs SET started_at=?, finished_at=?, outcome=? WHERE id=?').run(clock, clock + 30_000, outcome, id);
+    // successes carry a 👍 (downgrades need positive quality evidence)
+    store.db.prepare('UPDATE runs SET started_at=?, finished_at=?, outcome=?, user_feedback=? WHERE id=?').run(clock, clock + 30_000, outcome, outcome === 'success' ? 'up' : null, id);
   }
 };
 const pass = () => { clock += 60_000; const r = runTierPolicy(store, { now: clock }); clock += 60_000; return r; };
 const S = (n) => Array(n).fill('success'); const F = (n) => Array(n).fill('fail');
+
+// 0) quality first: downgrades are off by default — a perfect cell stays on the table
+const { downgradeEnabled } = await import('../dist/tier-policy.js');
+assert.equal(downgradeEnabled(store), false);
+runs(db, 'codex', 3, 3, S(12));
+pass();
+assert.equal(store.tierPolicyRow(db.domain, 3, 'codex').level, null);
+console.log('PASS downgrades off by default: 12/12 at D3 stays on the table');
+// without 👍 a clean record is not enough either
+store.kvSet('tier_policy_downgrade', 'on');
+for (let i = 0; i < 12; i++) { clock += 1000; const id = store.addRun({ userId: uid, agentId: db.id, engine: 'claude', model: TIER_TABLE[2].claude.model, effort: TIER_TABLE[2].claude.effort, depth: 2 }); store.db.prepare("UPDATE runs SET started_at=?, finished_at=?, outcome='success' WHERE id=?").run(clock, clock + 1000, id); }
+pass();
+assert.equal(store.tierPolicyRow(db.domain, 2, 'claude').level, null);
+console.log('PASS downgrade needs 👍 on at least half of the runs');
 
 // 1) frontend D1 claude fails often → up to D2
 runs(react, 'claude', 1, 1, [...S(2), ...F(4)]);

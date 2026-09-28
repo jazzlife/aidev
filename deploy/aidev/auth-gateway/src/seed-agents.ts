@@ -5,7 +5,8 @@
  * Meta agents (agent-architect, lesson-curator, knowledge-refresher) are never routing targets:
  * they are marked with domain 'meta' and excluded from the catalog sent to Laya.
  */
-export type SeedAgent = { name: string; domain: string; description: string; hint: string; prompt: string; tools?: string[]; model?: string; maxTurns?: number; skills?: string[] };
+/** `minTier`: lowest depth (D0-D4) the specialist runs at, whatever the command looks like (§3.4 floors). */
+export type SeedAgent = { name: string; domain: string; description: string; hint: string; prompt: string; tools?: string[]; model?: string; maxTurns?: number; skills?: string[]; minTier?: number };
 
 /**
  * `hint` is what Laya actually reads when choosing among agents. The model renders every option as
@@ -52,7 +53,7 @@ export const seedAgents: SeedAgent[] = [
 - 변경 후 tsc와 테스트를 실행하고, 엔드포인트는 curl 예시로 실제 호출해 본다.${common}`,
   },
   {
-    name: 'database', domain: 'database', hint: 'SQL schema queries migrations',
+    name: 'database', domain: 'database', hint: 'SQL schema queries migrations', minTier: 2,
     description: 'SQL and schema work: SQLite, PostgreSQL, migrations, indexes, query optimization, transactions, data modeling, FTS. 데이터베이스 스키마 설계, 마이그레이션, 인덱스, 쿼리 최적화, SQL 튜닝, 트랜잭션.',
     prompt: `당신은 관계형 데이터베이스 전문가다(SQLite, PostgreSQL 중심). 정규화와 의도적 비정규화, 인덱스 설계, 실행 계획 읽기(EXPLAIN QUERY PLAN / EXPLAIN ANALYZE), 트랜잭션 격리, 마이그레이션 안전성(무중단, 되돌리기), 전문 검색(FTS5/pgvector)에 능숙하다.
 ## 작업 방식
@@ -62,7 +63,7 @@ export const seedAgents: SeedAgent[] = [
 - SQLite에서는 WAL, busy_timeout, 단일 쓰기 주체 원칙을 지킨다.${common}`,
   },
   {
-    name: 'devops', domain: 'devops', hint: 'Docker servers deploy nginx scripts',
+    name: 'devops', domain: 'devops', hint: 'Docker servers deploy nginx scripts', minTier: 2,
     description: 'Docker, docker compose, Linux servers, nginx / reverse proxy, TLS, systemd, shell scripts, deployment and release automation, monitoring. 도커, 컴포즈, 리눅스 서버 운영, 배포 자동화, 리버스 프록시, 인증서, 쉘 스크립트, 로그.',
     prompt: `당신은 Linux/Docker 기반 배포·운영 전문가다. docker compose, 이미지 최적화, 볼륨과 네트워크, 리버스 프록시(nginx/NPM), TLS, systemd, cron, 로그 수집, 무중단·원자적 배포, 롤백 설계에 능숙하다.
 ## 작업 방식
@@ -118,7 +119,7 @@ export const seedAgents: SeedAgent[] = [
 - 접근성(대비, 포커스, 확대)을 함께 검사한다.${common}`,
   },
   {
-    name: 'security-review', domain: 'security', hint: 'security review vulnerabilities',
+    name: 'security-review', domain: 'security', hint: 'security review vulnerabilities', minTier: 3,
     description: 'Security review and hardening: auth, sessions, secrets, injection, path traversal, CSRF, headers, dependency vulnerabilities, container isolation. 보안 점검, 인증 취약점, 인젝션, 시크릿 관리, 권한, 보안 헤더, 의존성 취약점.',
     prompt: `당신은 애플리케이션 보안 리뷰어다. 인증·세션·토큰 처리, 입력 검증과 인젝션(SQL, 명령, 경로), CSRF/CORS, 보안 헤더, 시크릿 노출, 의존성 취약점, 컨테이너 격리(소켓, 권한, 네트워크)를 코드 수준에서 찾아내고 최소 변경으로 고친다.
 ## 작업 방식

@@ -26,7 +26,7 @@ import {
 } from '@/shared/context/SessionProtectionContext';
 import ChatMessagesPane from '@/modules/chat/transcript/ChatMessagesPane';
 import ChatComposer from '@/modules/chat/composer/ChatComposer';
-import { AgentCreateCard, AidevRouterBar, EscalationCard, useAgentCreation, useAidevRouting, useEscalation } from '@/modules/aidev-router';
+import { AgentCreateCard, AidevRouterBar, EscalationCard, routingStore, useAgentCreation, useAidevRouting, useEffortCap, useEscalation, useRoutingState } from '@/modules/aidev-router';
 import CommandResultModal from '@/modules/chat/modals/CommandResultModal';
 
 type ChatInterfaceProps = {
@@ -432,6 +432,33 @@ function ChatInterface({
     }
   }, [currentSessionId, provider, selectProviderEffort, selectedSession?.id]);
 
+  // Nado AI Dev: while routing is on, the router picks model/effort for every command, so the composer
+  // shows that (last plan, or "자동") instead of the provider default it would ignore; picking a model or
+  // effort there pins it for the router (engine = this composer's provider) until reset to 자동.
+  const routingState = useRoutingState();
+  const routingOn = routingState.mode !== 'off';
+  const pinnedModel = routingState.overrides.model;
+  const pinnedEffort = routingState.overrides.effort;
+  const lastPlan = routingState.last?.plan;
+  // the router's effort levels are the engine's (the session's last model may accept none, e.g. haiku)
+  const { ladder: effortLadder } = useEffortCap();
+  const routedEffortOptions = useMemo(() => (effortLadder?.[provider === 'codex' ? 'codex' : 'claude'] ?? []).map((value) => ({ value })), [effortLadder, provider]);
+  const modelRouting = routingOn ? {
+    label: pinnedModel || pinnedEffort ? ['고정', pinnedModel, pinnedEffort ? `강도 ${pinnedEffort}` : null].filter(Boolean).join(' · ') : lastPlan?.model ? `자동 · ${lastPlan.model}${lastPlan.effort ? `/${lastPlan.effort}` : ''}` : '자동',
+    detail: pinnedModel || pinnedEffort ? '선택한 모델·강도로 고정됨 (라우터 바에서 해제 가능)' : '라우터가 명령마다 작업에 맞는 모델·강도를 고릅니다',
+    pinned: Boolean(pinnedModel || pinnedEffort),
+    onReset: () => { const { model: _model, effort: _effort, ...rest } = routingStore.get().overrides; routingStore.patch({ overrides: rest }); },
+  } : null;
+  const selectComposerModel = useCallback((model: string) => {
+    if (routingStore.get().mode === 'off') { void handleSelectComposerModel(model); return; }
+    routingStore.setOverrides({ model, engine: provider === 'codex' ? 'codex' : 'claude' });
+  }, [handleSelectComposerModel, provider]);
+  const selectComposerEffort = useCallback((effort: string) => {
+    if (routingStore.get().mode === 'off') { void handleSelectComposerEffort(effort); return; }
+    if (effort === 'default') { const { effort: _effort, ...rest } = routingStore.get().overrides; routingStore.patch({ overrides: rest }); return; }
+    routingStore.setOverrides({ effort });
+  }, [handleSelectComposerEffort]);
+
   // Mirrors ChatComposer's own visibility check so the message pane can
   // reserve enough bottom space to keep the floating status tab from
   // overlapping the last message.
@@ -547,12 +574,13 @@ function ChatInterface({
           availablePermissionModes={availablePermissionModes}
           onSelectPermissionMode={selectPermissionMode}
           providerLabel={selectedProviderLabel}
-          effort={currentProviderEffort}
-          availableEffortOptions={currentProviderEffortOptions}
-          onSelectEffort={handleSelectComposerEffort}
-          model={currentProviderModel}
+          effort={modelRouting ? (pinnedEffort ?? 'default') : currentProviderEffort}
+          availableEffortOptions={modelRouting ? routedEffortOptions : currentProviderEffortOptions}
+          onSelectEffort={selectComposerEffort}
+          model={modelRouting ? (pinnedModel ?? '') : currentProviderModel}
           availableModelOptions={currentProviderModelOptions}
-          onSelectModel={handleSelectComposerModel}
+          onSelectModel={selectComposerModel}
+          modelRouting={modelRouting}
           modelsLoading={providerModelsLoading}
           tokenBudget={tokenBudget}
           onShowTokenUsage={showCostModal}

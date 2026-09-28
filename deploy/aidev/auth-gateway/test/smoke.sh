@@ -54,6 +54,11 @@ r=$(post "$A" /api/aidev/settings/effort-cap '{"claude":"high"}' PUT); r=$(post 
 r=$(post "$A" /api/aidev/settings/effort-cap '{"claude":"ultra"}' PUT); check "$r" 'j.error' "claude has no ultra"
 r=$(get "$A" /api/aidev/engines); check "$r" 'j.effort_cap.claude==="high" && j.effort_ladder.codex.includes("ultra")' "engines report ceiling + ladder"
 post "$A" /api/aidev/settings/effort-cap '{"claude":"xhigh","codex":"xhigh"}' PUT >/dev/null
+r=$(get "$ADM" /api/aidev/tier-policy); check "$r" 'j.downgrade===false' "tier downgrades off by default (quality first)"
+r=$(post "$ADM" /api/aidev/tier-policy/settings '{"downgrade":true}' PUT); check "$r" 'j.downgrade===true' "admin turns downgrades on"
+r=$(post "$A" /api/aidev/tier-policy/settings '{"downgrade":false}' PUT); check "$r" 'j.error' "downgrade setting is admin only"
+post "$ADM" /api/aidev/tier-policy/settings '{"downgrade":false}' PUT >/dev/null
+r=$(get "$A" /api/aidev/agents); check "$r" 'j.agents.find(a=>a.name==="security-review").minTier===3 && j.agents.find(a=>a.name==="frontend-react").minTier===null' "seeded specialist floors (security-review ≥ D3)"
 r=$(post "$ADM" /api/aidev/tier-policy/run '{}'); check "$r" 'typeof j.cells==="number" && Array.isArray(j.changes)' "tier policy pass ($(echo "$r" | node -pe 'const j=JSON.parse(require("fs").readFileSync(0)); j.cells+" cells, "+j.changes.length+" changes"'))"
 r=$(get "$ADM" /api/aidev/tier-policy); check "$r" 'j.log.length>=1 && j.log[0].actor==="admin" && j.last_run>0' "tier policy log"
 r=$(post "$ADM" /api/aidev/tier-policy "{\"domain\":\"$TDOM\",\"depth\":$TD,\"engine\":\"claude\",\"level\":null}" PUT); check "$r" 'j.cell.level===null && j.cell.model===null' "admin resets the cell"

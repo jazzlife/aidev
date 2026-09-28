@@ -10,7 +10,7 @@ export const ENGINES: Engine[] = ['claude', 'codex'];
 export const TASK_KINDS = ['bulk_read', 'implement', 'debug', 'refactor', 'design', 'ops', 'explain'] as const;
 export type TaskKind = typeof TASK_KINDS[number];
 
-export type AgentRow = { id: number; name: string; domain: string; description: string; hint: string | null; verified: number; prompt: string; tools: string | null; model: string | null; max_turns: number | null; owner_id: number | null; source: string; active: number; uses: number; created_at: number; updated_at: number; version: number; skills: string | null; mcp_servers: string | null };
+export type AgentRow = { id: number; name: string; domain: string; description: string; hint: string | null; verified: number; prompt: string; tools: string | null; model: string | null; max_turns: number | null; owner_id: number | null; source: string; active: number; uses: number; created_at: number; updated_at: number; version: number; skills: string | null; mcp_servers: string | null; min_tier: number | null };
 export type AgentVersionRow = { id: number; agent_id: number; version: number; prompt: string; tools: string | null; model: string | null; skills: string | null; mcp_servers: string | null; changelog: string | null; created_at: number };
 /** Default life of a sourced knowledge item before it is re-checked against its source (§3.8). */
 export const KNOWLEDGE_TTL_MS = 90 * 86400_000;
@@ -106,7 +106,8 @@ export function migrateAidev(db: Database.Database) {
       started_at INTEGER NOT NULL, finished_at INTEGER, exit_code INTEGER, artifacts TEXT);
     CREATE INDEX IF NOT EXISTS remote_runs_target ON remote_runs(target_id, started_at);
   `);
-  addColumn(db, 'agent_examples', 'task_kind', 'TEXT');   // label for the task-kind lexical prior (databases created before the column)
+  addColumn(db, 'agent_examples', 'task_kind', 'TEXT');
+  addColumn(db, 'agents', 'min_tier', 'INTEGER');   // lowest depth this specialist runs at (§3.4 floors); null = no floor   // label for the task-kind lexical prior (databases created before the column)
   // Web push (mobile PWA) and the Claude subscription-login reminders that use it.
   db.exec(`
     CREATE TABLE IF NOT EXISTS app_kv (k TEXT PRIMARY KEY, v TEXT NOT NULL);
@@ -271,6 +272,10 @@ export function aidevMethods(db: Database.Database) {
     tierPolicy(domain: string, depth: number, engine: Engine) {
       return db.prepare('SELECT * FROM tier_policy WHERE domain IN (?, \'*\') AND depth=? AND engine=? ORDER BY domain=\'*\' LIMIT 1').get(domain, depth, engine) as { model: string | null; effort: string | null; success_n: number; fail_n: number; avg_ms: number | null; level: number | null } | undefined;
     },
+    setAgentMinTier(id: number, minTier: number | null) {
+      if (minTier !== null && (!Number.isInteger(minTier) || minTier < 0 || minTier > 4)) throw new Error('min_tier must be 0-4 or null');
+      db.prepare('UPDATE agents SET min_tier=? WHERE id=?').run(minTier, id);
+    },
     tierPolicyRows() {
       return db.prepare('SELECT * FROM tier_policy ORDER BY domain, depth, engine').all() as TierPolicyRow[];
     },
@@ -290,8 +295,8 @@ export function aidevMethods(db: Database.Database) {
     tierPolicyLog(limit = 50) { return db.prepare('SELECT * FROM tier_policy_log ORDER BY id DESC LIMIT ?').all(limit) as Array<Record<string, unknown>>; },
     /** Finished runs with a clear outcome since `since`, with their agent's domain (policy aggregation input). */
     policyRuns(since: number) {
-      return db.prepare(`SELECT r.depth, r.engine, r.model, r.effort, r.outcome, r.started_at, r.finished_at, a.domain FROM runs r JOIN agents a ON a.id=r.agent_id
-        WHERE r.started_at >= ? AND r.outcome IN ('success','fail') AND r.engine IS NOT NULL AND r.depth IS NOT NULL AND a.domain != 'meta'`).all(since) as Array<{ depth: number; engine: string; model: string | null; effort: string | null; outcome: string; started_at: number; finished_at: number | null; domain: string }>;
+      return db.prepare(`SELECT r.depth, r.engine, r.model, r.effort, r.outcome, r.started_at, r.finished_at, r.user_feedback, r.reasked, a.domain FROM runs r JOIN agents a ON a.id=r.agent_id
+        WHERE r.started_at >= ? AND r.outcome IN ('success','fail') AND r.engine IS NOT NULL AND r.depth IS NOT NULL AND a.domain != 'meta'`).all(since) as Array<{ depth: number; engine: string; model: string | null; effort: string | null; outcome: string; started_at: number; finished_at: number | null; user_feedback: string | null; reasked: number; domain: string }>;
     },
     tierStats(engine: Engine) {
       return db.prepare('SELECT domain, depth, success_n, fail_n FROM tier_policy WHERE engine=?').all(engine) as Array<{ domain: string; depth: number; success_n: number; fail_n: number }>;
