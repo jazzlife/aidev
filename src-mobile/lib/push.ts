@@ -16,8 +16,12 @@ function urlBase64ToUint8Array(base64: string) {
   return Uint8Array.from(raw, (char) => char.charCodeAt(0));
 }
 
-async function registration() {
-  return navigator.serviceWorker.getRegistration('/m/') ?? navigator.serviceWorker.ready;
+/** The /m/ service worker registration; registers it when main.tsx's registration has not run or failed. */
+async function registration(): Promise<ServiceWorkerRegistration> {
+  const existing = await navigator.serviceWorker.getRegistration('/m/');
+  if (existing) return existing;
+  await navigator.serviceWorker.register('/m/sw.js', { scope: '/m/' });
+  return navigator.serviceWorker.ready;
 }
 
 /** Used by SettingsScreen to show the notification row. */
@@ -26,7 +30,7 @@ export async function pushState(): Promise<PushState> {
   if (isIos() && !isStandalone()) return 'needs_install';
   if (Notification.permission === 'denied') return 'denied';
   const reg = await registration();
-  const sub = await reg?.pushManager.getSubscription();
+  const sub = await reg.pushManager.getSubscription();
   return sub ? 'on' : 'off';
 }
 
@@ -35,7 +39,6 @@ export async function enablePush(): Promise<PushState> {
   const permission = await Notification.requestPermission();
   if (permission !== 'granted') return permission === 'denied' ? 'denied' : 'off';
   const reg = await registration();
-  if (!reg) return 'unsupported';
   const { publicKey } = await aidevApi.pushKey();
   const sub = (await reg.pushManager.getSubscription()) ?? await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(publicKey) });
   await aidevApi.pushSubscribe(sub.toJSON());
@@ -45,7 +48,7 @@ export async function enablePush(): Promise<PushState> {
 /** Used by SettingsScreen: unsubscribes this device here and at the gateway. */
 export async function disablePush(): Promise<PushState> {
   const reg = await registration();
-  const sub = await reg?.pushManager.getSubscription();
+  const sub = await reg.pushManager.getSubscription();
   if (sub) {
     await aidevApi.pushUnsubscribe(sub.endpoint).catch(() => undefined);
     await sub.unsubscribe();
