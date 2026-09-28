@@ -52,12 +52,17 @@ import { assetsRoutes } from './modules/assets/index.js';
 import { fileTreeRoutes } from './modules/file-tree/index.js';
 import { worktreesRoutes } from './modules/worktrees/index.js';
 import browserUseMcpRoutes from './modules/browser-use/browser-use-mcp.routes.js';
-import { aidevToolsMcpRoutes, aidevToolsRoutes } from './modules/aidev-tools/index.js';
+import { aidevToolsMcpRoutes, aidevToolsRoutes, aidevToolsService } from './modules/aidev-tools/index.js';
 import { claudeAuthStore } from './modules/providers/index.js';
 
 // Nado AI Dev: the platform-managed Claude subscription token (in-app login) applies to every
 // Claude process this server starts, so it must be in process.env before any provider runs.
 claudeAuthStore.loadIntoEnv();
+// ...and the gateway learns its expiry (reminder pushes) once it is reachable after start-up.
+setTimeout(() => {
+  const managed = claudeAuthStore.info();
+  if (managed) void aidevToolsService.reportClaudeAuth({ expires_at: managed.expiresAt });
+}, 15_000).unref();
 import { browserUseService } from './modules/browser-use/browser-use.service.js';
 import { initializeDatabase, sessionsDb } from './modules/database/index.js';
 import { configureWebPush } from './modules/notifications/index.js';

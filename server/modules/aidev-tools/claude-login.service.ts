@@ -4,6 +4,7 @@ import os from 'node:os';
 import pty, { type IPty } from 'node-pty';
 
 import { resolveClaudeCodeExecutablePath } from '@/shared/claude-cli-path.js';
+import { aidevToolsService } from '@/modules/aidev-tools/aidev-tools.service.js';
 // Lazy for the same reason as lesson-curator: providers imports this module's barrel.
 const loadAuthStore = async () => (await import('@/modules/providers/index.js')).claudeAuthStore;
 
@@ -97,6 +98,7 @@ export const claudeLoginService = {
       const match = await Promise.race([token, refusal]);
       const saved = (await loadAuthStore()).save(match[0]);
       console.log(`[aidev-tools] Claude subscription token stored (expires ${new Date(saved.expiresAt).toISOString().slice(0, 10)})`);
+      void aidevToolsService.reportClaudeAuth({ expires_at: saved.expiresAt });
       return saved;
     } finally {
       stop(login);

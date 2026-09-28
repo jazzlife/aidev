@@ -3,6 +3,9 @@ import { useEffect, useState } from 'react';
 import { useAuth } from '@/modules/chat-core';
 import { aidevApi, claudeAuth, routingStore, useClaudeAuth, useRoutingState, type EnginesResult, type RoutingMode } from '@/modules/aidev-router';
 import { ClaudeLoginSheet } from '@m/components/ClaudeLoginSheet';
+import { disablePush, enablePush, pushState, type PushState } from '@m/lib/push';
+
+const PUSH_LABEL: Record<PushState, string> = { on: '켜짐', off: '꺼짐', denied: '브라우저에서 차단됨 (설정에서 허용)', needs_install: '홈 화면에 추가한 앱에서 켤 수 있습니다', unsupported: '이 브라우저는 지원하지 않습니다' };
 import { TopBar } from '@m/components/TopBar';
 
 const MODES: Array<{ value: RoutingMode; label: string; hint: string }> = [
@@ -17,6 +20,18 @@ export function SettingsScreen() {
   const routing = useRoutingState();
   const [engines, setEngines] = useState<EnginesResult | null>(null);
   const auth = useClaudeAuth();
+  const [push, setPush] = useState<PushState | null>(null);
+  const [pushBusy, setPushBusy] = useState(false);
+  const [pushNote, setPushNote] = useState<string | null>(null);
+  useEffect(() => { void pushState().then(setPush).catch(() => setPush('unsupported')); }, []);
+  // Opened from a reminder notification (/m/settings?login=claude): go straight to the login sheet.
+  useEffect(() => { if (new URLSearchParams(window.location.search).get('login') === 'claude') claudeAuth.openDialog(); }, []);
+  const togglePush = async () => {
+    setPushBusy(true); setPushNote(null);
+    try { setPush(push === 'on' ? await disablePush() : await enablePush()); }
+    catch (error) { setPushNote(error instanceof Error ? error.message : '알림 설정 실패'); }
+    finally { setPushBusy(false); }
+  };
   // re-probe after a login finished in the sheet (the dialog closes on completion)
   useEffect(() => { if (!auth.dialogOpen) aidevApi.engines(true).then(setEngines).catch(() => setEngines(null)); }, [auth.dialogOpen]);
   const switchToWorkbench = () => {
@@ -55,6 +70,19 @@ export function SettingsScreen() {
             })}
           </div>
           {engines ? <div className="text-[12px] text-muted mt-2">기본 엔진: {engines.default_engine ?? '자동 선택'}</div> : null}
+        </section>
+        <section>
+          <div className="text-[12px] uppercase tracking-wide text-muted mb-2">알림</div>
+          <div className="rounded-xl2 border border-line bg-surface divide-y divide-line">
+            <div className="px-4 py-3 flex items-center gap-3">
+              <span className="flex-1"><div className="text-[15px]">푸시 알림</div><div className="text-[12px] text-muted">Claude 로그인 만료 30·7·1일 전과 만료 시 알려드립니다</div></span>
+              {push === 'on' || push === 'off'
+                ? <button type="button" role="switch" aria-checked={push === 'on'} aria-label="푸시 알림" disabled={pushBusy} onClick={() => { void togglePush(); }} className={`w-12 h-7 rounded-full p-0.5 transition-colors ${push === 'on' ? 'bg-accent' : 'bg-line'}`}><span className={`block w-6 h-6 rounded-full bg-surface shadow transition-transform ${push === 'on' ? 'translate-x-5' : ''}`} /></button>
+                : <span className="text-[12px] text-muted text-right max-w-[45%]">{push ? PUSH_LABEL[push] : '…'}</span>}
+            </div>
+            {push === 'on' ? <button type="button" className="w-full text-left px-4 py-3 text-[15px] text-accent" onClick={() => { void aidevApi.pushTest().then((r) => setPushNote(r.delivered ? '테스트 알림을 보냈습니다' : '보낼 기기가 없습니다')).catch((error: Error) => setPushNote(error.message)); }}>테스트 알림 보내기</button> : null}
+          </div>
+          {pushNote ? <div className="text-[12px] text-muted mt-2">{pushNote}</div> : null}
         </section>
         <section>
           <div className="text-[12px] uppercase tracking-wide text-muted mb-2">화면</div>

@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import type { openStore } from './store.js';
 import { ENGINES, type Engine } from './store-aidev.js';
 import type { LayaClient } from './laya.js';
+import type { Push } from './push.js';
 import { decide, listKinds } from './laya-questions.js';
 import fs from 'node:fs';
 import { evaluateRouting, route, type EngineAvailability, type RouteInput } from './routing.js';
@@ -18,6 +19,8 @@ export type AidevDeps = {
   /** Authenticated fetch against the caller's CloudCLI runtime (path starts with /api/...). */
   runtimeFetch: (session: Session, path: string, init?: RequestInit, timeoutMs?: number) => Promise<Response>;
   json: (res: ServerResponse, status: number, body: unknown, headers?: Record<string, string>) => void;
+  /** Web push (mobile PWA): subscriptions and the Claude login reminders. */
+  push: Push;
 };
 
 class HttpError extends Error { constructor(public status: number, message: string) { super(message); } }
@@ -153,6 +156,36 @@ export function createAidevApi(deps: AidevDeps) {
       if (rest === '/decisions' && m === 'GET') return json(res, 200, { decisions: store.decisions(uid, Number(url.searchParams.get('limit') ?? 100)) }), true;
 
       // ---- engines --------------------------------------------------------------------------
+      // ---- web push (mobile PWA) -------------------------------------------------------------
+      if (rest === '/push/key' && m === 'GET') return json(res, 200, { publicKey: deps.push.publicKey }), true;
+      if (rest === '/push/subscribe' && m === 'POST') {
+        const b = await readJson(req);
+        const sub = (b.subscription && typeof b.subscription === 'object' ? b.subscription : {}) as { endpoint?: unknown; keys?: { p256dh?: unknown; auth?: unknown } };
+        const endpoint = str(sub.endpoint, 'subscription.endpoint', 2000);
+        if (!/^https:\/\//.test(endpoint)) throw new HttpError(400, 'subscription.endpoint must be https');
+        const keys = { p256dh: str(sub.keys?.p256dh, 'subscription.keys.p256dh', 200), auth: str(sub.keys?.auth, 'subscription.keys.auth', 100) };
+        store.addPushSubscription(uid, endpoint, keys, optStr(req.headers['user-agent'], 400) ?? null);
+        return json(res, 201, { ok: true }), true;
+      }
+      if (rest === '/push/unsubscribe' && m === 'POST') {
+        const b = await readJson(req);
+        return json(res, 200, { removed: store.removePushSubscription(uid, str(b.endpoint, 'endpoint', 2000)) }), true;
+      }
+      if (rest === '/push/test' && m === 'POST') {
+        return json(res, 200, await deps.push.sendToUser(uid, { title: 'Nado AI Dev 알림 테스트', body: '이 기기로 알림이 도착합니다.', url: '/m/settings', tag: 'test' })), true;
+      }
+      // Reported by the user's runtime (runtime JWT via /internal/aidev) after an in-app Claude
+      // login (expires_at) or when a turn was refused for authentication (failure_at).
+      if (rest === '/claude-auth' && m === 'POST') {
+        const b = await readJson(req);
+        const report: { expiresAt?: number | null; failureAt?: number | null } = {};
+        if (b.expires_at !== undefined) report.expiresAt = b.expires_at === null ? null : num(b.expires_at, 'expires_at');
+        if (b.failure_at !== undefined) report.failureAt = b.failure_at === null ? null : num(b.failure_at, 'failure_at');
+        store.setClaudeAuth(uid, report);
+        // a refused turn is worth telling at once; expiry reminders follow their own schedule
+        if (report.failureAt) void deps.push.claudeReminders().catch(() => undefined);
+        return json(res, 200, { ok: true }), true;
+      }
       if (rest === '/engines' && m === 'GET') {
         const acct = store.accountEngines(uid);
         // ?refresh=1 right after an in-app login, so the next route sees the engine at once

@@ -263,6 +263,20 @@ export const aidevToolsService = {
   },
 
   /** Records an outcome signal for a run (used by the run watcher and tests). */
+  /**
+   * Tells the gateway about the Claude subscription login (expiry after an in-app login, or a turn
+   * refused for authentication) so it can push reminders without waking this runtime. Best effort:
+   * no-op outside the platform, errors are logged only.
+   */
+  async reportClaudeAuth(report: { expires_at?: number | null; failure_at?: number | null }) {
+    if (!runtimeName) return;
+    try {
+      await callGateway('POST', '/claude-auth', report);
+    } catch (error) {
+      console.warn('[aidev-tools] claude auth report failed:', error instanceof Error ? error.message : error);
+    }
+  },
+
   async runOutcome(runId: number, outcome: Record<string, unknown>) {
     return callGateway('PATCH', `/runs/${runId}/outcome`, outcome);
   },

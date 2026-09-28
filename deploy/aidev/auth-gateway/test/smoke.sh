@@ -69,4 +69,10 @@ r=$(curl -s -H 'accept: text/html' -H 'user-agent: Mozilla/5.0 (Macintosh)' "$G/
 kill %1; sleep 0.3
 r=$(post "$A" /api/aidev/route '{"text":"React 컴포넌트에 다크모드 토글 훅을 추가해줘"}'); check "$r" 'j.fallback===true && j.agent.name==="frontend-react" && j.plan.engine' "laya down → lexical prior still routes (frontend-react), engine still chosen"
 r=$(post "$A" /api/aidev/decide/ui.focus '{"state":{"event":"test failed"}}'); check "$r" 'j.fallback===true && j.answer==="none"' "laya down → kind fallback"
+# web push (C-06): VAPID key, subscription validation, runtime login report
+r=$(get "$A" /api/aidev/push/key); check "$r" 'typeof j.publicKey==="string" && j.publicKey.length>80' "push: VAPID public key"
+r=$(post "$A" /api/aidev/push/subscribe '{"subscription":{"endpoint":"http://insecure.example/x","keys":{"p256dh":"a","auth":"b"}}}'); check "$r" 'j.error && /https/.test(j.error)' "push: non-https endpoint refused"
+r=$(post "$A" /api/aidev/push/subscribe '{"subscription":{"endpoint":"https://push.example/abc","keys":{"p256dh":"BPk","auth":"x1"}}}'); check "$r" 'j.ok===true' "push: subscription stored"
+r=$(post "$A" /api/aidev/claude-auth '{"expires_at":4102444800000}'); check "$r" 'j.ok===true' "claude-auth: expiry report accepted"
+r=$(post "$A" /api/aidev/push/unsubscribe '{"endpoint":"https://push.example/abc"}'); check "$r" 'j.removed===1' "push: unsubscribe"
 [ $fail -eq 0 ] && echo "ALL PASS" || { echo "--- gateway log"; tail -20 "$T/gw.log"; exit 1; }

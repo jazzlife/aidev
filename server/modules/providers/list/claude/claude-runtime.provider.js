@@ -1134,7 +1134,10 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
       ? 'Claude Code is not installed. Please install it first: https://docs.anthropic.com/en/docs/claude-code'
       : error.message;
     // Nado AI Dev: an auth refusal flips the engine to "expired" so routing and the UI offer re-login.
-    if (installed && isClaudeAuthFailure(String(error?.message ?? ''))) claudeAuthStore.recordFailure(String(error.message));
+    if (installed && isClaudeAuthFailure(String(error?.message ?? ''))) {
+      claudeAuthStore.recordFailure(String(error.message));
+      void aidevToolsService.reportClaudeAuth({ failure_at: Date.now() });
+    }
 
     // Send error to WebSocket, then the terminal complete. A run that already
     // reported completion and then failed during its post-turn hold still

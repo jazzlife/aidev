@@ -7,6 +7,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { openStore } from './store.js';
 import { LayaClient } from './laya.js';
 import { createAidevApi } from './aidev-api.js';
+import { createPush } from './push.js';
 import { seedAgents } from './seed-agents.js';
 
 const port = Number(process.env.PORT ?? 8080);
@@ -152,8 +153,11 @@ async function proxyHttp(req: IncomingMessage, res: ServerResponse, session: Ses
 }
 // /api/aidev/* is answered by the gateway itself (routing, catalog, runs …); the runtime is only
 // consulted for provider auth status. See aidev-api.ts.
+// Web push for the mobile PWA + Claude login reminders (VAPID subject = the public origin).
+const push = createPush(store, origin.startsWith('https:') ? origin : 'mailto:aidev@localhost');   // web-push requires https: or mailto:
+push.startReminders();
 const aidev = createAidevApi({
-  store, laya, json,
+  store, laya, json, push,
   async runtimeFetch(session, path, init, timeoutMs = 10_000) {
     const runtime = await ready(session.user.runtime);
     return fetch(`${runtime.target}${path}`, { ...init, headers: { ...(init?.headers as Record<string, string> | undefined), authorization: `Bearer ${runtime.token}` }, signal: AbortSignal.timeout(timeoutMs) });

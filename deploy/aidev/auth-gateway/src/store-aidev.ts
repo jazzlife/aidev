@@ -100,6 +100,17 @@ export function migrateAidev(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS remote_runs_target ON remote_runs(target_id, started_at);
   `);
   addColumn(db, 'agent_examples', 'task_kind', 'TEXT');   // label for the task-kind lexical prior (databases created before the column)
+  // Web push (mobile PWA) and the Claude subscription-login reminders that use it.
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS app_kv (k TEXT PRIMARY KEY, v TEXT NOT NULL);
+    CREATE TABLE IF NOT EXISTS push_subscriptions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      endpoint TEXT NOT NULL UNIQUE, keys TEXT NOT NULL, user_agent TEXT, created_at INTEGER NOT NULL, last_ok INTEGER, failures INTEGER NOT NULL DEFAULT 0);
+    CREATE INDEX IF NOT EXISTS push_subscriptions_user ON push_subscriptions(user_id);
+  `);
+  addColumn(db, 'accounts', 'claude_token_expires_at', 'INTEGER');   // reported by the runtime after an in-app login
+  addColumn(db, 'accounts', 'claude_auth_failure_at', 'INTEGER');    // reported by the runtime when a turn is refused
+  addColumn(db, 'accounts', 'claude_notice', 'TEXT');                // last reminder sent ("<expiresAt>:<days>" or "fail:<at>")
   // engine_weights seed: bulk reading/analysis prefers Codex, everything else neutral (§0 decisions)
   const n = (db.prepare('SELECT COUNT(*) AS n FROM engine_weights').get() as { n: number }).n;
   if (n === 0) {
@@ -113,6 +124,33 @@ export function migrateAidev(db: Database.Database) {
 export function aidevMethods(db: Database.Database) {
   let exampleVersion = 1;
   const m = {
+    // ---- key/value + web push ---------------------------------------------
+    kvGet(k: string) { return (db.prepare('SELECT v FROM app_kv WHERE k=?').get(k) as { v: string } | undefined)?.v ?? null; },
+    kvSet(k: string, v: string) { db.prepare('INSERT INTO app_kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').run(k, v); },
+    addPushSubscription(userId: number, endpoint: string, keys: { p256dh: string; auth: string }, userAgent: string | null) {
+      db.prepare(`INSERT INTO push_subscriptions(user_id,endpoint,keys,user_agent,created_at) VALUES(?,?,?,?,?)
+        ON CONFLICT(endpoint) DO UPDATE SET user_id=excluded.user_id, keys=excluded.keys, user_agent=excluded.user_agent, failures=0`).run(userId, endpoint, JSON.stringify(keys), userAgent, Date.now());
+    },
+    removePushSubscription(userId: number, endpoint: string) { return db.prepare('DELETE FROM push_subscriptions WHERE user_id=? AND endpoint=?').run(userId, endpoint).changes; },
+    dropPushSubscription(id: number) { db.prepare('DELETE FROM push_subscriptions WHERE id=?').run(id); },
+    pushSubscriptions(userId: number) {
+      return (db.prepare('SELECT id, endpoint, keys FROM push_subscriptions WHERE user_id=?').all(userId) as Array<{ id: number; endpoint: string; keys: string }>)
+        .map((row) => ({ id: row.id, endpoint: row.endpoint, keys: JSON.parse(row.keys) as { p256dh: string; auth: string } }));
+    },
+    markPush(id: number, ok: boolean) {
+      if (ok) db.prepare('UPDATE push_subscriptions SET last_ok=?, failures=0 WHERE id=?').run(Date.now(), id);
+      else db.prepare('UPDATE push_subscriptions SET failures=failures+1 WHERE id=?').run(id);
+    },
+    // ---- Claude subscription login state (reported by the user's runtime) ---
+    setClaudeAuth(userId: number, report: { expiresAt?: number | null; failureAt?: number | null }) {
+      if (report.expiresAt !== undefined) db.prepare('UPDATE accounts SET claude_token_expires_at=?, claude_auth_failure_at=NULL WHERE id=?').run(report.expiresAt, userId);
+      if (report.failureAt !== undefined) db.prepare('UPDATE accounts SET claude_auth_failure_at=? WHERE id=?').run(report.failureAt, userId);
+    },
+    claudeAuthAccounts() {
+      return db.prepare('SELECT id, username, claude_token_expires_at AS expiresAt, claude_auth_failure_at AS failureAt, claude_notice AS notice FROM accounts WHERE active=1 AND (claude_token_expires_at IS NOT NULL OR claude_auth_failure_at IS NOT NULL)')
+        .all() as Array<{ id: number; username: string; expiresAt: number | null; failureAt: number | null; notice: string | null }>;
+    },
+    setClaudeNotice(userId: number, notice: string) { db.prepare('UPDATE accounts SET claude_notice=? WHERE id=?').run(notice, userId); },
     // ---- account engines --------------------------------------------------
     accountEngines(userId: number): { engines: Engine[]; defaultEngine: Engine | null; role: string } {
       const row = db.prepare('SELECT engines, default_engine, role FROM accounts WHERE id=?').get(userId) as { engines: string; default_engine: string | null; role: string } | undefined;
