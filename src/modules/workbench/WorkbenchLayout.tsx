@@ -129,7 +129,7 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
       />
     </WorkspaceErrorBoundary>
   );
-  const explorer = <FileTree selectedProject={selectedProject} onFileOpen={handleFileOpen} revealDirectory={revealDirectory} />;
+  const explorer = <FileTree selectedProject={selectedProject} onFileOpen={handleFileOpen} revealDirectory={revealDirectory} showTitle={false} />;
   const git = <GitPanel selectedProject={selectedProject} isMobile={false} onFileOpen={handleFileOpen} onProjectSelect={onProjectSelect} onProjectsRefresh={onProjectsRefresh} />;
   const terminal = (active: boolean) => <StandaloneShell project={selectedProject} session={selectedSession} showHeader={false} isActive={active} />;
   const editorGroup = <EditorGroup tabs={editor.tabs} active={editor.active} onActivate={editor.setActive} onClose={editor.api.close} projectPath={selectedProject.path} />;

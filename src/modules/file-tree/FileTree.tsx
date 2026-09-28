@@ -29,10 +29,12 @@ type FileTreeProps = {
   // Directory to reveal (from an in-chat `path/` reference): its ancestors are
   // expanded so the folder is visible without hunting through the tree.
   revealDirectory?: DirectoryRevealRequest | null;
+  /** Header title "Files"; the workbench hides it because its side view already says 탐색기. */
+  showTitle?: boolean;
 };
 
-/** Exported through the file-tree barrel; the project-workspace module renders it as the Files sidebar tab. */
-export default function FileTree({ selectedProject, onFileOpen, revealDirectory }: FileTreeProps) {
+/** Exported through the file-tree barrel; rendered by project-workspace as the Files tab and by the workbench as its 탐색기 side view. */
+export default function FileTree({ selectedProject, onFileOpen, revealDirectory, showTitle = true }: FileTreeProps) {
   const { t } = useTranslation();
   const [selectedImage, setSelectedImage] = useState<FileTreeImageSelection | null>(null);
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null);
@@ -210,6 +212,7 @@ export default function FileTree({ selectedProject, onFileOpen, revealDirectory 
       )}
 
       <FileTreeHeader
+        showTitle={showTitle}
         viewMode={viewMode}
         onViewModeChange={changeViewMode}
         searchQuery={searchQuery}

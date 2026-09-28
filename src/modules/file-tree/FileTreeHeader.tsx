@@ -9,6 +9,8 @@ import { MAX_FILE_UPLOAD_SIZE_LABEL } from '@/shared/constants';
 import type { FileTreeViewMode } from '@/shared/types';
 
 type FileTreeHeaderProps = {
+  /** false when the host already titles the pane (workbench side view "탐색기"): icons only. */
+  showTitle: boolean;
   viewMode: FileTreeViewMode;
   onViewModeChange: (mode: FileTreeViewMode) => void;
   searchQuery: string;
@@ -28,6 +30,7 @@ type FileTreeHeaderProps = {
 
 /** Rendered by FileTree to host the search box, view-mode switch and the create/upload/refresh/collapse actions. */
 export default function FileTreeHeader({
+  showTitle,
   viewMode,
   onViewModeChange,
   searchQuery,
@@ -56,8 +59,8 @@ export default function FileTreeHeader({
   return (
     <div className="space-y-2 border-b border-border px-3 pb-2 pt-3">
       {/* Title and Toolbar */}
-      <div className="flex items-center justify-between">
-        <h3 className="text-sm font-medium text-foreground">{t('fileTree.files')}</h3>
+      <div className={`flex items-center ${showTitle ? 'justify-between' : 'justify-start'}`}>
+        {showTitle ? <h3 className="text-sm font-medium text-foreground">{t('fileTree.files')}</h3> : null}
         <div className="flex items-center gap-0.5">
           {/* Action buttons */}
           {onUploadFiles && (
