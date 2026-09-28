@@ -1,6 +1,6 @@
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Bot, FolderTree, GitBranch, Globe, ListChecks, MessageSquare, MessagesSquare, MonitorSmartphone, PanelBottom, PanelLeft, PanelRight, Settings, SlidersHorizontal, TerminalSquare } from 'lucide-react';
+import { Bot, Code2, FolderTree, GitBranch, Globe, ListChecks, MessageSquare, MessagesSquare, MonitorSmartphone, PanelBottom, PanelLeft, PanelRight, Settings, SlidersHorizontal, TerminalSquare, X } from 'lucide-react';
 
 import { ChatInterface } from '@/modules/chat';
 import { FileTree } from '@/modules/file-tree';
@@ -77,7 +77,15 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
   const handleFileOpen = useCallback((filePath: string, diffInfo?: unknown, line?: number | null) => {
     editor.api.open(filePath, (diffInfo as never) ?? null, line ?? null);
     if (isTablet) layoutStore.patch('tablet', { tabletShowChat: false, tabletPane: 'files' });
+    else layoutStore.patch('desktop', { workOpen: true });   // the code panel appears when there is code to show
   }, [editor.api, isTablet]);
+  // ...and goes away with its last editor tab, unless the terminal panel keeps it in use.
+  const tabCountRef = useRef(editor.tabs.length);
+  useEffect(() => {
+    const previous = tabCountRef.current;
+    tabCountRef.current = editor.tabs.length;
+    if (!isTablet && previous > 0 && editor.tabs.length === 0 && !layoutStore.get('desktop').bottomOpen) layoutStore.patch('desktop', { workOpen: false });
+  }, [editor.tabs.length, isTablet]);
   const resolvedFileOpen = useFileOpenResolver(selectedProject, handleFileOpen as never);
   const openFile = useCallback((filePath: string) => { handleFileOpen(filePath); }, [handleFileOpen]);
   const openFileInEditor = useCallback((filePath: string, line?: number | null) => { resolvedFileOpen(filePath, undefined, line); }, [resolvedFileOpen]);
@@ -177,6 +185,12 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
   }
 
   const sideView = layout.sideView;
+  const workVisible = layout.workOpen;
+  // Terminal on → it lives in the code panel, so the panel opens with it; off with no open file → the panel closes too.
+  const toggleBottom = () => {
+    const next = !(workVisible && layout.bottomOpen);
+    layoutStore.patch('desktop', next ? { bottomOpen: true, workOpen: true } : { bottomOpen: false, workOpen: editor.tabs.length > 0 });
+  };
   return (
     <div className="flex h-full min-h-0">
       {/* activity bar */}
@@ -186,8 +200,8 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
             className={`p-2 rounded ${sideView === view.id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}><view.icon size={18} /></button>
         ))}
         <div className="flex-1" />
-        <button type="button" title="하단 패널" aria-label="하단 패널" aria-pressed={layout.bottomOpen} onClick={() => layoutStore.patch('desktop', { bottomOpen: !layout.bottomOpen })} className={`p-2 rounded ${layout.bottomOpen ? 'text-foreground' : 'text-muted-foreground'} hover:bg-muted`}><PanelBottom size={18} /></button>
-        <button type="button" title="채팅 패널" aria-label="채팅 패널" aria-pressed={layout.chatOpen} onClick={() => layoutStore.patch('desktop', { chatOpen: !layout.chatOpen })} className={`p-2 rounded ${layout.chatOpen ? 'text-foreground' : 'text-muted-foreground'} hover:bg-muted`}><PanelRight size={18} /></button>
+        <button type="button" title="터미널 패널" aria-label="터미널 패널" aria-pressed={workVisible && layout.bottomOpen} onClick={toggleBottom} className={`p-2 rounded ${workVisible && layout.bottomOpen ? 'text-foreground' : 'text-muted-foreground'} hover:bg-muted`}><PanelBottom size={18} /></button>
+        <button type="button" title="코드 패널" aria-label="코드 패널" aria-pressed={workVisible} onClick={() => layoutStore.patch('desktop', { workOpen: !workVisible })} className={`p-2 rounded ${workVisible ? 'text-foreground' : 'text-muted-foreground'} hover:bg-muted`}><PanelRight size={18} /></button>
         {quickSettingsButton}
         {settingsButton}
       </div>
@@ -203,8 +217,19 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
         ) : null}
       </div>
       {sideView ? <SplitHandle edge="right" size={layout.sideWidth} min={200} max={600} onSize={(size) => layoutStore.patch('desktop', { sideWidth: size })} /> : null}
-      {/* center: editor group + bottom panel */}
-      <div className="flex-1 min-w-0 flex flex-col min-h-0">
+      {/* center: the chat is the main column */}
+      <div className="flex-1 min-w-[360px] flex flex-col min-h-0">
+        <div className="aidev-chrome h-8 px-3 flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted-foreground border-b border-border shrink-0"><MessageSquare size={12} /> 채팅{selectedSession?.summary ? <span className="normal-case tracking-normal truncate text-foreground/80">· {selectedSession.summary}</span> : null}</div>
+        <div className="flex-1 min-h-0">{chat}</div>
+      </div>
+      {/* right: code panel (editor group + bottom panel), only while needed. Kept mounted when hidden
+          so open tabs and the terminal session survive closing it. */}
+      {workVisible ? <SplitHandle edge="left" size={layout.workWidth} min={360} max={1400} onSize={(size) => layoutStore.patch('desktop', { workWidth: size })} /> : null}
+      <div className={`shrink-0 min-w-[360px] max-w-[70vw] border-l border-border flex flex-col min-h-0 ${workVisible ? '' : 'hidden'}`} style={{ width: layout.workWidth }}>
+        <div className="aidev-chrome h-8 px-2 flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted-foreground border-b border-border shrink-0">
+          <Code2 size={12} /> 코드{editor.tabs.length ? <span className="normal-case tracking-normal">· {editor.tabs.length}개 파일</span> : null}
+          <button type="button" aria-label="코드 패널 닫기" title="코드 패널 닫기" onClick={() => layoutStore.patch('desktop', { workOpen: false })} className="ml-auto p-1 rounded hover:bg-muted"><X size={13} /></button>
+        </div>
         <div className="flex-1 min-h-0">{editorGroup}</div>
         {layout.bottomOpen ? (
           <>
@@ -216,24 +241,14 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
                 ))}
               </div>
               <div className="flex-1 min-h-0 relative">
-                <div className={`absolute inset-0 ${bottomTab === 'terminal' ? '' : 'hidden'}`}>{terminal(bottomTab === 'terminal')}</div>
-                {shouldShowTasks ? <div className={`absolute inset-0 ${bottomTab === 'tasks' ? '' : 'hidden'}`}><TaskMasterPanel isVisible={bottomTab === 'tasks'} /></div> : null}
-                {browserUseEnabled && bottomTab === 'browser' ? <div className="absolute inset-0"><BrowserUsePanel isVisible onShowSettings={onShowSettings} /></div> : null}
+                <div className={`absolute inset-0 ${bottomTab === 'terminal' ? '' : 'hidden'}`}>{terminal(workVisible && bottomTab === 'terminal')}</div>
+                {shouldShowTasks ? <div className={`absolute inset-0 ${bottomTab === 'tasks' ? '' : 'hidden'}`}><TaskMasterPanel isVisible={workVisible && bottomTab === 'tasks'} /></div> : null}
+                {browserUseEnabled && bottomTab === 'browser' ? <div className="absolute inset-0"><BrowserUsePanel isVisible={workVisible} onShowSettings={onShowSettings} /></div> : null}
               </div>
             </div>
           </>
         ) : null}
       </div>
-      {/* chat */}
-      {layout.chatOpen ? (
-        <>
-          <SplitHandle edge="left" size={layout.chatWidth} min={320} max={900} onSize={(size) => layoutStore.patch('desktop', { chatWidth: size })} />
-          <div className="shrink-0 min-w-[320px] border-l border-border flex flex-col" style={{ width: layout.chatWidth }}>
-            <div className="h-8 px-3 flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted-foreground border-b border-border shrink-0"><MessageSquare size={12} /> 채팅{selectedSession?.summary ? <span className="normal-case tracking-normal truncate text-foreground/80">· {selectedSession.summary}</span> : null}</div>
-            <div className="flex-1 min-h-0">{chat}</div>
-          </div>
-        </>
-      ) : null}
     </div>
   );
 }

@@ -22,11 +22,17 @@ export type WorkbenchLayoutState = {
   tabletPane: TabletPane;
   /** Tablet only: chat visible (true) or tool pane visible (false). */
   tabletShowChat: boolean;
+  /**
+   * Desktop: the code panel (editor group + terminal/browser/tasks) to the right of the chat. Opens
+   * when a file is opened or the terminal is toggled on, closes with its last tab — shown only when needed.
+   */
+  workOpen: boolean;
+  workWidth: number;
 };
 
 const DEFAULTS: Record<Exclude<DeviceTier, 'mobile'>, WorkbenchLayoutState> = {
-  desktop: { sideView: 'sessions', sideWidth: 280, chatOpen: true, chatWidth: 440, bottomOpen: true, bottomHeight: 260, bottomTab: 'terminal', tabletPane: 'files', tabletShowChat: true },
-  tablet: { sideView: null, sideWidth: 260, chatOpen: true, chatWidth: 380, bottomOpen: false, bottomHeight: 240, bottomTab: 'terminal', tabletPane: 'files', tabletShowChat: true },
+  desktop: { sideView: 'sessions', sideWidth: 280, chatOpen: true, chatWidth: 440, bottomOpen: false, bottomHeight: 260, bottomTab: 'terminal', tabletPane: 'files', tabletShowChat: true, workOpen: false, workWidth: 640 },
+  tablet: { sideView: null, sideWidth: 260, chatOpen: true, chatWidth: 380, bottomOpen: false, bottomHeight: 240, bottomTab: 'terminal', tabletPane: 'files', tabletShowChat: true, workOpen: false, workWidth: 640 },
 };
 
 const key = (tier: string) => `aidev.workbench.${tier}`;
