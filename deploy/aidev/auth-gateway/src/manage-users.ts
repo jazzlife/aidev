@@ -1,4 +1,5 @@
 import crypto from 'node:crypto';
+import jwt from 'jsonwebtoken';
 import fs from 'node:fs';
 import { openStore } from './store.js';
 import { runTierPolicy } from './tier-policy.js';
@@ -13,9 +14,9 @@ async function runtime(name: string, operation: 'provision' | 'delete') {
   if (!response.ok) throw new Error(`Runtime ${operation} failed; check runtime-manager logs and retry`);
 }
 try {
-  const usage = 'Usage: list | decisions [N] | tier-policy [run] | add USERNAME | delete USERNAME | disable USERNAME | engines USERNAME codex|claude|claude,codex | default-engine USERNAME claude|codex|none | role USERNAME user|admin | effort-cap USERNAME claude=xhigh|max,codex=xhigh|max|ultra';
+  const usage = 'Usage: list | decisions [N] | tier-policy [run] | session USERNAME | end-session SID | add USERNAME | delete USERNAME | disable USERNAME | engines USERNAME codex|claude|claude,codex | default-engine USERNAME claude|codex|none | role USERNAME user|admin | effort-cap USERNAME claude=xhigh|max,codex=xhigh|max|ultra';
   const withExtra = ['engines', 'default-engine', 'role', 'effort-cap'].includes(action ?? '');
-  if ((extra && !withExtra) || (withExtra && !extra) || (action === 'list' ? username : action === 'decisions' ? false : action === 'tier-policy' ? (username !== undefined && username !== 'run') : !/^[a-z0-9][a-z0-9_.-]{2,63}$/.test(username ?? ''))) throw new Error(usage);
+  if ((extra && !withExtra) || (withExtra && !extra) || (action === 'list' ? username : action === 'decisions' ? false : action === 'end-session' ? !/^[A-Za-z0-9_-]{16,128}$/.test(username ?? '') : action === 'tier-policy' ? (username !== undefined && username !== 'run') : !/^[a-z0-9][a-z0-9_.-]{2,63}$/.test(username ?? ''))) throw new Error(usage);
   if (action === 'decisions') {
     // last routing decisions with the signals behind them (B-13 evidence / routing post-mortems)
     const rows = store.db.prepare("SELECT d.id, a.username, d.command, d.agent, d.probability, d.needs_new, d.decision, d.final_engine, d.final_model, d.fallback, d.probabilities, d.created_at FROM decision_log d JOIN accounts a ON a.id=d.user_id WHERE d.kind='route' ORDER BY d.id DESC LIMIT ?").all(Number(username ?? 10) || 10) as Array<Record<string, unknown>>;
@@ -24,6 +25,17 @@ try {
       const top = (m: unknown) => (m && typeof m === 'object' ? Object.entries(m as Record<string, number>).sort((x, y) => y[1] - x[1]).slice(0, 3).map(([k, v]) => `${k} ${v.toFixed(2)}`).join(', ') : '-');
       console.log(`#${row.id} ${new Date(row.created_at as number).toISOString()} ${row.username}: "${String(row.command).slice(0, 80)}" → ${row.agent} p=${Number(row.probability).toFixed(2)} decision=${row.decision} needs_new=${Number(row.needs_new).toFixed(2)} engine=${row.final_engine ?? '-'} model=${row.final_model ?? '-'}${row.fallback ? ' FALLBACK' : ''}\n    laya: ${top(probs.agent_laya)} | nb: ${top(probs.agent_nb)} | kind: ${top(probs.task_kind)}`);
     }
+  } else if (action === 'session') {
+    // Server-side verification (relay `verify` job): a 10-minute gateway session for USERNAME, printed
+    // as "<token> <sid>" to the caller on the AI-PC only — no password is typed or sent anywhere.
+    const account = store.account(username); if (!account?.active) throw new Error('User not found or disabled');
+    const secret = fs.readFileSync(process.env.JWT_SECRET_FILE ?? '/run/secrets/gateway-jwt', 'utf8').trim();
+    const origin = new URL(process.env.PUBLIC_ORIGIN ?? 'https://dev.nado.work').origin;
+    const ttl = 600;
+    const sid = store.issue(account.id, Date.now() + ttl * 1000);
+    console.log(`${jwt.sign({ sid, userId: account.id, username }, secret, { expiresIn: ttl, issuer: 'aidev', audience: origin, algorithm: 'HS256' })} ${sid}`);
+  } else if (action === 'end-session') {
+    store.revoke(username); console.log('session revoked');
   } else if (action === 'tier-policy') {
     // E-05: learned tiers per (domain, depth, engine) and the recent change log; `run` applies a pass now
     if (username === 'run') { const weights = runEngineWeights(store, { actor: 'cli' }); console.log(`engine weights: ${weights.kinds} kinds, ${weights.changes.length} changes`); const result = runTierPolicy(store, { actor: 'cli' }); console.log(`pass: ${result.cells} cells, ${result.changes.length} changes`); for (const c of result.changes) console.log(`  ${c.domain} D${c.depth} ${c.engine}: ${c.fromModel} → ${c.toModel} (${c.reason})`); }

@@ -407,7 +407,7 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 ## 5. 매 릴리스 절차
 1. 클라우드: 구현 → `npm run build`(작업대 `dist` + 모바일 `dist-mobile` + 서버)/`tsc`(+ 러너 변경 시 `cargo build --release` cross) 통과, 모바일 번들 예산 통과 → 커밋 → `bash deploy/aidev/release/pack.sh /mnt/user-data/outputs/rel`
 2. `release-<sha>.tgz`를 Mac `ops/releases/`로 전달 (러너 바이너리는 `ops/runner/`로 별도)
-3. 사용자: `./relay.sh deploy releases/release-<sha>.tgz` (`changed:` 레인과 재시작 대상 확인)
+3. 배포: 사용자가 `./relay.sh watch`를 켜 둔 동안에는 Claude가 `ops/outbox/<id>.job`(허용 목록: deploy·rollback·status·list·restart·diag·gpu·logs·verify)으로 직접 배포하고 `ops/inbox/job-<id>.log`로 결과를 확인한다(2026-09-29). 꺼져 있으면 사용자가 `./relay.sh deploy releases/release-<sha>.tgz`. 서버 스크립트(`ops/scripts/*.sh`)가 바뀐 경우에만 사용자가 `./relay.sh scripts`. `verify`는 비밀번호 없이 서버 안에서 10분 세션을 발급·폐기(`manage-users session/end-session`).
 4. 검증: `./relay.sh status`, 필요 시 `./relay.sh run <cmd>`/`diag` 로그 회수 → 체크리스트 [x] + 릴리스 ID 기록
 5. 문제 시 `./relay.sh rollback`
 6. 도구 이미지가 바뀌는 경우에만 `laya-image.sh build` / `runtime-image.sh build` (drop-in payload로 별도 실행)

@@ -1,11 +1,14 @@
 #!/usr/bin/env bash
 # Stage B server verification (IMPLEMENTATION-PLAN B-13 … B-17). Runs ON the AI-PC:
-#   AIDEV_PASS=… verify-b.sh USERNAME [--bench] [--backup] [--experiments]   (or USERNAME PASSWORD …, legacy)
+#   verify-b.sh USERNAME [--bench] [--backup] [--experiments]
+#     no password: a 10-minute gateway session is minted inside the gateway container
+#     (manage-users session) and revoked at the end — nothing is typed or leaves the AI-PC.
+#   AIDEV_PASS=… verify-b.sh USERNAME …   (or USERNAME PASSWORD …, legacy) logs in like the browser
 # Talks to the gateway over the proxy network exactly like the browser does, then reads
 # container logs. Prints PASS/FAIL per check; exit 1 when any check fails.
 set -uo pipefail
 user=${1:?username}; shift
-if [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; then pass=$1; shift; else pass=${AIDEV_PASS:?password (AIDEV_PASS env or 2nd argument)}; fi
+pass=""; if [ $# -gt 0 ] && [ "${1#--}" = "$1" ]; then pass=$1; shift; else pass=${AIDEV_PASS:-}; fi
 bench=0; backup=0; experiments=0; for a in "$@"; do case "$a" in --bench) bench=1;; --backup) backup=1;; --experiments) experiments=1;; esac; done
 NET=${AIDEV_PROXY_NETWORK:-npm_bridge}
 GW=http://aidev-auth-gateway:8080
@@ -27,10 +30,19 @@ docker logs --tail 50 aidev-auth-gateway 2>&1 | grep -E "seeded|gateway\]" | tai
 echo "## accounts (engines column)"
 docker exec aidev-auth-gateway node /srv/app/current/control/gateway/dist/manage-users.js list 2>&1 | head -40
 
-echo "## login as $user"
-TOK=$($CURL -X POST -H 'content-type: application/json' --data-binary "{\"username\":\"$user\",\"password\":\"$pass\"}" "$GW/api/auth/login" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
-[ -n "$TOK" ] || { echo "FAIL login"; exit 1; }
-echo "PASS login"
+MU="docker exec aidev-auth-gateway node /srv/app/current/control/gateway/dist/manage-users.js"
+if [ -n "$pass" ]; then
+  echo "## login as $user"
+  TOK=$($CURL -X POST -H 'content-type: application/json' --data-binary "{\"username\":\"$user\",\"password\":\"$pass\"}" "$GW/api/auth/login" | sed -n 's/.*"token":"\([^"]*\)".*/\1/p')
+  [ -n "$TOK" ] || { echo "FAIL login"; exit 1; }
+  echo "PASS login"
+else
+  echo "## server-side session for $user (10 min, revoked at exit)"
+  read -r TOK SID < <($MU session "$user" 2>/dev/null | tail -1)
+  [ -n "${TOK:-}" ] && [ -n "${SID:-}" ] || { echo "FAIL session (gateway release without 'manage-users session'? deploy first)"; exit 1; }
+  trap '$MU end-session "$SID" >/dev/null 2>&1' EXIT
+  echo "PASS session"
+fi
 
 r=$(jget /api/aidev/laya/health); check "$r" 'j.status==="ok" && j.device' "laya health ($(echo "$r" | sed -n 's/.*"device": *"\([^"]*\)".*/\1/p'))"
 r=$(jget /api/aidev/agents); check "$r" 'j.agents.length>=13' "catalog seeded ($(echo "$r" | grep -o '"name"' | wc -l) agents)"
