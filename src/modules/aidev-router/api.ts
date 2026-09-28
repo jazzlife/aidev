@@ -46,7 +46,7 @@ export type RouteResult = {
   needs_new: number;
   plan: { engine: Engine | null; engine_locked: boolean; engine_error?: string | null; model: string | null; effort: string | null; target: RouteTarget; reason: string[] };
   engines: Record<Engine, { allowed: boolean; authenticated: boolean; error?: string | null; score: number | null; notes: string[] }>;
-  lessons: Array<{ id: number; trigger: string; rule: string }>;
+  lessons: Array<{ id: number; trigger: string; rule: string; trial?: boolean }>;
   knowledge_digest: string | null;
   latency_ms: number | null;
   total_ms: number;
@@ -183,7 +183,7 @@ export const aidevApi = {
   targets: () => authenticatedFetch('/api/aidev/targets').then((response) => readJson<{ targets: Array<Record<string, unknown>> }>(response)),
   agentExamples: (id: number) => authenticatedFetch(`/api/aidev/agents/${id}/examples`).then((response) => readJson<{ examples: Array<{ id: number; text: string; source: string }> }>(response)),
   addAgentExamples: (id: number, examples: string[]) => post(`/api/aidev/agents/${id}/examples`, { examples }).then((response) => readJson<{ added: number }>(response)),
-  updateLesson: (id: number, patch: { status?: string; rule?: string; trigger?: string }) => post(`/api/aidev/lessons/${id}`, patch, 'PATCH').then((response) => readJson<{ lesson: Record<string, unknown> }>(response)),
+  updateLesson: (id: number, patch: { status?: string; rule?: string; trigger?: string; promote?: boolean }) => post(`/api/aidev/lessons/${id}`, patch, 'PATCH').then((response) => readJson<{ lesson: Record<string, unknown>; promoted: string | null }>(response)),
   pushKey: () => authenticatedFetch('/api/aidev/push/key').then((response) => readJson<{ publicKey: string }>(response)),
   pushSubscribe: (subscription: PushSubscriptionJSON) => post('/api/aidev/push/subscribe', { subscription }).then((response) => readJson<{ ok: boolean }>(response)),
   pushUnsubscribe: (endpoint: string) => post('/api/aidev/push/unsubscribe', { endpoint }).then((response) => readJson<{ removed: number }>(response)),

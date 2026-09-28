@@ -45,7 +45,8 @@ function buildAidevPayload(route: RouteResult, runId: number | null) {
       skills: route.agent.definition.skills,
       mcpServers: route.agent.definition.mcpServers,
     },
-    lessons: route.lessons.map((lesson) => `${lesson.trigger} → ${lesson.rule}`),
+    // a trial lesson is a candidate on probation: this run's outcome verifies or rejects it (E-02)
+    lessons: route.lessons.map((lesson) => `${lesson.trial ? '[시험 적용] ' : ''}${lesson.trigger} → ${lesson.rule}`),
     knowledgeDigest: route.knowledge_digest,
     engine: route.plan.engine,
     model: route.plan.model,

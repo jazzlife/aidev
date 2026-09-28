@@ -385,6 +385,7 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 - [x] E-01 `runs.outcome` 결정 로직(3.8) + `outcome.classify` + `lesson-curator` 후보 생성 + `lesson.accept`
   - 로컬 검증(2026-09-23): 모바일 👎 → runtime `POST /api/aidev-tools/curate`(haiku, 도구 없음, ~40s) → `lesson.accept` 0.70 → 후보 → 카탈로그 승인 → 다음 라우팅에 주입. 새 세션 첫 명령의 run은 `complete` 시점에 `session_id`를 채운다(큐레이션에 필요). 게이트웨이 runtimeFetch 큐레이션 타임아웃 180s.
 - [~] E-02 교훈 검증 게이트(자동 재성공 / 수동 승인), 3회 이상 → 프롬프트 승격(새 버전); `inject.select` 주입 선택
+  - 구현(2026-09-28): 명령마다 실어 보낸 교훈을 `decision_lessons`에 기록 → run 결과로 학습(`lesson-loop.ts`). 후보는 Laya `lesson.relevant`(≥0.6, Laya 없으면 시험 없음)로 관련 있을 때만 명령당 1개 "[시험 적용]"; 성공 → verified(auto), 시험 중 2회 실패 → rejected; 검증 규칙이 실패가 성공보다 많고 3회 이상 → candidate 강등. 성공 3회 → 승격: agent·교훈 소유자가 같으면 프롬프트 "검증된 규칙" 섹션에 합쳐 새 버전(changelog), 공용 agent의 개인 교훈이면 "항상 적용"(top-k 밖). `hits`는 이제 주입 횟수가 아니라 성공 횟수. 카탈로그: 상태 라벨(시험 대기/자동 검증/항상 적용/프롬프트 vN)·성공/실패 수·수동 승격. 로컬: 시나리오 테스트 5종 + smoke +3, 실제 Claude 턴에서 시험 교훈 적용(aria-label·type=button) → 👍 → 자동 검증 확인. 서버 확인 대기
 - [ ] E-03 `escalate`·`handoff` 연결: fail → 다음 행동 자동 결정, 엔진 전환 시 요약 handoff 새 세션
 - [ ] E-04 `knowledge-refresher` 주기 작업(서버 cron: 주 1회) + `knowledge.stale` + superseded 처리
 - [ ] E-05 `tier_policy` 집계 작업(일 1회) + route에 반영, 변경 로그

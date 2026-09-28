@@ -65,6 +65,15 @@ r=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' -H 'accept: text/html
 r=$(curl -s -H 'accept: text/html' -H 'user-agent: Mozilla/5.0 (iPhone) Mobile' -H "cookie: aidev_ui=workbench" "$G/"); check "{\"body\":\"$r\"}" 'j.body.includes("workbench")' "cookie aidev_ui=workbench keeps the workbench on a phone"
 r=$(curl -s -o /dev/null -w '%{http_code} %{redirect_url}' -H 'accept: text/html' -H 'user-agent: Mozilla/5.0 (Macintosh)' "$G/?ui=mobile"); check "{\"r\":\"$r\"}" 'j.r.startsWith("302 ") && j.r.endsWith("/m")' "?ui=mobile switches (sets cookie)"
 r=$(curl -s -H 'accept: text/html' -H 'user-agent: Mozilla/5.0 (Macintosh)' "$G/"); check "{\"body\":\"$r\"}" 'j.body.includes("workbench")' "desktop at / gets the workbench"
+# E-02: a relevant candidate rides along on trial, is recorded, and a successful run verifies it
+AID=$(get "$A" /api/aidev/agents | node -pe 'JSON.parse(require("fs").readFileSync(0)).agents.find(a=>a.name==="frontend-react").id')
+LID=$(post "$A" /api/aidev/lessons "{\"agent_id\":$AID,\"trigger\":\"React 컴포넌트에 토글 훅을 추가할 때\",\"rule\":\"훅 상태를 localStorage와 동기화한다\",\"status\":\"candidate\"}" | node -pe 'const j=JSON.parse(require("fs").readFileSync(0)); j.lesson?.id ?? j.id')
+r=$(post "$A" /api/aidev/route '{"text":"React 컴포넌트에 다크모드 토글 훅을 추가해줘","sessionEngine":"claude"}'); check "$r" "j.lessons.some(l=>l.id===$LID && l.trial===true)" "lesson trial: relevant candidate #$LID carried on trial"
+DID=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).decision_id')
+RID=$(post "$A" /api/aidev/runs "{\"decision_id\":$DID,\"agent_id\":$AID,\"engine\":\"claude\"}" | node -pe 'JSON.parse(require("fs").readFileSync(0)).run_id')
+post "$A" /api/aidev/runs/$RID/outcome '{"user_feedback":"up"}' PATCH >/dev/null
+r=$(get "$A" /api/aidev/lessons?agent=$AID); check "$r" "j.lessons.some(l=>l.id===$LID && l.status==='verified' && l.verified_by==='auto' && l.hits===1)" "lesson trial: 👍 run verifies it (auto)"
+r=$(post "$A" /api/aidev/route '{"text":"docker compose 헬스체크 추가해줘","sessionEngine":"claude"}'); check "$r" "!j.lessons.some(l=>l.trial)" "lesson trial: unrelated command carries no trial"
 # Laya outage → fallback, service keeps answering
 kill %1; sleep 0.3
 r=$(post "$A" /api/aidev/route '{"text":"React 컴포넌트에 다크모드 토글 훅을 추가해줘"}'); check "$r" 'j.fallback===true && j.agent.name==="frontend-react" && j.plan.engine' "laya down → lexical prior still routes (frontend-react), engine still chosen"

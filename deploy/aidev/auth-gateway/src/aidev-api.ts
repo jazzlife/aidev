@@ -4,6 +4,7 @@ import type { openStore } from './store.js';
 import { ENGINES, type Engine } from './store-aidev.js';
 import type { LayaClient } from './laya.js';
 import type { Push } from './push.js';
+import { applyLessonOutcome, promote } from './lesson-loop.js';
 import { decide, listKinds } from './laya-questions.js';
 import fs from 'node:fs';
 import { evaluateRouting, route, type EngineAvailability, type RouteInput } from './routing.js';
@@ -271,6 +272,10 @@ export function createAidevApi(deps: AidevDeps) {
         if (final.decision_id) store.finalizeDecision(uid, final.decision_id, null, outcome);
         // Learning loop (§3.8): a successful run with a specialist confirms the routing — the command
         // becomes an example for that agent, so the lexical prior sharpens with real usage.
+        // Learning loop (§3.8 / E-02): the lessons this command carried learn from how it ended.
+        if (final.decision_id && (outcome === 'success' || outcome === 'fail') && row.outcome !== outcome) {
+          for (const line of applyLessonOutcome(store, final.decision_id, outcome)) console.log(`[aidev] ${line}`);
+        }
         // Learning loop (§3.8 / E-01): a fresh failure is curated out of band into a lesson candidate.
         if (outcome === 'fail' && final.agent_id && row.outcome !== 'fail' && final.session_id) {
           void curateFailure(session, final).catch((error) => console.warn('[aidev] lesson curation failed:', error instanceof Error ? error.message : error));
@@ -298,8 +303,17 @@ export function createAidevApi(deps: AidevDeps) {
       if (lessonMatch && m === 'PATCH') {
         const b = await readJson(req); const id = Number(lessonMatch[1]);
         const l = store.lessonById(id); if (!l || (l.owner_id !== null && l.owner_id !== uid)) throw new HttpError(404, 'Lesson not found');
-        store.updateLesson(id, { status: optStr(b.status, 20), rule: optStr(b.rule, 2000), trigger: optStr(b.trigger, 1000) });
-        return json(res, 200, { lesson: store.lessonById(id) }), true;
+        const status = optStr(b.status, 20);
+        store.updateLesson(id, { status, rule: optStr(b.rule, 2000), trigger: optStr(b.trigger, 1000), ...(status === 'verified' && l.status !== 'verified' ? { verifiedBy: 'user' } : {}) });
+        // manual promotion from the catalog (normally automatic after PROMOTE_HITS successes)
+        let promoted: string | null = null;
+        if (b.promote === true) {
+          const cur = store.lessonById(id)!;
+          if (cur.status !== 'verified' || cur.promoted_to_prompt) throw new HttpError(409, 'Only a verified, not yet promoted lesson can be promoted');
+          promoted = promote(store, id);
+          console.log(`[aidev] ${promoted} (manual)`);
+        }
+        return json(res, 200, { lesson: store.lessonById(id), promoted }), true;
       }
 
       // ---- knowledge ------------------------------------------------------------------------

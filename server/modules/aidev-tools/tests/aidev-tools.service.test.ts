@@ -60,7 +60,7 @@ test('composeAgentInstructions includes prompt, lessons, knowledge, target and t
   const text = composeAgentInstructions(clean);
   assert.match(text, /# 전문 agent: frontend-react \(v3\)/);
   assert.match(text, /You are a React 19 expert/);
-  assert.match(text, /검증된 교훈[\s\S]*- shader renders black/);
+  assert.match(text, /얻은 교훈[\s\S]*- shader renders black/);
   assert.match(text, /검증된 최신 지식[\s\S]*Blitter/);
   assert.match(text, /원격 실행 대상[\s\S]*mac-studio[\s\S]*요청된 원격 작업: test/);
   assert.match(text, /aidev_decide/);

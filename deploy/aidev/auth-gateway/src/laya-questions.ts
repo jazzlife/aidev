@@ -110,6 +110,12 @@ export const KINDS: Record<string, KindSpec> = {
     questions: () => ({ q: noulQ('Is this lesson a generalizable rule that would help in future similar tasks (not a one-off typo, not specific to one file or environment, not obvious common sense)?') }),
     interpret: singleNoul, fallback: () => ({ answer: 0, reason: 'keep as candidate' }),
   },
+  'lesson.relevant': {
+    description: 'Does a candidate lesson apply to this command (worth a trial run)?', threshold: 0.6,
+    questions: () => ({ q: noulQ('A rule was learned from an earlier failure (state: trigger = when it applies, rule = what to do). Does it apply to the new developer command in `command`?') }),
+    // Without Laya there is no trial: an unverified rule is never injected on a guess.
+    interpret: singleNoul, fallback: () => ({ answer: 0, reason: 'no trial without Laya' }),
+  },
   'knowledge.stale': {
     description: 'Does a newly fetched source supersede the stored knowledge item?', threshold: 0.7,
     questions: () => ({ q: noulQ('Does the new source content change or contradict the stored knowledge item so that the item should be replaced?') }),

@@ -58,6 +58,13 @@ function noul(state, q) {
   if (ins.includes('missing')) return { noul: /that file|그 파일|it\b|이거/.test(text) && text.length < 80 ? 0.8 : 0.15 };
   if (ins.includes('two or more')) return { noul: /and|그리고|와 |과 /.test(text) && /db|database|api/.test(text) && /ui|react|화면/.test(text) ? 0.8 : 0.1 };
   if (ins.includes('generalizable')) return { noul: 0.7 };
+  // lesson.relevant: overlap between the command and the lesson's trigger (Hangul bigrams + words)
+  if (ins.includes('earlier failure')) {
+    const grams = (s) => new Set((String(s || '').toLowerCase().match(/[가-힣]{2}|[a-z]{3,}/g) || []));
+    const cmd = grams(state.command); const trig = grams(state.trigger);
+    const shared = [...trig].filter((g) => cmd.has(g)).length;
+    return { noul: shared >= 2 ? 0.85 : 0.1 };
+  }
   if (ins.includes('sufficient')) return { noul: 0.6 };
   if (ins.includes('satisfy')) return { noul: /pass|ok|success/.test(text) ? 0.9 : 0.2 };
   return { noul: 0.3 };

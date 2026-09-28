@@ -7,7 +7,7 @@ import { routingStore } from '@/modules/aidev-router/store';
 type AgentDetail = {
   agent: CatalogAgent;
   knowledge: Array<{ id: number; title: string; source_url: string | null; source_date: string | null; status: string }>;
-  lessons: Array<{ id: number; trigger: string; rule: string; status: string; hits: number }>;
+  lessons: Array<{ id: number; trigger: string; rule: string; status: string; hits: number; fails?: number; verified_by?: string | null; promoted_to_prompt?: number; promoted_version?: number | null }>;
   stats: { runs: number; success: number | null; fail: number | null; avg_ms: number | null };
   versions: Array<{ version: number; changelog: string | null; createdAt: number }>;
 };
@@ -120,18 +120,29 @@ export function AgentCatalog() {
             <ul className="text-muted-foreground">{detail.knowledge.map((item) => <li key={item.id} className="truncate">· <span className={item.status === 'verified' ? 'text-emerald-600' : item.status === 'sourced' ? 'text-foreground/80' : ''}>[{item.status}]</span> {item.title}{item.source_date ? ` (${item.source_date})` : ''}</li>)}</ul>
           </section>
           <section>
-            <div className="text-muted-foreground mb-1">교훈 {detail.lessons.length}</div>
-            <ul className="text-muted-foreground space-y-1">{detail.lessons.map((lesson) => (
-              <li key={lesson.id}>
-                <span className={lesson.status === 'verified' ? 'text-emerald-600' : lesson.status === 'candidate' ? 'text-amber-600' : ''}>[{lesson.status}]</span> {lesson.trigger} → {lesson.rule}
-                {lesson.status === 'candidate' ? (
-                  <span className="ml-1 inline-flex gap-1">
-                    <button type="button" className="px-1 rounded border border-border hover:bg-accent" onClick={() => { void aidevApi.updateLesson(lesson.id, { status: 'verified' }).then(() => loadDetail(detail.agent.id)); }}>승인</button>
-                    <button type="button" className="px-1 rounded border border-border hover:bg-accent" onClick={() => { void aidevApi.updateLesson(lesson.id, { status: 'rejected' }).then(() => loadDetail(detail.agent.id)); }}>거절</button>
-                  </span>
-                ) : null}
-              </li>
-            ))}</ul>
+            <div className="text-muted-foreground mb-1" title="후보는 관련 명령에 시험 적용되어 성공하면 자동 검증, 2회 실패하면 폐기. 검증된 규칙이 3회 성공하면 프롬프트에 승격(내 agent) 또는 항상 적용(공용 agent).">교훈 {detail.lessons.length} · 시험 적용 → 자동 검증 → 승격</div>
+            <ul className="text-muted-foreground space-y-1.5">{detail.lessons.map((lesson) => {
+              const merged = Boolean(lesson.promoted_version);
+              const pinned = Boolean(lesson.promoted_to_prompt) && !merged;
+              const label = merged ? `프롬프트 v${lesson.promoted_version}` : pinned ? '항상 적용' : lesson.status === 'verified' ? (lesson.verified_by === 'auto' ? '자동 검증' : '검증') : lesson.status === 'candidate' ? '시험 대기' : lesson.status;
+              const tone = merged || pinned ? 'text-primary' : lesson.status === 'verified' ? 'text-emerald-600' : lesson.status === 'candidate' ? 'text-amber-600' : '';
+              const reload = () => loadDetail(detail.agent.id);
+              return (
+                <li key={lesson.id}>
+                  <span className={tone}>[{label}]</span> {lesson.trigger} → {lesson.rule}
+                  <span className="ml-1 text-[10px]">성공 {lesson.hits}{lesson.fails ? ` · 실패 ${lesson.fails}` : ''}</span>
+                  {lesson.status === 'candidate' ? (
+                    <span className="ml-1 inline-flex gap-1">
+                      <button type="button" className="px-1 rounded border border-border hover:bg-accent" onClick={() => { void aidevApi.updateLesson(lesson.id, { status: 'verified' }).then(reload); }}>승인</button>
+                      <button type="button" className="px-1 rounded border border-border hover:bg-accent" onClick={() => { void aidevApi.updateLesson(lesson.id, { status: 'rejected' }).then(reload); }}>거절</button>
+                    </span>
+                  ) : null}
+                  {lesson.status === 'verified' && !lesson.promoted_to_prompt ? (
+                    <button type="button" className="ml-1 px-1 rounded border border-border hover:bg-accent" title="내 agent면 프롬프트에 합쳐 새 버전, 공용 agent면 항상 적용" onClick={() => { void aidevApi.updateLesson(lesson.id, { promote: true }).then(() => { reload(); loadList(); }).catch((err: Error) => setError(err.message)); }}>승격</button>
+                  ) : null}
+                </li>
+              );
+            })}</ul>
           </section>
           <section>
             <div className="text-muted-foreground mb-1">버전</div>

@@ -13,7 +13,7 @@ export type TaskKind = typeof TASK_KINDS[number];
 export type AgentRow = { id: number; name: string; domain: string; description: string; hint: string | null; verified: number; prompt: string; tools: string | null; model: string | null; max_turns: number | null; owner_id: number | null; source: string; active: number; uses: number; created_at: number; updated_at: number; version: number; skills: string | null; mcp_servers: string | null };
 export type AgentVersionRow = { id: number; agent_id: number; version: number; prompt: string; tools: string | null; model: string | null; skills: string | null; mcp_servers: string | null; changelog: string | null; created_at: number };
 export type KnowledgeRow = { id: number; agent_id: number; title: string; body: string; source_url: string | null; source_date: string | null; status: string; superseded_by: number | null; expires_at: number | null; owner_id: number | null; created_at: number; updated_at: number };
-export type LessonRow = { id: number; agent_id: number; engine: string | null; trigger: string; rule: string; evidence_run_id: number | null; status: string; hits: number; owner_id: number | null; promoted_to_prompt: number; created_at: number };
+export type LessonRow = { id: number; agent_id: number; engine: string | null; trigger: string; rule: string; evidence_run_id: number | null; status: string; hits: number; owner_id: number | null; promoted_to_prompt: number; fails: number; verified_by: string | null; promoted_version: number | null; created_at: number };
 export type RunRow = { id: number; user_id: number; session_id: string | null; decision_id: number | null; agent_id: number | null; agent_version: number | null; engine: string | null; model: string | null; effort: string | null; depth: number | null; task_kind: string | null; risk: number | null; target_id: number | null; started_at: number; finished_at: number | null; exit_code: number | null; tool_errors: number; user_feedback: string | null; reverted: number; reasked: number; test_result: string | null; cost_tokens: number | null; escalated_from_run: number | null; outcome: string | null };
 export type TargetRow = { id: number; user_id: number; name: string; platform: string | null; arch: string | null; tags: string | null; description: string; token_hash: string | null; pairing_code: string | null; pairing_expires: number | null; policy: string; allowed_roots: string | null; capabilities: string | null; status: string; last_seen: number | null; created_at: number };
 
@@ -108,6 +108,14 @@ export function migrateAidev(db: Database.Database) {
       endpoint TEXT NOT NULL UNIQUE, keys TEXT NOT NULL, user_agent TEXT, created_at INTEGER NOT NULL, last_ok INTEGER, failures INTEGER NOT NULL DEFAULT 0);
     CREATE INDEX IF NOT EXISTS push_subscriptions_user ON push_subscriptions(user_id);
   `);
+  // Lesson verification loop (§3.8 / E-02): which lessons each routed command carried, and how
+  // the runs that carried them ended.
+  addColumn(db, 'lessons', 'fails', 'INTEGER NOT NULL DEFAULT 0');          // failed runs that carried the lesson
+  addColumn(db, 'lessons', 'verified_by', 'TEXT');                          // 'auto' (a trial run succeeded) | 'user'
+  addColumn(db, 'lessons', 'promoted_version', 'INTEGER');                  // agent version the rule was merged into
+  db.exec(`CREATE TABLE IF NOT EXISTS decision_lessons (
+    decision_id INTEGER NOT NULL, lesson_id INTEGER NOT NULL REFERENCES lessons(id) ON DELETE CASCADE, trial INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(decision_id, lesson_id));`);
   addColumn(db, 'accounts', 'claude_token_expires_at', 'INTEGER');   // reported by the runtime after an in-app login
   addColumn(db, 'accounts', 'claude_auth_failure_at', 'INTEGER');    // reported by the runtime when a turn is refused
   addColumn(db, 'accounts', 'claude_notice', 'TEXT');                // last reminder sent ("<expiresAt>:<days>" or "fail:<at>")
@@ -315,13 +323,22 @@ export function aidevMethods(db: Database.Database) {
         .run(l.agentId, l.engine ?? null, l.trigger, l.rule, l.evidenceRunId ?? null, l.status ?? 'candidate', l.ownerId, Date.now());
       return Number(r.lastInsertRowid);
     },
-    updateLesson(id: number, patch: Partial<{ status: string; hits: number; promotedToPrompt: number; rule: string; trigger: string }>) {
+    updateLesson(id: number, patch: Partial<{ status: string; hits: number; fails: number; promotedToPrompt: number; promotedVersion: number | null; verifiedBy: string | null; rule: string; trigger: string }>) {
       const cur = m.lessonById(id); if (!cur) throw new Error('Lesson not found');
       if (patch.status && !['verified', 'candidate', 'rejected'].includes(patch.status)) throw new Error('invalid status');
-      db.prepare('UPDATE lessons SET status=?, hits=?, promoted_to_prompt=?, rule=?, trigger=? WHERE id=?')
-        .run(patch.status ?? cur.status, patch.hits ?? cur.hits, patch.promotedToPrompt ?? cur.promoted_to_prompt, patch.rule ?? cur.rule, patch.trigger ?? cur.trigger, id);
+      db.prepare('UPDATE lessons SET status=?, hits=?, fails=?, promoted_to_prompt=?, promoted_version=?, verified_by=?, rule=?, trigger=? WHERE id=?')
+        .run(patch.status ?? cur.status, patch.hits ?? cur.hits, patch.fails ?? cur.fails, patch.promotedToPrompt ?? cur.promoted_to_prompt,
+          patch.promotedVersion === undefined ? cur.promoted_version : patch.promotedVersion, patch.verifiedBy === undefined ? cur.verified_by : patch.verifiedBy,
+          patch.rule ?? cur.rule, patch.trigger ?? cur.trigger, id);
     },
-    bumpLessonHits(ids: number[]) { if (ids.length) db.prepare(`UPDATE lessons SET hits=hits+1 WHERE id IN (${ids.map(() => '?').join(',')})`).run(...ids); },
+    /** Route time: the lessons a command carried (trial = a candidate on probation). */
+    recordInjectedLessons(decisionId: number, items: Array<{ id: number; trial: boolean }>) {
+      const ins = db.prepare('INSERT OR IGNORE INTO decision_lessons(decision_id, lesson_id, trial) VALUES(?,?,?)');
+      db.transaction(() => { for (const item of items) ins.run(decisionId, item.id, item.trial ? 1 : 0); })();
+    },
+    injectedLessons(decisionId: number) {
+      return db.prepare('SELECT l.*, d.trial FROM decision_lessons d JOIN lessons l ON l.id=d.lesson_id WHERE d.decision_id=?').all(decisionId) as Array<LessonRow & { trial: number }>;
+    },
     // ---- runs -------------------------------------------------------------------
     addRun(r: { userId: number; sessionId?: string | null; decisionId?: number | null; agentId?: number | null; agentVersion?: number | null; engine?: string | null; model?: string | null; effort?: string | null; depth?: number | null; taskKind?: string | null; risk?: number | null; targetId?: number | null; escalatedFromRun?: number | null }) {
       const res = db.prepare('INSERT INTO runs(user_id,session_id,decision_id,agent_id,agent_version,engine,model,effort,depth,task_kind,risk,target_id,started_at,escalated_from_run) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)')

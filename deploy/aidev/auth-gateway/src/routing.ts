@@ -248,15 +248,30 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   }
 
   // ---- lessons / knowledge injection (§3.8) -----------------------------------------------------
+  // (E-02) Pinned = verified 3+ times but the agent's prompt belongs to someone else (a global agent,
+  // a private lesson): always carried, outside the top-k. Rules merged into the agent's own prompt
+  // (promoted_version set) are not injected again. One relevant candidate may ride along on
+  // probation: its run's outcome verifies or rejects it (store.applyLessonOutcome).
   const topk = LESSON_TOPK[depth];
-  const verified = store.lessons(agent.id, userId, ['verified']);
+  const verifiedAll = store.lessons(agent.id, userId, ['verified']).filter((l) => !l.promoted_version);
+  const pinned = verifiedAll.filter((l) => l.promoted_to_prompt);
+  const verified = verifiedAll.filter((l) => !l.promoted_to_prompt);
   let lessons = verified.slice(0, Number.isFinite(topk) ? topk : undefined);
   if (verified.length > topk && Number.isFinite(topk) && topk > 0) {
     const sel = await decide(laya, 'inject.select', { state: { command: text, k: topk }, options: Object.fromEntries(verified.slice(0, 20).map((l) => [String(l.id), `${l.trigger} → ${l.rule}`])) });
     const ids = Array.isArray(sel.answer) ? (sel.answer as string[]).map(Number) : [];
     if (ids.length) lessons = ids.map((id) => verified.find((l) => l.id === id)!).filter(Boolean);
   }
-  store.bumpLessonHits(lessons.map((l) => l.id));
+  lessons = [...pinned, ...lessons];
+  let trial: (typeof lessons)[number] | null = null;
+  if (depth >= 1 && !fallback) {
+    const candidates = store.lessons(agent.id, userId, ['candidate']).slice(0, 5);
+    for (const candidate of candidates) {
+      const rel = await decide(laya, 'lesson.relevant', { state: { command: text, trigger: candidate.trigger, rule: candidate.rule } });
+      if (typeof rel.answer === 'number' && rel.answer >= 0.6) { trial = candidate; reason.push(`trial lesson #${candidate.id} (${rel.answer.toFixed(2)})`); break; }
+    }
+  }
+  if (trial) lessons.push(trial);
   let knowledgeDigest = '';
   const kBudget = KNOWLEDGE_DIGEST_CHARS[depth];
   if (kBudget > 0) {
@@ -279,6 +294,7 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   store.db.prepare('UPDATE decision_log SET kind=?, fallback=?, answer=?, state=? WHERE id=?').run('route', fallback ? 1 : 0,
     JSON.stringify({ agent: agentName, engine, model: tier.model, effort: tier.effort, depth, task_kind: taskKind, remote_action: remoteAction, target: target?.name ?? null }), JSON.stringify(state).slice(0, 8000), decisionId);
   if (decision === 'use') store.bumpAgentUse(userId, agentName);
+  store.recordInjectedLessons(decisionId, lessons.map((l) => ({ id: l.id, trial: l === trial })));
 
   // Creation flow (§3.7): the client sends the same command to the agent-architect meta agent first.
   const architect = decision === 'create' || decision === 'create_background' ? store.agent(userId, 'agent-architect') : undefined;
@@ -298,7 +314,7 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     needs_new: needsNew, shortlisted,
     plan: { engine, engine_locked: engineLocked, engine_error: engineError, model: tier.model, effort: tier.effort, target: target ? { id: target.id, name: target.name, platform: target.platform, tags: target.tags ? JSON.parse(target.tags) as string[] : [], capabilities: target.capabilities ? JSON.parse(target.capabilities) as unknown : null } : null, reason },
     engines: { claude: { ...engines.claude, score: scores.claude.score, notes: scores.claude.parts }, codex: { ...engines.codex, score: scores.codex.score, notes: scores.codex.parts } },
-    lessons: lessons.map((l) => ({ id: l.id, trigger: l.trigger, rule: l.rule })),
+    lessons: lessons.map((l) => ({ id: l.id, trigger: l.trigger, rule: l.rule, trial: l === trial })),
     knowledge_digest: knowledgeDigest || null,
     target_decision: targetDecision ? { answer: targetDecision.answer, confidence: targetDecision.confidence, fallback: targetDecision.fallback } : null,
     latency_ms: latency, total_ms: Date.now() - t0, device,

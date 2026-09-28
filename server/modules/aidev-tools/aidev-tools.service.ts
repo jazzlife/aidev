@@ -198,7 +198,7 @@ export function composeAgentInstructions(aidev: AidevTurnOptions): string {
   parts.push(`# 전문 agent: ${aidev.agent.name}${aidev.agent.version ? ` (v${aidev.agent.version})` : ''}`);
   parts.push(aidev.agent.prompt.trim());
   if (aidev.lessons.length) {
-    parts.push(`## 이전 실행에서 검증된 교훈 (반드시 지킬 것)\n${aidev.lessons.map((lesson) => `- ${lesson}`).join('\n')}`);
+    parts.push(`## 이전 실행에서 얻은 교훈 (반드시 지킬 것; [시험 적용]은 이번 결과로 검증 중인 규칙)\n${aidev.lessons.map((lesson) => `- ${lesson}`).join('\n')}`);
   }
   if (aidev.knowledgeDigest) {
     parts.push(`## 검증된 최신 지식\n${aidev.knowledgeDigest.trim()}`);
