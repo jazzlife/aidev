@@ -9,7 +9,8 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 W=${LOCAL_PLATFORM_DIR:-/home/claude/aidev-local}   # not under /tmp: CloudCLI refuses projects in system directories
 case "${1:-up}" in
-  down) for f in "$W"/*.pid; do [ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null || true; done; rm -rf "$W"; echo stopped; exit 0;;
+  # a recorded pid can be the `cd … && node` list's subshell, so its children are stopped too
+  down) for f in "$W"/*.pid; do [ -f "$f" ] || continue; p=$(cat "$f"); pkill -P "$p" 2>/dev/null || true; kill "$p" 2>/dev/null || true; done; rm -rf "$W"; echo stopped; exit 0;;
   up) ;;
   *) echo "usage: local-platform.sh up|down" >&2; exit 1;;
 esac

@@ -47,6 +47,8 @@ r=$(jpost /api/aidev/route/eval '{}'); echo "$r" | cut -c1-600; echo "task_kind:
 
 echo "## recent routing decisions (signals behind each pick)"
 docker exec aidev-auth-gateway node /srv/app/current/control/gateway/dist/manage-users.js decisions 6 2>&1 | grep -v "^$" | head -24
+echo "## learned tier policy (E-05) and recent changes"
+docker exec aidev-auth-gateway node /srv/app/current/control/gateway/dist/manage-users.js tier-policy 2>&1 | head -30
 echo "## runtime logs: aidev routing applied (send a chat message first; B-13)"
 for c in $(docker ps --format '{{.Names}}' | grep '^aidev-cloudcli-'); do
   n=$(docker logs --since 24h "$c" 2>&1 | grep -c "aidev routing"); echo "$c: $n routed turns"

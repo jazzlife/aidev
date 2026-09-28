@@ -15,6 +15,7 @@ export type AgentVersionRow = { id: number; agent_id: number; version: number; p
 /** Default life of a sourced knowledge item before it is re-checked against its source (§3.8). */
 export const KNOWLEDGE_TTL_MS = 90 * 86400_000;
 export type KnowledgeRow = { id: number; agent_id: number; title: string; body: string; source_url: string | null; source_date: string | null; status: string; superseded_by: number | null; expires_at: number | null; owner_id: number | null; created_at: number; updated_at: number; checked_at: number | null; check_fails: number; check_note: string | null; replaces: number | null };
+export type TierPolicyRow = { domain: string; depth: number; engine: string; model: string | null; effort: string | null; success_n: number; fail_n: number; avg_ms: number | null; level: number | null; pinned: number; updated_at: number | null };
 export type LessonRow = { id: number; agent_id: number; engine: string | null; trigger: string; rule: string; evidence_run_id: number | null; status: string; hits: number; owner_id: number | null; promoted_to_prompt: number; fails: number; verified_by: string | null; promoted_version: number | null; created_at: number };
 export type RunRow = { id: number; user_id: number; session_id: string | null; decision_id: number | null; agent_id: number | null; agent_version: number | null; engine: string | null; model: string | null; effort: string | null; depth: number | null; task_kind: string | null; risk: number | null; target_id: number | null; started_at: number; finished_at: number | null; exit_code: number | null; tool_errors: number; user_feedback: string | null; reverted: number; reasked: number; test_result: string | null; cost_tokens: number | null; escalated_from_run: number | null; outcome: string | null };
 export type TargetRow = { id: number; user_id: number; name: string; platform: string | null; arch: string | null; tags: string | null; description: string; token_hash: string | null; pairing_code: string | null; pairing_expires: number | null; policy: string; allowed_roots: string | null; capabilities: string | null; status: string; last_seen: number | null; created_at: number };
@@ -128,6 +129,14 @@ export function migrateAidev(db: Database.Database) {
   addColumn(db, 'knowledge', 'check_fails', 'INTEGER NOT NULL DEFAULT 0');
   addColumn(db, 'knowledge', 'check_note', 'TEXT');
   addColumn(db, 'knowledge', 'replaces', 'INTEGER');
+  // Tier policy learning (§3.8 / E-05): the cell's effective tier level (null = the table's depth),
+  // an administrator pin, when it last changed (stats count from then), and the change log.
+  addColumn(db, 'tier_policy', 'level', 'INTEGER');
+  addColumn(db, 'tier_policy', 'pinned', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(db, 'tier_policy', 'updated_at', 'INTEGER');
+  db.exec(`CREATE TABLE IF NOT EXISTS tier_policy_log (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, domain TEXT NOT NULL, depth INTEGER NOT NULL, engine TEXT NOT NULL,
+    from_level INTEGER, to_level INTEGER, from_model TEXT, to_model TEXT, success_n INTEGER, fail_n INTEGER, reason TEXT NOT NULL, actor TEXT NOT NULL);`);
   // engine_weights seed: bulk reading/analysis prefers Codex, everything else neutral (§0 decisions)
   const n = (db.prepare('SELECT COUNT(*) AS n FROM engine_weights').get() as { n: number }).n;
   if (n === 0) {
@@ -136,6 +145,17 @@ export function migrateAidev(db: Database.Database) {
       for (const kind of TASK_KINDS) for (const engine of ENGINES) ins.run(kind, engine, kind === 'bulk_read' ? (engine === 'codex' ? 0.7 : 0.3) : 0.5);
     })();
   }
+  // Engine weight learning (§3.4 / E-06): the seed/admin prior the learned weight is smoothed toward,
+  // an admin pin, and the statistics behind the current weight; changes go to engine_weight_log.
+  addColumn(db, 'engine_weights', 'prior', 'REAL');
+  addColumn(db, 'engine_weights', 'pinned', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(db, 'engine_weights', 'success_n', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(db, 'engine_weights', 'fail_n', 'INTEGER NOT NULL DEFAULT 0');
+  addColumn(db, 'engine_weights', 'avg_ms', 'INTEGER');
+  addColumn(db, 'engine_weights', 'updated_at', 'INTEGER');
+  db.exec(`UPDATE engine_weights SET prior=weight WHERE prior IS NULL;
+    CREATE TABLE IF NOT EXISTS engine_weight_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, task_kind TEXT NOT NULL, engine TEXT NOT NULL,
+      from_weight REAL, to_weight REAL, success_n INTEGER, fail_n INTEGER, reason TEXT NOT NULL, actor TEXT NOT NULL);`);
 }
 
 export function aidevMethods(db: Database.Database) {
@@ -201,11 +221,54 @@ export function aidevMethods(db: Database.Database) {
       for (const r of db.prepare('SELECT * FROM engine_weights').all() as Array<{ task_kind: string; engine: Engine; weight: number }>) (out[r.task_kind] ??= { claude: 0.5, codex: 0.5 })[r.engine] = r.weight;
       return out;
     },
-    setEngineWeight(taskKind: string, engine: Engine, weight: number) {
-      db.prepare('INSERT INTO engine_weights VALUES(?,?,?) ON CONFLICT(task_kind,engine) DO UPDATE SET weight=excluded.weight').run(taskKind, engine, Math.max(0, Math.min(1, weight)));
+    /** Administrator edit: the value becomes the prior too (learning is smoothed toward it); `pinned` stops learning. */
+    setEngineWeight(taskKind: string, engine: Engine, weight: number, opts: { pinned?: boolean; actor?: string } = {}) {
+      if (!ENGINES.includes(engine)) throw new Error('engine must be claude|codex');
+      const w = Math.max(0, Math.min(1, weight));
+      const cur = db.prepare('SELECT weight FROM engine_weights WHERE task_kind=? AND engine=?').get(taskKind, engine) as { weight: number } | undefined;
+      db.prepare(`INSERT INTO engine_weights(task_kind,engine,weight,prior,pinned,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(task_kind,engine)
+        DO UPDATE SET weight=excluded.weight, prior=excluded.prior, pinned=excluded.pinned, updated_at=excluded.updated_at`).run(taskKind, engine, w, w, opts.pinned ? 1 : 0, Date.now());
+      m.logEngineWeight({ taskKind, engine, from: cur?.weight ?? null, to: w, successN: 0, failN: 0, reason: `관리자 지정${opts.pinned ? ' (고정)' : ''}`, actor: opts.actor ?? 'admin' });
+    },
+    engineWeightRows() {
+      return db.prepare('SELECT * FROM engine_weights ORDER BY task_kind, engine').all() as Array<{ task_kind: string; engine: Engine; weight: number; prior: number | null; pinned: number; success_n: number; fail_n: number; avg_ms: number | null; updated_at: number | null }>;
+    },
+    updateLearnedWeight(taskKind: string, engine: Engine, r: { weight: number; successN: number; failN: number; avgMs: number | null }) {
+      db.prepare(`INSERT INTO engine_weights(task_kind,engine,weight,prior,success_n,fail_n,avg_ms,updated_at) VALUES(?,?,?,0.5,?,?,?,?) ON CONFLICT(task_kind,engine)
+        DO UPDATE SET weight=excluded.weight, success_n=excluded.success_n, fail_n=excluded.fail_n, avg_ms=excluded.avg_ms, updated_at=excluded.updated_at`).run(taskKind, engine, r.weight, r.successN, r.failN, r.avgMs, Date.now());
+    },
+    logEngineWeight(e: { taskKind: string; engine: string; from: number | null; to: number; successN: number; failN: number; reason: string; actor: string }) {
+      db.prepare('INSERT INTO engine_weight_log(at,task_kind,engine,from_weight,to_weight,success_n,fail_n,reason,actor) VALUES(?,?,?,?,?,?,?,?,?)').run(Date.now(), e.taskKind, e.engine, e.from, e.to, e.successN, e.failN, e.reason, e.actor);
+    },
+    engineWeightLog(limit = 50) { return db.prepare('SELECT * FROM engine_weight_log ORDER BY id DESC LIMIT ?').all(limit) as Array<Record<string, unknown>>; },
+    /** Finished runs with a clear outcome since `since`, per task kind and engine (weight learning input). */
+    engineRuns(since: number) {
+      return db.prepare("SELECT task_kind, engine, outcome, started_at, finished_at FROM runs WHERE started_at >= ? AND outcome IN ('success','fail') AND task_kind IS NOT NULL AND engine IN ('claude','codex')").all(since) as Array<{ task_kind: string; engine: Engine; outcome: string; started_at: number; finished_at: number | null }>;
     },
     tierPolicy(domain: string, depth: number, engine: Engine) {
       return db.prepare('SELECT * FROM tier_policy WHERE domain IN (?, \'*\') AND depth=? AND engine=? ORDER BY domain=\'*\' LIMIT 1').get(domain, depth, engine) as { model: string | null; effort: string | null; success_n: number; fail_n: number; avg_ms: number | null } | undefined;
+    },
+    tierPolicyRows() {
+      return db.prepare('SELECT * FROM tier_policy ORDER BY domain, depth, engine').all() as TierPolicyRow[];
+    },
+    tierPolicyRow(domain: string, depth: number, engine: string) {
+      return db.prepare('SELECT * FROM tier_policy WHERE domain=? AND depth=? AND engine=?').get(domain, depth, engine) as TierPolicyRow | undefined;
+    },
+    upsertTierPolicy(r: { domain: string; depth: number; engine: string; level: number | null; model: string | null; effort: string | null; successN: number; failN: number; avgMs: number | null; pinned?: number; updatedAt?: number }) {
+      const cur = m.tierPolicyRow(r.domain, r.depth, r.engine);
+      db.prepare(`INSERT INTO tier_policy(domain,depth,engine,model,effort,success_n,fail_n,avg_ms,level,pinned,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)
+        ON CONFLICT(domain,depth,engine) DO UPDATE SET model=excluded.model, effort=excluded.effort, success_n=excluded.success_n, fail_n=excluded.fail_n, avg_ms=excluded.avg_ms, level=excluded.level, pinned=excluded.pinned, updated_at=excluded.updated_at`)
+        .run(r.domain, r.depth, r.engine, r.model, r.effort, r.successN, r.failN, r.avgMs, r.level, r.pinned ?? cur?.pinned ?? 0, r.updatedAt ?? cur?.updated_at ?? null);
+    },
+    logTierChange(e: { domain: string; depth: number; engine: string; fromLevel: number; toLevel: number; fromModel: string; toModel: string; successN: number; failN: number; reason: string; actor: string }) {
+      db.prepare('INSERT INTO tier_policy_log(at,domain,depth,engine,from_level,to_level,from_model,to_model,success_n,fail_n,reason,actor) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)')
+        .run(Date.now(), e.domain, e.depth, e.engine, e.fromLevel, e.toLevel, e.fromModel, e.toModel, e.successN, e.failN, e.reason, e.actor);
+    },
+    tierPolicyLog(limit = 50) { return db.prepare('SELECT * FROM tier_policy_log ORDER BY id DESC LIMIT ?').all(limit) as Array<Record<string, unknown>>; },
+    /** Finished runs with a clear outcome since `since`, with their agent's domain (policy aggregation input). */
+    policyRuns(since: number) {
+      return db.prepare(`SELECT r.depth, r.engine, r.model, r.effort, r.outcome, r.started_at, r.finished_at, a.domain FROM runs r JOIN agents a ON a.id=r.agent_id
+        WHERE r.started_at >= ? AND r.outcome IN ('success','fail') AND r.engine IS NOT NULL AND r.depth IS NOT NULL AND a.domain != 'meta'`).all(since) as Array<{ depth: number; engine: string; model: string | null; effort: string | null; outcome: string; started_at: number; finished_at: number | null; domain: string }>;
     },
     tierStats(engine: Engine) {
       return db.prepare('SELECT domain, depth, success_n, fail_n FROM tier_policy WHERE engine=?').all(engine) as Array<{ domain: string; depth: number; success_n: number; fail_n: number }>;

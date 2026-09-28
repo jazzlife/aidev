@@ -5,11 +5,13 @@ import { ENGINES, type Engine } from './store-aidev.js';
 import type { LayaClient } from './laya.js';
 import type { Push } from './push.js';
 import { applyLessonOutcome, promote } from './lesson-loop.js';
+import { runTierPolicy, setTierPolicy } from './tier-policy.js';
+import { runEngineWeights } from './engine-weights.js';
 import { createKnowledgeRefresher, decideProposal } from './knowledge-refresh.js';
 import { decideNext, type NextAction } from './escalation.js';
 import { decide, listKinds } from './laya-questions.js';
 import fs from 'node:fs';
-import { evaluateRouting, route, type EngineAvailability, type RouteInput } from './routing.js';
+import { evaluateRouting, route, TIER_TABLE, type EngineAvailability, type RouteInput } from './routing.js';
 
 /**
  * /api/aidev/* — routing, decisions, agent catalog, runs, lessons, knowledge, engines, targets
@@ -206,9 +208,12 @@ export function createAidevApi(deps: AidevDeps) {
       if (rest === '/engines/weights' && m === 'PUT') {
         requireAdmin(session);
         const b = await readJson(req);
-        store.setEngineWeight(str(b.task_kind, 'task_kind', 40), str(b.engine, 'engine', 20) as Engine, num(b.weight, 'weight'));
-        return json(res, 200, { weights: store.engineWeights() }), true;
+        try { store.setEngineWeight(str(b.task_kind, 'task_kind', 40), str(b.engine, 'engine', 20) as Engine, num(b.weight, 'weight'), { pinned: b.pinned === true, actor: session.user.username }); }
+        catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid'); }
+        return json(res, 200, { weights: store.engineWeights(), rows: store.engineWeightRows() }), true;
       }
+      // E-06: learned weights with the statistics behind them and their change log (admin)
+      if (rest === '/engines/weights' && m === 'GET') { requireAdmin(session); return json(res, 200, { rows: store.engineWeightRows(), log: store.engineWeightLog(50) }), true; }
 
       // ---- agents ---------------------------------------------------------------------------
       if (rest === '/agents' && m === 'GET') {
@@ -402,6 +407,19 @@ export function createAidevApi(deps: AidevDeps) {
         res.writeHead(200, { 'content-type': 'application/x-ndjson', 'cache-control': 'no-store' });
         for (const r of rows) res.write(`${JSON.stringify(r)}\n`);
         return res.end(), true;
+      }
+      // E-05: learned tier per (domain, depth, engine) + change log; run now / pin / reset (admin)
+      if (rest === '/tier-policy' && m === 'GET') {
+        requireAdmin(session);
+        return json(res, 200, { cells: store.tierPolicyRows(), log: store.tierPolicyLog(50), last_run: Number(store.kvGet('tier_policy_at') ?? 0) || null, table: TIER_TABLE }), true;
+      }
+      if (rest === '/tier-policy/run' && m === 'POST') { requireAdmin(session); const tiers = runTierPolicy(store, { actor: session.user.username }); return json(res, 200, { ...tiers, weights: runEngineWeights(store, { actor: session.user.username }) }), true; }
+      if (rest === '/tier-policy' && m === 'PUT') {
+        requireAdmin(session);
+        const b = await readJson(req);
+        const cell = { domain: str(b.domain, 'domain', 60), depth: num(b.depth, 'depth'), engine: str(b.engine, 'engine', 10) };
+        try { return json(res, 200, { cell: setTierPolicy(store, cell, b.level === null || b.level === undefined ? null : num(b.level, 'level'), b.pinned === true, session.user.username) }), true; }
+        catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid'); }
       }
       if (rest === '/stats' && m === 'GET') { requireAdmin(session); return json(res, 200, { decisions_24h: store.decisionStats(86400_000), laya: laya.status }), true; }
       return json(res, 404, { error: 'Not found' }), true;

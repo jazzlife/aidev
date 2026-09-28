@@ -3,6 +3,7 @@ import { BookOpen, Bot, CheckCircle2, ChevronLeft, ListChecks, Plus, RefreshCw, 
 
 import { aidevApi, type CatalogAgent, type KnowledgeItem } from '@/modules/aidev-router/api';
 import { KnowledgePanel, KnowledgeProposalCard } from '@/modules/aidev-router/KnowledgePanel';
+import { TierPolicyPanel } from '@/modules/aidev-router/TierPolicyPanel';
 import { refreshSummary, useKnowledgeRefresh } from '@/modules/aidev-router/hooks/useKnowledgeRefresh';
 import { routingStore } from '@/modules/aidev-router/store';
 
@@ -38,6 +39,9 @@ export function AgentCatalog() {
   const selectedRef = useRef<number | null>(null);
   useEffect(() => { selectedRef.current = selected; });
   const knowledge = useKnowledgeRefresh(() => { if (selectedRef.current !== null) loadDetail(selectedRef.current); });
+  // E-05: the learned tier policy is shown to administrators only
+  const [isAdmin, setIsAdmin] = useState(false);
+  useEffect(() => { aidevApi.engines().then((response) => setIsAdmin(response.role === 'admin')).catch(() => setIsAdmin(false)); }, []);
   useEffect(() => { loadList(); }, [loadList]);
   useEffect(() => { if (selected !== null) loadDetail(selected); }, [selected, loadDetail]);
 
@@ -74,6 +78,7 @@ export function AgentCatalog() {
             {!knowledge.running && knowledge.job?.finishedAt ? <div className="text-muted-foreground">{refreshSummary(knowledge.job)}</div> : null}
             {knowledge.proposals?.map((proposal) => <KnowledgeProposalCard key={proposal.id} proposal={proposal} showAgent onDecide={(accept) => { void knowledge.decide(proposal.id, accept); }} />)}
           </div>
+          {isAdmin ? <TierPolicyPanel /> : null}
           {agents?.map((agent) => (
             <button key={agent.id} type="button" onClick={() => setSelected(agent.id)} className="w-full border-b border-border/60 px-3 py-2 text-left hover:bg-accent/50">
               <div className="flex items-center gap-1.5">
