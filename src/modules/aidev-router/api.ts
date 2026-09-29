@@ -181,6 +181,14 @@ export type TierPolicyCell = { domain: string; depth: number; engine: Engine; mo
 export type EngineWeightRow = { task_kind: string; engine: Engine; weight: number; prior: number | null; pinned: number; success_n: number; fail_n: number; avg_ms: number | null; updated_at: number | null };
 export type TierPolicyView = { downgrade?: boolean; cells: TierPolicyCell[]; log: Array<{ id: number; at: number; domain: string; depth: number; engine: string; from_model: string; to_model: string; reason: string; actor: string }>; last_run: number | null; table: Record<number, Record<Engine, { model: string; effort: string }>> };
 
+/** An agent's remote command waiting for (or answered by) the user — gateway remote gate (F-05). */
+export type RemoteApproval = {
+  id: string; targetId: number; targetName: string; cmd: string; cwd: string | null; agent: string | null; runId: number | null;
+  risk: number; reasons: string[]; destructive: boolean; policy: string;
+  status: 'pending' | 'allowed' | 'denied' | 'expired'; createdAt: number; expiresAt: number; decidedAt: number | null; decidedBy: string | null;
+  remoteRunId: number | null; error: string | null;
+};
+
 /** A command run on a remote PC (remote_runs row + the live stream while the gateway holds it). */
 export type RemoteRun = {
   id: number; target_id: number; target_name: string | null; kind: string; cmd: string | null; cwd: string | null; approved_by: string | null;
@@ -217,6 +225,9 @@ export const aidevApi = {
   remoteRun: (id: number) => authenticatedFetch(`/api/aidev/remote-runs/${id}`).then((response) => readJson<{ run: RemoteRun }>(response)),
   /** Last output as plain text (ANSI codes stripped). */
   remoteRunLog: (id: number, bytes = 16384) => authenticatedFetch(`/api/aidev/remote-runs/${id}/log?plain=1&bytes=${bytes}`).then(async (response) => { if (!response.ok) throw new Error(`log ${response.status}`); return response.text(); }),
+  /** Agent commands waiting for the user's approval (F-05). */
+  approvals: (all = false) => authenticatedFetch(`/api/aidev/approvals${all ? '?all=1' : ''}`).then((response) => readJson<{ approvals: RemoteApproval[] }>(response)),
+  answerApproval: (id: string, allow: boolean, auto = false) => post(`/api/aidev/approvals/${id}`, { allow, auto }).then((response) => readJson<{ approval: RemoteApproval }>(response)),
   remoteRunSignal: (id: number, signal: 'INT' | 'KILL' = 'INT') => post(`/api/aidev/remote-runs/${id}/signal`, { signal }).then((response) => readJson<{ ok: boolean }>(response)),
   agentExamples: (id: number) => authenticatedFetch(`/api/aidev/agents/${id}/examples`).then((response) => readJson<{ examples: Array<{ id: number; text: string; source: string }> }>(response)),
   addAgentExamples: (id: number, examples: string[]) => post(`/api/aidev/agents/${id}/examples`, { examples }).then((response) => readJson<{ added: number }>(response)),

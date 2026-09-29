@@ -8,6 +8,7 @@ import { openStore } from './store.js';
 import { LayaClient } from './laya.js';
 import { createAidevApi } from './aidev-api.js';
 import { createPush } from './push.js';
+import { createRemoteGate } from './remote-gate.js';
 import { createRunnerHub, type RunnerHub } from './runner-hub.js';
 import { startTierPolicySchedule } from './tier-policy.js';
 import { seedAgents } from './seed-agents.js';
@@ -163,8 +164,11 @@ push.startReminders();
 const remoteLogDir = process.env.REMOTE_LOG_DIR ?? path.join(path.dirname(process.env.DATABASE_PATH ?? '/data/auth.db'), 'remote-logs');
 const runners: RunnerHub = createRunnerHub(store, new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 }), { logDir: remoteLogDir });
 runners.resetStatuses();
+// Agents' remote commands pass the gate (risk, policy, approvals); remote test results feed the chat run's outcome.
+const gate = createRemoteGate({ store, laya, runners, push });
+runners.onFinish((stream, userId) => gate.onFinished(stream, userId, stream.runId));
 const aidev = createAidevApi({
-  runners,
+  runners, gate,
   store, laya, json, push,
   async runtimeFetch(session, path, init, timeoutMs = 10_000) {
     const runtime = await ready(session.user.runtime);

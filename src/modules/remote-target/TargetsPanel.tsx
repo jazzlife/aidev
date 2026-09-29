@@ -24,7 +24,7 @@ type Target = {
   } | null;
 };
 
-const POLICY_LABEL: Record<Target['policy'], string> = { ask: '실행 전 확인', auto: '자동 실행', deny: '실행 금지' };
+const POLICY_LABEL: Record<Target['policy'], string> = { ask: '변경 명령은 확인', auto: '위험 명령만 확인', deny: '실행 금지' };
 const POLL_MS = 5000;
 
 function ago(at: number | null) {

@@ -5,6 +5,7 @@ import { EFFORT_LADDER, ENGINES, type Engine } from './store-aidev.js';
 import type { LayaClient } from './laya.js';
 import type { Push } from './push.js';
 import { RpcError, type RunnerHub } from './runner-hub.js';
+import type { RemoteGate } from './remote-gate.js';
 import { applyLessonOutcome, promote } from './lesson-loop.js';
 import { downgradeEnabled, runTierPolicy, setTierPolicy } from './tier-policy.js';
 import { runEngineWeights } from './engine-weights.js';
@@ -29,8 +30,13 @@ export type AidevDeps = {
   push: Push;
   /** Remote PC runners (stage F): live connections and JSON-RPC calls. */
   runners?: RunnerHub;
+  /** Agent remote execution gate: risk, policy, approvals (F-05). */
+  gate?: RemoteGate;
 };
 
+/** Terminal output → plain text: no ANSI colour/cursor codes; a \r-redrawn line keeps its last state. */
+export const plainText = (text: string) => text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '').replace(/\x1b[()][A-Z0-9]/g, '')
+  .split('\n').map((line) => { const parts = line.replace(/\r$/, '').split('\r'); return parts[parts.length - 1]; }).join('\n');
 class HttpError extends Error { constructor(public status: number, message: string) { super(message); } }
 const num = (v: unknown, name: string) => { const n = Number(v); if (!Number.isFinite(n)) throw new HttpError(400, `${name} must be a number`); return n; };
 const str = (v: unknown, name: string, max = 20000) => { if (typeof v !== 'string' || !v.trim()) throw new HttpError(400, `${name} required`); if (v.length > max) throw new HttpError(400, `${name} too long`); return v; };
@@ -411,6 +417,17 @@ export function createAidevApi(deps: AidevDeps) {
         const id = store.addTarget({ userId: uid, name: str(b.name, 'name', 41), platform: optStr(b.platform, 20) ?? null, tags: Array.isArray(b.tags) ? (b.tags as unknown[]).map(String).slice(0, 20) : [], description: optStr(b.description, 600) ?? '', policy: optStr(b.policy, 10), pairingCode: code, pairingExpires: Date.now() + 10 * 60_000 });
         return json(res, 201, { target: { id, pairing_code: code, expires_in: 600 } }), true;
       }
+      // last N bytes of a run: the live ring while the gateway holds the stream, else the log file
+      const readRunTail = async (r: { id: number; target_id: number }, want: number): Promise<Buffer> => {
+        const live = deps.runners?.streamByRun(r.id);
+        const ring = live ? deps.runners!.tail(r.target_id, live.streamId) : null;
+        if (ring) return ring.subarray(-want);
+        const file = deps.runners?.logPath(r.id);
+        const stat = file ? await fs.promises.stat(file).catch(() => null) : null;
+        if (!file || !stat?.isFile()) return Buffer.alloc(0);
+        const fh = await fs.promises.open(file, 'r');
+        try { const len = Math.min(stat.size, want); const data = Buffer.alloc(len); await fh.read(data, 0, len, stat.size - len); return data; } finally { await fh.close(); }
+      };
       // ---- remote runs (F-03): start a command on a target, list runs, read logs, stop ---------------
       const remoteRunView = (r: NonNullable<ReturnType<Store['remoteRunById']>>) => ({ ...r, artifacts: r.artifacts ? JSON.parse(r.artifacts) : null, live: deps.runners?.streamByRun(r.id) ?? null });
       const execMatch = rest.match(/^\/targets\/(\d+)\/(exec|runs)$/);
@@ -423,9 +440,9 @@ export function createAidevApi(deps: AidevDeps) {
           return json(res, 200, { runs: store.remoteRuns(uid, id, limit).map(remoteRunView), streams: deps.runners?.streams(id) ?? [] }), true;
         }
         if (execMatch[2] === 'exec' && m === 'POST') {
-          // agents go through remote_exec + approval (F-05); this endpoint is the user's own hand
-          if (session.sid.startsWith('runtime:')) throw new HttpError(403, 'agent의 원격 실행은 승인 절차(remote_exec, F-05)를 거쳐야 합니다');
-          if (target.policy === 'deny') throw new HttpError(403, '이 대상의 실행 정책이 "거부"입니다 — 원격 대상에서 정책을 바꾸세요');
+          // the user's own hand (workbench) runs directly; an agent (runtime session) goes through the gate (F-05)
+          const agentCall = session.sid.startsWith('runtime:');
+          if (!agentCall && target.policy === 'deny') throw new HttpError(403, '이 대상의 실행 정책이 "거부"입니다 — 원격 대상에서 정책을 바꾸세요');
           if (!deps.runners) throw new HttpError(503, 'runner hub unavailable');
           const b = await readJson(req);
           const cmd = str(b.cmd, 'cmd', 16000);
@@ -437,8 +454,16 @@ export function createAidevApi(deps: AidevDeps) {
             env = Object.fromEntries(entries) as Record<string, string>;
           }
           const int = (v: unknown, lo: number, hi: number) => (v === undefined || v === null ? undefined : Math.min(Math.max(Math.round(num(v, 'number')), lo), hi));
+          const exec = { cmd, cwd: optStr(b.cwd, 1000) || null, pty: agentCall ? false : b.pty === true, cols: int(b.cols, 10, 500), rows: int(b.rows, 4, 300), env, timeoutSec: int(b.timeoutSec, 1, 86400) };
           try {
-            const stream = await deps.runners.exec(id, uid, { cmd, cwd: optStr(b.cwd, 1000) || null, pty: b.pty === true, cols: int(b.cols, 10, 500), rows: int(b.rows, 4, 300), env, timeoutSec: int(b.timeoutSec, 1, 86400) }, { approvedBy: 'user' });
+            if (agentCall) {
+              if (!deps.gate) throw new HttpError(503, 'remote gate unavailable');
+              if (!deps.runners.online(id)) return json(res, 200, { status: 'offline', error: `대상 ${target.name}이(가) 오프라인입니다 — 러너가 실행 중인지 확인하라고 사용자에게 알리세요` }), true;
+              const runId = typeof b.runId === 'number' && store.run(uid, b.runId) ? b.runId : null;
+              const result = await deps.gate.request(uid, target, exec, { runId, agent: optStr(b.agent, 41) ?? null });
+              return json(res, 200, result), true;
+            }
+            const stream = await deps.runners.exec(id, uid, exec, { approvedBy: 'user' });
             return json(res, 201, { stream }), true;
           } catch (error) {
             if (error instanceof HttpError) throw error;
@@ -446,34 +471,51 @@ export function createAidevApi(deps: AidevDeps) {
           }
         }
       }
+      // ---- approvals (F-05): agent commands waiting for the user --------------------------------
+      if (rest === '/approvals' && m === 'GET') return json(res, 200, { approvals: deps.gate?.list(uid, url.searchParams.get('all') === '1') ?? [] }), true;
+      const approvalMatch = rest.match(/^\/approvals\/([A-Za-z0-9_-]{8,40})(\/wait)?$/);
+      if (approvalMatch && deps.gate) {
+        if (approvalMatch[2] === '/wait' && m === 'GET') {
+          const timeoutMs = Math.min(Math.max(Number(url.searchParams.get('timeout')) || 25, 1), 50) * 1000;
+          const a = await deps.gate.wait(uid, approvalMatch[1], timeoutMs);
+          if (!a) throw new HttpError(404, 'approval not found');
+          return json(res, 200, { approval: a }), true;
+        }
+        if (!approvalMatch[2] && m === 'GET') { const a = deps.gate.get(uid, approvalMatch[1]); if (!a) throw new HttpError(404, 'approval not found'); return json(res, 200, { approval: a }), true; }
+        if (!approvalMatch[2] && m === 'POST') {
+          // only the person answers: an agent can never approve its own command
+          if (session.sid.startsWith('runtime:')) throw new HttpError(403, 'approvals are answered by the user');
+          const b = await readJson(req);
+          try { return json(res, 200, { approval: await deps.gate.answer(uid, approvalMatch[1], b.allow === true, { auto: b.auto === true }) }), true; }
+          catch (error) { throw new HttpError((error as { status?: number }).status ?? 400, error instanceof Error ? error.message : 'approval failed'); }
+        }
+      }
       if (rest === '/remote-runs' && m === 'GET') {
         const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 30, 1), 200);
         return json(res, 200, { runs: store.remoteRuns(uid, undefined, limit).map(remoteRunView) }), true;
       }
-      const remoteRunMatch = rest.match(/^\/remote-runs\/(\d+)(\/log|\/signal)?$/);
+      const remoteRunMatch = rest.match(/^\/remote-runs\/(\d+)(\/log|\/signal|\/wait)?$/);
       if (remoteRunMatch) {
         const row = store.remoteRunById(uid, Number(remoteRunMatch[1]));
         if (!row) throw new HttpError(404, 'Remote run not found');
         if (!remoteRunMatch[2] && m === 'GET') return json(res, 200, { run: remoteRunView(row) }), true;
         if (remoteRunMatch[2] === '/log' && m === 'GET') {
-          // last N bytes: the live ring while it runs (or is still in memory), else the log file
           const want = Math.min(Math.max(Number(url.searchParams.get('bytes')) || 65536, 1024), 1024 * 1024);
           const live = deps.runners?.streamByRun(row.id);
-          let data = live ? deps.runners!.tail(row.target_id, live.streamId) : null;
-          if (!data) {
-            const file = deps.runners?.logPath(row.id);
-            const stat = file ? await fs.promises.stat(file).catch(() => null) : null;
-            if (file && stat?.isFile()) {
-              const fh = await fs.promises.open(file, 'r');
-              try { const len = Math.min(stat.size, want); data = Buffer.alloc(len); await fh.read(data, 0, len, stat.size - len); } finally { await fh.close(); }
-            }
-          }
-          let text = (data ?? Buffer.alloc(0)).subarray(-want).toString('utf8');
-          // ?plain=1 → no ANSI colour/cursor codes (mobile cards, agents)
-          if (url.searchParams.get('plain') === '1') text = text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '').replace(/\r(?!\n)/g, '\n');
+          let text = (await readRunTail(row, want)).toString('utf8');
+          if (url.searchParams.get('plain') === '1') text = plainText(text);
           res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', 'x-remote-run-running': live?.running ? '1' : '0' });
           res.end(text);
           return true;
+        }
+        if (remoteRunMatch[2] === '/wait' && m === 'GET') {
+          // long-poll for agents (remote_exec / remote_logs): returns when the run ends or after ?timeout= seconds
+          const rawTimeout = url.searchParams.get('timeout');
+          const timeoutMs = Math.min(Math.max(rawTimeout === null ? 25 : Number(rawTimeout) || 0, 0), 50) * 1000;
+          const bytes = Math.min(Math.max(Number(url.searchParams.get('bytes')) || 12000, 1024), 200_000);
+          if (deps.runners && timeoutMs) await deps.runners.waitRun(row.id, timeoutMs);
+          const fresh = store.remoteRunById(uid, row.id) ?? row;
+          return json(res, 200, { run: remoteRunView(fresh), output: plainText((await readRunTail(fresh, bytes * 2)).toString('utf8')).slice(-bytes) }), true;
         }
         if (remoteRunMatch[2] === '/signal' && m === 'POST') {
           const b = await readJson(req);

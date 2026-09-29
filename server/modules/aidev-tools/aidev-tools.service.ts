@@ -64,7 +64,7 @@ function getMcpApiUrl(): string {
   return `http://127.0.0.1:${port}/api/aidev-tools-mcp`;
 }
 
-async function callGateway(method: 'GET' | 'POST' | 'PATCH', apiPath: string, body?: unknown): Promise<GatewayResponse> {
+async function callGateway(method: 'GET' | 'POST' | 'PATCH', apiPath: string, body?: unknown, timeoutMs = GATEWAY_TIMEOUT_MS): Promise<GatewayResponse> {
   if (!runtimeName) {
     throw new Error('aidev platform is not available in this runtime (AIDEV_RUNTIME unset).');
   }
@@ -76,13 +76,75 @@ async function callGateway(method: 'GET' | 'POST' | 'PATCH', apiPath: string, bo
       'content-type': 'application/json',
     },
     body: body === undefined ? undefined : JSON.stringify(body),
-    signal: AbortSignal.timeout(GATEWAY_TIMEOUT_MS),
+    signal: AbortSignal.timeout(timeoutMs),
   });
   const data = await response.json().catch(() => ({})) as GatewayResponse;
   if (!response.ok) {
     throw new Error(data.error || `aidev gateway request failed (${response.status})`);
   }
   return data;
+}
+
+export type RemoteExecInput = { target?: string | number; cmd: string; cwd?: string; timeoutSec?: number; waitSec?: number; background?: boolean; env?: Record<string, string>; outputBytes?: number };
+export type RemoteTurn = { runId?: number | null; targetId?: number | null; agent?: string | null };
+export type RemoteExecResult = {
+  target: string; cmd: string; status: string; message?: string; remoteRunId?: number; running?: boolean; exitCode?: number | null; signal?: string | null;
+  durationMs?: number | null; output?: string; approvedBy?: string; risk?: number; reasons?: string[];
+};
+type TargetInfo = { id: number; name: string; online: boolean; platform: string | null; policy: string };
+
+/** A target by id or name (case-insensitive); else the routed target; else the only online one. */
+async function resolveTarget(requested: string | number | undefined, routed: number | null): Promise<TargetInfo> {
+  const list = ((await callGateway('GET', '/targets')).targets ?? []) as TargetInfo[];
+  const names = list.map((t) => `${t.name}${t.online ? '' : ' (offline)'}`).join(', ') || '없음';
+  if (requested !== undefined && requested !== null && String(requested).trim()) {
+    const key = String(requested).trim().toLowerCase();
+    const hit = list.find((t) => String(t.id) === key || t.name.toLowerCase() === key);
+    if (!hit) throw new Error(`원격 대상 "${requested}"이(가) 없습니다. 등록된 대상: ${names}`);
+    return hit;
+  }
+  if (routed) {
+    const hit = list.find((t) => t.id === routed);
+    if (hit) return hit;
+  }
+  const online = list.filter((t) => t.online);
+  if (online.length === 1) return online[0];
+  if (!list.length) throw new Error('등록된 원격 대상이 없습니다. 사용자에게 작업대 "원격 대상"에서 PC를 등록하고 aidev-runner를 실행하도록 안내하세요.');
+  throw new Error(`대상을 지정하세요(target). 등록된 대상: ${names}`);
+}
+
+/** Long-polls the gateway (25 s per request) until the run ends or `waitSec` passes. */
+async function waitRemoteRun(remoteRunId: number, waitSec: number, outputBytes = 12_000) {
+  const deadline = Date.now() + waitSec * 1000;
+  const bytes = Math.min(Math.max(outputBytes, 1000), 60_000);
+  for (;;) {
+    const left = Math.max(0, Math.round((deadline - Date.now()) / 1000));
+    const asked = Math.min(left, 25);
+    const t0 = Date.now();
+    const r = await callGateway('GET', `/remote-runs/${remoteRunId}/wait?timeout=${asked}&bytes=${bytes}`, undefined, 45_000) as {
+      run: { id: number; finished_at: number | null; exit_code: number | null; started_at: number; artifacts: { signal?: string | null; duration_ms?: number } | null; live: { running: boolean; signal: string | null } | null };
+      output: string;
+    };
+    const running = Boolean(r.run.live?.running) || !r.run.finished_at;
+    const done = !running || left <= 0 || Date.now() >= deadline - 250;
+    if (running && !done && Date.now() - t0 < (asked - 1) * 1000) {
+      // the gateway answered early without an end (stream not in memory, e.g. right after a restart): don't spin
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+      continue;
+    }
+    if (done) {
+      return {
+        status: running ? 'running' : 'finished',
+        remoteRunId,
+        running,
+        exitCode: running ? null : r.run.exit_code,
+        signal: r.run.live?.signal ?? r.run.artifacts?.signal ?? null,
+        durationMs: r.run.artifacts?.duration_ms ?? (running ? Date.now() - r.run.started_at : null),
+        output: r.output,
+        ...(running ? { message: `아직 실행 중입니다. remote_logs{remoteRunId:${remoteRunId}}로 이어서 보거나 remote_stop으로 멈추세요.` } : {}),
+      };
+    }
+  }
 }
 
 /** Input accepted by the `aidev_decide` MCP tool (kind + Laya state, optional options). */
@@ -208,6 +270,7 @@ export function composeAgentInstructions(aidev: AidevTurnOptions): string {
     parts.push(`## 원격 실행 대상\n이 작업의 실행·테스트·디버깅은 사용자의 원격 PC \`${aidev.target.name}\` (${aidev.target.platform ?? 'unknown'}; tags ${aidev.target.tags.join(', ') || 'none'})에서 remote_* 도구로 수행한다.${aidev.scope.remoteAction && aidev.scope.remoteAction !== 'none' ? ` 요청된 원격 작업: ${aidev.scope.remoteAction}.` : ''}\n대상 capabilities: ${capabilities}`);
   }
   parts.push('## 판단 도구\n여러 후보(수정안·파일·접근법·위험도) 중 골라야 하면 추측 대신 `aidev_decide` 도구(kind agent.pick / agent.score / agent.yesno)로 판정한다.');
+  parts.push('## 사용자 PC에서 실행\n사용자가 자기 PC·Mac·원격 머신에서 실행·빌드·테스트·확인을 요청하면 이 작업공간의 셸이 아니라 `remote_targets`로 대상을 확인하고 `remote_exec`로 실행한다(허용 폴더 안에서, 결과의 종료 코드·출력을 근거로 판단). 테스트가 실패하면 원인을 고치고 다시 실행해 통과를 확인한다. 개발 서버처럼 계속 도는 명령은 `background:true` 후 `remote_logs`로 확인하고, 끝나면 `remote_stop`. 파일 삭제·sudo·설치·강제 push 같은 명령은 사용자 승인이 필요하므로 꼭 필요할 때만 쓰고, 거부되면 같은 명령을 반복하지 않는다.');
   return parts.join('\n\n');
 }
 
@@ -224,19 +287,20 @@ export const aidevToolsService = {
    * MCP server definition injected by the providers (`sdkOptions.mcpServers['aidev-tools']`
    * for Claude, `mcp_servers.aidev-tools` config for Codex). Null outside the platform.
    */
-  getMcpServerConfig(): { command: string; args: string[]; env: Record<string, string> } | null {
+  getMcpServerConfig(turn?: { runId?: number | null; targetId?: number | null; agent?: string | null }): { command: string; args: string[]; env: Record<string, string> } | null {
     if (!runtimeName) {
       return null;
     }
     const { command, args } = getMcpCommand();
-    return {
-      command,
-      args,
-      env: {
-        CLOUDCLI_AIDEV_TOOLS_API_URL: getMcpApiUrl(),
-        CLOUDCLI_AIDEV_TOOLS_MCP_TOKEN: getMcpToken(),
-      },
+    const env: Record<string, string> = {
+      CLOUDCLI_AIDEV_TOOLS_API_URL: getMcpApiUrl(),
+      CLOUDCLI_AIDEV_TOOLS_MCP_TOKEN: getMcpToken(),
     };
+    // per-turn context: remote runs are tied to the chat run (outcome) and default to the routed target
+    if (turn?.runId) env.AIDEV_RUN_ID = String(turn.runId);
+    if (turn?.targetId) env.AIDEV_TARGET_ID = String(turn.targetId);
+    if (turn?.agent) env.AIDEV_AGENT = turn.agent;
+    return { command, args, env };
   },
 
   /** Laya decision through the gateway registry (`/api/aidev/decide/:kind`). */
@@ -254,7 +318,63 @@ export const aidevToolsService = {
 
   /** Registered remote targets of this runtime's user. */
   async listTargets() {
-    return callGateway('GET', '/targets');
+    const data = await callGateway('GET', '/targets');
+    const targets = (data.targets ?? []) as Array<Record<string, unknown> & { capabilities?: Record<string, unknown> | null }>;
+    // what an agent needs to pick a machine and a folder — not pairing state or raw capability dumps
+    return {
+      targets: targets.map((t) => ({
+        id: t.id, name: t.name, description: t.description, online: t.online, platform: t.platform, arch: t.arch, policy: t.policy,
+        allowed_roots: t.allowed_roots, shell: t.capabilities?.shell ?? null, hostname: t.capabilities?.hostname ?? null,
+        tools: t.capabilities?.tools ?? {}, devices: t.capabilities?.devices ?? null, runner: t.capabilities?.runner ?? null,
+      })),
+      policy_meaning: { ask: 'read/build/test commands run; anything else waits for the user', auto: 'runs unless risky; destructive commands still ask', deny: 'no remote execution' },
+    };
+  },
+
+  /**
+   * remote_exec (F-05): run a shell command on one of the user's machines through the gateway gate.
+   * Safe commands start at once; risky ones wait for the user's approval (≤10 min, long-polled);
+   * then the call waits for the result up to `waitSec` (default 300 s). `background` returns after
+   * a few seconds with the first output — for dev servers and watchers (read on with remote_logs).
+   */
+  async remoteExec(input: RemoteExecInput, turn: RemoteTurn = {}): Promise<RemoteExecResult> {
+    const target = await resolveTarget(input.target, turn.targetId ?? null);
+    const started = await callGateway('POST', `/targets/${target.id}/exec`, {
+      cmd: input.cmd, cwd: input.cwd, timeoutSec: input.timeoutSec, env: input.env, runId: turn.runId ?? undefined, agent: turn.agent ?? undefined,
+    }) as GatewayResponse & { status?: string; stream?: { remoteRunId: number }; approval?: { id: string; risk: number; reasons: string[] }; reason?: string; error?: string };
+    const base = { target: target.name, cmd: input.cmd };
+    if (started.status === 'offline') return { ...base, status: 'offline', message: String(started.error ?? 'target offline') };
+    if (started.status === 'denied') return { ...base, status: 'denied', message: String(started.reason ?? 'denied by policy') };
+    let remoteRunId = started.stream?.remoteRunId ?? null;
+    let approvedBy: string = 'auto';
+    if (started.status === 'pending' && started.approval) {
+      const approvalId = started.approval.id;
+      const deadline = Date.now() + 11 * 60_000;
+      let decision: { status: string; remoteRunId: number | null; error: string | null } | null = null;
+      while (Date.now() < deadline) {
+        const r = await callGateway('GET', `/approvals/${approvalId}/wait?timeout=25`, undefined, 40_000) as { approval?: { status: string; remoteRunId: number | null; error: string | null } };
+        if (r.approval && r.approval.status !== 'pending') { decision = r.approval; break; }
+      }
+      if (!decision || decision.status === 'expired') return { ...base, status: 'expired', message: '사용자가 10분 안에 승인하지 않았습니다. 명령을 실행하지 않았습니다.', risk: started.approval.risk, reasons: started.approval.reasons };
+      if (decision.status === 'denied') return { ...base, status: 'denied', message: '사용자가 이 명령을 거부했습니다. 같은 명령을 다시 시도하지 말고, 필요하면 이유를 설명하고 다른 방법을 제안하세요.', risk: started.approval.risk, reasons: started.approval.reasons };
+      if (decision.error || !decision.remoteRunId) return { ...base, status: 'error', message: decision.error ?? 'approved but could not start' };
+      remoteRunId = decision.remoteRunId; approvedBy = 'user';
+    }
+    if (!remoteRunId) return { ...base, status: 'error', message: String(started.error ?? 'could not start') };
+    const waitSec = input.background ? 5 : Math.min(Math.max(input.waitSec ?? 300, 1), 1800);
+    const result = await waitRemoteRun(remoteRunId, waitSec, input.outputBytes);
+    return { ...base, ...result, approvedBy };
+  },
+
+  /** remote_logs: current state and the last output of a remote run (optionally waiting for it to end). */
+  async remoteLogs(remoteRunId: number, waitSec = 0, outputBytes?: number) {
+    return waitRemoteRun(remoteRunId, Math.min(Math.max(waitSec, 0), 1800), outputBytes);
+  },
+
+  /** remote_stop: interrupt (INT) or kill a running remote command. */
+  async remoteStop(remoteRunId: number, signal: 'INT' | 'TERM' | 'KILL' = 'INT') {
+    await callGateway('POST', `/remote-runs/${remoteRunId}/signal`, { signal });
+    return waitRemoteRun(remoteRunId, 5);
   },
 
   /** Remote-target RPC (stage F: exec, sync, preview, screenshot, debug). */

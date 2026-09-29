@@ -226,11 +226,14 @@ function matchesToolPermission(entry, toolName, input) {
  * whenever this runtime is part of the platform, even without a routed agent.
  */
 function applyAidevRouting(sdkOptions, rawAidev) {
-  const platformMcp = aidevToolsService.getMcpServerConfig();
+  const aidev = sanitizeAidevOptions(rawAidev);
+  const platformMcp = aidevToolsService.getMcpServerConfig(aidev ? { runId: aidev.runId, targetId: aidev.target?.id ?? null, agent: aidev.agent.name } : undefined);
   if (platformMcp) {
     sdkOptions.mcpServers = { ...(sdkOptions.mcpServers || {}), 'aidev-tools': platformMcp };
+    // the platform's own tools are gated server-side (remote_exec: risk + policy + the user's approval
+    // card), so Claude Code's generic permission prompt would only ask twice
+    sdkOptions.allowedTools = [...new Set([...(sdkOptions.allowedTools || []), 'mcp__aidev-tools__*'])];
   }
-  const aidev = sanitizeAidevOptions(rawAidev);
   if (!aidev) {
     return;
   }

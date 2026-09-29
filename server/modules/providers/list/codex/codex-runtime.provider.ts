@@ -266,11 +266,12 @@ function mapPermissionModeToCodexOptions(permissionMode: string): Pick<ThreadOpt
 function buildCodexOptions(rawAidev: unknown): ConstructorParameters<typeof Codex>[0] {
   const config: Record<string, unknown> = {};
   const mcpServers: Record<string, Record<string, unknown>> = {};
-  const platformMcp = aidevToolsService.getMcpServerConfig();
-  if (platformMcp) {
-    mcpServers['aidev-tools'] = { command: platformMcp.command, args: platformMcp.args, env: platformMcp.env };
-  }
   const aidev = sanitizeAidevOptions(rawAidev);
+  const platformMcp = aidevToolsService.getMcpServerConfig(aidev ? { runId: aidev.runId, targetId: aidev.target?.id ?? null, agent: aidev.agent.name } : undefined);
+  if (platformMcp) {
+    // remote_exec may wait for the user's approval and a long build: well past Codex's 60 s tool default
+    mcpServers['aidev-tools'] = { command: platformMcp.command, args: platformMcp.args, env: platformMcp.env, tool_timeout_sec: 2700 };
+  }
   if (aidev) {
     config.developer_instructions = composeAgentInstructions(aidev);
     for (const [name, spec] of Object.entries(aidev.agent.mcpServers ?? {})) {

@@ -14,7 +14,8 @@ import { useUiPreferences } from '@/shared/context/UiPreferencesContext';
 import { useFileOpenResolver, WorkspaceErrorBoundary, WorkspaceStateView } from '@/modules/project-workspace';
 import type { DirectoryRevealRequest, WorkspaceMainProps } from '@/shared/types';
 import { AgentCatalog } from '@/modules/aidev-router';
-import { RunOutputPane, TargetsPanel } from '@/modules/remote-target';
+import { RemoteApprovalCards, requestRunFocus, RunOutputPane, TargetsPanel } from '@/modules/remote-target';
+import { REMOTE_RUN_FOCUS_EVENT } from '@/modules/aidev-router';
 import { EditorGroup, useEditorGroup } from '@/modules/workbench/EditorGroup';
 import { SplitHandle } from '@/modules/workbench/SplitHandle';
 import { layoutStore, useWorkbenchLayout, type BottomTab, type SideView, type TabletPane } from '@/modules/workbench/layoutStore';
@@ -104,6 +105,18 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
     setRevealDirectory({ path: directoryPath });
   }, [tier]);
   usePaletteOpsRegister({ openFile, openFileInEditor, openDirectory });
+  // "출력 보기" on an approval card: open the remote run panel on that run
+  useEffect(() => {
+    const onFocus = (event: Event) => {
+      const detail = (event as CustomEvent<{ remoteRunId: number; targetId: number }>).detail;
+      if (!detail) return;
+      requestRunFocus(detail);
+      if (tier === 'tablet') layoutStore.patch('tablet', { tabletShowChat: false, tabletPane: 'remote' });
+      else layoutStore.patch('desktop', { workOpen: true, bottomOpen: true, bottomTab: 'run_output' });
+    };
+    window.addEventListener(REMOTE_RUN_FOCUS_EVENT, onFocus);
+    return () => window.removeEventListener(REMOTE_RUN_FOCUS_EVENT, onFocus);
+  }, [tier]);
   // The legacy tab state still drives a few upstream effects (task banner, palette); keep it on chat.
   useEffect(() => { setActiveTab('chat'); }, [setActiveTab]);
 
@@ -178,7 +191,7 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
           </div>
         </div>
         <div className="flex-1 min-h-0 relative">
-          <div className={`absolute inset-0 ${layout.tabletShowChat ? '' : 'hidden'}`}>{chat}</div>
+          <div className={`absolute inset-0 flex flex-col ${layout.tabletShowChat ? '' : 'hidden'}`}><RemoteApprovalCards /><div className="flex-1 min-h-0">{chat}</div></div>
           {!layout.tabletShowChat && pane === 'files' ? (
             <div className="absolute inset-0 flex">
               <div className="w-[260px] shrink-0 border-r border-border overflow-hidden">{explorer}</div>
@@ -230,6 +243,7 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
       {/* center: the chat is the main column */}
       <div className="flex-1 min-w-[360px] flex flex-col min-h-0">
         <div className="aidev-chrome h-8 px-3 flex items-center gap-2 text-[11px] uppercase tracking-wide text-muted-foreground border-b border-border shrink-0"><MessageSquare size={12} /> 채팅{selectedSession?.summary ? <span className="normal-case tracking-normal truncate text-foreground/80">· {selectedSession.summary}</span> : null}</div>
+        <RemoteApprovalCards />
         <div className="flex-1 min-h-0">{chat}</div>
       </div>
       {/* right: code panel (editor group + bottom panel), only while needed. Kept mounted when hidden

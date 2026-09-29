@@ -9,7 +9,7 @@ mkdir -p "$T/secrets"; head -c 48 /dev/urandom | base64 > "$T/secrets/jwt"; head
 MOCK_CODEX_ONLY=rt-codexonly node test/mock-services.mjs >"$T/mock.log" 2>&1 &
 sleep 0.5
 export DATABASE_PATH="$T/auth.db" JWT_SECRET_FILE="$T/secrets/jwt" RUNTIME_MANAGER_TOKEN_FILE="$T/secrets/rt" \
-  RUNTIME_MANAGER_URL=http://127.0.0.1:18090 LAYA_URL=http://127.0.0.1:18095 PUBLIC_ORIGIN=http://127.0.0.1:18080 PORT=18080 STATIC_ROOT="$T/dist"
+  RUNTIME_MANAGER_URL=http://127.0.0.1:18090 LAYA_URL=http://127.0.0.1:18095 PUBLIC_ORIGIN=http://127.0.0.1:18080 PORT=18080 STATIC_ROOT="$T/dist" LAYA_RETRY_MS=1500
 export RUNNER_DIST_DIR="$(cd .. && pwd)/runner/dist"
 mkdir -p "$T/dist" "$T/dist-mobile"; echo '<html>workbench</html>' > "$T/dist/index.html"; echo '<html>mobile</html>' > "$T/dist-mobile/index.html"
 # accounts: alice (both engines), bob (codex only, runtime rt-codexonly)
@@ -116,6 +116,9 @@ r=$(post "$A" /api/aidev/push/unsubscribe '{"endpoint":"https://push.example/abc
 r=$(curl -s "$G/_runner/download"); if [ -d "$RUNNER_DIST_DIR" ]; then check "$r" 'j.files.length>=1 && j.files[0].sha256 && j.files[0].platform' "runner binaries listed ($(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).files.map(f=>f.platform).join(",")'))"
   F=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).files[0].name'); n=$(curl -s "$G/_runner/download/$F" | wc -c); check "{\"n\":$n,\"want\":$(stat -c %s "$RUNNER_DIST_DIR/$F")}" 'j.n===j.want' "runner binary download ($n bytes)"; fi
 r=$(curl -s "$G/_runner/download/..%2F..%2Fetc%2Fpasswd" | grep -c "root:" || true); check "{\"c\":$r}" 'j.c===0' "download path traversal cannot read files"
+# mocks back up (Laya + runtime manager) for the runner / gate checks
+MOCK_CODEX_ONLY=rt-codexonly node test/mock-services.mjs >>"$T/mock.log" 2>&1 &
+for i in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:18095/health && break; sleep 0.1; done; sleep 1.6   # past the gateway's Laya retry window
 # F-02: remote PC runner — pairing, online state + capabilities, ping, ownership, re-pair and delete revoke it
 RUNNER_BIN=${RUNNER_BIN:-$(cd .. && pwd)/runner/target/debug/aidev-runner}
 if [ -x "$RUNNER_BIN" ]; then
@@ -147,6 +150,33 @@ if [ -x "$RUNNER_BIN" ]; then
   r=$(node test/stream-client.mjs "$G" "$A" "$TID" || true); check "$r" 'j.hello && j.started && j.attached && j.echoed && j.sizeSeen && j.exit && j.exit.code!==0 && j.replay' "browser stream: pty input, resize, Ctrl+C, late viewer replay ($(echo "$r" | cut -c1-160))"
   r=$(curl -s -o /dev/null -w '%{http_code}' -H 'connection: upgrade' -H 'upgrade: websocket' -H 'sec-websocket-version: 13' -H 'sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==' -H "origin: http://evil.example" "$G/api/aidev/targets/$TID/stream?token=$A"); check "{\"code\":$r}" 'j.code===401' "stream socket from another origin refused"
   r=$(curl -s -o /dev/null -w '%{http_code}' -H 'connection: upgrade' -H 'upgrade: websocket' -H 'sec-websocket-version: 13' -H 'sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==' -H "origin: $G" "$G/api/aidev/targets/$TID/stream?token=$B"); check "{\"code\":$r}" 'j.code===401' "stream socket for someone else's target refused"
+  # F-05: agent (runtime session) → gate: safe commands run, risky ones wait for the user, tests feed the chat run
+  rpost() { curl -s -X POST "$G/internal/aidev$1" -H 'authorization: Bearer rtjwt-rt-alice' -H 'x-aidev-runtime: rt-alice' -H 'content-type: application/json' -d "$2"; }
+  rget() { curl -s "$G/internal/aidev$1" -H 'authorization: Bearer rtjwt-rt-alice' -H 'x-aidev-runtime: rt-alice'; }
+  mkdir -p "$RH/aidev-work"; echo '{"name":"t","scripts":{"test":"echo 3 passing"}}' > "$RH/aidev-work/package.json"
+  RUN2=$(post "$A" /api/aidev/runs "{\"decision_id\":$DID,\"session_id\":\"s-remote\",\"engine\":\"claude\",\"model\":\"sonnet\",\"effort\":\"high\",\"agent_id\":1,\"depth\":2,\"task_kind\":\"implement\"}" | node -pe 'JSON.parse(require("fs").readFileSync(0)).run_id')
+  r=$(rpost "/targets/$TID/exec" "{\"cmd\":\"npm test\",\"runId\":$RUN2,\"agent\":\"testing\"}"); RR3=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).stream?.remoteRunId')
+  check "$r" 'j.status==="started" && j.stream.by==="auto" && j.assessment.safe===true' "agent: test command runs without asking (policy ask, risk $(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).assessment?.risk'))"
+  r=$(rget "/remote-runs/$RR3/wait?timeout=20"); check "$r" 'j.run.exit_code===0 && /3 passing/.test(j.output) && j.run.run_id>0' "agent: waits for the result (exit 0, output returned)"
+  r=$(get "$A" "/api/aidev/runs?limit=5"); check "$r" "(j.runs||[]).some(x=>x.id===$RUN2 && x.test_result==='pass')" "remote test result recorded on the chat run (test_result=pass)"
+  r=$(rpost "/targets/$TID/exec" '{"cmd":"rm -rf build-tmp && echo removed","agent":"testing"}'); AP=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).approval?.id')
+  check "$r" 'j.status==="pending" && j.approval.destructive && j.approval.reasons.length>0' "agent: rm -rf waits for approval ($(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).approval?.reasons.join(", ")'))"
+  r=$(get "$A" /api/aidev/approvals); check "$r" "j.approvals.some(a=>a.id==='$AP')" "user sees the pending approval"
+  r=$(get "$B" /api/aidev/approvals); check "$r" "!j.approvals.some(a=>a.id==='$AP')" "another user does not"
+  r=$(rpost "/approvals/$AP" '{"allow":true}'); check "$r" '/answered by the user/.test(j.error)' "an agent cannot approve its own command"
+  (sleep 1; post "$A" "/api/aidev/approvals/$AP" '{"allow":true}' >/dev/null) &
+  r=$(rget "/approvals/$AP/wait?timeout=10"); RR4=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).approval?.remoteRunId')
+  check "$r" 'j.approval.status==="allowed" && j.approval.remoteRunId>0 && j.approval.decidedBy==="user"' "agent's long-poll returns when the user allows"
+  r=$(rget "/remote-runs/$RR4/wait?timeout=20"); check "$r" 'j.run.exit_code===0 && j.run.approved_by==="user" && /removed/.test(j.output)' "approved command ran (approved_by=user)"
+  r=$(rpost "/targets/$TID/exec" '{"cmd":"sudo ls","agent":"testing"}'); AP2=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).approval?.id')
+  r=$(post "$A" "/api/aidev/approvals/$AP2" '{"allow":false}'); check "$r" 'j.approval.status==="denied" && j.approval.remoteRunId>0' "user denies sudo → recorded"
+  r=$(get "$A" "/api/aidev/remote-runs/$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).approval.remoteRunId')"); check "$r" 'j.run.approved_by==="denied" && j.run.finished_at>0' "denied command is a remote_runs row (approved_by=denied)"
+  r=$(rpost "/targets/$TID/exec" '{"cmd":"touch made-by-agent.txt"}'); check "$r" 'j.status==="pending"' "policy ask: file-changing command asks"
+  post "$A" "/api/aidev/approvals/$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).approval.id')" '{"allow":true,"auto":true}' >/dev/null
+  r=$(get "$A" /api/aidev/targets); check "$r" "j.targets.find(t=>t.id===$TID).policy==='auto'" "\"allow + auto\" switches the target to policy auto"
+  r=$(rpost "/targets/$TID/exec" '{"cmd":"touch second.txt"}'); check "$r" 'j.status==="started" && j.stream.by==="auto"' "policy auto: moderate command runs without asking"
+  r=$(rpost "/targets/$TID/exec" '{"cmd":"git push --force origin main"}'); check "$r" 'j.status==="pending"' "policy auto: destructive command still asks"
+  post "$A" "/api/aidev/targets/$TID" '{"policy":"deny"}' PATCH >/dev/null; r=$(rpost "/targets/$TID/exec" '{"cmd":"ls"}'); check "$r" 'j.status==="denied" && /실행 금지/.test(j.reason)' "policy deny: agent refused"; post "$A" "/api/aidev/targets/$TID" '{"policy":"ask"}' PATCH >/dev/null
   # a command outlives a gateway restart: the runner keeps it, the new gateway adopts it by tag and catches up the output
   r=$(post "$A" "/api/aidev/targets/$TID/exec" '{"cmd":"echo before; sleep 3; echo after-restart; exit 5"}'); RR2=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).stream?.remoteRunId')
   sleep 0.5; kill "$GWPID"; sleep 0.5

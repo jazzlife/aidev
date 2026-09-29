@@ -40,7 +40,7 @@ const LOG_MAX = 20 * 1024 * 1024;
 const KEEP_FINISHED = 20;
 const BROWSER_BUFFER_MAX = 8 * 1024 * 1024;
 
-export type StreamInfo = { streamId: number; targetId: number; remoteRunId: number; cmd: string; cwd: string | null; pty: boolean; by: string | null; pid: number | null; startedAt: number; running: boolean; code: number | null; signal: string | null; durationMs: number | null; bytes: number };
+export type StreamInfo = { streamId: number; targetId: number; remoteRunId: number; runId: number | null; cmd: string; cwd: string | null; pty: boolean; by: string | null; pid: number | null; startedAt: number; running: boolean; code: number | null; signal: string | null; durationMs: number | null; bytes: number };
 export type TargetEvent =
   | { type: 'data'; streamId: number; chunk: Buffer }
   | { type: 'started'; stream: StreamInfo }
@@ -58,16 +58,17 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
   const attempts = new Map<string, { count: number; until: number }>();
   const streams = new Map<string, Stream>();               // `${targetId}:${streamId}`
   const listeners = new Map<number, Set<(event: TargetEvent) => void>>();
+  const finishListeners = new Set<(stream: StreamInfo, userId: number) => void>();
   let nextStream = crypto.randomInt(1, 0x3fff_ffff);        // runner-chosen ids live in 0x4000_0000+
   const key = (targetId: number, streamId: number) => `${targetId}:${streamId}`;
 
   function emit(targetId: number, event: TargetEvent) {
     for (const fn of listeners.get(targetId) ?? []) { try { fn(event); } catch { /* a broken listener must not stop the stream */ } }
   }
-  const info = (st: Stream): StreamInfo => ({ streamId: st.streamId, targetId: st.targetId, remoteRunId: st.remoteRunId, cmd: st.cmd, cwd: st.cwd, pty: st.pty, by: st.by, pid: st.pid, startedAt: st.startedAt, running: st.running, code: st.code, signal: st.signal, durationMs: st.durationMs, bytes: st.bytes });
+  const info = (st: Stream): StreamInfo => ({ streamId: st.streamId, targetId: st.targetId, remoteRunId: st.remoteRunId, runId: st.runId, cmd: st.cmd, cwd: st.cwd, pty: st.pty, by: st.by, pid: st.pid, startedAt: st.startedAt, running: st.running, code: st.code, signal: st.signal, durationMs: st.durationMs, bytes: st.bytes });
 
-  function newStream(p: { targetId: number; userId: number; streamId: number; remoteRunId: number; cmd: string; cwd: string | null; pty: boolean; by: string | null; startedAt?: number }): Stream {
-    const st: Stream = { ...p, pid: null, startedAt: p.startedAt ?? Date.now(), running: true, code: null, signal: null, durationMs: null, bytes: 0, ring: [], ringBytes: 0, log: null, logPath: null, logBytes: 0, finishedAt: null };
+  function newStream(p: { targetId: number; userId: number; streamId: number; remoteRunId: number; runId?: number | null; cmd: string; cwd: string | null; pty: boolean; by: string | null; startedAt?: number }): Stream {
+    const st: Stream = { ...p, runId: p.runId ?? null, pid: null, startedAt: p.startedAt ?? Date.now(), running: true, code: null, signal: null, durationMs: null, bytes: 0, ring: [], ringBytes: 0, log: null, logPath: null, logBytes: 0, finishedAt: null };
     streams.set(key(p.targetId, p.streamId), st);
     return st;
   }
@@ -99,6 +100,7 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
     try { store.finishRemoteRun(st.remoteRunId, { exitCode: code, artifacts: { log: st.logPath, bytes: st.bytes, signal, duration_ms: st.durationMs } }); } catch { /* target deleted meanwhile */ }
     st.log?.end(); st.log = null;
     emit(st.targetId, { type: 'exit', stream: info(st) });
+    for (const fn of finishListeners) { try { fn(info(st), st.userId); } catch (error) { console.warn('[runner] finish listener:', error instanceof Error ? error.message : error); } }
     // keep the last few finished streams per target for late viewers; older ones live on in the log file
     const done = [...streams.values()].filter((s) => s.targetId === st.targetId && !s.running).sort((a, b) => (b.finishedAt ?? 0) - (a.finishedAt ?? 0));
     for (const old of done.slice(KEEP_FINISHED)) streams.delete(key(old.targetId, old.streamId));
@@ -133,7 +135,7 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
       if ([...streams.values()].some((s) => s.remoteRunId === row.id)) continue;
       const remote = list.find((r) => r.tag === `rr:${row.id}`);
       if (!remote) { store.finishRemoteRun(row.id, { exitCode: null, artifacts: { lost: true } }); continue; }
-      const st = newStream({ targetId, userId: row.user_id, streamId: remote.streamId, remoteRunId: row.id, cmd: row.cmd ?? remote.cmd, cwd: remote.cwd, pty: remote.pty, by: row.approved_by, startedAt: row.started_at });
+      const st = newStream({ targetId, userId: row.user_id, streamId: remote.streamId, remoteRunId: row.id, runId: row.run_id, cmd: row.cmd ?? remote.cmd, cwd: remote.cwd, pty: remote.pty, by: row.approved_by, startedAt: row.started_at });
       st.pid = remote.pid;
       await catchUp(st, remote);
       emit(targetId, { type: 'started', stream: info(st) });
@@ -278,7 +280,7 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
       const cmd = p.cmd.trim();
       const remoteRunId = store.addRemoteRun({ runId: meta.runId ?? null, targetId, userId, kind: 'exec', cmd, cwd: p.cwd ?? null, risk: meta.risk ?? null, approvedBy: meta.approvedBy });
       nextStream = nextStream >= 0x3fff_fff0 ? 1 : nextStream + 1;
-      const st = newStream({ targetId, userId, streamId: nextStream, remoteRunId, cmd, cwd: p.cwd ?? null, pty: Boolean(p.pty), by: meta.approvedBy });
+      const st = newStream({ targetId, userId, streamId: nextStream, remoteRunId, runId: meta.runId ?? null, cmd, cwd: p.cwd ?? null, pty: Boolean(p.pty), by: meta.approvedBy });
       try {
         const r = await hub.call<{ streamId: number; pid: number | null; cwd: string }>(targetId, 'exec.start', {
           cmd, cwd: p.cwd || undefined, pty: Boolean(p.pty), cols: p.cols, rows: p.rows, env: p.env, timeoutSec: p.timeoutSec, streamId: st.streamId, tag: `rr:${remoteRunId}`,
@@ -291,6 +293,18 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
       }
       emit(targetId, { type: 'started', stream: info(st) });
       return info(st);
+    },
+    /** Called once per finished stream (remote gate: test results → the chat run's outcome). */
+    onFinish(fn: (stream: StreamInfo, userId: number) => void) { finishListeners.add(fn); return () => finishListeners.delete(fn); },
+    /** Resolves when the remote run has finished (or after `timeoutMs`), with its current state. */
+    waitRun(remoteRunId: number, timeoutMs: number): Promise<StreamInfo | null> {
+      const st = [...streams.values()].find((s) => s.remoteRunId === remoteRunId);
+      if (!st || !st.running) return Promise.resolve(st ? info(st) : null);
+      return new Promise((resolve) => {
+        let off = () => {};
+        const t = setTimeout(() => { off(); resolve(info(st)); }, timeoutMs);
+        off = hub.onFinish((s) => { if (s.remoteRunId === remoteRunId) { clearTimeout(t); off(); resolve(s); } });
+      });
     },
     /** exec.write / exec.resize / exec.signal on a stream of this target. */
     async control(targetId: number, streamId: number, op: 'write' | 'resize' | 'signal', params: Record<string, unknown>) {

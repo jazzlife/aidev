@@ -6,6 +6,7 @@ import { LoginScreen } from '@m/screens/LoginScreen';
 import { SessionsScreen } from '@m/screens/SessionsScreen';
 import { SettingsScreen } from '@m/screens/SettingsScreen';
 import { Splash } from '@m/components/Splash';
+import { ApprovalSheet } from '@m/components/ApprovalSheet';
 
 /** Route names mirror the workbench (/session/:id) so deep links and notifications work in both apps. */
 function Gate({ children }: { children: React.ReactNode }) {
@@ -16,7 +17,8 @@ function Gate({ children }: { children: React.ReactNode }) {
   if (!user) {
     return <Navigate to="/login" replace />;
   }
-  return <WebSocketProvider>{children}</WebSocketProvider>;
+  // agent commands waiting for approval surface on every signed-in screen
+  return <WebSocketProvider>{children}<ApprovalSheet /></WebSocketProvider>;
 }
 
 export default function App() {

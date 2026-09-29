@@ -36,6 +36,14 @@ export function statusText(run: { running: boolean; code: number | null; signal:
 }
 const dot = (run: { running: boolean; code: number | null }) => (run.running ? 'bg-sky-500 animate-pulse' : run.code === 0 ? 'bg-emerald-500' : 'bg-rose-500');
 
+/** "Show this run" requests (approval cards, chat): the pane picks them up when it is (or becomes) mounted. */
+let focusRequest: { remoteRunId: number; targetId: number } | null = null;
+const focusListeners = new Set<() => void>();
+export function requestRunFocus(request: { remoteRunId: number; targetId: number }) {
+  focusRequest = request;
+  for (const fn of focusListeners) fn();
+}
+
 export function RunOutputPane({ isVisible = true }: { isVisible?: boolean }) {
   const [targets, setTargets] = useState<Target[]>([]);
   const [targetId, setTargetId] = useState<number | null>(null);
@@ -59,6 +67,23 @@ export function RunOutputPane({ isVisible = true }: { isVisible?: boolean }) {
   selectedRef.current = selected;
   const streamsRef = useRef<StreamInfo[]>([]);
   streamsRef.current = streams;
+  const pendingSelect = useRef<number | null>(null);
+  const selectRef = useRef<(remoteRunId: number) => void>(() => undefined);
+  const targetIdRef = useRef<number | null>(null);
+  targetIdRef.current = targetId;
+  useEffect(() => {
+    const apply = () => {
+      const request = focusRequest;
+      if (!request) return;
+      focusRequest = null;
+      pendingSelect.current = request.remoteRunId;
+      if (targetIdRef.current !== request.targetId) { setTargetId(request.targetId); setSelected(null); setCwd(''); }
+      else if (streamsRef.current.some((s) => s.remoteRunId === request.remoteRunId)) { pendingSelect.current = null; selectRef.current(request.remoteRunId); }
+    };
+    focusListeners.add(apply);
+    apply();
+    return () => { focusListeners.delete(apply); };
+  }, []);
 
   const target = targets.find((t) => t.id === targetId) ?? null;
   const loadTargets = useCallback(() => {
@@ -129,6 +154,7 @@ export function RunOutputPane({ isVisible = true }: { isVisible?: boolean }) {
           setOnline(Boolean(msg.online)); setStreams(msg.streams ?? []);
           streamsRef.current = msg.streams ?? [];
           if (attached.current) attach(attached.current);   // re-attach after a reconnect (replay restores the screen)
+          if (pendingSelect.current) { const id = pendingSelect.current; pendingSelect.current = null; setTimeout(() => selectRef.current(id), 0); }
         } else if (msg.type === 'online' || msg.type === 'offline') {
           setOnline(msg.type === 'online');
         } else if ((msg.type === 'started' || msg.type === 'exit' || msg.type === 'attached') && msg.stream) {
@@ -169,6 +195,7 @@ export function RunOutputPane({ isVisible = true }: { isVisible?: boolean }) {
       if (term.current) { term.current.options.convertEol = true; term.current.write(text || (failed ? `\x1b[31m시작 실패: ${failed}\x1b[0m` : '\x1b[2m(출력 없음 — 로그가 정리되었거나 비어 있습니다)\x1b[0m')); }
     } catch (error) { setNote((error as Error).message); }
   }, [attach, runs]);
+  selectRef.current = (id: number) => { void select(id); };
 
   const run = async () => {
     if (!targetId || !cmd.trim()) return;

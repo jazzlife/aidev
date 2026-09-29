@@ -10,7 +10,7 @@ export type Question = ChoiceQuestion | ScoreQuestion | NoulQuestion;
 export type Answer = { choice?: string; probabilities?: Record<string, number>; confidence?: number; score?: number; noul?: number };
 export type PredictResult = { answers: Record<string, Answer>; latency_ms: number; usage?: unknown; device?: string };
 
-const RETRY_MS = 30_000;
+const RETRY_MS = Number(process.env.LAYA_RETRY_MS ?? 30_000);
 
 export class LayaClient {
   private downUntil = 0;

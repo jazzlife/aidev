@@ -8,7 +8,12 @@ import '../../load-env.js';
  * platform runtime; forwards every tool call to the runtime's local HTTP endpoint
  * (/api/aidev-tools-mcp), which talks to the aidev gateway. Tools:
  *   aidev_decide    — ask the Laya decision model (choice / score / yes-no) through the gateway registry
- *   remote_targets  — list the user's registered remote machines (stage F adds remote_exec & co.)
+ *   remote_targets  — list the user's registered remote machines
+ *   remote_exec     — run a shell command on one of them (gateway gate: safe → runs, risky → user approval)
+ *   remote_logs     — state + last output of a remote run (optionally wait for it)
+ *   remote_stop     — interrupt / kill a remote run
+ * The turn context (chat run id, routed target, agent) comes from this process's env and is sent
+ * with every call, so remote results count toward the run's outcome.
  */
 
 type JsonRpcRequest = {
@@ -31,6 +36,15 @@ const apiUrl = (process.env.CLOUDCLI_AIDEV_TOOLS_API_URL || 'http://127.0.0.1:30
 const apiToken = process.env.CLOUDCLI_AIDEV_TOOLS_MCP_TOKEN || '';
 const API_TIMEOUT_MS = Number.parseInt(process.env.CLOUDCLI_AIDEV_TOOLS_API_TIMEOUT_MS || '120000', 10);
 
+const turnContext = {
+  runId: Number.parseInt(process.env.AIDEV_RUN_ID || '', 10) || undefined,
+  targetId: Number.parseInt(process.env.AIDEV_TARGET_ID || '', 10) || undefined,
+  agent: process.env.AIDEV_AGENT || undefined,
+};
+// approvals can take minutes and a build or test run longer: remote tools get their own ceiling
+const LONG_TOOLS = new Set(['remote_exec', 'remote_logs']);
+const LONG_TIMEOUT_MS = 45 * 60_000;
+
 async function callApi(toolName: string, input: Record<string, unknown>) {
   if (!apiToken) {
     throw new Error('CLOUDCLI_AIDEV_TOOLS_MCP_TOKEN is not configured.');
@@ -38,8 +52,8 @@ async function callApi(toolName: string, input: Record<string, unknown>) {
   const response = await fetch(`${apiUrl}/tools/${encodeURIComponent(toolName)}`, {
     method: 'POST',
     headers: { Authorization: `Bearer ${apiToken}`, 'Content-Type': 'application/json' },
-    body: JSON.stringify(input),
-    signal: AbortSignal.timeout(API_TIMEOUT_MS),
+    body: JSON.stringify({ ...input, _turn: turnContext }),
+    signal: AbortSignal.timeout(LONG_TOOLS.has(toolName) ? LONG_TIMEOUT_MS : API_TIMEOUT_MS),
   });
   const data = await response.json() as { success?: boolean; data?: unknown; error?: string };
   if (!response.ok || data.success === false) {
@@ -72,8 +86,55 @@ const tools: ToolDefinition[] = [
   },
   {
     name: 'remote_targets',
-    description: 'List the user\'s registered remote machines (name, platform, online status, tools). Remote execution tools become available when a target is online.',
+    description: 'List the user\'s registered remote machines (their own PCs running aidev-runner): name, platform, online status, execution policy, allowed folders and installed tools. Call it first when the user asks to run, build, test or check something "on my Mac/PC/machine".',
     inputSchema: { type: 'object', properties: {} },
+  },
+  {
+    name: 'remote_exec',
+    description: [
+      'Run a shell command on one of the user\'s own machines (see remote_targets) and get its exit code and output.',
+      'Runs through the user\'s login shell inside an allowed folder (`cwd`, absolute or relative to the first allowed folder; default: the first allowed folder).',
+      'Read/build/test commands start immediately; commands that change files or the system may wait for the user\'s approval in the chat (up to 10 min) — the call returns status "denied" or "expired" if they refuse; then do not retry the same command.',
+      'Destructive commands (rm -rf, sudo, force push, installs, system settings) always need approval — avoid them unless the user asked.',
+      'Waits for the command to finish (up to waitSec, default 300); for dev servers/watchers use background:true and read on with remote_logs. Stop with remote_stop.',
+      'A failing test command marks this task\'s result as failed until it passes, so fix and re-run.',
+    ].join(' '),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string', description: 'Target name or id. Optional when the task was routed to a target or only one is online.' },
+        cmd: { type: 'string', description: 'Shell command line, e.g. "npm test" or "cd app && npm ci && npm run build".' },
+        cwd: { type: 'string', description: 'Working folder inside the target\'s allowed folders.' },
+        waitSec: { type: 'number', description: 'How long to wait for the result (1-1800, default 300). If still running, the result says so and gives remoteRunId.' },
+        background: { type: 'boolean', description: 'Start and return after ~5 s with the first output (dev servers, watchers).' },
+        timeoutSec: { type: 'number', description: 'Kill the command after this many seconds (runner-side limit).' },
+        env: { type: 'object', description: 'Extra environment variables {NAME: value}. The runner passes only these plus a safe baseline (PATH, HOME, LANG…).' },
+        outputBytes: { type: 'number', description: 'How much trailing output to return (1000-60000, default 12000).' },
+      },
+      required: ['cmd'],
+    },
+  },
+  {
+    name: 'remote_logs',
+    description: 'State and last output of a remote run started with remote_exec (by remoteRunId). Pass waitSec to wait for it to finish.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        remoteRunId: { type: 'number' },
+        waitSec: { type: 'number', description: '0 (default) returns now; up to 1800 waits for the end.' },
+        outputBytes: { type: 'number' },
+      },
+      required: ['remoteRunId'],
+    },
+  },
+  {
+    name: 'remote_stop',
+    description: 'Stop a running remote command: signal INT (Ctrl+C, default), TERM or KILL.',
+    inputSchema: {
+      type: 'object',
+      properties: { remoteRunId: { type: 'number' }, signal: { type: 'string', enum: ['INT', 'TERM', 'KILL'] } },
+      required: ['remoteRunId'],
+    },
   },
 ];
 
@@ -83,6 +144,10 @@ async function callTool(name: string, args: Record<string, unknown>) {
       return jsonResponse(await callApi(name, args));
     case 'remote_targets':
       return jsonResponse(await callApi(name, {}));
+    case 'remote_exec':
+    case 'remote_logs':
+    case 'remote_stop':
+      return jsonResponse(await callApi(name, args));
     default:
       throw new Error(`Unknown tool: ${name}`);
   }
