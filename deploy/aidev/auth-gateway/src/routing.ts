@@ -302,9 +302,11 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   if (risk >= 1.5) reason.push(`risk ${risk.toFixed(1)} → depth +1`);
   let agentName = agentTop.choice && catalog[agentTop.choice] ? agentTop.choice : 'generalist';
   let decision: 'use' | 'generalist' | 'create' | 'create_background' = 'use';
+  // how long the send waited for the judge beyond Laya (0 when the verdict was cached or pre-judged in time)
+  const layaDoneAt = Date.now();
   verdict = await judgePromise;
-  const judgeWaitMs = Date.now() - judgeT0;
-  if (!verdict && !input.forceAgent && opts.judge && jctx.specialists.length) reason.push(judgeWaitMs >= JUDGE_WAIT_MS ? `specialist judge still running after ${Math.round(judgeWaitMs / 1000)}s — its verdict is cached for the next send` : 'specialist judge failed');
+  const judgeWaitMs = Date.now() - layaDoneAt;
+  if (!verdict && !input.forceAgent && opts.judge && jctx.specialists.length) reason.push(Date.now() - judgeT0 >= JUDGE_WAIT_MS ? `specialist judge still running after ${Math.round((Date.now() - judgeT0) / 1000)}s — its verdict is cached for the next send` : 'specialist judge failed');
   let proposal: JudgeVerdict['new'] = null;
   if (input.forceAgent) { /* handled below */ }
   else if (verdict) {
