@@ -50,7 +50,7 @@
     "postbuild:server": "node scripts/promote-dist-server.mjs",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p server/tsconfig.json",
-    "test": "tsx --tsconfig server/tsconfig.json --test \"server/**/*.test.ts\" \"server/**/*.test.js\"",
+    "test": "tsx --tsconfig server/tsconfig.json --import ./server/test-support/console-to-stderr.mjs --test \"server/**/*.test.ts\" \"server/**/*.test.js\"",
     "test:client": "vitest run",
     "lint": "oxlint src/ server/",
     "lint:server": "oxlint server/",
