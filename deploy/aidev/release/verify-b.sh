@@ -61,6 +61,21 @@ echo "## runner hub (F-02)"
 r=$($CURL "$GW/_runner/download"); check "$r" 'Array.isArray(j.files) && j.files.length>=1' "runner binaries served ($(echo "$r" | grep -o '"platform":"[^"]*"' | cut -d'"' -f4 | tr '\n' ' '))"
 r=$($CURL -X POST -H 'content-type: application/json' --data-binary '{"code":"ZZZZ0000"}' "$GW/_runner/pair"); check "$r" 'typeof j.error==="string"' "unknown pairing code refused"
 r=$(jget /api/aidev/targets); check "$r" 'Array.isArray(j.targets)' "targets: $(echo "$r" | grep -o '"name":"[^"]*"' | cut -d'"' -f4 | tr '\n' ' ')online=$(echo "$r" | grep -o '"online":true' | wc -l)"
+# F-03/F-05: run a harmless command on the first online target (as the user) and read its result
+OTID=$(echo "$r" | tr '{' '\n' | grep '"online":true' | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
+if [ -n "$OTID" ]; then
+  echo "## remote exec on target #$OTID"
+  r=$(jpost "/api/aidev/targets/$OTID/exec" '{"cmd":"echo aidev-verify-$((20+22)); uname -sm; pwd; command -v node >/dev/null && node -v || echo no-node","cwd":"~/aidev-work","timeoutSec":60}')
+  RRV=$(echo "$r" | grep -o '"remoteRunId":[0-9]*' | head -1 | cut -d: -f2)
+  check "$r" 'j.stream && j.stream.remoteRunId>0' "exec started (remote run #${RRV:-?})"
+  if [ -n "$RRV" ]; then
+    r=$(jget "/api/aidev/remote-runs/$RRV/wait?timeout=25")
+    check "$r" 'j.run.exit_code===0 && /aidev-verify-42/.test(j.output)' "exec finished: exit=$(echo "$r" | grep -o '"exit_code":[^,]*' | head -1 | cut -d: -f2) output: $(echo "$r" | grep -o '"output":"[^"]*' | cut -d'"' -f4 | sed 's/\\n/ | /g' | cut -c1-160)"
+  fi
+  echo "## recent remote runs"
+  jget "/api/aidev/remote-runs?limit=8" | tr '{' '\n' | grep -o '"id":[0-9]*,"run_id":[^,]*,"target_id":[0-9]*,"user_id":[0-9]*,"kind":"[a-z]*","cmd":"[^"]*","cwd":[^,]*,"risk":[^,]*,"approved_by":[^,]*,"started_at":[0-9]*,"finished_at":[^,]*,"exit_code":[^,]*' | sed -E 's/"(user_id|kind|started_at)":[^,]*,?//g' | head -8
+  echo "## pending approvals"; jget "/api/aidev/approvals?all=1" | grep -o '"cmd":"[^"]*","cwd":[^,]*,"agent":[^,]*\|"status":"[a-z]*"' | head -10
+fi
 echo "## recent routing decisions (signals behind each pick)"
 docker exec aidev-auth-gateway node /srv/app/current/control/gateway/dist/manage-users.js decisions 6 2>&1 | grep -v "^$" | head -24
 echo "## learned tier policy (E-05) and recent changes"
