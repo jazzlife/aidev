@@ -34,6 +34,23 @@ export type AidevDeps = {
   gate?: RemoteGate;
 };
 
+/**
+ * `~/x` and `$HOME/x` as agents write them: older runners (≤0.2.1) take them literally, so map them onto
+ * the allowed root that has the same first folder (…/aidev-work for ~/aidev-work/app), else the home
+ * folder above the first root. Anything else is passed through for the runner to check.
+ */
+export function normalizeCwd(cwd: string | null, roots: string[]): string | null {
+  if (!cwd) return cwd;
+  const m = cwd.trim().match(/^(~|\$HOME)(\/.*)?$/);
+  if (!m || !roots.length) return cwd.trim();
+  const rest = (m[2] ?? '').replace(/^\/+/, '');
+  if (!rest) return roots[0];
+  const [first, ...more] = rest.split('/');
+  const root = roots.find((r) => r.replace(/\/+$/, '').split('/').pop() === first);
+  if (root) return [root.replace(/\/+$/, ''), ...more].filter(Boolean).join('/');
+  const home = roots[0].replace(/\/+$/, '').split('/').slice(0, -1).join('/');
+  return home ? `${home}/${rest}` : cwd.trim();
+}
 /** Terminal output → plain text: no ANSI colour/cursor codes; a \r-redrawn line keeps its last state. */
 export const plainText = (text: string) => text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '').replace(/\x1b[()][A-Z0-9]/g, '')
   .split('\n').map((line) => { const parts = line.replace(/\r$/, '').split('\r'); return parts[parts.length - 1]; }).join('\n');
@@ -454,7 +471,7 @@ export function createAidevApi(deps: AidevDeps) {
             env = Object.fromEntries(entries) as Record<string, string>;
           }
           const int = (v: unknown, lo: number, hi: number) => (v === undefined || v === null ? undefined : Math.min(Math.max(Math.round(num(v, 'number')), lo), hi));
-          const exec = { cmd, cwd: optStr(b.cwd, 1000) || null, pty: agentCall ? false : b.pty === true, cols: int(b.cols, 10, 500), rows: int(b.rows, 4, 300), env, timeoutSec: int(b.timeoutSec, 1, 86400) };
+          const exec = { cmd, cwd: normalizeCwd(optStr(b.cwd, 1000) || null, target.allowed_roots ? JSON.parse(target.allowed_roots) as string[] : []), pty: agentCall ? false : b.pty === true, cols: int(b.cols, 10, 500), rows: int(b.rows, 4, 300), env, timeoutSec: int(b.timeoutSec, 1, 86400) };
           try {
             if (agentCall) {
               if (!deps.gate) throw new HttpError(503, 'remote gate unavailable');
@@ -467,6 +484,8 @@ export function createAidevApi(deps: AidevDeps) {
             return json(res, 201, { stream }), true;
           } catch (error) {
             if (error instanceof HttpError) throw error;
+            // an agent gets the reason as a result it can act on (folder, roots), not a transport error
+            if (agentCall) return json(res, 200, { status: 'error', error: error instanceof Error ? error.message : 'exec failed', allowed_roots: target.allowed_roots ? JSON.parse(target.allowed_roots) : [] }), true;
             throw new HttpError(error instanceof RpcError && error.code === -32010 ? 409 : 400, error instanceof Error ? error.message : 'exec failed');
           }
         }

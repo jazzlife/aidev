@@ -114,7 +114,9 @@ async function resolveTarget(requested: string | number | undefined, routed: num
 }
 
 /** Long-polls the gateway (25 s per request) until the run ends or `waitSec` passes. */
+const QUIET_MS = 90_000;
 async function waitRemoteRun(remoteRunId: number, waitSec: number, outputBytes = 12_000) {
+  const callStart = Date.now();
   const deadline = Date.now() + waitSec * 1000;
   const bytes = Math.min(Math.max(outputBytes, 1000), 60_000);
   for (;;) {
@@ -122,11 +124,14 @@ async function waitRemoteRun(remoteRunId: number, waitSec: number, outputBytes =
     const asked = Math.min(left, 25);
     const t0 = Date.now();
     const r = await callGateway('GET', `/remote-runs/${remoteRunId}/wait?timeout=${asked}&bytes=${bytes}`, undefined, 45_000) as {
-      run: { id: number; finished_at: number | null; exit_code: number | null; started_at: number; artifacts: { signal?: string | null; duration_ms?: number } | null; live: { running: boolean; signal: string | null } | null };
+      run: { id: number; finished_at: number | null; exit_code: number | null; started_at: number; artifacts: { signal?: string | null; duration_ms?: number } | null; live: { running: boolean; signal: string | null; lastOutputAt?: number | null } | null };
       output: string;
     };
     const running = Boolean(r.run.live?.running) || !r.run.finished_at;
-    const done = !running || left <= 0 || Date.now() >= deadline - 250;
+    // silent for a long time: tell the agent instead of waiting out waitSec (it may be waiting for input)
+    const quietMs = running ? Date.now() - (r.run.live?.lastOutputAt ?? r.run.started_at) : 0;
+    const quiet = running && quietMs > QUIET_MS && Date.now() - callStart > QUIET_MS;
+    const done = !running || left <= 0 || Date.now() >= deadline - 250 || quiet;
     if (running && !done && Date.now() - t0 < (asked - 1) * 1000) {
       // the gateway answered early without an end (stream not in memory, e.g. right after a restart): don't spin
       await new Promise((resolve) => setTimeout(resolve, 1000));
@@ -141,7 +146,9 @@ async function waitRemoteRun(remoteRunId: number, waitSec: number, outputBytes =
         signal: r.run.live?.signal ?? r.run.artifacts?.signal ?? null,
         durationMs: r.run.artifacts?.duration_ms ?? (running ? Date.now() - r.run.started_at : null),
         output: r.output,
-        ...(running ? { message: `아직 실행 중입니다. remote_logs{remoteRunId:${remoteRunId}}로 이어서 보거나 remote_stop으로 멈추세요.` } : {}),
+        ...(running ? { message: quiet
+          ? `${Math.round(quietMs / 1000)}초 동안 출력이 없습니다 — 입력을 기다리거나 멈췄을 수 있습니다. remote_stop{remoteRunId:${remoteRunId}}으로 멈추고 비대화형 옵션(예: --yes, CI=1)으로 다시 실행하거나, 오래 걸리는 작업이면 remote_logs로 계속 확인하세요.`
+          : `아직 실행 중입니다. remote_logs{remoteRunId:${remoteRunId}}로 이어서 보거나 remote_stop으로 멈추세요.` } : {}),
       };
     }
   }
@@ -344,6 +351,10 @@ export const aidevToolsService = {
     }) as GatewayResponse & { status?: string; stream?: { remoteRunId: number }; approval?: { id: string; risk: number; reasons: string[] }; reason?: string; error?: string };
     const base = { target: target.name, cmd: input.cmd };
     if (started.status === 'offline') return { ...base, status: 'offline', message: String(started.error ?? 'target offline') };
+    if (started.status === 'error') {
+      const roots = Array.isArray((started as { allowed_roots?: unknown }).allowed_roots) ? ((started as { allowed_roots: string[] }).allowed_roots).join(', ') : '';
+      return { ...base, status: 'error', message: `${String(started.error ?? 'could not start')}${roots && !String(started.error ?? '').includes('허용 폴더') ? ` — 허용 폴더: ${roots}` : ''}. cwd는 허용 폴더 안의 절대 경로로 지정하세요(없는 폴더는 먼저 만들어야 합니다).` };
+    }
     if (started.status === 'denied') return { ...base, status: 'denied', message: String(started.reason ?? 'denied by policy') };
     let remoteRunId = started.stream?.remoteRunId ?? null;
     let approvedBy: string = 'auto';

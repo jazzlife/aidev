@@ -162,15 +162,19 @@ export function createRemoteGate(deps: { store: Store; laya: LayaClient; runners
   return {
     assess,
     /** An agent asks to run `exec` on `target`. */
-    async request(userId: number, target: TargetRow, exec: ExecParams, meta: { runId?: number | null; agent?: string | null }): Promise<GateResult> {
+    async request(userId: number, target: TargetRow, execIn: ExecParams, meta: { runId?: number | null; agent?: string | null }): Promise<GateResult> {
+      let exec = execIn;
       if (target.policy === 'deny') return { status: 'denied', reason: `대상 ${target.name}의 실행 정책이 "실행 금지"입니다`, approval: null, assessment: null };
       const assessment = await assess(userId, target, exec.cmd, exec.cwd ?? null);
+      // an agent's command never runs unbounded: 30 min unless it asked otherwise (dev servers pass their own)
+      exec = { ...exec, timeoutSec: exec.timeoutSec ?? 1800 };
       const now = Date.now();
       const a: Approval = {
         id: crypto.randomBytes(9).toString('base64url'), userId, targetId: target.id, targetName: target.name, cmd: exec.cmd, cwd: exec.cwd ?? null,
         agent: meta.agent ?? null, runId: meta.runId ?? null, risk: assessment.risk, reasons: assessment.reasons, destructive: assessment.destructive, policy: target.policy,
         status: 'pending', createdAt: now, expiresAt: now + APPROVAL_TTL_MS, decidedAt: null, decidedBy: null, remoteRunId: null, error: null, exec, waiters: new Set(),
       };
+      console.log(`[remote-gate] target #${target.id} ${meta.agent ?? 'agent'} risk ${assessment.risk} safe=${assessment.safe} destructive=${assessment.destructive} policy=${target.policy}: ${exec.cmd.slice(0, 120)}`);
       if (!needsApproval(target.policy, assessment)) {
         a.status = 'allowed'; a.decidedAt = now; a.decidedBy = 'auto';
         const stream = await start(a, 'auto');
@@ -195,6 +199,7 @@ export function createRemoteGate(deps: { store: Store; laya: LayaClient; runners
       if (!a || a.userId !== userId) throw Object.assign(new Error('승인 요청이 없습니다(만료되었거나 이미 처리됨)'), { status: 404 });
       if (a.status !== 'pending') return view(a);
       a.decidedAt = Date.now(); a.decidedBy = 'user';
+      console.log(`[remote-gate] approval ${a.id} ${allow ? 'allowed' : 'denied'}${opts.auto ? ' (+auto)' : ''}`);
       if (!allow) { a.status = 'denied'; recordRefused(a, 'denied'); settle(a); return view(a); }
       a.status = 'allowed';
       if (opts.auto) { try { store.updateTarget(userId, a.targetId, { policy: 'auto' }); } catch { /* deleted */ } }

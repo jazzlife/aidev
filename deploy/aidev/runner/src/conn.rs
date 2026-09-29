@@ -44,6 +44,11 @@ fn chrono_now() -> String {
 /// Runs until shutdown or revocation, reconnecting as needed.
 pub async fn run(cfg: Config) -> Exit {
     let hub = ExecHub::default();
+    // probe the interactive PATH once, off the connection path
+    tokio::task::spawn_blocking(|| {
+        let path = crate::exec::user_path();
+        log(&format!("명령 PATH: {}", path.as_deref().map(|p| format!("사용자 셸에서 가져옴 ({}개 경로)", p.split(':').count())).unwrap_or_else(|| "기본값".into())));
+    });
     let exit = run_with(&cfg, &hub).await;
     // nothing keeps running unattended once the runner itself stops
     if hub.running() > 0 {

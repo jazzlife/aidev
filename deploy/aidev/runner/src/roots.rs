@@ -13,7 +13,15 @@ pub fn resolve(roots: &[PathBuf], requested: &str) -> Result<PathBuf, String> {
     if requested.is_empty() || requested.contains('\0') {
         return Err("잘못된 경로".into());
     }
-    let raw = Path::new(requested);
+    // `~` / `$HOME` are the user's home, as in a shell (agents write paths that way)
+    let expanded = if requested == "~" || requested == "$HOME" {
+        crate::config::home()
+    } else if let Some(rest) = requested.strip_prefix("~/").or_else(|| requested.strip_prefix("$HOME/")) {
+        crate::config::home().join(rest)
+    } else {
+        std::path::PathBuf::from(requested)
+    };
+    let raw = expanded.as_path();
     let joined = if raw.is_absolute() { raw.to_path_buf() } else { roots[0].join(raw) };
     let real = real_path(&joined)?;
     for root in roots {
@@ -22,7 +30,8 @@ pub fn resolve(roots: &[PathBuf], requested: &str) -> Result<PathBuf, String> {
             return Ok(real);
         }
     }
-    Err(format!("허용된 폴더 밖입니다: {requested}"))
+    let list = roots.iter().map(|r| r.display().to_string()).collect::<Vec<_>>().join(", ");
+    Err(format!("허용된 폴더 밖입니다: {requested} — 허용 폴더: {list}"))
 }
 
 /// Canonical path of `p`; for a path that does not exist yet, the canonical nearest existing

@@ -132,10 +132,21 @@ fn job_env(cfg: &Config, extra: &serde_json::Map<String, Value>, pty: bool) -> R
     } else {
         std::env::vars().filter(|(k, _)| BASE_ENV.iter().any(|b| b.eq_ignore_ascii_case(k))).collect()
     };
-    if pty {
-        env.retain(|(k, _)| k != "TERM");
-        env.push(("TERM".into(), "xterm-256color".into()));
-        env.push(("COLORTERM".into(), "truecolor".into()));
+    if !pty {
+        if let Some(path) = user_path() {
+            env.retain(|(k, _)| k != "PATH");
+            env.push(("PATH".into(), path));
+        }
+    }
+    let defaults: &[(&str, &str)] = if pty {
+        &[("TERM", "xterm-256color"), ("COLORTERM", "truecolor")]
+    } else {
+        // nobody can answer a prompt on an output-only job: tools should not ask, page or wait
+        &[("TERM", "dumb"), ("CI", "1"), ("PAGER", "cat"), ("GIT_PAGER", "cat"), ("GIT_TERMINAL_PROMPT", "0"), ("npm_config_yes", "true"), ("HOMEBREW_NO_AUTO_UPDATE", "1")]
+    };
+    for (k, v) in defaults {
+        env.retain(|(ek, _)| ek != k);
+        env.push((k.to_string(), v.to_string()));
     }
     for (k, v) in extra {
         if !valid_env_key(k) {
@@ -153,16 +164,53 @@ fn job_env(cfg: &Config, extra: &serde_json::Map<String, Value>, pty: bool) -> R
     Ok(env)
 }
 
-/// `cmd` runs through the user's shell so PATH from their profile applies (zsh: -ilc → ~/.zshrc too).
-fn shell_argv(cmd: &str) -> Vec<String> {
+fn user_shell() -> String {
+    std::env::var("SHELL").ok().filter(|s| std::path::Path::new(s).exists()).unwrap_or_else(|| {
+        ["/bin/zsh", "/bin/bash", "/bin/sh"].iter().find(|s| std::path::Path::new(s).exists()).unwrap_or(&"/bin/sh").to_string()
+    })
+}
+
+/// PATH as the user's interactive shell sets it (~/.zshrc: nvm, pyenv, brew …), probed once with
+/// stdin closed and a time limit. Jobs then run in a *non-interactive* login shell with this PATH,
+/// so rc files that prompt or wait for a terminal can never hang a command.
+static USER_PATH: std::sync::OnceLock<Option<String>> = std::sync::OnceLock::new();
+
+pub fn user_path() -> Option<String> {
+    USER_PATH.get_or_init(|| {
+        if cfg!(windows) {
+            return None;
+        }
+        use std::process::{Command, Stdio};
+        let mut child = Command::new(user_shell())
+            .args(["-ilc", "printf '__AIDEV_PATH__%s__END__' \"$PATH\""])
+            .stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::null())
+            .spawn().ok()?;
+        let deadline = Instant::now() + Duration::from_secs(8);
+        loop {
+            match child.try_wait() {
+                Ok(Some(_)) => break,
+                Ok(None) if Instant::now() < deadline => std::thread::sleep(Duration::from_millis(50)),
+                _ => { let _ = child.kill(); let _ = child.wait(); return None; }
+            }
+        }
+        let mut out = String::new();
+        std::io::Read::read_to_string(child.stdout.as_mut()?, &mut out).ok()?;
+        let start = out.find("__AIDEV_PATH__")? + "__AIDEV_PATH__".len();
+        let end = out[start..].find("__END__")? + start;
+        let path = out[start..end].trim().to_string();
+        (!path.is_empty()).then_some(path)
+    }).clone()
+}
+
+/// `cmd` runs through the user's login shell. Output-only jobs (no pty) use a non-interactive shell
+/// with the probed PATH; a pty job is interactive like a terminal the user opened (zsh -ilc).
+fn shell_argv(cmd: &str, pty: bool) -> Vec<String> {
     if cfg!(windows) {
         let comspec = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into());
         return vec![comspec, "/d".into(), "/s".into(), "/c".into(), cmd.into()];
     }
-    let shell = std::env::var("SHELL").ok().filter(|s| std::path::Path::new(s).exists()).unwrap_or_else(|| {
-        ["/bin/zsh", "/bin/bash", "/bin/sh"].iter().find(|s| std::path::Path::new(s).exists()).unwrap_or(&"/bin/sh").to_string()
-    });
-    let flags = if shell.ends_with("/zsh") { "-ilc" } else { "-lc" };
+    let shell = user_shell();
+    let flags = if pty && shell.ends_with("/zsh") { "-ilc" } else { "-lc" };
     vec![shell, flags.into(), cmd.into()]
 }
 
@@ -299,7 +347,7 @@ impl ExecHub {
                 }
                 v
             }
-            (None, Some(cmd)) if !cmd.trim().is_empty() => shell_argv(cmd),
+            (None, Some(cmd)) if !cmd.trim().is_empty() => shell_argv(cmd, pty),
             _ => return Err((-32602, "cmd 또는 program 필요".into())),
         };
         let display = params.get("cmd").and_then(Value::as_str).map(String::from).unwrap_or_else(|| argv.join(" "));
@@ -314,7 +362,8 @@ impl ExecHub {
             }
         };
         if !cwd.is_dir() {
-            return Err((-32001, format!("폴더가 아닙니다: {}", cwd.display())));
+            let roots = cfg.allowed_roots.iter().map(|r| r.display().to_string()).collect::<Vec<_>>().join(", ");
+            return Err((-32001, format!("폴더가 없습니다: {} — 허용 폴더: {roots}", cwd.display())));
         }
         let empty = serde_json::Map::new();
         let env = job_env(cfg, params.get("env").and_then(Value::as_object).unwrap_or(&empty), pty).map_err(|e| (-32602, e))?;
@@ -488,12 +537,13 @@ fn spawn_piped(
     #[cfg(not(windows))]
     cmd.args(&argv[1..]);
     cmd.current_dir(cwd).env_clear().envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
-    cmd.stdin(Stdio::piped()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    // stdin is closed: a command that asks for input gets EOF instead of waiting forever
+    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     #[cfg(unix)]
     cmd.process_group(0);
     let mut child = cmd.spawn().map_err(|e| format!("{}: {e}", argv[0]))?;
     let pid = child.id();
-    let mut stdin = child.stdin.take();
+    let mut stdin: Option<tokio::process::ChildStdin> = None;
     for pipe in [child.stdout.take().map(|s| Box::new(s) as Box<dyn tokio::io::AsyncRead + Unpin + Send>), child.stderr.take().map(|s| Box::new(s) as Box<dyn tokio::io::AsyncRead + Unpin + Send>)].into_iter().flatten() {
         let tx = chunk_tx.clone();
         let mut pipe = pipe;

@@ -159,6 +159,9 @@ if [ -x "$RUNNER_BIN" ]; then
   check "$r" 'j.status==="started" && j.stream.by==="auto" && j.assessment.safe===true' "agent: test command runs without asking (policy ask, risk $(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).assessment?.risk'))"
   r=$(rget "/remote-runs/$RR3/wait?timeout=20"); check "$r" 'j.run.exit_code===0 && /3 passing/.test(j.output) && j.run.run_id>0' "agent: waits for the result (exit 0, output returned)"
   r=$(get "$A" "/api/aidev/runs?limit=5"); check "$r" "(j.runs||[]).some(x=>x.id===$RUN2 && x.test_result==='pass')" "remote test result recorded on the chat run (test_result=pass)"
+  r=$(rpost "/targets/$TID/exec" '{"cmd":"pwd","cwd":"~/aidev-work"}'); RR5=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).stream?.remoteRunId')
+  r=$(rget "/remote-runs/$RR5/wait?timeout=10"); check "$r" 'j.run.exit_code===0 && /aidev-work/.test(j.output)' "agent: cwd ~/aidev-work resolves on the target"
+  r=$(rpost "/targets/$TID/exec" '{"cmd":"ls","cwd":"/definitely/not/here"}'); check "$r" 'j.status==="error" && /허용/.test(j.error) && Array.isArray(j.allowed_roots)' "agent: bad folder comes back as a result with the allowed roots"
   r=$(rpost "/targets/$TID/exec" '{"cmd":"rm -rf build-tmp && echo removed","agent":"testing"}'); AP=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).approval?.id')
   check "$r" 'j.status==="pending" && j.approval.destructive && j.approval.reasons.length>0' "agent: rm -rf waits for approval ($(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).approval?.reasons.join(", ")'))"
   r=$(get "$A" /api/aidev/approvals); check "$r" "j.approvals.some(a=>a.id==='$AP')" "user sees the pending approval"

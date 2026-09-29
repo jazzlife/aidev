@@ -1,6 +1,6 @@
 [package]
 name = "aidev-runner"
-version = "0.2.1"
+version = "0.2.2"
 edition = "2021"
 description = "Nado AI Dev remote runner: connects a developer PC to the platform (outbound only) to run, sync, preview, show and debug code"
 license = "UNLICENSED"
