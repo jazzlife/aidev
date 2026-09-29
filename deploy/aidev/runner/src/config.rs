@@ -87,3 +87,30 @@ pub fn describe(cfg: &Config) -> String {
         path().display()
     )
 }
+
+/// Held for the lifetime of `start`: a second runner with the same config is refused instead of
+/// fighting the first one for the target's connection.
+pub struct InstanceLock(#[allow(dead_code)] std::fs::File);
+
+pub fn lock_instance() -> Result<InstanceLock, String> {
+    std::fs::create_dir_all(dir()).map_err(|e| e.to_string())?;
+    let path = dir().join("runner.lock");
+    let busy = || format!("이미 이 PC에서 러너가 실행 중입니다 ({}) — 서비스로 돌고 있다면 `launchctl list | grep aidev` / `systemctl --user status aidev-runner` / 작업 관리자에서 확인하고, 하나만 실행하세요", path.display());
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).open(&path).map_err(|e| e.to_string())?;
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+            return Err(busy());
+        }
+        let _ = file.set_len(0);
+        let _ = std::io::Write::write_all(&mut &file, std::process::id().to_string().as_bytes());
+        Ok(InstanceLock(file))
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+        let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).share_mode(0).open(&path).map_err(|_| busy())?;
+        Ok(InstanceLock(file))
+    }
+}

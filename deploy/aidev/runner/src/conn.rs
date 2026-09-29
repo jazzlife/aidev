@@ -68,6 +68,10 @@ async fn run_with(cfg: &Config, hub: &ExecHub) -> Exit {
                 Ok(()) => log("연결이 끊어졌습니다"),
                 Err(SessionError::Unauthorized) => return Exit::Unauthorized,
                 Err(SessionError::Other(e)) => log(&format!("연결 오류: {e}")),
+                Err(SessionError::Replaced) => {
+                    log("같은 토큰을 쓰는 다른 러너가 접속해 이 연결을 대체했습니다 — 이 PC나 다른 PC에서 러너가 두 개 실행 중인지 확인하세요 (서비스 + 터미널 start 등). 30초 뒤 다시 시도합니다");
+                    backoff = backoff.max(Duration::from_secs(30));
+                }
             },
         }
         // a connection that lasted a while starts the backoff over
@@ -91,6 +95,8 @@ async fn shutdown_signal() {
 
 enum SessionError {
     Unauthorized,
+    /// Another runner holding the same token took over (gateway close 4000).
+    Replaced,
     Other(String),
 }
 
@@ -158,8 +164,12 @@ where
                     }
                     Message::Ping(payload) => send(Message::Pong(payload)).await?,
                     Message::Close(frame) => {
+                        let code = frame.as_ref().map(|f| u16::from(f.code));
                         // 4401 = token revoked / target deleted by the user
-                        if frame.as_ref().map(|f| u16::from(f.code)) == Some(4401) { return Err(SessionError::Unauthorized); }
+                        if code == Some(4401) { return Err(SessionError::Unauthorized); }
+                        // 4000 = another runner connected with this token and took the target over
+                        if code == Some(4000) { return Err(SessionError::Replaced); }
+                        log(&format!("게이트웨이가 연결을 닫았습니다 (code {}{})", code.map(|c| c.to_string()).unwrap_or_else(|| "-".into()), frame.as_ref().map(|f| format!(", {}", f.reason)).unwrap_or_default()));
                         return Ok(());
                     }
                     _ => {}

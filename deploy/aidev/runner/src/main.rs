@@ -85,6 +85,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
         }
         Cmd::Start => {
             let cfg = config::load()?;
+            // one runner per config: a second `start` (terminal + service) would keep stealing the connection
+            let _lock = config::lock_instance()?;
             let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
             match rt.block_on(conn::run(cfg)) {
                 conn::Exit::Shutdown => eprintln!("종료합니다"),
