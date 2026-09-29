@@ -47,7 +47,7 @@ fi
 r=$(jget /api/aidev/laya/health); check "$r" 'j.status==="ok" && j.device' "laya health ($(echo "$r" | sed -n 's/.*"device": *"\([^"]*\)".*/\1/p'))"
 r=$(jget /api/aidev/agents); check "$r" 'j.agents.length>=13' "catalog seeded ($(echo "$r" | grep -o '"name"' | wc -l) agents)"
 r=$(jget /api/aidev/engines); check "$r" 'j.engines && j.engines.claude && j.engines.codex' "engines: $(echo "$r" | cut -c1-200)"
-r=$(jpost /api/aidev/route '{"text":"React 컴포넌트에 다크모드 토글 훅을 추가해줘"}'); check "$r" 'j.agent && j.decision_id>0' "route react → $(echo "$r" | sed -n 's/.*"agent":{"id":[0-9]*,"name":"\([^"]*\)".*/\1/p') fallback=$(echo "$r" | sed -n 's/.*"fallback":\([a-z]*\).*/\1/p') plan=$(echo "$r" | sed -n 's/.*"plan":{"engine":\("[^"]*"\|null\),"engine_locked":[a-z]*,"model":\("[^"]*"\|null\),"effort":\("[^"]*"\|null\).*/\1 \2 \3/p') laya_ms=$(echo "$r" | sed -n 's/.*"latency_ms":\([0-9.]*\).*/\1/p')"
+r=$(jpost /api/aidev/route '{"text":"React 컴포넌트에 다크모드 토글 훅을 추가해줘"}'); check "$r" 'j.agent && j.decision_id>0' "route react → $(echo "$r" | sed -n 's/.*"agent":{"id":[0-9]*,"name":"\([^"]*\)".*/\1/p') fallback=$(echo "$r" | sed -n 's/.*"fallback":\([a-z]*\).*/\1/p') plan=$(echo "$r" | grep -o '"plan":{[^}]*' | grep -oE '"(engine|model|effort)":("[^"]*"|null)' | cut -d: -f2 | tr -d '"' | tr '\n' ' ') laya_ms=$(echo "$r" | sed -n 's/.*"latency_ms":\([0-9.]*\).*/\1/p')"
 check "$r" 'j.agent.name==="frontend-react"' "route react picks frontend-react"
 r=$(jpost /api/aidev/route '{"text":"이 로그 파일 5만 줄을 읽고 분석해서 오류 패턴을 요약해줘"}'); check "$r" 'j.scope.task_kind==="bulk_read"' "bulk_read recognised (task_kind=$(echo "$r" | sed -n 's/.*"task_kind":"\([^"]*\)".*/\1/p'), engine=$(echo "$r" | sed -n 's/.*"plan":{"engine":\("[^"]*"\|null\).*/\1/p'))"
 r=$(jpost /api/aidev/route '{"text":"Unity 셰이더로 물 표면 굴절 효과를 구현해줘"}'); check "$r" 'j.decision' "unknown domain → decision=$(echo "$r" | sed -n 's/.*"decision":"\([^"]*\)".*/\1/p') needs_new=$(echo "$r" | sed -n 's/.*"needs_new":\([0-9.]*\).*/\1/p')"
@@ -57,6 +57,10 @@ r=$(jget "/api/aidev/decisions?limit=5"); check "$r" 'j.decisions.length>=3' "de
 echo "## routing eval on the held-out bench set (Laya-only vs lexical prior vs fused)"
 r=$(jpost /api/aidev/route/eval '{}'); echo "$r" | cut -c1-600; echo "task_kind: $(echo "$r" | sed -n 's/.*"kind":{\([^}]*}\).*/\1/p' | cut -c1-400)"; check "$r" 'j.kind && j.kind.bulk_read_recall>=0.75' "task_kind fusion: bulk_read recall >= 0.75 (laya $(echo "$r" | sed -n 's/.*"kind":{[^}]*"laya_only":\([0-9.]*\).*/\1/p') nb $(echo "$r" | sed -n 's/.*"kind":{[^}]*"lexical_only":\([0-9.]*\).*/\1/p') fused $(echo "$r" | sed -n 's/.*"kind":{[^}]*"fused":\([0-9.]*\).*/\1/p') best α $(echo "$r" | sed -n 's/.*"kind":{[^}]*"best_alpha":\([0-9.]*\).*/\1/p'))"; check "$r" 'j.fused>=0.75' "fused routing accuracy >= 0.75 (laya $(echo "$r" | sed -n 's/.*"laya_only":\([0-9.]*\).*/\1/p') nb $(echo "$r" | sed -n 's/.*"lexical_only":\([0-9.]*\).*/\1/p') fused $(echo "$r" | sed -n 's/.*"fused":\([0-9.]*\).*/\1/p') best α $(echo "$r" | sed -n 's/.*"best_alpha":\([0-9.]*\).*/\1/p'))"
 
+echo "## runner hub (F-02)"
+r=$($CURL "$GW/_runner/download"); check "$r" 'Array.isArray(j.files) && j.files.length>=1' "runner binaries served ($(echo "$r" | grep -o '"platform":"[^"]*"' | cut -d'"' -f4 | tr '\n' ' '))"
+r=$($CURL -X POST -H 'content-type: application/json' --data-binary '{"code":"ZZZZ0000"}' "$GW/_runner/pair"); check "$r" 'typeof j.error==="string"' "unknown pairing code refused"
+r=$(jget /api/aidev/targets); check "$r" 'Array.isArray(j.targets)' "targets: $(echo "$r" | grep -o '"name":"[^"]*"' | cut -d'"' -f4 | tr '\n' ' ')online=$(echo "$r" | grep -o '"online":true' | wc -l)"
 echo "## recent routing decisions (signals behind each pick)"
 docker exec aidev-auth-gateway node /srv/app/current/control/gateway/dist/manage-users.js decisions 6 2>&1 | grep -v "^$" | head -24
 echo "## learned tier policy (E-05) and recent changes"
