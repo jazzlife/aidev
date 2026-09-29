@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 
 import { useAuth } from '@/modules/chat-core';
-import { aidevApi, claudeAuth, EFFORT_LABEL, routingStore, useClaudeAuth, useEffortCap, useRoutingState, type EnginesResult, type RoutingMode } from '@/modules/aidev-router';
+import { aidevApi, claudeAuth, routingStore, useClaudeAuth, useRoutingState, type EnginesResult, type RoutingMode } from '@/modules/aidev-router';
+import { EffortCapControl } from '@m/components/EffortCapControl';
 import { ClaudeLoginSheet } from '@m/components/ClaudeLoginSheet';
 import { KnowledgeSection } from '@m/components/KnowledgeSection';
 import { RemoteRunsSection } from '@m/components/RemoteRunCard';
@@ -22,7 +23,6 @@ export function SettingsScreen() {
   const routing = useRoutingState();
   const [engines, setEngines] = useState<EnginesResult | null>(null);
   const auth = useClaudeAuth();
-  const effort = useEffortCap();
   const [push, setPush] = useState<PushState | null>(null);
   const [pushBusy, setPushBusy] = useState(false);
   const [pushNote, setPushNote] = useState<string | null>(null);
@@ -57,22 +57,10 @@ export function SettingsScreen() {
             ))}
           </div>
         </section>
-        {effort.cap && effort.ladder ? (
-          <section data-testid="effort-cap">
-            <div className="text-[12px] uppercase tracking-wide text-muted mb-2">추론 강도(effort) 상한</div>
-            <div className="rounded-xl2 border border-line bg-surface divide-y divide-line">
-              {(['claude', 'codex'] as const).map((engine) => (
-                <label key={engine} className="px-4 py-3 flex items-center gap-3">
-                  <span className="flex-1 text-[15px] capitalize">{engine}</span>
-                  <select aria-label={`${engine} effort 상한`} value={effort.cap![engine]} onChange={(event) => { void effort.save(engine, event.target.value); }} className="h-9 rounded-lg border border-line bg-elevated px-2 text-[14px]">
-                    {effort.ladder![engine].map((level) => <option key={level} value={level}>{level} · {EFFORT_LABEL[level] ?? level}</option>)}
-                  </select>
-                </label>
-              ))}
-            </div>
-            <div className="text-[12px] text-muted mt-2">{effort.error ?? '가장 어려운 작업(D4)은 이 강도로 실행하고, 다른 등급도 이 값을 넘지 않습니다. 실패 후 이어서 시도할 때도 여기까지 올립니다. 높을수록 구독 사용량이 많이 듭니다.'}</div>
-          </section>
-        ) : null}
+        <section data-testid="effort-cap">
+          <div className="text-[12px] uppercase tracking-wide text-muted mb-2">추론 강도(effort) 상한</div>
+          <EffortCapControl />
+        </section>
         <section>
           <div className="text-[12px] uppercase tracking-wide text-muted mb-2">엔진</div>
           <div className="rounded-xl2 border border-line bg-surface divide-y divide-line">
