@@ -20,6 +20,7 @@ if ! have_node; then
   # no node on the host: evaluate checks inside the gateway image
   check() { if docker run --rm -i node:22-bookworm-slim node -e "const j=JSON.parse(process.argv[1]); process.exit(($2)?0:1)" "$1" 2>/dev/null; then echo "PASS $3"; else echo "FAIL $3 :: $(echo "$1" | cut -c1-300)"; fail=1; fi; }
 fi
+jeval() { if have_node; then node -e "const j=JSON.parse(process.argv[1]); console.log(($2))" "$1" 2>/dev/null; else docker run --rm -i node:22-bookworm-slim node -e "const j=JSON.parse(process.argv[1]); console.log(($2))" "$1" 2>/dev/null; fi; }
 jget() { $CURL -H "authorization: Bearer $TOK" "$GW$1"; }
 jpost() { $CURL -X "${3:-POST}" -H "authorization: Bearer $TOK" -H 'content-type: application/json' --data-binary "$2" "$GW$1"; }
 
@@ -62,7 +63,7 @@ r=$($CURL "$GW/_runner/download"); check "$r" 'Array.isArray(j.files) && j.files
 r=$($CURL -X POST -H 'content-type: application/json' --data-binary '{"code":"ZZZZ0000"}' "$GW/_runner/pair"); check "$r" 'typeof j.error==="string"' "unknown pairing code refused"
 r=$(jget /api/aidev/targets); check "$r" 'Array.isArray(j.targets)' "targets: $(echo "$r" | grep -o '"name":"[^"]*"' | cut -d'"' -f4 | tr '\n' ' ')online=$(echo "$r" | grep -o '"online":true' | wc -l)"
 # F-03/F-05: run a harmless command on the first online target (as the user) and read its result
-OTID=$(echo "$r" | tr '{' '\n' | grep '"online":true' | grep -o '"id":[0-9]*' | head -1 | cut -d: -f2)
+OTID=$(jeval "$r" '(j.targets.find(t=>t.online)||{}).id||""')
 if [ -n "$OTID" ]; then
   echo "## remote exec on target #$OTID"
   r=$(jpost "/api/aidev/targets/$OTID/exec" '{"cmd":"echo aidev-verify-$((20+22)); uname -sm; pwd; command -v node >/dev/null && node -v || echo no-node","cwd":"~/aidev-work","timeoutSec":60}')
@@ -73,8 +74,8 @@ if [ -n "$OTID" ]; then
     check "$r" 'j.run.exit_code===0 && /aidev-verify-42/.test(j.output)' "exec finished: exit=$(echo "$r" | grep -o '"exit_code":[^,]*' | head -1 | cut -d: -f2) output: $(echo "$r" | grep -o '"output":"[^"]*' | cut -d'"' -f4 | sed 's/\\n/ | /g' | cut -c1-160)"
   fi
   echo "## recent remote runs"
-  jget "/api/aidev/remote-runs?limit=8" | tr '{' '\n' | grep -o '"id":[0-9]*,"run_id":[^,]*,"target_id":[0-9]*,"user_id":[0-9]*,"kind":"[a-z]*","cmd":"[^"]*","cwd":[^,]*,"risk":[^,]*,"approved_by":[^,]*,"started_at":[0-9]*,"finished_at":[^,]*,"exit_code":[^,]*' | sed -E 's/"(user_id|kind|started_at)":[^,]*,?//g' | head -8
-  echo "## pending approvals"; jget "/api/aidev/approvals?all=1" | grep -o '"cmd":"[^"]*","cwd":[^,]*,"agent":[^,]*\|"status":"[a-z]*"' | head -10
+  jeval "$(jget "/api/aidev/remote-runs?limit=10")" 'j.runs.map(x=>`#${x.id} run=${x.run_id??"-"} ${x.approved_by} exit=${x.exit_code??"-"} ${x.finished_at?Math.round((x.finished_at-x.started_at)/1000)+"s":"RUNNING"} cwd=${x.cwd??"-"} :: ${(x.cmd||"").slice(0,90)}${x.artifacts&&x.artifacts.error?" ERR "+x.artifacts.error.slice(0,80):""}`).join("\n")'
+  echo "## approvals"; jeval "$(jget "/api/aidev/approvals?all=1")" 'j.approvals.map(a=>`${a.status} risk=${a.risk} ${a.targetName}: ${a.cmd.slice(0,90)}`).join("\n")||"(none)"'
 fi
 echo "## recent routing decisions (signals behind each pick)"
 docker exec aidev-auth-gateway node /srv/app/current/control/gateway/dist/manage-users.js decisions 6 2>&1 | grep -v "^$" | head -24
