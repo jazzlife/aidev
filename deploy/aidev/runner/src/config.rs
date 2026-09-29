@@ -18,6 +18,9 @@ pub struct Config {
     /// Screen capture only with explicit consent (`aidev-runner consent screen on`).
     #[serde(default)]
     pub screen_consent: bool,
+    /// Remote control (mouse, keyboard from the live screen) only with explicit consent (`consent control on`).
+    #[serde(default)]
+    pub control_consent: bool,
     /// Pass this process's environment to commands it runs (off: only the variables a job sends).
     #[serde(default)]
     pub inherit_env: bool,
@@ -77,12 +80,13 @@ fn write_private(p: &Path, text: &str) -> std::io::Result<()> {
 pub fn describe(cfg: &Config) -> String {
     let roots: Vec<String> = cfg.allowed_roots.iter().map(|r| r.display().to_string()).collect();
     format!(
-        "gateway: {}\ntarget: #{} {}\nallowed_roots: {}\nscreen capture: {}\ninherit env: {}\nconfig: {}",
+        "gateway: {}\ntarget: #{} {}\nallowed_roots: {}\nscreen capture: {}\nremote control: {}\ninherit env: {}\nconfig: {}",
         cfg.gateway,
         cfg.target_id,
         cfg.name,
         if roots.is_empty() { "(none)".into() } else { roots.join(", ") },
         if cfg.screen_consent { "allowed" } else { "off" },
+        if cfg.control_consent { "allowed" } else { "off" },
         if cfg.inherit_env { "yes" } else { "no" },
         path().display()
     )

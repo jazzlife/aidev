@@ -575,12 +575,14 @@ export const api = {
     /** F-07: the target's displays and a live view (JPEG frames over a WebSocket) / one screenshot. */
     screens: (targetId: number) => get(`/api/aidev/targets/${targetId}/screens`),
     screenshotUrl: (targetId: number, opts: { display?: number; maxWidth?: number } = {}) => `/api/aidev/targets/${targetId}/screenshot.jpg?display=${opts.display ?? 1}&maxWidth=${opts.maxWidth ?? 1440}&t=${Date.now()}`,
-    screenUrl: (targetId: number, opts: { display?: number; fps?: number; maxWidth?: number } = {}) => {
+    screenUrl: (targetId: number, opts: { mode?: string; display?: number; fps?: number; maxWidth?: number; bitrate?: number; codec?: string } = {}) => {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
       const token = getStoredAuthToken();
-      const q = new URLSearchParams({ display: String(opts.display ?? 1), fps: String(opts.fps ?? 2), maxWidth: String(opts.maxWidth ?? 1440), ...(token ? { token } : {}) });
+      const q = new URLSearchParams({ mode: opts.mode ?? 'video', display: String(opts.display ?? 1), fps: String(opts.fps ?? 30), maxWidth: String(opts.maxWidth ?? 1440), bitrate: String(opts.bitrate ?? 4000), codec: opts.codec ?? 'h264', ...(token ? { token } : {}) });
       return `${protocol}//${window.location.host}/api/aidev/targets/${targetId}/screen?${q}`;
     },
+    /** One screenshot as JSON (base64 JPEG). */
+    screenshot: (targetId: number, opts: { display?: number; maxWidth?: number } = {}) => post(`/api/aidev/targets/${targetId}/screenshot`, opts),
     /** WebSocket URL of a target's run streams (same origin; the session cookie or stored token authenticates). */
     streamUrl: (targetId: number) => {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';

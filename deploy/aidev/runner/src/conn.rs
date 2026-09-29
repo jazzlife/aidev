@@ -137,10 +137,12 @@ async fn session(cfg: &Config, hub: &ExecHub) -> Result<(), SessionError> {
     hub.attach(out.clone());
     crate::tunnel::attach(out.clone());
     crate::screen::attach(out.clone());
+    crate::input::attach(out.clone());
     let result = read_loop(cfg, hub, &out, &mut rx).await;
     hub.detach();
     crate::tunnel::detach();
     crate::screen::detach();
+    crate::input::detach();
     drop(out);
     writer.abort();
     result
@@ -199,7 +201,11 @@ pub async fn handle(cfg: &Config, hub: &ExecHub, text: &str) -> Option<Value> {
     };
     let id = msg.get("id").cloned();
     let method = msg.get("method").and_then(Value::as_str)?;
-    // notifications (no id) are not answered
+    // notifications (no id) are not answered; remote-control input arrives as notifications
+    if id.is_none() {
+        crate::input::notify(cfg, method, msg.get("params").unwrap_or(&Value::Null));
+        return None;
+    }
     let id = id?;
     let params = msg.get("params").cloned().unwrap_or(Value::Null);
     let routed = match hub.rpc(cfg, method, &params).await {

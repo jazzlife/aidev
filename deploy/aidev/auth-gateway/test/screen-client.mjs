@@ -3,10 +3,10 @@
 import { execFileSync } from 'node:child_process';
 import { WebSocket } from 'ws';
 const [gw, token, tid, src] = process.argv.slice(2);
-const url = `${gw.replace(/^http/, 'ws')}/api/aidev/targets/${tid}/screen?token=${token}&fps=10&maxWidth=320`;
+const url = `${gw.replace(/^http/, 'ws')}/api/aidev/targets/${tid}/screen?token=${token}&mode=jpeg&fps=10&maxWidth=320`;
 const open = () => new WebSocket(url, { headers: { origin: gw } });
 const out = { frames1: 0, frames2: 0 };
-const jpeg = (d) => d[0] === 0xff && d[1] === 0xd8;
+const jpeg = (d) => d[0] === 3 && d[2] === 0xff && d[3] === 0xd8;   // [kind 3 = JPEG][flags][JPEG]
 const done = (extra = {}) => { console.log(JSON.stringify({ ...out, ...extra })); process.exit(0); };
 setTimeout(() => done({ timeout: true }), 12000);
 const a = open();

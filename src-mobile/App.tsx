@@ -5,6 +5,7 @@ import { ChatScreen } from '@m/screens/ChatScreen';
 import { LoginScreen } from '@m/screens/LoginScreen';
 import { SessionsScreen } from '@m/screens/SessionsScreen';
 import { SettingsScreen } from '@m/screens/SettingsScreen';
+import { RemoteScreenScreen } from '@m/screens/RemoteScreenScreen';
 import { Splash } from '@m/components/Splash';
 import { ApprovalSheet } from '@m/components/ApprovalSheet';
 
@@ -31,6 +32,7 @@ export default function App() {
           <Route path="/session/:sessionId" element={<Gate><ChatScreen /></Gate>} />
           <Route path="/new" element={<Gate><ChatScreen /></Gate>} />
           <Route path="/settings" element={<Gate><SettingsScreen /></Gate>} />
+          <Route path="/screen/:targetId" element={<Gate><RemoteScreenScreen /></Gate>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AuthProvider>

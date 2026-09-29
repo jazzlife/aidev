@@ -6,12 +6,14 @@ mod caps;
 mod config;
 mod conn;
 mod exec;
+mod input;
 mod pair;
 mod roots;
 mod screen;
 mod service;
 mod sync;
 mod tunnel;
+mod video;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -127,11 +129,17 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             println!("(실행 중인 러너는 다시 시작해야 반영됩니다)");
         }
         Cmd::Consent { what, state } => {
-            if what != "screen" { return Err("지원: consent screen on|off".into()); }
             let mut cfg = config::load()?;
-            cfg.screen_consent = match state.as_str() { "on" => true, "off" => false, _ => return Err("on|off".into()) };
+            let on = match state.as_str() { "on" => true, "off" => false, _ => return Err("on|off".into()) };
+            match what.as_str() {
+                "screen" => cfg.screen_consent = on,
+                // control implies seeing the screen
+                "control" => { cfg.control_consent = on; if on { cfg.screen_consent = true; } }
+                _ => return Err("지원: consent screen on|off, consent control on|off".into()),
+            }
             config::save(&cfg)?;
-            println!("화면 캡처: {}", if cfg.screen_consent { "허용" } else { "꺼짐" });
+            println!("화면 보기: {} / 원격 제어(마우스·키보드): {}", if cfg.screen_consent { "허용" } else { "꺼짐" }, if cfg.control_consent { "허용" } else { "꺼짐" });
+            println!("(실행 중인 러너는 다시 시작해야 반영됩니다)");
         }
         Cmd::InstallService { print } => println!("{}", service::install(print)?),
         Cmd::UninstallService => println!("{}", service::uninstall()?),

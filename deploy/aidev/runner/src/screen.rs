@@ -2,16 +2,24 @@
 //! the owner ran `aidev-runner consent screen on`.
 //!   screen.list → {displays:[{id, name, width?, height?}], backend}
 //!   screen.shot {display?, maxWidth?, quality?} → {b64 (JPEG), width, height, bytes, ms}
-//!   screen.start {streamId, display?, fps (1-10, default 2), maxWidth?, quality?} → {streamId}
-//!   screen.stop {streamId}     notification screen.error {streamId, error}
-//! A stream sends a binary frame `[streamId u32 BE][JPEG]` only when the picture changed (hash of the
-//! scaled JPEG), at most `fps` per second (slower when capturing takes longer). Captures use the OS tool
+//!   screen.start {streamId, mode: "video"|"jpeg", display?, fps?, maxWidth?, bitrate?, codec?} → {streamId, mode, codec}
+//!   screen.stop {streamId}     notifications screen.format {streamId, codec, reason?}, screen.error {streamId, error}
+//! Frames: binary `[streamId u32 BE][kind u8][flags u8][data]`, kind 1 = H.264 access unit (Annex B),
+//! 2 = VP8 frame, 3 = JPEG; flags bit 0 = keyframe.
+//! video (F-07b, default): ffmpeg captures the display and encodes in real time (macOS avfoundation +
+//! VideoToolbox, Windows gdigrab + x264, Linux x11grab + x264; 30 fps, 2 s GOP, no B-frames, SPS/PPS on
+//! every keyframe), the stdout stream is cut into access units (video.rs) — the browser decodes them with
+//! WebCodecs. No ffmpeg / it fails to start → the stream falls back to jpeg and says so (screen.format).
+//! jpeg: a frame only when the picture changed (hash of the scaled JPEG), at most `fps` per second (slower
+//! when capturing takes longer); also used for screen.shot. Captures use the OS tool
 //! — macOS `screencapture`, Windows PowerShell/System.Drawing, Linux grim / gnome-screenshot / ImageMagick
 //! `import` / scrot — then scale (≤ maxWidth, default 1440) and re-encode as JPEG in-process.
-//! `AIDEV_SCREEN_CMD` (tests) replaces the tool: a shell command whose `{out}` is the image file to write.
+//! `AIDEV_SCREEN_CMD` (tests) replaces the tool: a shell command whose `{out}` is the image file to write;
+//! `AIDEV_SCREEN_FFMPEG_INPUT` (tests) replaces ffmpeg's capture input (e.g. `-f lavfi -i testsrc2=…`).
 
 use crate::config::Config;
 use crate::exec::{frame, Out};
+use crate::video;
 use base64::Engine as _;
 use serde_json::{json, Value};
 use std::collections::HashMap;
@@ -173,9 +181,172 @@ async fn notify(id: u32, error: &str) {
     }
 }
 
+const KIND_H264: u8 = 1;
+const KIND_VP8: u8 = 2;
+const KIND_JPEG: u8 = 3;
+
+fn tagged(kind: u8, key: bool, data: &[u8]) -> Vec<u8> {
+    let mut v = Vec::with_capacity(data.len() + 2);
+    v.push(kind);
+    v.push(u8::from(key));
+    v.extend_from_slice(data);
+    v
+}
+
+async fn notify_format(id: u32, codec: &str, reason: Option<String>) {
+    let out = hub().lock().unwrap().out.clone();
+    if let Some(out) = out {
+        let note = json!({ "jsonrpc": "2.0", "method": "screen.format", "params": { "streamId": id, "codec": codec, "reason": reason } });
+        let _ = out.send(Message::Text(note.to_string())).await;
+    }
+}
+
+async fn send_frame(id: u32, payload: Vec<u8>) -> bool {
+    let out = hub().lock().unwrap().out.clone();
+    let Some(out) = out else { return false };
+    out.send(Message::Binary(frame(id, &payload))).await.is_ok()
+}
+
+/// ffmpeg found in the user's PATH (a service's PATH is short) or the usual Homebrew places.
+fn ffmpeg_path() -> Option<PathBuf> {
+    let mut dirs: Vec<PathBuf> = std::env::split_paths(&crate::exec::user_path().or_else(|| std::env::var("PATH").ok()).unwrap_or_default()).collect();
+    dirs.extend(["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"].iter().map(PathBuf::from));
+    let exe = if cfg!(windows) { "ffmpeg.exe" } else { "ffmpeg" };
+    dirs.into_iter().map(|d| d.join(exe)).find(|p| p.is_file())
+}
+
+/// macOS: avfoundation's device index of "Capture screen <display-1>".
+fn avfoundation_screen(ffmpeg: &Path, display: u32) -> String {
+    let out = Command::new(ffmpeg).args(["-hide_banner", "-f", "avfoundation", "-list_devices", "true", "-i", ""]).output();
+    let text = out.map(|o| String::from_utf8_lossy(&o.stderr).to_string()).unwrap_or_default();
+    let want = format!("Capture screen {}", display - 1);
+    for line in text.lines() {
+        if line.contains(&want) {
+            // "[AVFoundation indev @ 0x…] [3] Capture screen 0" → "3"
+            if let Some(idx) = line.split('[').nth(2).and_then(|s| s.split(']').next()) {
+                return idx.trim().to_string();
+            }
+        }
+    }
+    // no list (permission missing / parse failed): screens usually follow the cameras; "1" is a common guess
+    "1".into()
+}
+
+struct VideoOpts {
+    display: u32,
+    fps: u32,
+    max_width: u32,
+    bitrate_kbps: u32,
+    codec: &'static str,
+}
+
+fn ffmpeg_args(ffmpeg: &Path, v: &VideoOpts) -> Vec<String> {
+    let mut a: Vec<String> = ["-hide_banner", "-loglevel", "error", "-nostdin"].iter().map(|s| s.to_string()).collect();
+    let fps = v.fps.to_string();
+    if let Ok(custom) = std::env::var("AIDEV_SCREEN_FFMPEG_INPUT") {
+        a.extend(custom.replace("{fps}", &fps).split_whitespace().map(String::from));
+    } else if cfg!(target_os = "macos") {
+        let dev = format!("{}:none", avfoundation_screen(ffmpeg, v.display));
+        a.extend(["-f", "avfoundation", "-capture_cursor", "1", "-framerate", &fps, "-i", &dev].iter().map(|s| s.to_string()));
+    } else if cfg!(windows) {
+        a.extend(["-f", "gdigrab", "-framerate", &fps, "-draw_mouse", "1", "-i", "desktop"].iter().map(|s| s.to_string()));
+    } else {
+        let display = std::env::var("DISPLAY").unwrap_or_else(|_| ":0".into());
+        a.extend(["-f", "x11grab", "-framerate", &fps, "-draw_mouse", "1", "-i", &display].iter().map(|s| s.to_string()));
+    }
+    let scale = format!("scale=trunc(min({}\\,iw)/2)*2:-2,format=yuv420p", v.max_width);
+    a.extend(["-vf".to_string(), scale]);
+    let gop = (v.fps * 2).to_string();
+    let br = format!("{}k", v.bitrate_kbps);
+    let buf = format!("{}k", v.bitrate_kbps / 2);
+    if v.codec == "vp8" {
+        a.extend(["-c:v", "libvpx", "-deadline", "realtime", "-cpu-used", "8", "-b:v", &br, "-g", &gop, "-f", "ivf", "-"].iter().map(|s| s.to_string()));
+        return a;
+    }
+    let encoder = std::env::var("AIDEV_SCREEN_ENCODER").unwrap_or_else(|_| if cfg!(target_os = "macos") { "h264_videotoolbox".into() } else { "libx264".into() });
+    a.extend(["-c:v".to_string(), encoder.clone()]);
+    if encoder == "h264_videotoolbox" {
+        a.extend(["-realtime", "1", "-prio_speed", "1", "-profile:v", "high"].iter().map(|s| s.to_string()));
+    } else if encoder == "libx264" {
+        a.extend(["-preset", "ultrafast", "-tune", "zerolatency", "-profile:v", "baseline"].iter().map(|s| s.to_string()));
+    }
+    a.extend(["-b:v", &br, "-maxrate", &br, "-bufsize", &buf, "-g", &gop, "-bf", "0", "-bsf:v", "dump_extra=freq=keyframe", "-f", "h264", "-"].iter().map(|s| s.to_string()));
+    a
+}
+
+/// ffmpeg → access units → frames. Returns Err(reason) when it could not produce any video.
+async fn run_video(id: u32, v: VideoOpts) -> Result<(), String> {
+    use tokio::io::AsyncReadExt;
+    let ffmpeg = ffmpeg_path().ok_or_else(|| "ffmpeg가 없습니다 (brew install ffmpeg / winget install ffmpeg) — JPEG 화면으로 대신합니다".to_string())?;
+    let args = { let f = ffmpeg.clone(); let v2 = VideoOpts { codec: v.codec, ..v }; tokio::task::spawn_blocking(move || ffmpeg_args(&f, &v2)).await.map_err(|e| e.to_string())? };
+    let mut cmd = tokio::process::Command::new(&ffmpeg);
+    cmd.args(&args).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped()).kill_on_drop(true);
+    if let Some(path) = crate::exec::user_path() {
+        cmd.env("PATH", path);
+    }
+    let mut child = cmd.spawn().map_err(|e| format!("ffmpeg 실행 실패: {e}"))?;
+    let mut stdout = child.stdout.take().ok_or("ffmpeg stdout 없음")?;
+    let mut stderr = child.stderr.take().ok_or("ffmpeg stderr 없음")?;
+    let err_tail = tokio::spawn(async move { let mut s = String::new(); let _ = stderr.read_to_string(&mut s).await; s.chars().rev().take(600).collect::<String>().chars().rev().collect::<String>() });
+    let kind = if v.codec == "vp8" { KIND_VP8 } else { KIND_H264 };
+    let mut h264 = video::AnnexB::default();
+    let mut ivf = video::Ivf::default();
+    let mut buf = vec![0u8; 256 * 1024];
+    let mut frames = 0u64;
+    loop {
+        let n = match stdout.read(&mut buf).await { Ok(0) | Err(_) => break, Ok(n) => n };
+        let units = if kind == KIND_VP8 { ivf.push(&buf[..n]) } else { h264.push(&buf[..n]) };
+        for (data, key) in units {
+            if frames == 0 {
+                notify_format(id, if kind == KIND_VP8 { "vp8" } else { "h264" }, None).await;
+            }
+            frames += 1;
+            if !send_frame(id, tagged(kind, key, &data)).await {
+                return Ok(());
+            }
+        }
+    }
+    let _ = child.wait().await;
+    let tail = err_tail.await.unwrap_or_default();
+    if frames == 0 {
+        let hint = if cfg!(target_os = "macos") { " — 시스템 설정 → 개인정보 보호 및 보안 → 화면 기록에서 러너를 실행하는 앱을 허용하세요" } else { "" };
+        return Err(format!("ffmpeg가 화면을 가져오지 못했습니다{hint}: {}", tail.trim()));
+    }
+    Err(format!("ffmpeg가 멈췄습니다: {}", tail.trim()))
+}
+
+async fn run_jpeg(id: u32, o: Opts, fps: f64) {
+    let period = Duration::from_secs_f64(1.0 / fps);
+    let mut last: Option<u64> = None;
+    let mut failures = 0;
+    loop {
+        let t0 = Instant::now();
+        match capture_async(o).await {
+            Ok((jpeg, _, _)) => {
+                failures = 0;
+                let fp = fingerprint(&jpeg);
+                if last != Some(fp) {
+                    last = Some(fp);
+                    if !send_frame(id, tagged(KIND_JPEG, true, &jpeg)).await {
+                        break;
+                    }
+                }
+            }
+            Err(e) => {
+                failures += 1;
+                notify(id, &e).await;
+                if failures >= 3 {
+                    break;
+                }
+            }
+        }
+        tokio::time::sleep(period.saturating_sub(t0.elapsed())).await;
+    }
+}
+
 fn start(params: &Value) -> RpcResult {
     let id = params.get("streamId").and_then(Value::as_u64).map(|v| v as u32).ok_or((-32602, "streamId 필요".to_string()))?;
-    let fps = params.get("fps").and_then(Value::as_f64).unwrap_or(2.0).clamp(0.2, 10.0);
+    let video = params.get("mode").and_then(Value::as_str) != Some("jpeg");
     let o = opts(params);
     let mut g = hub().lock().unwrap();
     if g.streams.contains_key(&id) {
@@ -185,39 +356,29 @@ fn start(params: &Value) -> RpcResult {
     if g.streams.len() >= MAX_STREAMS {
         return Err((-32006, format!("동시 화면 스트림은 최대 {MAX_STREAMS}개입니다")));
     }
-    let period = Duration::from_secs_f64(1.0 / fps);
-    let task = tokio::spawn(async move {
-        let mut last: Option<u64> = None;
-        let mut failures = 0;
-        loop {
-            let t0 = Instant::now();
-            match capture_async(o).await {
-                Ok((jpeg, _, _)) => {
-                    failures = 0;
-                    let fp = fingerprint(&jpeg);
-                    if last != Some(fp) {
-                        last = Some(fp);
-                        let out = hub().lock().unwrap().out.clone();
-                        let Some(out) = out else { break };
-                        if out.send(Message::Binary(frame(id, &jpeg))).await.is_err() {
-                            break;
-                        }
-                    }
-                }
-                Err(e) => {
-                    failures += 1;
-                    notify(id, &e).await;
-                    if failures >= 3 {
-                        break;
-                    }
-                }
+    let codec: &'static str = if params.get("codec").and_then(Value::as_str) == Some("vp8") { "vp8" } else { "h264" };
+    let task = if video {
+        let fps = params.get("fps").and_then(Value::as_f64).unwrap_or(30.0).clamp(5.0, 60.0) as u32;
+        let bitrate = params.get("bitrate").and_then(Value::as_u64).unwrap_or(4000).clamp(500, 20000) as u32;
+        let v = VideoOpts { display: o.display, fps, max_width: o.max_width, bitrate_kbps: bitrate, codec };
+        tokio::spawn(async move {
+            if let Err(reason) = run_video(id, v).await {
+                // no video from ffmpeg: say why and carry on with JPEG frames
+                notify_format(id, "jpeg", Some(reason)).await;
+                run_jpeg(id, o, 2.0).await;
             }
-            tokio::time::sleep(period.saturating_sub(t0.elapsed())).await;
-        }
-        hub().lock().unwrap().streams.remove(&id);
-    });
+            hub().lock().unwrap().streams.remove(&id);
+        })
+    } else {
+        let fps = params.get("fps").and_then(Value::as_f64).unwrap_or(2.0).clamp(0.2, 10.0);
+        tokio::spawn(async move {
+            notify_format(id, "jpeg", None).await;
+            run_jpeg(id, o, fps).await;
+            hub().lock().unwrap().streams.remove(&id);
+        })
+    };
     g.streams.insert(id, task);
-    Ok(json!({ "streamId": id, "fps": fps, "display": o.display, "maxWidth": o.max_width }))
+    Ok(json!({ "streamId": id, "mode": if video { "video" } else { "jpeg" }, "codec": if video { codec } else { "jpeg" }, "display": o.display, "maxWidth": o.max_width }))
 }
 
 /// JSON-RPC entry point for `screen.*`; None when the method is not a screen method.
@@ -286,9 +447,12 @@ mod tests {
 
         let (tx, mut rx) = tokio::sync::mpsc::channel::<Message>(16);
         attach(tx);
-        rpc(&cfg, "screen.start", &json!({ "streamId": 5, "fps": 10, "maxWidth": 640 })).await.unwrap().unwrap();
+        rpc(&cfg, "screen.start", &json!({ "streamId": 5, "mode": "jpeg", "fps": 10, "maxWidth": 640 })).await.unwrap().unwrap();
+        let Some(Message::Text(fmt)) = rx.recv().await else { panic!("no format note") };
+        assert!(fmt.contains("screen.format") && fmt.contains("\"jpeg\""));
         let Some(Message::Binary(first)) = rx.recv().await else { panic!("no frame") };
         assert_eq!(&first[..4], &5u32.to_be_bytes());
+        assert_eq!(&first[4..8], &[KIND_JPEG, 1, 0xFF, 0xD8]);
         // unchanged screen → no second frame
         assert!(tokio::time::timeout(Duration::from_millis(600), rx.recv()).await.is_err());
         // the picture changes → a new frame
@@ -299,11 +463,51 @@ mod tests {
 
         // a failing capture tool reports screen.error and the stream ends after 3 tries
         std::env::set_var("AIDEV_SCREEN_CMD", "exit 7");
-        rpc(&cfg, "screen.start", &json!({ "streamId": 6, "fps": 10 })).await.unwrap().unwrap();
+        rpc(&cfg, "screen.start", &json!({ "streamId": 6, "mode": "jpeg", "fps": 10 })).await.unwrap().unwrap();
+        let _format = rx.recv().await;
         let Some(Message::Text(t)) = tokio::time::timeout(Duration::from_secs(3), rx.recv()).await.unwrap() else { panic!("no error note") };
         assert!(t.contains("screen.error") && t.contains("\"streamId\":6"));
-        detach();
+        rpc(&cfg, "screen.stop", &json!({ "streamId": 6 })).await.unwrap().unwrap();
         std::env::remove_var("AIDEV_SCREEN_CMD");
         let _ = std::fs::remove_file(src);
+
+        // video: ffmpeg (test pattern instead of the display) → H.264 access units, first one a keyframe with SPS
+        if which("ffmpeg") {
+            std::env::set_var("AIDEV_SCREEN_FFMPEG_INPUT", "-f lavfi -i testsrc2=size=640x360:rate={fps}");
+            std::env::set_var("AIDEV_SCREEN_ENCODER", "libx264");
+            while tokio::time::timeout(Duration::from_millis(100), rx.recv()).await.is_ok() {}
+            let r = rpc(&cfg, "screen.start", &json!({ "streamId": 7, "fps": 30, "maxWidth": 640 })).await.unwrap().unwrap();
+            assert_eq!(r["codec"], "h264");
+            let Some(Message::Text(fmt)) = tokio::time::timeout(Duration::from_secs(10), rx.recv()).await.unwrap() else { panic!("no format") };
+            assert!(fmt.contains("\"h264\""), "{fmt}");
+            let mut keys = 0; let mut deltas = 0;
+            for i in 0..40 {
+                let Some(Message::Binary(f)) = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await.unwrap() else { panic!("no video frame") };
+                assert_eq!(&f[..4], &7u32.to_be_bytes());
+                assert_eq!(f[4], KIND_H264);
+                if i == 0 { assert_eq!(f[5], 1, "starts with a keyframe"); assert_eq!(&f[6..11], &[0, 0, 0, 1, 0x67], "SPS first"); }
+                if f[5] == 1 { keys += 1 } else { deltas += 1 }
+            }
+            assert!(keys >= 1 && deltas >= 30, "keys {keys} deltas {deltas}");
+            rpc(&cfg, "screen.stop", &json!({ "streamId": 7 })).await.unwrap().unwrap();
+            // VP8 in IVF
+            while tokio::time::timeout(Duration::from_millis(200), rx.recv()).await.is_ok() {}
+            rpc(&cfg, "screen.start", &json!({ "streamId": 8, "fps": 30, "codec": "vp8", "maxWidth": 640 })).await.unwrap().unwrap();
+            let Some(Message::Text(fmt)) = tokio::time::timeout(Duration::from_secs(10), rx.recv()).await.unwrap() else { panic!("no format") };
+            assert!(fmt.contains("\"vp8\""), "{fmt}");
+            let Some(Message::Binary(f)) = tokio::time::timeout(Duration::from_secs(5), rx.recv()).await.unwrap() else { panic!("no vp8 frame") };
+            assert_eq!((f[4], f[5]), (KIND_VP8, 1));
+            rpc(&cfg, "screen.stop", &json!({ "streamId": 8 })).await.unwrap().unwrap();
+            // a broken capture input → falls back to JPEG with the reason
+            std::env::set_var("AIDEV_SCREEN_FFMPEG_INPUT", "-f lavfi -i nosuchsource");
+            std::env::set_var("AIDEV_SCREEN_CMD", "exit 9");
+            while tokio::time::timeout(Duration::from_millis(200), rx.recv()).await.is_ok() {}
+            rpc(&cfg, "screen.start", &json!({ "streamId": 9 })).await.unwrap().unwrap();
+            let Some(Message::Text(fmt)) = tokio::time::timeout(Duration::from_secs(10), rx.recv()).await.unwrap() else { panic!("no fallback") };
+            assert!(fmt.contains("\"jpeg\"") && fmt.contains("ffmpeg"), "{fmt}");
+            rpc(&cfg, "screen.stop", &json!({ "streamId": 9 })).await.unwrap().unwrap();
+            for k in ["AIDEV_SCREEN_FFMPEG_INPUT", "AIDEV_SCREEN_ENCODER", "AIDEV_SCREEN_CMD"] { std::env::remove_var(k); }
+        }
+        detach();
     }
 }

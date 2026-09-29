@@ -212,10 +212,33 @@ if [ -x "$RUNNER_BIN" ]; then
   for i in $(seq 1 40); do r=$(get "$A" /api/aidev/targets); echo "$r" | node -e "const j=JSON.parse(require('fs').readFileSync(0));process.exit(j.targets.find(t=>t.id===$TID)?.online && j.targets.find(t=>t.id===$TID).capabilities.screen ? 0 : 1)" && break; sleep 0.25; done
   r=$(get "$A" "/api/aidev/targets/$TID/screens"); check "$r" 'j.displays.length>=1 && j.displays[0].id===1' "displays listed"
   r=$(post "$A" "/api/aidev/targets/$TID/screenshot" '{"maxWidth":320}'); check "$r" 'j.mime==="image/jpeg" && j.width===320 && j.height===180 && j.image.length>100 && j.remoteRunId>0' "screenshot scaled to 320x180 JPEG, recorded as a run"
-  n=$(curl -s "$G/api/aidev/targets/$TID/screenshot.jpg?maxWidth=400" -H "authorization: Bearer $A" | head -c 2 | od -An -tx1 | tr -d ' '); check "{\"magic\":\"$n\"}" 'j.magic==="ffd8"' "screenshot.jpg serves image bytes (for <img>)"
+  curl -s "$G/api/aidev/targets/$TID/screenshot.jpg?maxWidth=400" -H "authorization: Bearer $A" -o "$T/shot.jpg"; n=$(head -c 2 "$T/shot.jpg" | od -An -tx1 | tr -d ' '); check "{\"magic\":\"$n\"}" 'j.magic==="ffd8"' "screenshot.jpg serves image bytes (for <img>)"
   r=$(get "$A" "/api/aidev/remote-runs/$(post "$A" "/api/aidev/targets/$TID/screenshot" '{}' | node -pe 'JSON.parse(require("fs").readFileSync(0)).remoteRunId')"); check "$r" 'j.run.kind==="screenshot" && j.run.approved_by==="user" && j.run.artifacts.width>0' "screen captures leave a trace (kind screenshot, by user)"
   r=$(node test/screen-client.mjs "$G" "$A" "$TID" "$SRC" || true); check "$r" 'j.started && j.frames1>=2 && j.lateViewerGotLastFrame && j.changedFrame && !j.error' "live screen: shared stream, last frame for a late viewer, new frame on change ($(echo "$r" | cut -c1-120))"
   r=$(curl -s -o /dev/null -w '%{http_code}' -H 'connection: upgrade' -H 'upgrade: websocket' -H 'sec-websocket-version: 13' -H 'sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==' -H "origin: http://evil.example" "$G/api/aidev/targets/$TID/screen?token=$A"); check "{\"code\":$r}" 'j.code===401' "screen socket from another origin refused"
+  # F-07b: live video (ffmpeg x11grab + x264 on a real X display) and remote control (enigo → X11)
+  if command -v Xvfb >/dev/null && command -v ffmpeg >/dev/null && command -v xdotool >/dev/null; then
+    Xvfb :99 -screen 0 1280x720x24 >/dev/null 2>&1 & XPID=$!; sleep 0.8
+    # a picture on the desktop so the stream is not all black (ImageMagick reads PPM without delegates)
+    node -e "const w=1280,h=720,b=Buffer.alloc(w*h*3);for(let i=0;i<w*h;i++){b[i*3]=i%256;b[i*3+1]=(i>>8)%256;b[i*3+2]=140}require('fs').writeFileSync(process.argv[1],Buffer.concat([Buffer.from('P6\\n'+w+' '+h+'\\n255\\n'),b]))" "$T/desk.ppm"
+    { command -v display >/dev/null && DISPLAY=:99 display -window root "$T/desk.ppm" 2>/dev/null; } || true
+    r=$(node test/screen-video.mjs "$G" "$A" "$TID" :99 "$T" refuse || true)
+    check "$r" 'j.controlAvailable===false && /허용하지 않았습니다/.test(j.error||"")' "control without the owner's consent refused"
+    kill $RPID 2>/dev/null; wait $RPID 2>/dev/null || true
+    HOME="$RH" "$RUNNER_BIN" consent control on >/dev/null
+    HOME="$RH" DISPLAY=:99 AIDEV_SCREEN_CMD="cp $SRC {out}" "$RUNNER_BIN" start > "$T/runner-video.log" 2>&1 & RPID=$!
+    for i in $(seq 1 40); do r=$(get "$A" /api/aidev/targets); echo "$r" | node -e "const j=JSON.parse(require('fs').readFileSync(0));const t=j.targets.find(t=>t.id===$TID);process.exit(t?.online && t.capabilities.control ? 0 : 1)" && break; sleep 0.25; done
+    r=$(node test/screen-video.mjs "$G" "$A" "$TID" :99 "$T" || true)
+    check "$r" 'j.codec==="h264" && j.firstKind===1 && j.firstKey && j.firstNal===7 && j.frames>=45 && j.decoded>=40' "live video: H.264 from a real display, starts at a keyframe with SPS, decodes with ffmpeg ($(echo "$r" | node -pe 'const j=JSON.parse(require("fs").readFileSync(0)); j.frames+" AUs, decoded "+j.decoded+", keys "+j.keys'))"
+    check "$r" 'j.lateFirstKey===true' "late viewer starts at a keyframe (GOP replay)"
+    check "$r" 'j.controlAvailable===true && j.controlOn===false && j.mouseAtQuarter===true && !j.error' "remote control: the mouse moves on the PC's display ($(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).mouse'))"
+    r=$(get "$A" "/api/aidev/targets/$TID/runs?limit=20"); check "$r" 'j.runs.some(x=>x.kind==="control" && x.approved_by==="user" && x.artifacts && x.artifacts.events>=4)' "control session recorded (kind control, events counted)"
+    PWDIR="$(npm root -g)/playwright"; if [ -d "$PWDIR" ]; then
+      r=$(PLAYWRIGHT_DIR="$PWDIR" node test/screen-browser.mjs "$G" "$A" "$TID" :99 "$T/dist" || true)
+      check "$r" 'j.codec==="vp8" && j.width===640 && j.litSamples>50 && j.controlAvailable && j.pointerFollows && !j.error' "browser: WebCodecs decodes the live stream on a canvas, real clicks on it move the PC's pointer ($(echo "$r" | cut -c1-160))"
+    fi
+    kill $XPID 2>/dev/null
+  else echo "SKIP video/control checks (needs Xvfb, ffmpeg, xdotool)"; fi
   r=$(post "$B" "/api/aidev/targets/$TID/screenshot" '{}'); check "$r" 'j.error' "another user cannot see the screen"
   r=$(rpost "/targets/$TID/screenshot" '{"maxWidth":320}'); check "$r" 'j.image && j.width===320' "agent (runtime session) takes a screenshot"
   post "$A" "/api/aidev/targets/$TID" '{"policy":"deny"}' PATCH >/dev/null; r=$(rpost "/targets/$TID/screenshot" '{}'); check "$r" '/실행 금지/.test(j.error)' "policy deny: agent screenshots refused"; post "$A" "/api/aidev/targets/$TID" '{"policy":"ask"}' PATCH >/dev/null

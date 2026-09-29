@@ -22,6 +22,7 @@ const TOOLS: &[(&str, &str, &[&str])] = &[
     ("adb", "adb", &["version"]),
     ("sdb", "sdb", &["version"]),
     ("dotnet", "dotnet", &["--version"]),
+    ("ffmpeg", "ffmpeg", &["-version"]),
 ];
 
 async fn first_line(cmd: &str, args: &[&str]) -> Option<String> {
@@ -106,7 +107,8 @@ pub async fn collect(cfg: &crate::config::Config) -> Value {
         "devices": { "adb": adb, "sdb": sdb },
         "allowed_roots": cfg.allowed_roots.iter().map(|r| r.display().to_string()).collect::<Vec<_>>(),
         "screen": cfg.screen_consent,
-        "features": ["ping", "exec", "sync", "tunnel", "screen"],
+        "control": cfg.control_consent,
+        "features": ["ping", "exec", "sync", "tunnel", "screen", "video", "input"],
         "limits": { "exec_running": crate::exec::MAX_RUNNING },
     })
 }

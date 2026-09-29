@@ -58,6 +58,7 @@ pub fn pair(code: &str, gateway: &str, name: Option<&str>) -> Result<config::Con
         name: parsed.name,
         allowed_roots: roots,
         screen_consent: previous.as_ref().map(|c| c.screen_consent).unwrap_or(false),
+        control_consent: previous.as_ref().map(|c| c.control_consent).unwrap_or(false),
         inherit_env: previous.as_ref().map(|c| c.inherit_env).unwrap_or(false),
     };
     config::save(&cfg)?;

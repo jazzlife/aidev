@@ -30,11 +30,15 @@ import type { TargetRow } from './store-aidev.js';
  * returns a Duplex that carries raw TCP bytes as binary frames in both directions (same id space as
  * streams). The preview proxy speaks HTTP / WebSocket over it. `tunnel.closed` or a lost runner ends it.
  *
- * Screen (F-07): attachScreen() is the browser side of `/api/aidev/targets/:id/screen` — viewers with the
- * same display/fps/width share one runner stream (`screen.start`), which sends a JPEG frame only when the
- * picture changes; the last frame is kept for late viewers; the stream stops 8 s after its last viewer
- * leaves. screenshot() is one `screen.shot`. Both need runner ≥ 0.5 and the owner's consent on that PC.
- */
+ * Screen (F-07/F-07b): attachScreen() is the browser side of `/api/aidev/targets/:id/screen`. Viewers with the
+ * same options share one runner stream (`screen.start`): video (H.264/VP8 access units from ffmpeg, decoded
+ * with WebCodecs) or JPEG frames sent only on change. Frames are `[kind][flags][data]` (see runner screen.rs);
+ * the frames since the last keyframe are kept so a late viewer can start decoding at once, and a viewer that
+ * falls behind skips to the next keyframe instead of buffering. The stream stops 8 s after its last viewer.
+ * Remote control: a viewer turns control on ({op:"control", on:true}) — only with the owner's consent on that
+ * PC (`consent control on`) and a policy other than deny — then its {op:"input", ev} messages go to the runner
+ * as `input.event` notifications (≤ 300/s). Every control session is a remote_runs row (kind "control").
+ * screenshot() is one `screen.shot`. Screen needs runner ≥ 0.5 (video, input ≥ 0.6) and the owner's consent. */
 type Store = ReturnType<typeof openStore>;
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
 type Conn = { ws: WebSocket; targetId: number; userId: number; connectedAt: number; lastFrame: number; pending: Map<number, Pending>; nextId: number; hello: boolean };
@@ -60,10 +64,17 @@ export type ExecParams = { cmd: string; cwd?: string | null; pty?: boolean; cols
 
 export const streamFrame = (streamId: number, chunk: Buffer) => { const head = Buffer.alloc(4); head.writeUInt32BE(streamId >>> 0, 0); return Buffer.concat([head, chunk]); };
 
-/** Viewer options for a screen stream, clamped (display 1-16, fps 0.5-10, width 320-2560). */
-export function screenOpts(q: { display?: unknown; fps?: unknown; maxWidth?: unknown }) {
-  const n = (v: unknown, d: number, lo: number, hi: number) => { const x = Number(v); return Number.isFinite(x) ? Math.min(Math.max(x, lo), hi) : d; };
-  return { display: Math.round(n(q.display, 1, 1, 16)), fps: n(q.fps, 2, 0.5, 10), maxWidth: Math.round(n(q.maxWidth, 1440, 320, 2560)) };
+/** Viewer options for a screen stream, clamped. video: 5-60 fps (default 30), 500-20000 kbps; jpeg: 0.5-10 fps (default 2). */
+export type ScreenOpts = { mode: 'video' | 'jpeg'; display: number; fps: number; maxWidth: number; bitrate: number; codec: 'h264' | 'vp8' };
+export function screenOpts(q: { mode?: unknown; display?: unknown; fps?: unknown; maxWidth?: unknown; bitrate?: unknown; codec?: unknown }): ScreenOpts {
+  const n = (v: unknown, d: number, lo: number, hi: number) => { const x = v === null || v === undefined || v === '' ? NaN : Number(v); return Number.isFinite(x) ? Math.min(Math.max(x, lo), hi) : d; };
+  const mode = q.mode === 'jpeg' ? 'jpeg' : 'video';
+  return {
+    mode, display: Math.round(n(q.display, 1, 1, 16)),
+    fps: mode === 'video' ? Math.round(n(q.fps, 30, 5, 60)) : n(q.fps, 2, 0.5, 10),
+    maxWidth: Math.round(n(q.maxWidth, 1440, 320, 2560)), bitrate: Math.round(n(q.bitrate, 4000, 500, 20000)),
+    codec: q.codec === 'vp8' ? 'vp8' : 'h264',
+  };
 }
 
 export class RpcError extends Error { constructor(public code: number, message: string) { super(message); } }
@@ -89,15 +100,17 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
   const attempts = new Map<string, { count: number; until: number }>();
   const streams = new Map<string, Stream>();               // `${targetId}:${streamId}`
   const tunnels = new Map<string, RunnerTunnel>();         // `${targetId}:${streamId}` (F-06)
-  type ScreenStream = { targetId: number; streamId: number; config: string; viewers: Set<WebSocket>; last: Buffer | null; lastAt: number; frames: number; bytes: number; stopTimer: NodeJS.Timeout | null };
+  type ScreenStream = { targetId: number; streamId: number; config: string; viewers: Map<WebSocket, { needKey: boolean }>; gop: Buffer[]; gopBytes: number; format: { codec: string; reason?: string | null } | null; lastAt: number; frames: number; bytes: number; stopTimer: NodeJS.Timeout | null };
   const screens = new Map<string, ScreenStream>();          // `${targetId}:${streamId}` (F-07)
   const SCREEN_VIEWER_BUFFER = 3 * 1024 * 1024;
+  const GOP_MAX = 12 * 1024 * 1024;
+  const controllers = new Map<number, Set<WebSocket>>();     // targetId → viewers with control on (input errors go to them)
   function stopScreen(sc: ScreenStream, notifyRunner: boolean) {
     if (sc.stopTimer) clearTimeout(sc.stopTimer);
     screens.delete(key(sc.targetId, sc.streamId));
     if (notifyRunner) void hub.call(sc.targetId, 'screen.stop', { streamId: sc.streamId }, 5000).catch(() => {});
   }
-  const screenCaps = (targetId: number) => { try { return JSON.parse(store.targetById(targetId)?.capabilities ?? '{}') as { features?: string[]; screen?: boolean }; } catch { return {}; } };
+  const screenCaps = (targetId: number) => { try { return JSON.parse(store.targetById(targetId)?.capabilities ?? '{}') as { features?: string[]; screen?: boolean; control?: boolean }; } catch { return {}; } };
   function screenReady(targetId: number) {
     const caps = screenCaps(targetId);
     if (!caps.features?.includes('screen')) throw new RpcError(-32021, '러너가 화면 보기를 지원하지 않습니다 — aidev-runner 0.5.0 이상으로 업데이트하세요');
@@ -199,7 +212,7 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
     conn.pending.clear();
     for (const [k, t] of tunnels) if (k.startsWith(`${conn.targetId}:`)) { tunnels.delete(k); t.destroy(new Error(reason)); }
     for (const sc of [...screens.values()]) if (sc.targetId === conn.targetId) {
-      for (const v of sc.viewers) if (v.readyState === WebSocket.OPEN) v.send(JSON.stringify({ type: 'offline' }));
+      for (const v of sc.viewers.keys()) if (v.readyState === WebSocket.OPEN) v.send(JSON.stringify({ type: 'offline' }));
       stopScreen(sc, false);
     }
     if (conns.get(conn.targetId) === conn) {
@@ -275,9 +288,19 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
             if (tunnel) { tunnel.push(buf.subarray(4)); return; }
             const sc = screens.get(key(conn.targetId, id));
             if (sc) {
-              const jpeg = buf.subarray(4);
-              sc.last = jpeg; sc.lastAt = Date.now(); sc.frames++; sc.bytes += jpeg.length;
-              for (const v of sc.viewers) if (v.readyState === WebSocket.OPEN && v.bufferedAmount < SCREEN_VIEWER_BUFFER) v.send(jpeg, { binary: true });   // a slow viewer skips frames
+              const frame = buf.subarray(4);
+              const isKey = (frame[1] & 1) === 1;
+              sc.lastAt = Date.now(); sc.frames++; sc.bytes += frame.length;
+              // frames since the last keyframe, for viewers that join mid-stream
+              if (isKey) { sc.gop = [frame]; sc.gopBytes = frame.length; }
+              else if (sc.gop.length) { sc.gop.push(frame); sc.gopBytes += frame.length; if (sc.gopBytes > GOP_MAX) { sc.gop = []; sc.gopBytes = 0; } }
+              for (const [v, state] of sc.viewers) {
+                if (v.readyState !== WebSocket.OPEN) continue;
+                if (state.needKey && !isKey) continue;
+                if (v.bufferedAmount > SCREEN_VIEWER_BUFFER) { state.needKey = true; continue; }   // behind: skip to the next keyframe
+                state.needKey = false;
+                v.send(frame, { binary: true });
+              }
               return;
             }
             const st = streams.get(key(conn.targetId, id));
@@ -302,10 +325,20 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
             if (Array.isArray(caps.features) && caps.features.includes('exec')) void reconcile(conn.targetId);
             return;
           }
-          if (msg.method === 'screen.error' && msg.params && typeof msg.params === 'object') {
-            const p = msg.params as { streamId?: number; error?: string };
+          if ((msg.method === 'screen.error' || msg.method === 'screen.format') && msg.params && typeof msg.params === 'object') {
+            const p = msg.params as { streamId?: number; error?: string; codec?: string; reason?: string | null };
             const sc = typeof p.streamId === 'number' ? screens.get(key(conn.targetId, p.streamId)) : undefined;
-            if (sc) for (const v of sc.viewers) if (v.readyState === WebSocket.OPEN) v.send(JSON.stringify({ type: 'error', message: String(p.error ?? 'capture failed').slice(0, 500) }));
+            if (!sc) return;
+            const out = msg.method === 'screen.format'
+              ? (sc.format = { codec: String(p.codec ?? 'jpeg'), reason: p.reason ? String(p.reason).slice(0, 600) : null }, { type: 'format', ...sc.format })
+              : { type: 'error', message: String(p.error ?? 'capture failed').slice(0, 500) };
+            if (msg.method === 'screen.format') { sc.gop = []; sc.gopBytes = 0; }
+            for (const v of sc.viewers.keys()) if (v.readyState === WebSocket.OPEN) v.send(JSON.stringify(out));
+            return;
+          }
+          if (msg.method === 'input.error' && msg.params && typeof msg.params === 'object') {
+            const text = String((msg.params as { error?: string }).error ?? 'input failed').slice(0, 500);
+            for (const v of controllers.get(conn.targetId) ?? []) if (v.readyState === WebSocket.OPEN) v.send(JSON.stringify({ type: 'error', message: text }));
             return;
           }
           if (msg.method === 'tunnel.closed' && msg.params && typeof msg.params === 'object') {
@@ -410,11 +443,21 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
       return hub.call<{ displays: Array<Record<string, unknown>> }>(targetId, 'screen.list', {}, 20_000);
     },
     screenCount() { return screens.size; },
+    /** JSON-RPC notification to a runner (no reply): remote-control input. */
+    notifyRunner(targetId: number, method: string, params: unknown) {
+      const c = conns.get(targetId);
+      if (!c || c.ws.readyState !== WebSocket.OPEN) return false;
+      c.ws.send(JSON.stringify({ jsonrpc: '2.0', method, params }));
+      return true;
+    },
     /** Browser side of `/api/aidev/targets/:id/screen` (session and ownership checked by the caller).
-     *  client → {op:"config", display, fps, maxWidth}   server → {type:"started"|"error"|"offline"} + binary JPEG frames */
-    attachScreen(req: IncomingMessage, socket: Duplex, head: Buffer, targetId: number, alive: () => boolean, initial: { display: number; fps: number; maxWidth: number }) {
+     *  client → {op:"config", mode, display, fps, maxWidth, bitrate, codec} | {op:"control", on} | {op:"input", ev}
+     *  server → {type:"started"|"format"|"control"|"error"|"offline"} + binary frames `[kind][flags][data]` */
+    attachScreen(req: IncomingMessage, socket: Duplex, head: Buffer, targetId: number, userId: number, alive: () => boolean, initial: ScreenOpts) {
       wss.handleUpgrade(req, socket, head, (ws) => {
         let current: ScreenStream | null = null;
+        let control: { remoteRunId: number; events: number; startedAt: number } | null = null;
+        let windowStart = Date.now(); let windowCount = 0;
         const send = (obj: unknown) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj)); };
         const leave = () => {
           const sc = current; current = null;
@@ -422,25 +465,36 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
           sc.viewers.delete(ws);
           if (!sc.viewers.size && !sc.stopTimer) sc.stopTimer = setTimeout(() => { if (!sc.viewers.size) stopScreen(sc, true); }, 8000);
         };
-        const join = async (o: { display: number; fps: number; maxWidth: number }) => {
+        const controlOff = () => {
+          if (!control) return;
+          hub.notifyRunner(targetId, 'input.end', {});
+          store.finishRemoteRun(control.remoteRunId, { exitCode: 0, artifacts: { events: control.events, durationMs: Date.now() - control.startedAt } });
+          control = null;
+          controllers.get(targetId)?.delete(ws);
+        };
+        const join = async (o: ScreenOpts) => {
           leave();
-          const config = `${o.display}|${o.fps}|${o.maxWidth}`;
+          const config = `${o.mode}|${o.display}|${o.fps}|${o.maxWidth}|${o.bitrate}|${o.codec}`;
           try {
             if (!hub.online(targetId)) throw new RpcError(-32010, '원격 PC가 오프라인입니다');
             screenReady(targetId);
+            const caps = screenCaps(targetId);
+            const mode = o.mode === 'video' && !caps.features?.includes('video') ? 'jpeg' : o.mode;   // runner < 0.6: JPEG only
             let sc = [...screens.values()].find((s) => s.targetId === targetId && s.config === config);
             if (!sc) {
               nextStream = nextStream >= 0x3fff_fff0 ? 1 : nextStream + 1;
-              sc = { targetId, streamId: nextStream, config, viewers: new Set(), last: null, lastAt: 0, frames: 0, bytes: 0, stopTimer: null };
+              sc = { targetId, streamId: nextStream, config, viewers: new Map(), gop: [], gopBytes: 0, format: null, lastAt: 0, frames: 0, bytes: 0, stopTimer: null };
               screens.set(key(targetId, sc.streamId), sc);
-              try { await hub.call(targetId, 'screen.start', { streamId: sc.streamId, display: o.display, fps: o.fps, maxWidth: o.maxWidth }, 10_000); }
+              try { await hub.call(targetId, 'screen.start', { streamId: sc.streamId, mode, display: o.display, fps: o.fps, maxWidth: o.maxWidth, bitrate: o.bitrate, codec: o.codec }, 10_000); }
               catch (error) { screens.delete(key(targetId, sc.streamId)); throw error; }
             }
             if (sc.stopTimer) { clearTimeout(sc.stopTimer); sc.stopTimer = null; }
             if (ws.readyState !== WebSocket.OPEN) return;
-            sc.viewers.add(ws); current = sc;
-            send({ type: 'started', display: o.display, fps: o.fps, maxWidth: o.maxWidth });
-            if (sc.last) ws.send(sc.last, { binary: true });
+            send({ type: 'started', ...o, mode, control: Boolean(caps.control && caps.features?.includes('input')) });
+            if (sc.format) send({ type: 'format', ...sc.format });
+            for (const f of sc.gop) ws.send(f, { binary: true });
+            sc.viewers.set(ws, { needKey: sc.gop.length === 0 });
+            current = sc;
           } catch (error) {
             send({ type: 'error', message: error instanceof Error ? error.message : String(error) });
           }
@@ -449,11 +503,33 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
         const timer = setInterval(() => { if (!alive()) ws.close(1008, 'Session expired'); else if (ws.readyState === WebSocket.OPEN) ws.ping(); }, 5000);
         ws.on('message', (data, binary) => {
           if (binary) return;
-          let msg: { op?: string; display?: number; fps?: number; maxWidth?: number };
+          let msg: { op?: string; on?: boolean; ev?: Record<string, unknown> } & Record<string, unknown>;
           try { msg = JSON.parse(String(data)); } catch { return; }
-          if (msg.op === 'config') void join(screenOpts(msg));
+          if (msg.op === 'config') return void join(screenOpts(msg as Parameters<typeof screenOpts>[0]));
+          if (msg.op === 'control') {
+            if (!msg.on) { controlOff(); return send({ type: 'control', on: false }); }
+            const caps = screenCaps(targetId);
+            const target = store.targetById(targetId);
+            if (!caps.features?.includes('input')) return send({ type: 'error', message: '러너가 원격 제어를 지원하지 않습니다 — aidev-runner 0.6.0 이상으로 업데이트하세요' });
+            if (!caps.control) return send({ type: 'error', message: '이 PC는 원격 제어를 허용하지 않았습니다 — PC에서 `aidev-runner consent control on` 후 러너를 다시 시작하세요' });
+            if (!target || target.policy === 'deny') return send({ type: 'error', message: '이 대상의 실행 정책이 "실행 금지"입니다' });
+            if (!control) {
+              const remoteRunId = store.addRemoteRun({ runId: null, targetId, userId, kind: 'control', cmd: 'remote control (mouse/keyboard)', cwd: null, risk: null, approvedBy: 'user' });
+              control = { remoteRunId, events: 0, startedAt: Date.now() };
+              if (!controllers.has(targetId)) controllers.set(targetId, new Set());
+              controllers.get(targetId)!.add(ws);
+            }
+            return send({ type: 'control', on: true });
+          }
+          if (msg.op === 'input' && control && msg.ev && typeof msg.ev === 'object') {
+            const now = Date.now();
+            if (now - windowStart > 1000) { windowStart = now; windowCount = 0; }
+            if (++windowCount > 300) return;   // a stuck client cannot flood the PC
+            control.events++;
+            hub.notifyRunner(targetId, 'input.event', msg.ev);
+          }
         });
-        ws.on('close', () => { clearInterval(timer); leave(); });
+        ws.on('close', () => { clearInterval(timer); controlOff(); leave(); });
         ws.on('error', () => ws.terminate());
       });
     },
