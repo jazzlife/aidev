@@ -7,7 +7,7 @@ ARG CLAUDE_CODE_VERSION
 ARG SDB_TARBALL_URL
 ARG SDB_SHA256
 RUN test -n "$CLAUDE_CODE_VERSION" && apt-get update \
- && apt-get install -y --no-install-recommends git openssh-client adb ca-certificates curl libstdc++6 libusb-1.0-0 unzip procps \
+ && apt-get install -y --no-install-recommends git openssh-client adb ca-certificates curl libstdc++6 libusb-1.0-0 unzip procps ripgrep \
  && rm -rf /var/lib/apt/lists/* \
  && npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} \
  && useradd --uid 1001 --create-home --shell /bin/bash cloudcli

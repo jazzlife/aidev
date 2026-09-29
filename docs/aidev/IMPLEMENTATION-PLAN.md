@@ -366,6 +366,11 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 - 서버 실측(0bce93bf, 전문 agent 12개, 명령 12개): 판정 12/12 의도대로(Unity·Verilog·Blender·SwiftUI·Solidity·퀀트·Helm → 새 전문가 제안, React→frontend-react, PostgreSQL→database, Tizen→tizen-device, Kotlin Compose→android-device, sw_vers→generalist). 단 지연 6~36초(중앙값 약 10초)이고 2건(Kotlin 32초·Helm 36초)은 30초 한도를 넘어 판정이 버려지고 Kotlin이 generalist로 떨어짐. 원인: CLI 기본 adaptive thinking(출력 토큰 600~950개 중 대부분이 사고, 최대 74초 폭주).
 - 최적화 R-JUDGE-2 (2026-09-29): ① 판정은 thinking 끔 + 스트리밍 + 첫 완결 JSON에서 즉시 중단(Codex는 reasoning low) — 벤치 18개: 정확도 18/18 동일, 중앙값 7.7초→2.8초, 최대 74초→4.1초 ② **입력 중 사전 판정**: 작성 중 0.9초 멈추면(8자 이상, 슬래시 명령 제외) `/api/aidev/route/prejudge`가 판정을 시작해 캐시 — 전송 시 대부분 캐시 적중(대기 0) ③ 같은 명령의 판정은 게이트웨이·런타임 모두 1회만 실행(진행 중이면 합류), 사용자당 동시 사전 판정 3개 ④ 전송은 최대 20초(`AIDEV_JUDGE_WAIT_MS`)만 기다리고, 늦은 판정도 도착하면 캐시되어 다음 전송에 사용(런타임 호출 한도 60초). 응답 `judge.wait_ms`·`judge.prejudged`로 확인. smoke +7(사전 판정 시작·합류·캐시·짧은 입력·지연 판정 폴백·늦은 판정 캐시)
 
+### 수정 (2026-09-29, a3e04726): 대화 내용 검색이 서버에서 항상 실패하던 문제
+- 원인: 릴리스 볼륨이 의존성을 `npm ci --ignore-scripts`로 설치 → `@vscode/ripgrep`의 postinstall(GitHub에서 rg 내려받기)이 실행되지 않아 `bin/rg` 없음 → 검색 시 `spawn … rg ENOENT` → 제목 결과 뒤 "Search failed". 작업 환경의 서버 테스트 1건 실패도 같은 원인
+- 수정: 패키지 rg가 있으면 사용 → 없으면 PATH의 `rg` → 없으면 Node 스트리밍 검색(대소문자 무시, 청크 경계 처리). 테스트 추가(rg 없는 환경, 256KiB 경계에 걸친 일치; 경계 처리를 빼면 실패함을 확인). 서버 확인: "sw_vers"·"macOS 15.7"(제목에 없는 본문) 검색 결과 반환, 약 0.45초, 없는 단어는 결과 0·오류 없음
+- 런타임 이미지 Dockerfile에 `ripgrep` 추가(다음 이미지 재빌드 때 반영 → 그때부터 rg 경로 사용)
+
 ### 판단 원칙 (2026-09-29 사용자 결정): 정확도 우선, 비정상적으로 느릴 때만 속도
 - agent 선택·판단·확률 작업에서 정확도와 속도가 충돌하면 **정확도**를 택한다. 단 정확도를 위한 방법이 비정상적으로 느리면 속도를 택한다.
 - 기준(라우팅 1회, 사용자가 기다리는 시간): 전송 후 대기 p95 ≤ 5초는 정상, 10초 초과가 반복되면 비정상 → 더 빠른 경로로 전환(현재 판정 대기 상한 20초는 안전장치). 입력 중 사전 판정으로 가려지는 시간은 대기에 넣지 않는다.
