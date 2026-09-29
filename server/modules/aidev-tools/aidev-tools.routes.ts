@@ -6,12 +6,31 @@ import { claudeLoginService } from '@/modules/aidev-tools/claude-login.service.j
 import { handoffService } from '@/modules/aidev-tools/handoff.service.js';
 import { knowledgeCheckService } from '@/modules/aidev-tools/knowledge-check.service.js';
 import { remoteSync } from '@/modules/aidev-tools/remote-sync.service.js';
+import { specialistJudgeService } from '@/modules/aidev-tools/specialist-judge.service.js';
 
 /**
  * Gateway → runtime calls made on behalf of the user (mounted at /api/aidev-tools behind
  * authenticateToken). The gateway reaches these through the same proxy path as the browser.
  */
 const router = express.Router();
+
+/** Gateway → runtime: is one of the existing agents a true specialist for this command? (routing) */
+router.post('/specialist-judge', asyncHandler(async (req: Request, res: Response) => {
+  const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
+  const command = typeof body.command === 'string' ? body.command.trim() : '';
+  const candidates = Array.isArray(body.candidates)
+    ? (body.candidates as unknown[]).filter((c): c is { name: string; description: string } => Boolean(c) && typeof (c as { name?: unknown }).name === 'string' && typeof (c as { description?: unknown }).description === 'string')
+    : [];
+  if (!command || !candidates.length) {
+    res.status(400).json({ success: false, error: 'command and candidates are required.' });
+    return;
+  }
+  try {
+    res.json(createApiSuccessResponse(await specialistJudgeService.judge({ command, candidates, project: typeof body.project === 'string' ? body.project : null })));
+  } catch (error) {
+    res.status(502).json({ success: false, error: error instanceof Error ? error.message : 'judge failed' });
+  }
+}));
 
 /** Workbench "프로젝트 동기화" (F-04): copy a project of this runtime to one of the user's machines. */
 router.post('/remote-sync', asyncHandler(async (req: Request, res: Response) => {

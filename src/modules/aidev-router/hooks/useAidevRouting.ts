@@ -127,7 +127,8 @@ export function useAidevRouting() {
         const architect = route.create.architect;
         payload.agent = { name: architect.name, version: architect.version, description: architect.description, prompt: architect.prompt, tools: architect.tools, model: architect.model, maxTurns: architect.maxTurns, skills: null, mcpServers: null };
         payload.lessons = [];
-        payload.knowledgeDigest = `## 현재 카탈로그 (name: routing hint)\n${route.create.catalog}`;
+        const proposal = route.create.proposal;
+        payload.knowledgeDigest = `## 현재 카탈로그 (name: routing hint)\n${route.create.catalog}${proposal ? `\n\n## 라우터가 판단한 필요한 전문 분야\n- 이름 제안: ${proposal.name}\n- 분야: ${proposal.domain}\n- 설명: ${proposal.description}\n- 핵심 기술: ${proposal.technologies.join(', ')}\n이 분야를 정확히 전문으로 하는 agent를 설계할 것(기존 agent와 겹치지 않게).` : ''}`;
       }
       return {
         aidev: payload,

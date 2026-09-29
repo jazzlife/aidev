@@ -37,7 +37,9 @@ export type RouteResult = {
   decision_id: number;
   decision: 'use' | 'generalist' | 'create' | 'create_background';
   /** Present when no fitting agent exists: what to send to the agent-architect first (§3.7). */
-  create: { architect: ArchitectDefinition; catalog: string; background: boolean } | null;
+  create: { architect: ArchitectDefinition; catalog: string; background: boolean; proposal?: SpecialistProposal | null } | null;
+  /** Specialist judge verdict (LLM / cache / judge-confirmed similar command); null when unavailable. */
+  judge?: { agent: string | null; fit: number; reason: string; source: 'llm' | 'cache' | 'similar' | null; engine: string | null; ms: number | null; proposal: SpecialistProposal | null } | null;
   fallback: boolean;
   laya_error: string | null;
   scope: RouteScope;
@@ -97,6 +99,9 @@ export type CatalogAgent = {
   createdAt: number;
   updatedAt: number;
 };
+
+/** The specialist the router says should exist (seed for the agent-architect). */
+export type SpecialistProposal = { name: string; domain: string; description: string; technologies: string[] };
 
 export type RouteRequest = {
   /** this chat's own effort ceiling (a new chat sends it with its first message) */

@@ -357,6 +357,13 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 
 **C 완료 기준**: C-11 3기기 확인, 모바일 메인 청크 ≤600KB 기록, override·피드백이 DB에 기록, 데스크탑에서 파일 열기·diff·터미널·chat이 한 화면에서 동작.
 
+### 라우팅 보정 (2026-09-29): 전문 agent 판정 (specialist judge)
+- 문제(서버 실측): Laya·어휘 prior는 카탈로그 안에서 **상대** 순위만 매겨, 맞는 전문가가 없어도 1등이 선택됨 — Unity 셰이더→testing, Verilog→docs, SwiftUI→frontend-react, 퀀트 백테스트→testing(p=0.99), Kotlin Compose→mobile-responsive(android-device가 있는데도), sw_vers→testing. needs_new(Laya)는 0.03~0.47로 생성이 거의 일어나지 않았고, `create_background`는 클라이언트에서 아무것도 만들지 않았음.
+- 해결: 명령마다 **LLM 판정**(런타임 `/api/aidev-tools/specialist-judge`, Claude haiku → 실패 시 Codex mini, 도구 없음·대화에 기록 안 함)이 Laya와 **병렬로** "기존 agent 중 이 명령의 핵심 기술·분야를 명시적으로 전문으로 하는 agent가 있는가"를 절대 기준으로 판정: 있으면 그 agent(fit≥0.6), 사소하거나 분야 없는 요청(짧은 질문·지정된 셸 명령 실행·이름 변경)은 generalist, 없으면 **create**(판정이 제안한 이름·분야·기술을 agent-architect에 전달). 비슷한 이름의 근접 분야(React↔SwiftUI, testing↔퀀트)는 적합 아님을 규칙·예시로 명시.
+- 속도·학습: 같은 명령은 캐시(30일, 카탈로그 변경 시 무효), judge가 확인한 명령은 그 agent의 예시(source=judge)로 추가되어 어휘 prior가 학습, 어휘 prior ≥0.9이고 judge 확인 예시와 cosine ≥0.8이면 LLM 생략. judge 불가 시: 애매(<0.5)하고 D≥2면 best match 대신 create.
+- 생성 자동화: 라우팅 "자동" 모드에서는 architect 초안을 자동 승인 → agent 생성 → 원래 명령을 새 agent로 재전송(카드는 결과 표시로 남음). "확인 후" 모드는 기존처럼 승인 대기.
+- 검증: 실제 haiku 판정 14개 중 13개 정답(Unity·Verilog·Blender·SwiftUI·Solidity·퀀트 → 새 전문가, React·PostgreSQL·Tizen·Express·Kotlin → 해당 전문가, 이름 변경·sw_vers → generalist), smoke +4(생성·근접 분야 불사용·캐시·generalist), 실제 e2e "Verilog UART" → verilog-hdl 생성 → 재전송 → 모듈 코드(73초). 지연: 판정 1회 약 8~15초(작업 환경 기준) — 서버 실측 후 최적화(상주 판정 세션) 검토
+
 ### F. 원격 PC 실행·디버깅·화면 (목표: 지정한 PC에서 실행·테스트·디버그하고 그 화면이 작업대와 모바일에 보인다)
 - [~] F-01 러너 crate 골격: `pair`/`start`/`install-service`, 토큰 저장, WS 접속·heartbeat·재접속, capabilities 보고, allowed_roots. Linux·Windows cross-build 스크립트(`deploy/aidev/runner/build.sh`), macOS는 `ops/runner/build.sh`
   - 구현(2026-09-29): `deploy/aidev/runner/`(tokio, tokio-tungstenite rustls, ureq rustls, clap, toml). 명령 pair/start/status/caps/roots/consent/install-service/uninstall-service/unpair. 설정 `~/.aidev/runner.toml` 0600. WS Bearer + `runner.hello{capabilities}`(OS·arch·host·shell·도구 13종 버전·adb/sdb 기기·allowed_roots·screen 동의), 15s heartbeat·45s 무응답 재연결·지수 backoff+jitter, 401/403·close 4401 → exit 3. RPC `runner.ping`·`runner.capabilities`·`fs.resolve`. `roots.rs`: canonicalize + 미존재 경로는 가장 가까운 기존 상위로, 심볼릭 링크 탈출 거부. 서비스: systemd user unit / LaunchAgent / schtasks 로그온 작업(사용자 권한). 빌드 `build.sh`(zig로 linux-x64 glibc 2.28, 2.5MB) — 이 작업 환경은 static.rust-lang.org 차단으로 Windows·ARM·macOS std 설치 불가 → Mac `ops/runner/build.sh`(universal + zig 있으면 win-x64·linux-arm64). 검증: cargo test 6, `test/e2e.sh` 12항목(mock 게이트웨이: 잘못된 코드·원격 http 거부, 페어링, 0600, status 토큰 숨김, ping, 허용 폴더 밖 거부, 재연결, 4401·401 종료, capabilities). clippy 0

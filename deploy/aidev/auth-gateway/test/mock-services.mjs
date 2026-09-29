@@ -83,6 +83,7 @@ const laya = http.createServer(async (req, res) => {
 });
 laya.listen(layaPort, () => console.log(`mock laya on ${layaPort}`));
 
+let judgeCalls = 0;
 const manager = http.createServer(async (req, res) => {
   const v = req.url.match(/^\/v1\/runtimes\/([^/]+)\/verify$/);
   if (v) { const b = await read(req); return b.token === `rtjwt-${v[1]}` ? send(res, 200, { ok: true, runtime: v[1] }) : send(res, 401, { error: 'Invalid runtime token' }); }
@@ -92,6 +93,19 @@ const manager = http.createServer(async (req, res) => {
   if (r) {
     const [, name, path] = r;
     if (path === '/api/auth/user') return send(res, 200, { user: { id: 1, username: name } });
+    if (path === '/api/aidev-tools/specialist-judge') {
+      // stands in for the runtime's haiku judge: keyword rules over the catalog it is given
+      const b = await read(req); judgeCalls++;
+      const names = new Set(b.candidates.map((c) => c.name));
+      const rules = [[/unity|셰이더/i, [...names].find((n) => n.includes('unity')) ?? null, { name: 'unity-shader', domain: 'unity-graphics', description: 'Unity shaders and URP', technologies: ['Unity', 'HLSL'] }],
+        [/verilog|fpga/i, null, { name: 'fpga-verilog', domain: 'hardware', description: 'Verilog / FPGA', technologies: ['Verilog'] }],
+        [/swiftui|ios/i, null, { name: 'ios-swift', domain: 'ios', description: 'SwiftUI / iOS apps', technologies: ['Swift', 'SwiftUI'] }],
+        [/react|컴포넌트|훅/i, 'frontend-react'], [/express|rate limit|middleware|미들웨어/i, 'backend-node'], [/docker/i, 'devops'], [/adb|logcat|android/i, 'android-device'],
+        [/db|migration|마이그레이션|index|인덱스|sql/i, 'database']];
+      for (const [re, agent, proposal] of rules) if (re.test(b.command)) return send(res, 200, { success: true, data: agent ? { agent, fit: 0.95, reason: 'mock rule', new: null, engine: 'mock', ms: 5 } : { agent: null, fit: 0, reason: 'mock: no specialist', new: proposal, engine: 'mock', ms: 5 } });
+      return send(res, 200, { success: true, data: { agent: 'generalist', fit: 0.7, reason: 'mock: general request', new: null, engine: 'mock', ms: 5 } });
+    }
+    if (path === '/_mock/judge-calls') return send(res, 200, { calls: judgeCalls });
     if (path === '/api/aidev-tools/knowledge-check') {
       const b = await read(req);
       return /URP/.test(b.title || '')

@@ -34,6 +34,11 @@ r=$(post "$A" /api/aidev/route '{"text":"React 컴포넌트에 다크모드 토�
 r=$(post "$A" /api/aidev/route '{"text":"이 로그 파일 5만 줄을 읽고 분석해서 오류 패턴을 요약해줘"}'); check "$r" 'j.scope.task_kind==="bulk_read" && j.plan.engine==="codex"' "bulk_read → codex (B-15)"
 r=$(post "$B" /api/aidev/route '{"text":"React 컴포넌트에 다크모드 토글 훅을 추가해줘"}'); check "$r" 'j.plan.engine==="codex" && j.engines.claude.score===null' "codex-only account never gets claude (B-14)"
 r=$(post "$A" /api/aidev/route '{"text":"Unity 셰이더로 물 표면 굴절 효과를 구현해줘","sessionEngine":"claude"}'); check "$r" 'j.decision==="create" && j.plan.engine==="claude" && j.plan.engine_locked' "unknown domain → create; session engine locked"
+# specialist judge: only a true specialist is used; otherwise create (with a proposal) — the ranker's pick does not win by default
+r=$(post "$A" /api/aidev/route '{"text":"Verilog로 UART 송신기 모듈을 작성해줘"}'); check "$r" 'j.decision==="create" && j.create && j.create.proposal && j.create.proposal.name==="fpga-verilog" && j.judge.source==="llm"' "no specialist → create with the judge's proposal (fpga-verilog)"
+r=$(post "$A" /api/aidev/route '{"text":"SwiftUI로 iOS 위젯 만들어줘"}'); check "$r" 'j.decision==="create" && j.agent.name!=="frontend-react"' "near miss (SwiftUI ≠ React) is not used"
+r=$(post "$A" /api/aidev/route '{"text":"Verilog로 UART 송신기 모듈을 작성해줘"}'); check "$r" 'j.judge.source==="cache" && j.decision==="create"' "same command → cached verdict (no second LLM turn)"
+r=$(post "$A" /api/aidev/route '{"text":"이 함수 이름을 더 명확하게 바꿔줘"}'); check "$r" 'j.decision==="generalist" && j.agent.name==="generalist"' "trivial request → generalist"
 r=$(post "$A" /api/aidev/route '{"text":"프로덕션 DB 테이블을 drop 하고 마이그레이션을 다시 돌려"}'); check "$r" 'j.scope.risk>=1.5 && j.scope.depth>=2' "risk raises depth"
 r=$(post "$A" /api/aidev/decide/remote.approve '{"state":{"command":"rm -rf ~/projects/app/node_modules && npm ci"}}'); check "$r" 'typeof j.answer==="number" && j.decision_id>0' "decide remote.approve"
 r=$(post "$A" /api/aidev/decide/agent.pick '{"state":{"command":"pick the fix","question":"Which fix is safest?"},"options":{"a":"add null check","b":"rewrite module","c":"delete the feature"}}'); check "$r" 'j.answer && j.kind==="agent.pick"' "decide agent.pick"

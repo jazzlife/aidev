@@ -1,4 +1,4 @@
-import { useCallback } from 'react';
+import { useCallback, useRef } from 'react';
 
 import { aidevApi, type AgentDraft, parseAgentDraft } from '@/modules/aidev-router/api';
 import { routingStore, useRoutingState } from '@/modules/aidev-router/store';
@@ -28,6 +28,9 @@ export function useAgentCreation({ getLastAssistantText, resend }: UseAgentCreat
       const text = getLastAssistantText();
       const draft = text ? parseAgentDraft(text) : null;
       routingStore.patch({ pendingCreate: { ...current, stage: 'review', draft, error: draft ? null : 'agent 설계 블록(<aidev-agent>)을 찾지 못했습니다. 다시 시도하거나 직접 카탈로그에서 만들 수 있습니다.' } });
+      // automatic routing: the new specialist is created and the original command runs with it right away
+      // (the card stays so the user can open or retire the agent); manual mode waits for the user's approval
+      if (draft && routingStore.get().mode === 'auto') await approveRef.current?.(draft);
       return;
     }
     if (current.stage === 'selfcheck' && current.draft?.self_check) {
@@ -39,6 +42,7 @@ export function useAgentCreation({ getLastAssistantText, resend }: UseAgentCreat
     }
   }, [getLastAssistantText]);
 
+  const approveRef = useRef<((draft: AgentDraft) => Promise<void>) | null>(null);
   const approve = useCallback(async (draft: AgentDraft) => {
     const current = routingStore.get().pendingCreate;
     if (!current) return;
@@ -50,6 +54,8 @@ export function useAgentCreation({ getLastAssistantText, resend }: UseAgentCreat
       routingStore.patch({ pendingCreate: { ...current, error: error instanceof Error ? error.message : '생성 실패' } });
     }
   }, [resend]);
+
+  approveRef.current = approve;
 
   const runSelfCheck = useCallback(() => {
     const current = routingStore.get().pendingCreate;

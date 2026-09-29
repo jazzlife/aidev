@@ -2,7 +2,8 @@ import type { openStore } from './store.js';
 import { EFFORT_LADDER, routingHint, type Engine } from './store-aidev.js';
 import { budgetState, topChoice, type LayaClient, type Question } from './laya.js';
 import { DEPTH_LEVELS, REMOTE_ACTIONS, RISK_LEVELS, TASK_KIND_CRITERIA, decide } from './laya-questions.js';
-import { NaiveBayesRouter, fuse } from './classifier.js';
+import { NaiveBayesRouter, fuse, tokenize } from './classifier.js';
+import crypto from 'node:crypto';
 
 /** Weight of Laya vs the lexical prior in the fused agent choice (tuned on the bench set; env LAYA_WEIGHT). */
 export const LAYA_WEIGHT = Math.max(0, Math.min(1, Number(process.env.LAYA_WEIGHT ?? 0.3)));   // bench 2026-09-23: plateau 0.2–0.35 (0.833)
@@ -135,7 +136,26 @@ export async function evaluateRouting(store: Store, laya: LayaClient, userId: nu
   };
 }
 
-export async function route(store: Store, laya: LayaClient, userId: number, engines: EngineAvailability, input: RouteInput) {
+/**
+ * Specialist judge (§3.1): an LLM turn (runtime, Claude haiku / Codex mini) that decides whether an EXISTING
+ * agent truly specialises in the command. Laya and the lexical prior only rank agents against each other,
+ * so their top pick "wins" even when nothing fits; the judge makes the absolute call. Only a true specialist
+ * is used; a trivial/domain-less command goes to the generalist; otherwise a new specialist is created.
+ */
+export type JudgeVerdict = { agent: string | null; fit: number; reason: string; new: { name: string; domain: string; description: string; technologies: string[] } | null; engine?: string; ms?: number; source?: 'llm' | 'cache' | 'similar' };
+export type SpecialistJudge = (input: { command: string; candidates: Array<{ name: string; description: string }>; project?: string | null }) => Promise<JudgeVerdict | null>;
+const normText = (text: string) => text.toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 500);
+function cosine(a: string[], b: string[]) {
+  const ca = new Map<string, number>(); const cb = new Map<string, number>();
+  for (const t of a) ca.set(t, (ca.get(t) ?? 0) + 1);
+  for (const t of b) cb.set(t, (cb.get(t) ?? 0) + 1);
+  let dot = 0; for (const [t, n] of ca) dot += n * (cb.get(t) ?? 0);
+  const na = Math.sqrt([...ca.values()].reduce((x, n) => x + n * n, 0)); const nb = Math.sqrt([...cb.values()].reduce((x, n) => x + n * n, 0));
+  return na && nb ? dot / (na * nb) : 0;
+}
+const SIMILAR_JUDGED = 0.8;
+
+export async function route(store: Store, laya: LayaClient, userId: number, engines: EngineAvailability, input: RouteInput, opts: { judge?: SpecialistJudge } = {}) {
   const t0 = Date.now();
   const reason: string[] = [];
   const text = input.text.trim();
@@ -177,6 +197,22 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   const nbTop = topChoice({ probabilities: nbProbs });
   const kindProbs = kindPrior(store, text);
   let layaProbs: Record<string, number> | null = null;
+  // ---- specialist judge: cached verdict → a judge-confirmed similar command → an LLM turn (runs alongside Laya)
+  const specialists = all.filter((a) => a.name !== 'generalist');
+  const catalogSig = crypto.createHash('sha1').update(specialists.map((a) => `${a.name}@${a.version}`).sort().join(',')).digest('hex').slice(0, 16);
+  const textNorm = normText(text);
+  let verdict: JudgeVerdict | null = input.forceAgent ? null : (store.judgeCached(userId, textNorm, catalogSig) as JudgeVerdict | null);
+  if (verdict) verdict = { ...verdict, source: 'cache' };
+  if (!verdict && !input.forceAgent && nbTop.choice && nbTop.probability >= 0.9) {
+    const candidate = specialists.find((a) => a.name === nbTop.choice);
+    const tokens = tokenize(text);
+    const best = candidate ? Math.max(0, ...store.judgedExamples(candidate.id).map((ex) => cosine(tokens, tokenize(ex)))) : 0;
+    if (candidate && best >= SIMILAR_JUDGED) verdict = { agent: candidate.name, fit: 0.9, reason: `judge confirmed a similar command (${best.toFixed(2)})`, new: null, source: 'similar' };
+  }
+  const judgePromise: Promise<JudgeVerdict | null> = verdict || input.forceAgent || !opts.judge || !specialists.length
+    ? Promise.resolve(verdict)
+    : opts.judge({ command: text, candidates: specialists.map((a) => ({ name: a.name, description: a.description })), project: input.projectHint ?? null })
+      .then((v) => (v ? { ...v, source: 'llm' as const } : null)).catch(() => null);
   try {
     const r = await laya.predict(state, questions);
     latency = r.latency_ms ?? null; device = r.device ?? null;
@@ -211,7 +247,26 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   if (risk >= 1.5) reason.push(`risk ${risk.toFixed(1)} → depth +1`);
   let agentName = agentTop.choice && catalog[agentTop.choice] ? agentTop.choice : 'generalist';
   let decision: 'use' | 'generalist' | 'create' | 'create_background' = 'use';
-  if (fallback && agentTop.probability < 0.5) { agentName = 'generalist'; decision = 'generalist'; }
+  verdict = await judgePromise;
+  if (verdict?.source === 'llm') store.cacheJudge(userId, textNorm, catalogSig, { agent: verdict.agent, fit: verdict.fit, reason: verdict.reason, new: verdict.new, engine: verdict.engine });
+  let proposal: JudgeVerdict['new'] = null;
+  if (input.forceAgent) { /* handled below */ }
+  else if (verdict) {
+    const judged = verdict.agent && verdict.agent !== 'generalist' ? store.agent(userId, verdict.agent) : undefined;
+    if (judged && judged.domain !== 'meta' && verdict.fit >= 0.6) {
+      agentName = judged.name; decision = 'use';
+      reason.push(`specialist judge: ${judged.name} (fit ${verdict.fit.toFixed(2)}, ${verdict.source}${verdict.reason ? `: ${verdict.reason}` : ''})${agentTop.choice !== judged.name ? ` — ranker had ${agentTop.choice} ${agentTop.probability.toFixed(2)}` : ''}`);
+      // a confirmed command becomes an example of that specialist: the lexical prior learns from the judge
+      if (verdict.source === 'llm') store.addExamples(judged.id, [{ text, source: 'judge', taskKind: null }]);
+    } else if (verdict.agent === 'generalist') {
+      agentName = 'generalist'; decision = 'generalist';
+      reason.push(`specialist judge: general request → generalist${verdict.reason ? ` (${verdict.reason})` : ''}`);
+    } else {
+      agentName = 'generalist'; decision = 'create'; proposal = verdict.new;
+      reason.push(`specialist judge: no existing specialist${verdict.new ? ` → create ${verdict.new.name} (${verdict.new.domain})` : ''}${verdict.reason ? `: ${verdict.reason}` : ''}`);
+    }
+  }
+  else if (fallback && agentTop.probability < 0.5) { agentName = 'generalist'; decision = 'generalist'; }
   else if (fallback) { reason.push(`lexical prior ${agentName} ${(agentTop.probability * 100).toFixed(0)}%`); }
   else if (needsNew >= 0.5 && agentTop.probability < 0.7 && nbTop.probability < 0.6) {
     // Laya's needs_new is noisy; a confident lexical match ("react로 todo 앱" → frontend-react) vetoes creation.
@@ -219,9 +274,10 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     agentName = 'generalist';
     reason.push(`no fitting agent (needs_new ${needsNew.toFixed(2)}, best ${agentTop.choice} ${agentTop.probability.toFixed(2)}) → ${decision}`);
   } else if (agentTop.probability < 0.5) {
+    // no judge available: an ambiguous pick is not a specialist — shallow work goes to the generalist, deeper work creates one
     if (scoredDepth <= 1) { decision = 'generalist'; agentName = 'generalist'; reason.push(`ambiguous agent (${agentTop.probability.toFixed(2)}) and shallow → generalist fast path`); }
-    else reason.push(`ambiguous agent (${agentTop.probability.toFixed(2)}); using best match, LLM review suggested`);
-  } else reason.push(`agent ${agentName} ${(agentTop.probability * 100).toFixed(0)}%`);
+    else { decision = 'create'; agentName = 'generalist'; reason.push(`ambiguous agent (${agentTop.probability.toFixed(2)}) and no specialist judge → create`); }
+  } else reason.push(`agent ${agentName} ${(agentTop.probability * 100).toFixed(0)}% (specialist judge unavailable)`);
   if (input.forceAgent && store.agent(userId, input.forceAgent)) { agentName = input.forceAgent; decision = 'use'; reason.push(`user override → ${agentName}`); }
   const needsLlmAnalysis = !fallback && (agentTop.probability < 0.5 || depthRaw >= 2.5 || multiDomain > 0.6);
   const askClarify = !fallback && clarify > 0.7 && scoredDepth >= 2;
@@ -347,11 +403,13 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     architect: { name: architect.name, version: architect.version, description: architect.description, prompt: architect.prompt, tools: architect.tools ? JSON.parse(architect.tools) as string[] : null, maxTurns: architect.max_turns, model: architect.model },
     catalog: all.map((a) => `${a.name}: ${routingHint(a)}`).join('\n'),
     background: decision === 'create_background',
+    proposal,
   } : null;
 
   return {
     decision_id: decisionId,
     decision, fallback, laya_error: layaError, create,
+    judge: verdict ? { agent: verdict.agent, fit: verdict.fit, reason: verdict.reason, source: verdict.source ?? null, engine: verdict.engine ?? null, ms: verdict.ms ?? null, proposal: verdict.new } : null,
     scope: { depth, depth_raw: depthRaw, task_kind: taskKind, task_kind_probability: taskKindP, risk, multi_domain: multiDomain, clarify, remote_action: remoteAction, needs_llm_analysis: needsLlmAnalysis, ask_clarify: askClarify },
     agent: { id: agent.id, name: agent.name, version: agent.version, domain: agent.domain, description: agent.description, probability: agentTop.probability, confidence: agentTop.confidence,
       definition: { prompt, tools: agent.tools ? JSON.parse(agent.tools) as string[] : null, model: agent.model, maxTurns: agent.max_turns, skills: agent.skills ? JSON.parse(agent.skills) as string[] : null, mcpServers: agent.mcp_servers ? JSON.parse(agent.mcp_servers) as Record<string, unknown> : null } },

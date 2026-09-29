@@ -13,7 +13,8 @@ import { createKnowledgeRefresher, decideProposal } from './knowledge-refresh.js
 import { decideNext, type NextAction } from './escalation.js';
 import { decide, listKinds } from './laya-questions.js';
 import fs from 'node:fs';
-import { evaluateRouting, route, TIER_TABLE, type EngineAvailability, type RouteInput } from './routing.js';
+import { evaluateRouting, route, TIER_TABLE, type EngineAvailability, type JudgeVerdict, type RouteInput, type SpecialistJudge } from './routing.js';
+const JUDGE_TIMEOUT_MS = Number(process.env.AIDEV_JUDGE_TIMEOUT_MS ?? 30_000);
 
 /**
  * /api/aidev/* — routing, decisions, agent catalog, runs, lessons, knowledge, engines, targets
@@ -155,7 +156,16 @@ export function createAidevApi(deps: AidevDeps) {
           forceAgent: optStr(b.forceAgent, 41) ?? null, projectHint: optStr(b.projectHint, 400), recentFiles: Array.isArray(b.recentFiles) ? (b.recentFiles as unknown[]).map(String).slice(0, 10) : null, model: optStr(b.model, 100), effort: optStr(b.effort, 20),
           effortCap: b.effortCap && typeof b.effortCap === 'object' ? { claude: optStr((b.effortCap as Record<string, unknown>).claude, 20), codex: optStr((b.effortCap as Record<string, unknown>).codex, 20) } as Partial<Record<Engine, string>> : null };
         const engines = await engineAvailability(session);
-        return json(res, 200, await route(store, laya, uid, engines, input)), true;
+        // the specialist judge runs in the user's runtime (their Claude/Codex login); off when no engine is usable
+        const judge: SpecialistJudge | undefined = (engines.claude.allowed && engines.claude.authenticated) || (engines.codex.allowed && engines.codex.authenticated)
+          ? async (payload) => {
+            const r = await deps.runtimeFetch(session, '/api/aidev-tools/specialist-judge', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }, JUDGE_TIMEOUT_MS);
+            const body = await r.json().catch(() => ({})) as { success?: boolean; data?: JudgeVerdict; error?: string };
+            if (!r.ok || !body.data) { console.warn(`[aidev] specialist judge unavailable: ${body.error ?? r.status}`); return null; }
+            return body.data;
+          }
+          : undefined;
+        return json(res, 200, await route(store, laya, uid, engines, input, { judge })), true;
       }
       // a chat's own effort ceiling (the account default lives in /settings/effort-cap)
       const sessMatch = rest.match(/^\/session-settings\/([A-Za-z0-9._:-]{1,200})$/);

@@ -108,6 +108,9 @@ export function migrateAidev(db: Database.Database) {
       pairing_code TEXT, pairing_expires INTEGER, policy TEXT NOT NULL DEFAULT 'ask', allowed_roots TEXT,
       capabilities TEXT, status TEXT NOT NULL DEFAULT 'offline', last_seen INTEGER, created_at INTEGER NOT NULL,
       UNIQUE(user_id, name));
+    CREATE TABLE IF NOT EXISTS judge_cache (
+      user_id INTEGER NOT NULL, text_norm TEXT NOT NULL, catalog_sig TEXT NOT NULL, result TEXT NOT NULL, created_at INTEGER NOT NULL,
+      PRIMARY KEY(user_id, text_norm, catalog_sig));
     CREATE TABLE IF NOT EXISTS session_settings (
       user_id INTEGER NOT NULL, session_id TEXT NOT NULL, effort_cap TEXT, updated_at INTEGER NOT NULL,
       PRIMARY KEY(user_id, session_id));
@@ -234,6 +237,19 @@ export function aidevMethods(db: Database.Database) {
       }
       db.prepare('UPDATE accounts SET effort_cap=? WHERE id=?').run(JSON.stringify(next), userId);
       return next;
+    },
+    /** Specialist-judge verdicts per exact command (30 days, invalidated when the catalog changes). */
+    judgeCached(userId: number, textNorm: string, catalogSig: string) {
+      const row = db.prepare('SELECT result, created_at FROM judge_cache WHERE user_id=? AND text_norm=? AND catalog_sig=?').get(userId, textNorm, catalogSig) as { result: string; created_at: number } | undefined;
+      if (!row || row.created_at < Date.now() - 30 * 86_400_000) return null;
+      try { return JSON.parse(row.result) as Record<string, unknown>; } catch { return null; }
+    },
+    cacheJudge(userId: number, textNorm: string, catalogSig: string, result: unknown) {
+      db.prepare('INSERT OR REPLACE INTO judge_cache(user_id,text_norm,catalog_sig,result,created_at) VALUES(?,?,?,?,?)').run(userId, textNorm, catalogSig, JSON.stringify(result), Date.now());
+    },
+    /** Commands the judge already confirmed for an agent (source 'judge'). */
+    judgedExamples(agentId: number, limit = 300) {
+      return (db.prepare("SELECT text FROM agent_examples WHERE agent_id=? AND source='judge' ORDER BY id DESC LIMIT ?").all(agentId, limit) as Array<{ text: string }>).map((r) => r.text);
     },
     /** A chat's own ceiling (set from the chat); engines it leaves out follow the account default. */
     sessionEffortCap(userId: number, sessionId: string): Partial<Record<Engine, string>> | null {
