@@ -161,7 +161,8 @@ def main():
     ap.add_argument("--out", default="/models/bench")
     ap.add_argument("--commands", default=os.path.join(HERE, "commands.jsonl"))
     ap.add_argument("--catalog", default=os.path.join(HERE, "catalog.json"))
-    ap.add_argument("--experiments", action="store_true", help="compare routing strategies A..E and print a table")
+    ap.add_argument("--experiments", action="store_true", help="specialist-decision experiments S1..S7 (use / generalist / create) — see specialist.py")
+    ap.add_argument("--routing-experiments", action="store_true", help="older relative-choice strategies A..E")
     ap.add_argument("--strategy", default="B_short_hint", help="strategy used for the single run (default: what the gateway does)")
     args = ap.parse_args()
     catalog = json.load(open(args.catalog, encoding="utf-8"))
@@ -169,8 +170,15 @@ def main():
     if args.limit:
         rows = rows[: args.limit]
     health = json.loads(urllib.request.urlopen(f"{LAYA}/health", timeout=10).read())
-    strat = strategies(catalog, health)
     if args.experiments:
+        import specialist
+        table, misses = specialist.run_all(catalog, args.commands, args.limit)
+        print(json.dumps({"release": health.get("release"), "device": health.get("device"), "head_max_len": health.get("head_max_len"), "max_len": health.get("max_len"), "specialist_experiments": table, "misses": misses}, ensure_ascii=False, indent=1))
+        os.makedirs(args.out, exist_ok=True)
+        json.dump({"table": table, "misses": misses}, open(os.path.join(args.out, f"specialist-{time.strftime('%Y%m%d-%H%M%S')}.json"), "w"), ensure_ascii=False, indent=1)
+        return
+    strat = strategies(catalog, health)
+    if args.routing_experiments:
         table = []
         for name, run in strat.items():
             print(f"=== {name}", file=sys.stderr)

@@ -1,0 +1,46 @@
+{"text": "Unity URP에서 물 표면 셰이더 만들어줘", "accept": [null]}
+{"text": "Verilog로 UART 송수신 모듈 작성하고 테스트벤치도", "accept": [null]}
+{"text": "Blender 애드온으로 선택 오브젝트 일괄 리네이머 만들어줘", "accept": [null]}
+{"text": "SwiftUI로 iOS 홈화면 위젯 만들어줘", "accept": [null]}
+{"text": "Kotlin Jetpack Compose로 안드로이드 로그인 화면 구현", "accept": ["android-device"]}
+{"text": "React에서 다크모드 토글 커스텀 훅 만들어줘", "accept": ["frontend-react"]}
+{"text": "PostgreSQL 느린 쿼리 인덱스 튜닝해줘", "accept": ["database"]}
+{"text": "Helm 차트로 이 서비스 쿠버네티스 배포 구성해줘", "accept": [null, "devops"]}
+{"text": "m4pro에서 sw_vers 실행해줘", "accept": ["generalist"]}
+{"text": "Solidity로 ERC-20 토큰 컨트랙트 작성", "accept": [null]}
+{"text": "파이썬으로 이동평균 크로스 퀀트 백테스트 엔진 만들어줘", "accept": [null]}
+{"text": "Tizen TV 앱에서 리모컨 키 이벤트 처리 구현", "accept": ["tizen-device"]}
+{"text": "nginx 리버스 프록시에 TLS 인증서 설정해줘", "accept": ["devops"]}
+{"text": "이 함수 이름 foo를 bar로 바꿔줘", "accept": ["generalist"]}
+{"text": "Playwright e2e 테스트가 가끔 실패하는 원인 찾아줘", "accept": ["testing"]}
+{"text": "git rebase 하다 생긴 충돌 해결해줘", "accept": ["git-workflow"]}
+{"text": "Rust로 WASM 이미지 필터 모듈 만들어줘", "accept": [null]}
+{"text": "Express API에 JWT 인증 미들웨어 추가해줘", "accept": ["backend-node", "security-review"]}
+{"text": "Godot 엔진으로 2D 플랫포머 캐릭터 이동 구현", "accept": [null]}
+{"text": "STM32 펌웨어에서 UART DMA 수신 버그 고쳐줘", "accept": [null]}
+{"text": "Flutter로 결제 화면 만들어줘", "accept": [null]}
+{"text": "nginx에 gzip 압축 설정 추가해줘", "accept": ["devops"]}
+{"text": "Vitest로 이 유틸 함수 단위 테스트 작성", "accept": ["testing"]}
+{"text": "README에 설치 방법 섹션 추가해줘", "accept": ["docs"]}
+{"text": "지금 몇 시야?", "accept": ["generalist"]}
+{"text": "Terraform으로 AWS S3 버킷과 CloudFront 구성", "accept": [null]}
+{"text": "WebGPU로 파티클 시뮬레이션 컴퓨트 셰이더 작성", "accept": [null]}
+{"text": "Svelte로 대시보드 차트 컴포넌트 만들어줘", "accept": [null]}
+{"text": "iOS 앱에서 푸시 알림 권한 요청 구현", "accept": [null]}
+{"text": "모바일 사파리에서 100vh 레이아웃 깨짐 고쳐줘", "accept": ["mobile-responsive"]}
+{"text": "Claude Agent SDK로 MCP 서버에 도구 추가해줘", "accept": ["ai-integration"]}
+{"text": "로그인 API의 SQL 인젝션 취약점 점검해줘", "accept": ["security-review"]}
+{"text": "adb logcat으로 앱 크래시 원인 찾아줘", "accept": ["android-device"]}
+{"text": "sdb로 갤럭시 워치에 앱 설치해줘", "accept": ["tizen-device"]}
+{"text": "cherry-pick으로 핫픽스 커밋을 release 브랜치로 옮겨줘", "accept": ["git-workflow"]}
+{"text": "docker compose에 redis 서비스 추가해줘", "accept": ["devops"]}
+{"text": "Express WebSocket 서버에 재연결 처리 추가", "accept": ["backend-node"]}
+{"text": "Unreal Engine 블루프린트로 문 여는 로직 만들어줘", "accept": [null]}
+{"text": "ls -la 결과 보여줘", "accept": ["generalist"]}
+{"text": "이 변수명 오타 고쳐줘", "accept": ["generalist"]}
+{"text": "Write a Unity C# script for third-person camera follow", "accept": [null]}
+{"text": "Add a GraphQL resolver in our Express server", "accept": ["backend-node"]}
+{"text": "Create a Jetpack Compose settings screen for the Android app", "accept": ["android-device"]}
+{"text": "Build a Chrome extension that blocks trackers", "accept": [null]}
+{"text": "Fix the flaky Jest snapshot test", "accept": ["testing"]}
+{"text": "What does HTTP 418 mean?", "accept": ["generalist"]}
