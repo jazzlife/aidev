@@ -2,7 +2,7 @@ import fsSync from 'node:fs';
 import path from 'node:path';
 import readline from 'node:readline';
 
-import { spawn } from 'cross-spawn';
+import { spawn, sync as spawnSync } from 'cross-spawn';
 import { rgPath } from '@vscode/ripgrep';
 
 import { stripAnsiSequences } from '@/shared/utils.js';
@@ -628,9 +628,79 @@ function buildProjectBuckets(searchableSessions: SearchableSessionRow[]): Projec
 }
 
 /**
+ * Which ripgrep binary to run, decided once per process:
+ *   1. the one `@vscode/ripgrep` downloads in its postinstall — absent when dependencies are installed
+ *      with `--ignore-scripts` (the Nado AI Dev release volume does this), so `bin/rg` may not exist;
+ *   2. `rg` on PATH (e.g. the distro package);
+ *   3. none → searchFilesInNode(): a streaming, case-insensitive fixed-string scan of the same file list.
+ * A spawn ENOENT later (binary removed) also switches to the Node scan for the rest of the process.
+ */
+let ripgrepCommand: string | null | undefined;
+function resolveRipgrepCommand(): string | null {
+  if (ripgrepCommand !== undefined) {
+    return ripgrepCommand;
+  }
+  const candidates = [rgPath && fsSync.existsSync(rgPath) ? rgPath : null, 'rg'].filter((c): c is string => Boolean(c));
+  ripgrepCommand = null;
+  for (const candidate of candidates) {
+    const probe = spawnSync(candidate, ['--version'], { stdio: 'ignore', windowsHide: true, timeout: 5000 });
+    if (!probe.error && probe.status === 0) {
+      ripgrepCommand = candidate;
+      break;
+    }
+  }
+  if (!ripgrepCommand) {
+    console.warn('[search] ripgrep not found (@vscode/ripgrep binary or rg on PATH); conversation search scans files in Node');
+  }
+  return ripgrepCommand;
+}
+
+/**
+ * Files (of `filePaths`) that contain `pattern`, case-insensitively — the Node equivalent of
+ * `rg --files-with-matches --ignore-case --fixed-strings`. Reads each file as a UTF-8 stream and keeps
+ * the last pattern-length characters between chunks so a match split across chunks is still found.
+ */
+async function searchFilesInNode(pattern: string, filePaths: string[], signal?: AbortSignal): Promise<Set<string>> {
+  const needle = pattern.toLowerCase();
+  const matched = new Set<string>();
+  for (const filePath of filePaths) {
+    if (signal?.aborted) {
+      return new Set();
+    }
+    const found = await new Promise<boolean>((resolve) => {
+      const stream = fsSync.createReadStream(filePath, { encoding: 'utf8', highWaterMark: 256 * 1024 });
+      let carry = '';
+      let done = false;
+      const finish = (value: boolean) => {
+        if (!done) {
+          done = true;
+          stream.destroy();
+          resolve(value);
+        }
+      };
+      stream.on('data', (chunk: string | Buffer) => {
+        const text = carry + String(chunk).toLowerCase();
+        if (text.includes(needle)) {
+          finish(true);
+          return;
+        }
+        carry = text.slice(-Math.max(0, needle.length - 1));
+      });
+      stream.on('end', () => finish(false));
+      stream.on('error', () => finish(false));   // unreadable file = no match, as with rg --no-messages
+    });
+    if (found) {
+      matched.add(normalizeComparablePath(filePath));
+    }
+  }
+  return matched;
+}
+
+/**
  * Executes ripgrep with the file list explicitly provided from sessionsDb jsonl paths.
  *
  * This avoids recursive directory walks and uses a fixed known candidate list.
+ * Falls back to searchFilesInNode() when no ripgrep binary is available.
  */
 async function runRipgrepFilesWithMatches(
   pattern: string,
@@ -639,6 +709,11 @@ async function runRipgrepFilesWithMatches(
 ): Promise<Set<string>> {
   if (!pattern || filePaths.length === 0 || signal?.aborted) {
     return new Set();
+  }
+
+  const command = resolveRipgrepCommand();
+  if (!command) {
+    return searchFilesInNode(pattern, filePaths, signal);
   }
 
   return new Promise((resolve, reject) => {
@@ -651,7 +726,7 @@ async function runRipgrepFilesWithMatches(
       pattern,
       ...filePaths,
     ];
-    const rg = spawn(rgPath, args, {
+    const rg = spawn(command, args, {
       stdio: ['ignore', 'pipe', 'pipe'],
       windowsHide: true,
     });
@@ -684,6 +759,13 @@ async function runRipgrepFilesWithMatches(
 
       if (aborted || signal?.aborted) {
         resolve(new Set());
+        return;
+      }
+
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+        // the binary disappeared after the probe: scan in Node from now on
+        ripgrepCommand = null;
+        searchFilesInNode(pattern, filePaths, signal).then(resolve, reject);
         return;
       }
 
