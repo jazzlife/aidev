@@ -534,7 +534,9 @@ export function createAidevApi(deps: AidevDeps) {
           const agentCall = session.sid.startsWith('runtime:');
           const entry = await deps.preview.open(target, port, agentCall ? 'agent' : 'user', optStr(b.label, 120) ?? null, deps.publicOrigin ?? '');
           const hint = entry.error
-            ? `미리보기 준비 실패: ${entry.error}. 개발 서버를 base ${entry.base} 로 시작한 뒤 다시 호출하세요 (Vite: npm run dev -- --base ${entry.base} --port ${port}, Next.js: basePath).`
+            ? /업데이트|오프라인/.test(entry.error)
+              ? `미리보기 준비 실패: ${entry.error}`
+              : `미리보기 준비 실패: ${entry.error}. 개발 서버를 base ${entry.base} 로 시작한 뒤 다시 호출하세요 (Vite: npm run dev -- --base ${entry.base} --port ${port}, Next.js: basePath).`
             : entry.mode === 'keep'
               ? `개발 서버가 base ${entry.base} 로 실행 중 — 그대로 동작합니다(HMR 포함).`
               : `개발 서버가 루트(/) 경로로 실행 중입니다. 정적 페이지는 보이지만 Vite·webpack 앱은 모듈 경로가 깨질 수 있습니다 — base를 ${entry.base} 로 두고 다시 실행하세요 (Vite: npm run dev -- --base ${entry.base} --port ${port}, Next.js: basePath).`;
