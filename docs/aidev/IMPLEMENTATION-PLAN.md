@@ -358,7 +358,8 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 **C 완료 기준**: C-11 3기기 확인, 모바일 메인 청크 ≤600KB 기록, override·피드백이 DB에 기록, 데스크탑에서 파일 열기·diff·터미널·chat이 한 화면에서 동작.
 
 ### F. 원격 PC 실행·디버깅·화면 (목표: 지정한 PC에서 실행·테스트·디버그하고 그 화면이 작업대와 모바일에 보인다)
-- [ ] F-01 러너 crate 골격: `pair`/`start`/`install-service`, 토큰 저장, WS 접속·heartbeat·재접속, capabilities 보고, allowed_roots. Linux·Windows cross-build 스크립트(`deploy/aidev/runner/build.sh`), macOS는 `ops/runner/build.sh`
+- [~] F-01 러너 crate 골격: `pair`/`start`/`install-service`, 토큰 저장, WS 접속·heartbeat·재접속, capabilities 보고, allowed_roots. Linux·Windows cross-build 스크립트(`deploy/aidev/runner/build.sh`), macOS는 `ops/runner/build.sh`
+  - 구현(2026-09-29): `deploy/aidev/runner/`(tokio, tokio-tungstenite rustls, ureq rustls, clap, toml). 명령 pair/start/status/caps/roots/consent/install-service/uninstall-service/unpair. 설정 `~/.aidev/runner.toml` 0600. WS Bearer + `runner.hello{capabilities}`(OS·arch·host·shell·도구 13종 버전·adb/sdb 기기·allowed_roots·screen 동의), 15s heartbeat·45s 무응답 재연결·지수 backoff+jitter, 401/403·close 4401 → exit 3. RPC `runner.ping`·`runner.capabilities`·`fs.resolve`. `roots.rs`: canonicalize + 미존재 경로는 가장 가까운 기존 상위로, 심볼릭 링크 탈출 거부. 서비스: systemd user unit / LaunchAgent / schtasks 로그온 작업(사용자 권한). 빌드 `build.sh`(zig로 linux-x64 glibc 2.28, 2.5MB) — 이 작업 환경은 static.rust-lang.org 차단으로 Windows·ARM·macOS std 설치 불가 → Mac `ops/runner/build.sh`(universal + zig 있으면 win-x64·linux-arm64). 검증: cargo test 6, `test/e2e.sh` 12항목(mock 게이트웨이: 잘못된 코드·원격 http 거부, 페어링, 0600, status 토큰 숨김, ping, 허용 폴더 밖 거부, 재연결, 4401·401 종료, capabilities). clippy 0
 - [ ] F-02 게이트웨이 `runner-hub.ts` + `/_runner/ws` + `targets` API(등록·pairing·정책·삭제) + 프런트 `TargetsPanel`(pairing 코드·온라인·capabilities) — 서버 검증: Mac 러너 접속, 목록에 online
 - [ ] F-03 `exec.start`(pty) 스트림 + `/targets/:id/stream` 멀티플렉스 + `RunOutputPane`; 모바일 실행 결과 카드
 - [ ] F-04 `sync.manifest/apply/delete`(blake3, ignore) + 런타임 `remote_sync` — 서버 검증: 프로젝트 1개 동기화 후 diff 0

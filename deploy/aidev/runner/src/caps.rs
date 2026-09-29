@@ -1,0 +1,111 @@
+//! What this PC offers, reported to the gateway on every connect: OS, shell, tool versions, attached
+//! Android/Tizen devices and the allowed folders. Probes run in parallel with a short timeout.
+
+use serde_json::{json, Value};
+use std::time::Duration;
+use tokio::process::Command;
+
+const PROBE_TIMEOUT: Duration = Duration::from_secs(4);
+
+/// (name, command, args) — the first line of output is reported as the version.
+const TOOLS: &[(&str, &str, &[&str])] = &[
+    ("node", "node", &["--version"]),
+    ("npm", "npm", &["--version"]),
+    ("python", "python3", &["--version"]),
+    ("java", "java", &["-version"]),
+    ("go", "go", &["version"]),
+    ("rustc", "rustc", &["--version"]),
+    ("cargo", "cargo", &["--version"]),
+    ("git", "git", &["--version"]),
+    ("docker", "docker", &["--version"]),
+    ("xcodebuild", "xcodebuild", &["-version"]),
+    ("adb", "adb", &["version"]),
+    ("sdb", "sdb", &["version"]),
+    ("dotnet", "dotnet", &["--version"]),
+];
+
+async fn first_line(cmd: &str, args: &[&str]) -> Option<String> {
+    let mut c = Command::new(cmd);
+    c.args(args).stdin(std::process::Stdio::null()).kill_on_drop(true);
+    #[cfg(windows)]
+    {
+        // `npm` and friends are .cmd shims on Windows
+        if cmd == "npm" {
+            c = Command::new("cmd");
+            c.args(["/C", "npm", "--version"]).kill_on_drop(true);
+        }
+    }
+    let out = tokio::time::timeout(PROBE_TIMEOUT, c.output()).await.ok()?.ok()?;
+    let text = if out.stdout.is_empty() { out.stderr } else { out.stdout };
+    let line = String::from_utf8_lossy(&text).lines().map(str::trim).find(|l| !l.is_empty())?.to_string();
+    Some(line.chars().take(120).collect())
+}
+
+/// `adb devices` / `sdb devices`: serials in state "device".
+async fn devices(tool: &str) -> Vec<String> {
+    let Ok(Ok(out)) = tokio::time::timeout(PROBE_TIMEOUT, Command::new(tool).arg("devices").kill_on_drop(true).output()).await else {
+        return vec![];
+    };
+    String::from_utf8_lossy(&out.stdout)
+        .lines()
+        .skip(1)
+        .filter_map(|l| {
+            let mut parts = l.split_whitespace();
+            let serial = parts.next()?;
+            (parts.next()? == "device").then(|| serial.to_string())
+        })
+        .collect()
+}
+
+pub fn hostname() -> String {
+    std::env::var("HOSTNAME")
+        .or_else(|_| std::env::var("COMPUTERNAME"))
+        .ok()
+        .filter(|h| !h.is_empty())
+        .or_else(|| std::fs::read_to_string("/etc/hostname").ok().map(|s| s.trim().to_string()))
+        .or_else(|| {
+            std::process::Command::new("hostname").output().ok().map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string())
+        })
+        .filter(|h| !h.is_empty())
+        .unwrap_or_else(|| "unknown".into())
+}
+
+pub fn shell() -> String {
+    std::env::var("SHELL").or_else(|_| std::env::var("COMSPEC")).unwrap_or_else(|_| if cfg!(windows) { "cmd.exe".into() } else { "/bin/sh".into() })
+}
+
+pub fn platform() -> &'static str {
+    match std::env::consts::OS {
+        "macos" => "macos",
+        "windows" => "windows",
+        "linux" => "linux",
+        other => other,
+    }
+}
+
+pub async fn collect(cfg: &crate::config::Config) -> Value {
+    let probes = TOOLS.iter().map(|(name, cmd, args)| async move { (*name, first_line(cmd, args).await) });
+    let results = futures_util::future::join_all(probes).await;
+    let mut tools = serde_json::Map::new();
+    for (name, version) in results {
+        if let Some(v) = version {
+            tools.insert(name.to_string(), json!(v));
+        }
+    }
+    let (adb, sdb) = tokio::join!(
+        async { if tools.contains_key("adb") { devices("adb").await } else { vec![] } },
+        async { if tools.contains_key("sdb") { devices("sdb").await } else { vec![] } }
+    );
+    json!({
+        "runner": env!("CARGO_PKG_VERSION"),
+        "os": platform(),
+        "arch": std::env::consts::ARCH,
+        "hostname": hostname(),
+        "shell": shell(),
+        "tools": tools,
+        "devices": { "adb": adb, "sdb": sdb },
+        "allowed_roots": cfg.allowed_roots.iter().map(|r| r.display().to_string()).collect::<Vec<_>>(),
+        "screen": cfg.screen_consent,
+        "features": ["ping"],
+    })
+}
