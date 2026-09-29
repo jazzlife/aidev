@@ -13,6 +13,7 @@ import '../../load-env.js';
  *   remote_logs     — state + last output of a remote run (optionally wait for it)
  *   remote_stop     — interrupt / kill a remote run
  *   remote_preview  — show a dev server running on a target in the workbench preview panel (F-06)
+ *   remote_screenshot — look at a target's screen (image content; needs the PC owner's consent) (F-07)
  * The turn context (chat run id, routed target, agent) comes from this process's env and is sent
  * with every call, so remote results count toward the run's outcome.
  */
@@ -32,6 +33,13 @@ type ToolDefinition = {
 
 const textResponse = (text: string) => ({ content: [{ type: 'text', text }] });
 const jsonResponse = (value: unknown) => textResponse(JSON.stringify(value, null, 2));
+/** A screenshot as MCP image content (the model sees the picture) plus its metadata as text. */
+const imageResponse = (value: unknown) => {
+  const v = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>;
+  const { image, mime, ...meta } = v;
+  if (typeof image !== 'string') return jsonResponse(value);
+  return { content: [{ type: 'image', data: image, mimeType: typeof mime === 'string' ? mime : 'image/jpeg' }, { type: 'text', text: JSON.stringify(meta, null, 2) }] };
+};
 
 const apiUrl = (process.env.CLOUDCLI_AIDEV_TOOLS_API_URL || 'http://127.0.0.1:3001/api/aidev-tools-mcp').replace(/\/$/, '');
 const apiToken = process.env.CLOUDCLI_AIDEV_TOOLS_MCP_TOKEN || '';
@@ -166,6 +174,21 @@ const tools: ToolDefinition[] = [
     },
   },
   {
+    name: 'remote_screenshot',
+    description: [
+      'Take a screenshot of one of the user\'s machines and look at it (returned as an image) — e.g. to check a desktop/mobile app window, a dialog, or what a running program shows.',
+      'Works only when the owner allowed screen capture on that PC (`aidev-runner consent screen on`); every capture is recorded in the target\'s history. View only: you cannot click or type.',
+    ].join(' '),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string', description: 'Target name or id (optional when routed or only one is online).' },
+        display: { type: 'number', description: 'Display number (1 = main).' },
+        maxWidth: { type: 'number', description: 'Scale down to this width (320-2560, default 1440; smaller = cheaper to look at).' },
+      },
+    },
+  },
+  {
     name: 'remote_stop',
     description: 'Stop a running remote command: signal INT (Ctrl+C, default), TERM or KILL.',
     inputSchema: {
@@ -188,6 +211,8 @@ async function callTool(name: string, args: Record<string, unknown>) {
     case 'remote_stop':
     case 'remote_preview':
       return jsonResponse(await callApi(name, args));
+    case 'remote_screenshot':
+      return imageResponse(await callApi(name, args));
     default:
       throw new Error(`Unknown tool: ${name}`);
   }

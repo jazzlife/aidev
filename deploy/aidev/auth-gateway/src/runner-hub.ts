@@ -29,6 +29,11 @@ import type { TargetRow } from './store-aidev.js';
  * Tunnels (F-06): openTunnel() asks the runner to dial 127.0.0.1/::1:<port> on its PC (`tunnel.open`) and
  * returns a Duplex that carries raw TCP bytes as binary frames in both directions (same id space as
  * streams). The preview proxy speaks HTTP / WebSocket over it. `tunnel.closed` or a lost runner ends it.
+ *
+ * Screen (F-07): attachScreen() is the browser side of `/api/aidev/targets/:id/screen` — viewers with the
+ * same display/fps/width share one runner stream (`screen.start`), which sends a JPEG frame only when the
+ * picture changes; the last frame is kept for late viewers; the stream stops 8 s after its last viewer
+ * leaves. screenshot() is one `screen.shot`. Both need runner ≥ 0.5 and the owner's consent on that PC.
  */
 type Store = ReturnType<typeof openStore>;
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
@@ -55,6 +60,12 @@ export type ExecParams = { cmd: string; cwd?: string | null; pty?: boolean; cols
 
 export const streamFrame = (streamId: number, chunk: Buffer) => { const head = Buffer.alloc(4); head.writeUInt32BE(streamId >>> 0, 0); return Buffer.concat([head, chunk]); };
 
+/** Viewer options for a screen stream, clamped (display 1-16, fps 0.5-10, width 320-2560). */
+export function screenOpts(q: { display?: unknown; fps?: unknown; maxWidth?: unknown }) {
+  const n = (v: unknown, d: number, lo: number, hi: number) => { const x = Number(v); return Number.isFinite(x) ? Math.min(Math.max(x, lo), hi) : d; };
+  return { display: Math.round(n(q.display, 1, 1, 16)), fps: n(q.fps, 2, 0.5, 10), maxWidth: Math.round(n(q.maxWidth, 1440, 320, 2560)) };
+}
+
 export class RpcError extends Error { constructor(public code: number, message: string) { super(message); } }
 
 /** One TCP connection to a server on a runner's loopback, as a stream (http.request createConnection-compatible). */
@@ -78,6 +89,20 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
   const attempts = new Map<string, { count: number; until: number }>();
   const streams = new Map<string, Stream>();               // `${targetId}:${streamId}`
   const tunnels = new Map<string, RunnerTunnel>();         // `${targetId}:${streamId}` (F-06)
+  type ScreenStream = { targetId: number; streamId: number; config: string; viewers: Set<WebSocket>; last: Buffer | null; lastAt: number; frames: number; bytes: number; stopTimer: NodeJS.Timeout | null };
+  const screens = new Map<string, ScreenStream>();          // `${targetId}:${streamId}` (F-07)
+  const SCREEN_VIEWER_BUFFER = 3 * 1024 * 1024;
+  function stopScreen(sc: ScreenStream, notifyRunner: boolean) {
+    if (sc.stopTimer) clearTimeout(sc.stopTimer);
+    screens.delete(key(sc.targetId, sc.streamId));
+    if (notifyRunner) void hub.call(sc.targetId, 'screen.stop', { streamId: sc.streamId }, 5000).catch(() => {});
+  }
+  const screenCaps = (targetId: number) => { try { return JSON.parse(store.targetById(targetId)?.capabilities ?? '{}') as { features?: string[]; screen?: boolean }; } catch { return {}; } };
+  function screenReady(targetId: number) {
+    const caps = screenCaps(targetId);
+    if (!caps.features?.includes('screen')) throw new RpcError(-32021, '러너가 화면 보기를 지원하지 않습니다 — aidev-runner 0.5.0 이상으로 업데이트하세요');
+    if (!caps.screen) throw new RpcError(-32030, '이 PC는 화면 캡처를 허용하지 않았습니다 — PC에서 `aidev-runner consent screen on` 후 러너를 다시 시작하세요');
+  }
   const listeners = new Map<number, Set<(event: TargetEvent) => void>>();
   const finishListeners = new Set<(stream: StreamInfo, userId: number) => void>();
   let nextStream = crypto.randomInt(1, 0x3fff_ffff);        // runner-chosen ids live in 0x4000_0000+
@@ -173,6 +198,10 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
     for (const p of conn.pending.values()) { clearTimeout(p.timer); p.reject(new RpcError(-32000, reason)); }
     conn.pending.clear();
     for (const [k, t] of tunnels) if (k.startsWith(`${conn.targetId}:`)) { tunnels.delete(k); t.destroy(new Error(reason)); }
+    for (const sc of [...screens.values()]) if (sc.targetId === conn.targetId) {
+      for (const v of sc.viewers) if (v.readyState === WebSocket.OPEN) v.send(JSON.stringify({ type: 'offline' }));
+      stopScreen(sc, false);
+    }
     if (conns.get(conn.targetId) === conn) {
       conns.delete(conn.targetId);
       const t = store.targetById(conn.targetId);
@@ -244,6 +273,13 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
             const id = buf.readUInt32BE(0);
             const tunnel = tunnels.get(key(conn.targetId, id));
             if (tunnel) { tunnel.push(buf.subarray(4)); return; }
+            const sc = screens.get(key(conn.targetId, id));
+            if (sc) {
+              const jpeg = buf.subarray(4);
+              sc.last = jpeg; sc.lastAt = Date.now(); sc.frames++; sc.bytes += jpeg.length;
+              for (const v of sc.viewers) if (v.readyState === WebSocket.OPEN && v.bufferedAmount < SCREEN_VIEWER_BUFFER) v.send(jpeg, { binary: true });   // a slow viewer skips frames
+              return;
+            }
             const st = streams.get(key(conn.targetId, id));
             if (st) appendData(st, buf.subarray(4));
             return;
@@ -264,6 +300,12 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
             });
             emit(conn.targetId, { type: 'online' });
             if (Array.isArray(caps.features) && caps.features.includes('exec')) void reconcile(conn.targetId);
+            return;
+          }
+          if (msg.method === 'screen.error' && msg.params && typeof msg.params === 'object') {
+            const p = msg.params as { streamId?: number; error?: string };
+            const sc = typeof p.streamId === 'number' ? screens.get(key(conn.targetId, p.streamId)) : undefined;
+            if (sc) for (const v of sc.viewers) if (v.readyState === WebSocket.OPEN) v.send(JSON.stringify({ type: 'error', message: String(p.error ?? 'capture failed').slice(0, 500) }));
             return;
           }
           if (msg.method === 'tunnel.closed' && msg.params && typeof msg.params === 'object') {
@@ -356,6 +398,65 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
       return tunnel;
     },
     tunnelCount() { return tunnels.size; },
+    /** One screenshot (JPEG, base64) of a display on the target. */
+    async screenshot(targetId: number, opts: { display?: number; maxWidth?: number; quality?: number } = {}) {
+      if (!hub.online(targetId)) throw new RpcError(-32010, 'target is offline');
+      screenReady(targetId);
+      return hub.call<{ b64: string; mime: string; width: number; height: number; bytes: number; ms: number }>(targetId, 'screen.shot', opts, 30_000);
+    },
+    async screenList(targetId: number) {
+      if (!hub.online(targetId)) throw new RpcError(-32010, 'target is offline');
+      screenReady(targetId);
+      return hub.call<{ displays: Array<Record<string, unknown>> }>(targetId, 'screen.list', {}, 20_000);
+    },
+    screenCount() { return screens.size; },
+    /** Browser side of `/api/aidev/targets/:id/screen` (session and ownership checked by the caller).
+     *  client → {op:"config", display, fps, maxWidth}   server → {type:"started"|"error"|"offline"} + binary JPEG frames */
+    attachScreen(req: IncomingMessage, socket: Duplex, head: Buffer, targetId: number, alive: () => boolean, initial: { display: number; fps: number; maxWidth: number }) {
+      wss.handleUpgrade(req, socket, head, (ws) => {
+        let current: ScreenStream | null = null;
+        const send = (obj: unknown) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj)); };
+        const leave = () => {
+          const sc = current; current = null;
+          if (!sc) return;
+          sc.viewers.delete(ws);
+          if (!sc.viewers.size && !sc.stopTimer) sc.stopTimer = setTimeout(() => { if (!sc.viewers.size) stopScreen(sc, true); }, 8000);
+        };
+        const join = async (o: { display: number; fps: number; maxWidth: number }) => {
+          leave();
+          const config = `${o.display}|${o.fps}|${o.maxWidth}`;
+          try {
+            if (!hub.online(targetId)) throw new RpcError(-32010, '원격 PC가 오프라인입니다');
+            screenReady(targetId);
+            let sc = [...screens.values()].find((s) => s.targetId === targetId && s.config === config);
+            if (!sc) {
+              nextStream = nextStream >= 0x3fff_fff0 ? 1 : nextStream + 1;
+              sc = { targetId, streamId: nextStream, config, viewers: new Set(), last: null, lastAt: 0, frames: 0, bytes: 0, stopTimer: null };
+              screens.set(key(targetId, sc.streamId), sc);
+              try { await hub.call(targetId, 'screen.start', { streamId: sc.streamId, display: o.display, fps: o.fps, maxWidth: o.maxWidth }, 10_000); }
+              catch (error) { screens.delete(key(targetId, sc.streamId)); throw error; }
+            }
+            if (sc.stopTimer) { clearTimeout(sc.stopTimer); sc.stopTimer = null; }
+            if (ws.readyState !== WebSocket.OPEN) return;
+            sc.viewers.add(ws); current = sc;
+            send({ type: 'started', display: o.display, fps: o.fps, maxWidth: o.maxWidth });
+            if (sc.last) ws.send(sc.last, { binary: true });
+          } catch (error) {
+            send({ type: 'error', message: error instanceof Error ? error.message : String(error) });
+          }
+        };
+        void join(initial);
+        const timer = setInterval(() => { if (!alive()) ws.close(1008, 'Session expired'); else if (ws.readyState === WebSocket.OPEN) ws.ping(); }, 5000);
+        ws.on('message', (data, binary) => {
+          if (binary) return;
+          let msg: { op?: string; display?: number; fps?: number; maxWidth?: number };
+          try { msg = JSON.parse(String(data)); } catch { return; }
+          if (msg.op === 'config') void join(screenOpts(msg));
+        });
+        ws.on('close', () => { clearInterval(timer); leave(); });
+        ws.on('error', () => ws.terminate());
+      });
+    },
     /** Called once per finished stream (remote gate: test results → the chat run's outcome). */
     onFinish(fn: (stream: StreamInfo, userId: number) => void) { finishListeners.add(fn); return () => finishListeners.delete(fn); },
     /** Resolves when the remote run has finished (or after `timeoutMs`), with its current state. */

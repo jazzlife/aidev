@@ -122,3 +122,17 @@ test('remote_preview (F-06): opens the preview on the routed target and passes t
   assert.equal(r.hint, 'ok');
   assert.deepEqual(sent, { port: 5173, label: 'todo' });
 });
+
+test('remote_screenshot (F-07): captures on the routed target and returns the image with the chat run id', async () => {
+  let sent: Record<string, unknown> = {};
+  handler = (method, path, body) => {
+    if (path === '/targets') return targets;
+    if (method === 'POST' && path === '/targets/7/screenshot') { sent = body; return { image: '/9j/AAAA', mime: 'image/jpeg', width: 1440, height: 900, bytes: 4, ms: 210, display: 1, remoteRunId: 40 }; }
+    throw new Error(`unexpected ${method} ${path}`);
+  };
+  const r = await aidevToolsService.remoteScreenshot({ maxWidth: 1440 }, { targetId: 7, runId: 12 }) as Record<string, unknown>;
+  assert.equal(r.target, 'm4pro');
+  assert.equal(r.image, '/9j/AAAA');
+  assert.equal(r.width, 1440);
+  assert.deepEqual(sent, { maxWidth: 1440, runId: 12 });
+});

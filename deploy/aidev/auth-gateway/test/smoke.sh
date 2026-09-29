@@ -201,8 +201,24 @@ if [ -x "$RUNNER_BIN" ]; then
   r=$(post "$B" "/api/aidev/targets/$TID/preview" "{\"port\":$PP}"); check "$r" 'j.error' "another user cannot open a preview on the target"
   r=$(rpost "/targets/$TID/preview" "{\"port\":$PP,\"label\":\"agent app\"}"); check "$r" 'j.preview.by==="agent" && j.preview.mode==="strip"' "agent (runtime session) opens a preview"
   post "$A" "/api/aidev/targets/$TID" '{"policy":"deny"}' PATCH >/dev/null; r=$(curl -s -o /dev/null -w '%{http_code}' "$G$PB"); check "{\"code\":$r}" 'j.code===403' "policy deny blocks the preview"; post "$A" "/api/aidev/targets/$TID" '{"policy":"ask"}' PATCH >/dev/null
-  kill $DEV1 $DEV2 2>/dev/null
+  kill $DEV1 $DEV2 2>/dev/null; wait $DEV1 $DEV2 2>/dev/null || true
   r=$(curl -s -w '|%{http_code}' "$G$PB"); check "{\"ok\":$(echo "$r" | grep -q '연결할 수 없습니다' && echo "$r" | grep -q '|502' && echo true || echo false)}" 'j.ok' "dev server stopped → 502 page"
+  # F-07: screen — consent, screenshot (REST + jpg), shared stream with change-only frames, agent audit
+  r=$(post "$A" "/api/aidev/targets/$TID/screenshot" '{}'); check "$r" '/허용하지 않았습니다/.test(j.error)' "no screen consent on the PC → refused with the command to enable it"
+  kill $RPID 2>/dev/null; wait $RPID 2>/dev/null || true
+  HOME="$RH" "$RUNNER_BIN" consent screen on >/dev/null
+  SRC="$T/screen.png"; node test/make-png.mjs "$SRC" 10
+  HOME="$RH" AIDEV_SCREEN_CMD="cp $SRC {out}" "$RUNNER_BIN" start > "$T/runner-screen.log" 2>&1 & RPID=$!
+  for i in $(seq 1 40); do r=$(get "$A" /api/aidev/targets); echo "$r" | node -e "const j=JSON.parse(require('fs').readFileSync(0));process.exit(j.targets.find(t=>t.id===$TID)?.online && j.targets.find(t=>t.id===$TID).capabilities.screen ? 0 : 1)" && break; sleep 0.25; done
+  r=$(get "$A" "/api/aidev/targets/$TID/screens"); check "$r" 'j.displays.length>=1 && j.displays[0].id===1' "displays listed"
+  r=$(post "$A" "/api/aidev/targets/$TID/screenshot" '{"maxWidth":320}'); check "$r" 'j.mime==="image/jpeg" && j.width===320 && j.height===180 && j.image.length>100 && j.remoteRunId>0' "screenshot scaled to 320x180 JPEG, recorded as a run"
+  n=$(curl -s "$G/api/aidev/targets/$TID/screenshot.jpg?maxWidth=400" -H "authorization: Bearer $A" | head -c 2 | od -An -tx1 | tr -d ' '); check "{\"magic\":\"$n\"}" 'j.magic==="ffd8"' "screenshot.jpg serves image bytes (for <img>)"
+  r=$(get "$A" "/api/aidev/remote-runs/$(post "$A" "/api/aidev/targets/$TID/screenshot" '{}' | node -pe 'JSON.parse(require("fs").readFileSync(0)).remoteRunId')"); check "$r" 'j.run.kind==="screenshot" && j.run.approved_by==="user" && j.run.artifacts.width>0' "screen captures leave a trace (kind screenshot, by user)"
+  r=$(node test/screen-client.mjs "$G" "$A" "$TID" "$SRC" || true); check "$r" 'j.started && j.frames1>=2 && j.lateViewerGotLastFrame && j.changedFrame && !j.error' "live screen: shared stream, last frame for a late viewer, new frame on change ($(echo "$r" | cut -c1-120))"
+  r=$(curl -s -o /dev/null -w '%{http_code}' -H 'connection: upgrade' -H 'upgrade: websocket' -H 'sec-websocket-version: 13' -H 'sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==' -H "origin: http://evil.example" "$G/api/aidev/targets/$TID/screen?token=$A"); check "{\"code\":$r}" 'j.code===401' "screen socket from another origin refused"
+  r=$(post "$B" "/api/aidev/targets/$TID/screenshot" '{}'); check "$r" 'j.error' "another user cannot see the screen"
+  r=$(rpost "/targets/$TID/screenshot" '{"maxWidth":320}'); check "$r" 'j.image && j.width===320' "agent (runtime session) takes a screenshot"
+  post "$A" "/api/aidev/targets/$TID" '{"policy":"deny"}' PATCH >/dev/null; r=$(rpost "/targets/$TID/screenshot" '{}'); check "$r" '/실행 금지/.test(j.error)' "policy deny: agent screenshots refused"; post "$A" "/api/aidev/targets/$TID" '{"policy":"ask"}' PATCH >/dev/null
   # F-05: agent (runtime session) → gate: safe commands run, risky ones wait for the user, tests feed the chat run
   rpost() { curl -s -X POST "$G/internal/aidev$1" -H 'authorization: Bearer rtjwt-rt-alice' -H 'x-aidev-runtime: rt-alice' -H 'content-type: application/json' -d "$2"; }
   rget() { curl -s "$G/internal/aidev$1" -H 'authorization: Bearer rtjwt-rt-alice' -H 'x-aidev-runtime: rt-alice'; }

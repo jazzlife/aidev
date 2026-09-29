@@ -7,3 +7,4 @@ export { RunOutputPane, requestRunFocus } from '@/modules/remote-target/RunOutpu
 export { RemoteApprovalCards, ApprovalCard } from '@/modules/remote-target/RemoteApprovalCards';
 export { PreviewPane, usePreviewList } from '@/modules/remote-target/PreviewPane';
 export type { PreviewEntry } from '@/modules/remote-target/PreviewPane';
+export { ScreenPane } from '@/modules/remote-target/ScreenPane';

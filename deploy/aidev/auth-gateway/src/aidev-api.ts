@@ -4,7 +4,7 @@ import type { openStore } from './store.js';
 import { EFFORT_LADDER, ENGINES, type Engine } from './store-aidev.js';
 import type { LayaClient } from './laya.js';
 import type { Push } from './push.js';
-import { RpcError, type RunnerHub } from './runner-hub.js';
+import { RpcError, screenOpts, type RunnerHub } from './runner-hub.js';
 import type { RemoteGate } from './remote-gate.js';
 import { applyLessonOutcome, promote } from './lesson-loop.js';
 import { downgradeEnabled, runTierPolicy, setTierPolicy } from './tier-policy.js';
@@ -514,6 +514,38 @@ export function createAidevApi(deps: AidevDeps) {
         if (typeof params.root === 'string') params.root = normalizeCwd(params.root, target.allowed_roots ? JSON.parse(target.allowed_roots) as string[] : []);
         try { return json(res, 200, { result: await deps.runners.call(id, method, params, method === 'sync.manifest' ? 180_000 : 120_000) }), true; }
         catch (error) { throw new HttpError(error instanceof RpcError && error.code === -32010 ? 409 : 400, error instanceof Error ? error.message : 'rpc failed'); }
+      }
+      // ---- screen (F-07): what is on the target's display (view only, the PC owner's consent) --------------
+      const screenMatch = rest.match(/^\/targets\/(\d+)\/(screens|screenshot|screenshot\.jpg)$/);
+      if (screenMatch) {
+        if (!deps.runners) throw new HttpError(503, 'runner hub unavailable');
+        const id = Number(screenMatch[1]);
+        const target = store.target(uid, id);
+        if (!target) throw new HttpError(404, 'Target not found');
+        const agentCall = session.sid.startsWith('runtime:');
+        const status = (error: unknown) => (error instanceof RpcError ? (error.code === -32010 ? 409 : error.code === -32030 ? 403 : error.code === -32021 ? 501 : 502) : 502);
+        try {
+          if (screenMatch[2] === 'screens' && m === 'GET') return json(res, 200, await deps.runners.screenList(id)), true;
+          if (agentCall && target.policy === 'deny') throw new HttpError(403, '이 대상의 실행 정책이 "실행 금지"입니다');
+          const q = screenMatch[2] === 'screenshot.jpg' ? Object.fromEntries(url.searchParams) : m === 'POST' ? await readJson(req) : null;
+          if (!q || (screenMatch[2] === 'screenshot.jpg' ? m !== 'GET' : m !== 'POST')) throw new HttpError(405, 'Method not allowed');
+          const o = screenOpts({ display: q.display, maxWidth: q.maxWidth ?? 1440 });
+          const quality = Math.min(Math.max(Number(q.quality) || 70, 30), 90);
+          const shot = await deps.runners.screenshot(id, { display: o.display, maxWidth: o.maxWidth, quality });
+          // every capture leaves a trace in the target's run history (who looked, which display, how big)
+          const rr = store.addRemoteRun({ runId: typeof q.runId === 'number' && store.run(uid, q.runId) ? q.runId : null, targetId: id, userId: uid, kind: 'screenshot', cmd: `screen.shot display ${o.display}`, cwd: null, risk: null, approvedBy: agentCall ? 'agent' : 'user' });
+          store.finishRemoteRun(rr, { exitCode: 0, artifacts: { width: shot.width, height: shot.height, bytes: shot.bytes, ms: shot.ms, display: o.display } });
+          if (screenMatch[2] === 'screenshot.jpg') {
+            const bytes = Buffer.from(shot.b64, 'base64');
+            res.writeHead(200, { 'content-type': 'image/jpeg', 'content-length': String(bytes.length), 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+            res.end(bytes);
+            return true;
+          }
+          return json(res, 200, { image: shot.b64, mime: shot.mime, width: shot.width, height: shot.height, bytes: shot.bytes, ms: shot.ms, display: o.display, remoteRunId: rr }), true;
+        } catch (error) {
+          if (error instanceof HttpError) throw error;
+          throw new HttpError(status(error), error instanceof Error ? error.message : 'screen failed');
+        }
       }
       // ---- previews (F-06): a dev server on the target's loopback, shown in the workbench -----------------
       if (rest === '/previews' && m === 'GET') {

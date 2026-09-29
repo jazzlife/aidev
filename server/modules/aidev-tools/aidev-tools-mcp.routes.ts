@@ -99,6 +99,13 @@ router.post('/tools/:toolName', async (req, res) => {
         }, readTurn(input));
         break;
       }
+      case 'remote_screenshot':
+        result = await aidevToolsService.remoteScreenshot({
+          target: typeof input.target === 'string' || typeof input.target === 'number' ? input.target : undefined,
+          display: typeof input.display === 'number' ? input.display : undefined,
+          maxWidth: typeof input.maxWidth === 'number' ? input.maxWidth : undefined,
+        }, readTurn(input));
+        break;
       case 'remote_stop': {
         const remoteRunId = Number(input.remoteRunId);
         if (!Number.isInteger(remoteRunId)) throw new Error('remoteRunId must be an integer.');

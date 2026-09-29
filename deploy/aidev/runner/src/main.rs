@@ -8,6 +8,7 @@ mod conn;
 mod exec;
 mod pair;
 mod roots;
+mod screen;
 mod service;
 mod sync;
 mod tunnel;

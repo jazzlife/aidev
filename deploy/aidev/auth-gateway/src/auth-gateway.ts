@@ -9,7 +9,7 @@ import { LayaClient } from './laya.js';
 import { createAidevApi } from './aidev-api.js';
 import { createPush } from './push.js';
 import { createRemoteGate } from './remote-gate.js';
-import { createRunnerHub, type RunnerHub } from './runner-hub.js';
+import { createRunnerHub, screenOpts, type RunnerHub } from './runner-hub.js';
 import { createPreview } from './preview.js';
 import { startTierPolicySchedule } from './tier-policy.js';
 import { seedAgents } from './seed-agents.js';
@@ -376,6 +376,16 @@ server.on('upgrade', async (req, socket, head) => {
     if (runners.upgrade(req, socket, head, pathname)) return;
     if (preview.upgrade(req, socket, head, new URL(req.url ?? '/', origin))) return;
     // Remote run streams for the workbench (F-03): session cookie + same origin + the caller's own target.
+    // Remote screen (F-07): same checks as the run streams; frames are JPEGs.
+    const screenMatch = pathname.match(/^\/api\/aidev\/targets\/(\d+)\/screen$/);
+    if (screenMatch) {
+      if (req.headers.origin !== origin) throw new Error('Origin rejected');
+      const session = authenticate(req);
+      if (!session || !store.target(session.user.id, Number(screenMatch[1]))) throw new Error('Authentication required');
+      const q = new URL(req.url ?? '/', origin).searchParams;
+      runners.attachScreen(req, socket, head, Number(screenMatch[1]), () => Boolean(store.session(session.sid)), screenOpts({ display: q.get('display'), fps: q.get('fps'), maxWidth: q.get('maxWidth') }));
+      return;
+    }
     const streamMatch = pathname.match(/^\/api\/aidev\/targets\/(\d+)\/stream$/);
     if (streamMatch) {
       if (req.headers.origin !== origin) throw new Error('Origin rejected');
