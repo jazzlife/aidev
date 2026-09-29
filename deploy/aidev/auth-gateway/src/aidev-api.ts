@@ -4,6 +4,7 @@ import type { openStore } from './store.js';
 import { EFFORT_LADDER, ENGINES, type Engine } from './store-aidev.js';
 import type { LayaClient } from './laya.js';
 import type { Push } from './push.js';
+import type { RunnerHub } from './runner-hub.js';
 import { applyLessonOutcome, promote } from './lesson-loop.js';
 import { downgradeEnabled, runTierPolicy, setTierPolicy } from './tier-policy.js';
 import { runEngineWeights } from './engine-weights.js';
@@ -26,6 +27,8 @@ export type AidevDeps = {
   json: (res: ServerResponse, status: number, body: unknown, headers?: Record<string, string>) => void;
   /** Web push (mobile PWA): subscriptions and the Claude login reminders. */
   push: Push;
+  /** Remote PC runners (stage F): live connections and JSON-RPC calls. */
+  runners?: RunnerHub;
 };
 
 class HttpError extends Error { constructor(public status: number, message: string) { super(message); } }
@@ -392,21 +395,41 @@ export function createAidevApi(deps: AidevDeps) {
         return json(res, 200, { knowledge: store.knowledgeById(id) }), true;
       }
 
-      // ---- targets (registration only; the runner hub lands in stage F) ------------------------
-      if (rest === '/targets' && m === 'GET') return json(res, 200, { targets: store.targets(uid).map((t) => ({ ...t, token_hash: undefined, pairing_code: t.pairing_expires && t.pairing_expires > Date.now() ? t.pairing_code : null, tags: t.tags ? JSON.parse(t.tags) : [], capabilities: t.capabilities ? JSON.parse(t.capabilities) : null })) }), true;
+      // ---- targets (remote PCs with aidev-runner; F-02) ----------------------------------------
+      const targetView = (t: NonNullable<ReturnType<Store['target']>>) => ({
+        ...t, token_hash: undefined, paired: Boolean(t.token_hash),
+        pairing_code: t.pairing_expires && t.pairing_expires > Date.now() ? t.pairing_code : null,
+        pairing_expires: t.pairing_expires && t.pairing_expires > Date.now() ? t.pairing_expires : null,
+        tags: t.tags ? JSON.parse(t.tags) : [], capabilities: t.capabilities ? JSON.parse(t.capabilities) : null,
+        allowed_roots: t.allowed_roots ? JSON.parse(t.allowed_roots) : [],
+        online: deps.runners?.online(t.id) ?? false, connection: deps.runners?.connection(t.id) ?? null,
+      });
+      if (rest === '/targets' && m === 'GET') return json(res, 200, { targets: store.targets(uid).map(targetView) }), true;
       if (rest === '/targets' && m === 'POST') {
         const b = await readJson(req);
         const code = crypto.randomBytes(4).toString('hex').toUpperCase();
         const id = store.addTarget({ userId: uid, name: str(b.name, 'name', 41), platform: optStr(b.platform, 20) ?? null, tags: Array.isArray(b.tags) ? (b.tags as unknown[]).map(String).slice(0, 20) : [], description: optStr(b.description, 600) ?? '', policy: optStr(b.policy, 10), pairingCode: code, pairingExpires: Date.now() + 10 * 60_000 });
         return json(res, 201, { target: { id, pairing_code: code, expires_in: 600 } }), true;
       }
-      const targetMatch = rest.match(/^\/targets\/(\d+)(\/pair\/refresh)?$/);
+      const targetMatch = rest.match(/^\/targets\/(\d+)(\/pair\/refresh|\/ping|\/refresh-caps)?$/);
       if (targetMatch) {
         const id = Number(targetMatch[1]);
         if (!store.target(uid, id)) throw new HttpError(404, 'Target not found');
+        if (targetMatch[2] === '/ping' && m === 'POST') {
+          const t0 = Date.now();
+          try { const result = await deps.runners!.call(id, 'runner.ping', {}, 10_000); return json(res, 200, { ok: true, rtt_ms: Date.now() - t0, result }), true; }
+          catch (error) { return json(res, 200, { ok: false, error: error instanceof Error ? error.message : 'ping failed' }), true; }
+        }
+        if (targetMatch[2] === '/refresh-caps' && m === 'POST') {
+          try {
+            const caps = await deps.runners!.call<Record<string, unknown>>(id, 'runner.capabilities', {}, 20_000);
+            store.updateTarget(uid, id, { capabilities: caps, lastSeen: Date.now(), allowedRoots: Array.isArray(caps.allowed_roots) ? (caps.allowed_roots as unknown[]).map(String) : null });
+            return json(res, 200, { target: targetView(store.target(uid, id)!) }), true;
+          } catch (error) { throw new HttpError(409, error instanceof Error ? error.message : 'runner unavailable'); }
+        }
         if (targetMatch[2] && m === 'POST') { const code = crypto.randomBytes(4).toString('hex').toUpperCase(); store.updateTarget(uid, id, { pairingCode: code, pairingExpires: Date.now() + 10 * 60_000 }); return json(res, 200, { pairing_code: code, expires_in: 600 }), true; }
         if (!targetMatch[2] && m === 'PATCH') { const b = await readJson(req); store.updateTarget(uid, id, { name: optStr(b.name, 41), description: optStr(b.description, 600), tags: Array.isArray(b.tags) ? (b.tags as unknown[]).map(String) : undefined, policy: optStr(b.policy, 10) }); return json(res, 200, { ok: true }), true; }
-        if (!targetMatch[2] && m === 'DELETE') { store.deleteTarget(uid, id); return json(res, 200, { ok: true }), true; }
+        if (!targetMatch[2] && m === 'DELETE') { store.deleteTarget(uid, id); deps.runners?.disconnect(id); return json(res, 200, { ok: true }), true; }
       }
 
       // ---- admin / export ----------------------------------------------------------------------

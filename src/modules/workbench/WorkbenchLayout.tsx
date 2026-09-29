@@ -14,6 +14,7 @@ import { useUiPreferences } from '@/shared/context/UiPreferencesContext';
 import { useFileOpenResolver, WorkspaceErrorBoundary, WorkspaceStateView } from '@/modules/project-workspace';
 import type { DirectoryRevealRequest, WorkspaceMainProps } from '@/shared/types';
 import { AgentCatalog } from '@/modules/aidev-router';
+import { TargetsPanel } from '@/modules/remote-target';
 import { EditorGroup, useEditorGroup } from '@/modules/workbench/EditorGroup';
 import { SplitHandle } from '@/modules/workbench/SplitHandle';
 import { layoutStore, useWorkbenchLayout, type BottomTab, type SideView, type TabletPane } from '@/modules/workbench/layoutStore';
@@ -149,7 +150,6 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
   const git = <GitPanel selectedProject={selectedProject} isMobile={false} onFileOpen={handleFileOpen} onProjectSelect={onProjectSelect} onProjectsRefresh={onProjectsRefresh} />;
   const terminal = (active: boolean) => <StandaloneShell project={selectedProject} session={selectedSession} showHeader={false} isActive={active} />;
   const editorGroup = <EditorGroup tabs={editor.tabs} active={editor.active} onActivate={editor.setActive} onClose={editor.api.close} projectPath={selectedProject.path} />;
-  const placeholder = (title: string) => <div className="h-full flex items-center justify-center text-sm text-muted-foreground">{title} — 단계 F에서 제공됩니다</div>;
 
   if (isTablet) {
     // Two panes: chat, or one tool pane, switched by the segmented control (swipe lands in C-05).
@@ -220,7 +220,7 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
         <div className={`flex-1 min-h-0 overflow-hidden ${sideView === 'sessions' ? '' : 'hidden'}`}>{sessionsPanel}</div>
         {sideView && sideView !== 'sessions' ? (
           <div className="flex-1 min-h-0 overflow-hidden">
-            {sideView === 'explorer' ? explorer : sideView === 'git' ? git : sideView === 'targets' ? placeholder('원격 대상') : <AgentCatalog />}
+            {sideView === 'explorer' ? explorer : sideView === 'git' ? git : sideView === 'targets' ? <TargetsPanel /> : <AgentCatalog />}
           </div>
         ) : null}
       </div>

@@ -10,6 +10,7 @@ MOCK_CODEX_ONLY=rt-codexonly node test/mock-services.mjs >"$T/mock.log" 2>&1 &
 sleep 0.5
 export DATABASE_PATH="$T/auth.db" JWT_SECRET_FILE="$T/secrets/jwt" RUNTIME_MANAGER_TOKEN_FILE="$T/secrets/rt" \
   RUNTIME_MANAGER_URL=http://127.0.0.1:18090 LAYA_URL=http://127.0.0.1:18095 PUBLIC_ORIGIN=http://127.0.0.1:18080 PORT=18080 STATIC_ROOT="$T/dist"
+export RUNNER_DIST_DIR="$(cd .. && pwd)/runner/dist"
 mkdir -p "$T/dist" "$T/dist-mobile"; echo '<html>workbench</html>' > "$T/dist/index.html"; echo '<html>mobile</html>' > "$T/dist-mobile/index.html"
 # accounts: alice (both engines), bob (codex only, runtime rt-codexonly)
 node -e "
@@ -112,4 +113,39 @@ r=$(post "$A" /api/aidev/push/subscribe '{"subscription":{"endpoint":"http://ins
 r=$(post "$A" /api/aidev/push/subscribe '{"subscription":{"endpoint":"https://push.example/abc","keys":{"p256dh":"BPk","auth":"x1"}}}'); check "$r" 'j.ok===true' "push: subscription stored"
 r=$(post "$A" /api/aidev/claude-auth '{"expires_at":4102444800000}'); check "$r" 'j.ok===true' "claude-auth: expiry report accepted"
 r=$(post "$A" /api/aidev/push/unsubscribe '{"endpoint":"https://push.example/abc"}'); check "$r" 'j.removed===1' "push: unsubscribe"
+r=$(curl -s "$G/_runner/download"); if [ -d "$RUNNER_DIST_DIR" ]; then check "$r" 'j.files.length>=1 && j.files[0].sha256 && j.files[0].platform' "runner binaries listed ($(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).files.map(f=>f.platform).join(",")'))"
+  F=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).files[0].name'); n=$(curl -s "$G/_runner/download/$F" | wc -c); check "{\"n\":$n,\"want\":$(stat -c %s "$RUNNER_DIST_DIR/$F")}" 'j.n===j.want' "runner binary download ($n bytes)"; fi
+r=$(curl -s "$G/_runner/download/..%2F..%2Fetc%2Fpasswd" | grep -c "root:" || true); check "{\"c\":$r}" 'j.c===0' "download path traversal cannot read files"
+# F-02: remote PC runner — pairing, online state + capabilities, ping, ownership, re-pair and delete revoke it
+RUNNER_BIN=${RUNNER_BIN:-$(cd .. && pwd)/runner/target/debug/aidev-runner}
+if [ -x "$RUNNER_BIN" ]; then
+  export AIDEV_RUNNER_HOME="$T/runner-home"; RH="$T/runner-user"; mkdir -p "$RH"
+  r=$(post "$A" /api/aidev/targets '{"name":"dev-mac","description":"test PC","policy":"ask"}'); TID=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).target.id'); CODE=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).target.pairing_code')
+  check "$r" 'j.target.id>0 && /^[0-9A-F]{8}$/.test(j.target.pairing_code)' "target registered with a pairing code"
+  r=$(curl -s -X POST "$G/_runner/pair" -H 'content-type: application/json' -d '{"code":"ZZZZ9999"}'); check "$r" '/expired|not found/.test(j.error)' "unknown pairing code refused"
+  r=$(curl -s -X POST "$G/_runner/pair" -H 'content-type: application/json' -H "origin: $G" -d "{\"code\":\"$CODE\"}"); check "$r" 'j.error' "pairing from a browser origin refused"
+  HOME="$RH" "$RUNNER_BIN" pair "$(echo "$CODE" | tr A-Z a-z)" --gateway "$G" >/dev/null 2>&1; check "{\"ok\":$([ -f "$AIDEV_RUNNER_HOME/runner.toml" ] && echo true || echo false)}" 'j.ok' "runner paired with the code"
+  r=$(curl -s -X POST "$G/_runner/pair" -H 'content-type: application/json' -d "{\"code\":\"$CODE\"}"); check "$r" 'j.error' "pairing code works once"
+  HOME="$RH" "$RUNNER_BIN" start > "$T/runner1.log" 2>&1 & RPID=$!
+  for i in $(seq 1 40); do r=$(get "$A" /api/aidev/targets); echo "$r" | grep -q '"online":true' && echo "$r" | grep -q '"hostname"' && break; sleep 0.25; done
+  check "$r" "j.targets.find(t=>t.id===$TID).online && j.targets.find(t=>t.id===$TID).capabilities.os && j.targets.find(t=>t.id===$TID).paired && !('token_hash' in j.targets.find(t=>t.id===$TID) && j.targets.find(t=>t.id===$TID).token_hash)" "runner online with capabilities ($(echo "$r" | node -pe "const t=JSON.parse(require('fs').readFileSync(0)).targets.find(t=>t.id===$TID); t.capabilities.os+'/'+t.capabilities.arch+' tools '+Object.keys(t.capabilities.tools).length+' roots '+t.allowed_roots.length"))"
+  r=$(post "$A" "/api/aidev/targets/$TID/ping" '{}'); check "$r" 'j.ok===true && j.result.pong===true && j.rtt_ms>=0' "ping through the hub ($(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).rtt_ms')ms)"
+  r=$(post "$A" "/api/aidev/targets/$TID/refresh-caps" '{}'); check "$r" 'j.target.capabilities.runner' "capabilities refreshed on demand"
+  r=$(post "$B" "/api/aidev/targets/$TID/ping" '{}'); check "$r" 'j.error' "another user cannot reach the target"
+  r=$(curl -s -o /dev/null -w '%{http_code}' -H 'authorization: Bearer '"$(printf 'c%.0s' $(seq 1 64))" -H 'connection: upgrade' -H 'upgrade: websocket' -H 'sec-websocket-version: 13' -H 'sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==' "$G/_runner/ws"); check "{\"code\":$r}" 'j.code===401' "runner socket with a wrong token refused"
+  # re-pair: a new code, paired again → the old connection is cut (4401) and that runner exits 3
+  CODE2=$(post "$A" "/api/aidev/targets/$TID/pair/refresh" '{}' | node -pe 'JSON.parse(require("fs").readFileSync(0)).pairing_code')
+  cp "$AIDEV_RUNNER_HOME/runner.toml" "$T/old-runner.toml"
+  HOME="$RH" "$RUNNER_BIN" pair "$CODE2" --gateway "$G" >/dev/null 2>&1 || true
+  for i in $(seq 1 40); do kill -0 $RPID 2>/dev/null || break; sleep 0.25; done; code=0; wait $RPID || code=$?
+  check "{\"code\":$code}" 'j.code===3' "re-pairing revokes the old runner (exit 3)"
+  HOME="$RH" "$RUNNER_BIN" start > "$T/runner2.log" 2>&1 & RPID=$!
+  for i in $(seq 1 40); do get "$A" /api/aidev/targets | grep -q '"online":true' && break; sleep 0.25; done
+  r=$(post "$A" "/api/aidev/targets/$TID" '{}' DELETE); check "$r" 'j.ok' "target deleted"
+  for i in $(seq 1 40); do kill -0 $RPID 2>/dev/null || break; sleep 0.25; done; code=0; wait $RPID || code=$?
+  check "{\"code\":$code}" 'j.code===3' "deleting the target disconnects the runner (exit 3)"
+  cp "$T/old-runner.toml" "$AIDEV_RUNNER_HOME/runner.toml"; code=0; HOME="$RH" timeout 10 "$RUNNER_BIN" start >/dev/null 2>&1 || code=$?
+  check "{\"code\":$code}" 'j.code===3' "old token no longer connects"
+  unset AIDEV_RUNNER_HOME
+else echo "SKIP runner checks (build deploy/aidev/runner first: cargo build)"; fi
 [ $fail -eq 0 ] && echo "ALL PASS" || { echo "--- gateway log"; tail -20 "$T/gw.log"; exit 1; }

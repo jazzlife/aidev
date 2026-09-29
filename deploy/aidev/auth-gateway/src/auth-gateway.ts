@@ -8,6 +8,7 @@ import { openStore } from './store.js';
 import { LayaClient } from './laya.js';
 import { createAidevApi } from './aidev-api.js';
 import { createPush } from './push.js';
+import { createRunnerHub, type RunnerHub } from './runner-hub.js';
 import { startTierPolicySchedule } from './tier-policy.js';
 import { seedAgents } from './seed-agents.js';
 
@@ -157,7 +158,11 @@ async function proxyHttp(req: IncomingMessage, res: ServerResponse, session: Ses
 // Web push for the mobile PWA + Claude login reminders (VAPID subject = the public origin).
 const push = createPush(store, origin.startsWith('https:') ? origin : 'mailto:aidev@localhost');   // web-push requires https: or mailto:
 push.startReminders();
+// Remote PC runners (stage F): outbound WebSockets from `aidev-runner` on users' machines.
+const runners: RunnerHub = createRunnerHub(store, new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 }));
+runners.resetStatuses();
 const aidev = createAidevApi({
+  runners,
   store, laya, json, push,
   async runtimeFetch(session, path, init, timeoutMs = 10_000) {
     const runtime = await ready(session.user.runtime);
@@ -237,6 +242,19 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse) {
   });
   res.end(req.method === 'HEAD' ? undefined : content);
 }
+/** Directory of the active release's runner binaries (release/control/runner, next to dist). */
+function runnerDir() { return process.env.RUNNER_DIST_DIR ?? path.join(path.dirname(staticRoot), 'control', 'runner'); }
+async function runnerFiles() {
+  const dir = await fs.promises.realpath(runnerDir()).catch(() => null);
+  if (!dir) return [];
+  const names = (await fs.promises.readdir(dir).catch(() => [] as string[])).filter((n) => n.startsWith('aidev-runner-')).sort();
+  const sums = await fs.promises.readFile(path.join(dir, 'SHA256SUMS'), 'utf8').catch(() => '');
+  return Promise.all(names.map(async (name) => {
+    const m = name.match(/^aidev-runner-([0-9.]+)-(.+?)(\.exe)?$/);
+    const sha256 = sums.split('\n').find((l) => l.trim().endsWith(` ${name}`) || l.trim().endsWith(`*${name}`))?.split(/\s+/)[0] ?? null;
+    return { name, version: m?.[1] ?? null, platform: m?.[2] ?? null, size: (await fs.promises.stat(path.join(dir, name))).size, sha256 };
+  }));
+}
 const assetFallback = new Map<string, string | null>();
 async function findAssetInOtherReleases(currentRoot: string, pathname: string, distDir = 'dist') {
   const key = `${distDir}:${pathname}`;
@@ -259,6 +277,24 @@ const server = http.createServer(async (req, res) => {
     if (!req.url?.startsWith('/') || req.url.startsWith('//')) return json(res, 400, { error: 'Invalid request path' });
     const url = new URL(req.url, origin);
     if (url.pathname === '/_gateway/health' && req.method === 'GET') return json(res, 200, { status: 'ok' });
+    // Runner binaries shipped with the release (control/runner): list + download, no session needed.
+    if (url.pathname === '/_runner/download' && req.method === 'GET') return json(res, 200, { files: await runnerFiles() });
+    const dl = url.pathname.match(/^\/_runner\/download\/(aidev-runner-[0-9A-Za-z._-]+|SHA256SUMS)$/);
+    if (dl && (req.method === 'GET' || req.method === 'HEAD')) {
+      const file = path.join(runnerDir(), dl[1]);
+      const stat = await fs.promises.stat(file).catch(() => null);
+      if (!stat?.isFile()) return json(res, 404, { error: 'Not found' });
+      res.writeHead(200, { 'content-type': dl[1] === 'SHA256SUMS' ? 'text/plain; charset=utf-8' : 'application/octet-stream', 'content-length': String(stat.size), 'content-disposition': `attachment; filename="${dl[1].endsWith('.exe') ? 'aidev-runner.exe' : dl[1] === 'SHA256SUMS' ? 'SHA256SUMS' : 'aidev-runner'}"`, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+      if (req.method === 'HEAD') return res.end();
+      return fs.createReadStream(file).pipe(res);
+    }
+    // Runner pairing: the one-time code is the credential (no session; runners send no Origin).
+    if (url.pathname === '/_runner/pair' && req.method === 'POST') {
+      if (req.headers.origin) return json(res, 403, { error: 'Origin rejected' });
+      const ip = String(req.headers['x-real-ip'] ?? String(req.headers['x-forwarded-for'] ?? '').split(',')[0] ?? '').trim() || req.socket.remoteAddress || 'unknown';
+      try { return json(res, 200, runners.pair(await body(req), ip)); }
+      catch (error) { return json(res, (error as { status?: number }).status ?? 400, { error: error instanceof Error ? error.message : 'pairing failed' }); }
+    }
     if (req.headers.origin && req.headers.origin !== origin) return json(res, 403, { error: 'Origin rejected' });
     if (url.pathname.startsWith('/admin')) return json(res, 404, { error: 'Not found' });
     if (url.pathname === '/api/auth/status') return json(res, 200, { needsSetup: false, isAuthenticated: Boolean(authenticate(req)) });
@@ -326,6 +362,7 @@ server.on('upgrade', async (req, socket, head) => {
   let upstream: WebSocket | undefined;
   try {
     const pathname = new URL(req.url ?? '/', origin).pathname;
+    if (runners.upgrade(req, socket, head, pathname)) return;
     if (!['/ws', '/shell', '/desktop-notifications'].includes(pathname) && !/^\/plugin-ws\/[a-zA-Z0-9_-]+$/.test(pathname)) throw new Error('Unknown WS endpoint');
     if (req.headers.origin !== origin) throw new Error('Origin rejected');
     const session = authenticate(req);

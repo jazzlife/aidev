@@ -509,6 +509,7 @@ export function aidevMethods(db: Database.Database) {
     // ---- remote targets ---------------------------------------------------------
     targets(userId: number) { return db.prepare('SELECT * FROM targets WHERE user_id=? ORDER BY name').all(userId) as TargetRow[]; },
     target(userId: number, id: number) { return db.prepare('SELECT * FROM targets WHERE id=? AND user_id=?').get(id, userId) as TargetRow | undefined; },
+    targetById(id: number) { return db.prepare('SELECT * FROM targets WHERE id=?').get(id) as TargetRow | undefined; },
     targetByTokenHash(hash: string) { return db.prepare('SELECT * FROM targets WHERE token_hash=?').get(hash) as TargetRow | undefined; },
     targetByPairingCode(code: string) { return db.prepare('SELECT * FROM targets WHERE pairing_code=? AND pairing_expires>?').get(code, Date.now()) as TargetRow | undefined; },
     addTarget(t: { userId: number; name: string; platform?: string | null; tags?: string[]; description?: string; policy?: string; pairingCode: string; pairingExpires: number }) {

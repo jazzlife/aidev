@@ -20,6 +20,8 @@ for c in gateway:auth-gateway runtime-manager:runtime-manager; do
 done
 cp -a deploy/aidev/runtime/entrypoint.mjs "$R/runtime/"
 mkdir -p "$R/control/laya" && cp -a deploy/aidev/laya/app/. "$R/control/laya/"   # python, no build step
+# aidev-runner binaries built so far (deploy/aidev/runner/build.sh; macOS ones come from the Mac) → served at /_runner/download
+if ls deploy/aidev/runner/dist/aidev-runner-* >/dev/null 2>&1; then mkdir -p "$R/control/runner" && cp -a deploy/aidev/runner/dist/. "$R/control/runner/"; fi
 # routing benchmark needs the seed catalog exactly as the gateway sends it to Laya
 node --input-type=module -e "import('$ROOT/deploy/aidev/auth-gateway/dist/seed-agents.js').then(m=>console.log(JSON.stringify(Object.fromEntries(m.seedAgents.filter(a=>a.domain!=='meta').map(a=>[a.name,{hint:a.hint,description:a.description,domain:a.domain}])),null,1)))" > "$R/control/laya/bench/catalog.json"
 echo "$sha" > "$R/RELEASE"

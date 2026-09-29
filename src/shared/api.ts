@@ -545,6 +545,19 @@ export const api = {
   system: {
     update: () => post('/api/system/update'),
   },
+
+  // Nado AI Dev remote targets (developer PCs running aidev-runner; gateway /api/aidev/targets).
+  targets: {
+    list: () => get('/api/aidev/targets'),
+    create: (input: { name: string; description?: string; policy?: string }) => post('/api/aidev/targets', input),
+    update: (targetId: number, input: { name?: string; description?: string; policy?: string }) => patch(`/api/aidev/targets/${targetId}`, input),
+    remove: (targetId: number) => del(`/api/aidev/targets/${targetId}`),
+    refreshPairing: (targetId: number) => post(`/api/aidev/targets/${targetId}/pair/refresh`),
+    ping: (targetId: number) => post(`/api/aidev/targets/${targetId}/ping`),
+    refreshCapabilities: (targetId: number) => post(`/api/aidev/targets/${targetId}/refresh-caps`),
+    /** aidev-runner binaries shipped with the active release (served by the gateway without a session). */
+    runnerDownloads: () => get('/_runner/download'),
+  },
 };
 
 // ---------------------------
