@@ -160,6 +160,8 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
       />
     </WorkspaceErrorBoundary>
   );
+  const remoteProjectPath = selectedProject?.fullPath || selectedProject?.path || '';
+  const remoteProject = remoteProjectPath ? { path: remoteProjectPath, name: String(selectedProject?.displayName || selectedProject?.name || remoteProjectPath.split('/').pop()) } : null;
   const explorer = <FileTree selectedProject={selectedProject} onFileOpen={handleFileOpen} revealDirectory={revealDirectory} showTitle={false} />;
   const git = <GitPanel selectedProject={selectedProject} isMobile={false} onFileOpen={handleFileOpen} onProjectSelect={onProjectSelect} onProjectsRefresh={onProjectsRefresh} />;
   const terminal = (active: boolean) => <StandaloneShell project={selectedProject} session={selectedSession} showHeader={false} isActive={active} />;
@@ -200,7 +202,7 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
           ) : null}
           <div className={`absolute inset-0 ${!layout.tabletShowChat && pane === 'terminal' ? '' : 'hidden'}`}>{terminal(!layout.tabletShowChat && pane === 'terminal')}</div>
           {!layout.tabletShowChat && pane === 'git' ? <div className="absolute inset-0">{git}</div> : null}
-          {!layout.tabletShowChat && pane === 'remote' ? <div className="absolute inset-0"><RunOutputPane isVisible /></div> : null}
+          {!layout.tabletShowChat && pane === 'remote' ? <div className="absolute inset-0"><RunOutputPane isVisible project={remoteProject} /></div> : null}
           {!layout.tabletShowChat && pane === 'browser' && browserUseEnabled ? <div className="absolute inset-0"><BrowserUsePanel isVisible onShowSettings={onShowSettings} /></div> : null}
         </div>
       </div>
@@ -268,7 +270,7 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
                 <div className={`absolute inset-0 ${bottomTab === 'terminal' ? '' : 'hidden'}`}>{terminal(workVisible && bottomTab === 'terminal')}</div>
                 {shouldShowTasks ? <div className={`absolute inset-0 ${bottomTab === 'tasks' ? '' : 'hidden'}`}><TaskMasterPanel isVisible={workVisible && bottomTab === 'tasks'} /></div> : null}
                 {browserUseEnabled && bottomTab === 'browser' ? <div className="absolute inset-0"><BrowserUsePanel isVisible={workVisible} onShowSettings={onShowSettings} /></div> : null}
-                {bottomTab === 'run_output' ? <div className="absolute inset-0"><RunOutputPane isVisible={workVisible} /></div> : null}
+                {bottomTab === 'run_output' ? <div className="absolute inset-0"><RunOutputPane isVisible={workVisible} project={remoteProject} /></div> : null}
               </div>
             </div>
           </>

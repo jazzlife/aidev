@@ -40,9 +40,11 @@ const turnContext = {
   runId: Number.parseInt(process.env.AIDEV_RUN_ID || '', 10) || undefined,
   targetId: Number.parseInt(process.env.AIDEV_TARGET_ID || '', 10) || undefined,
   agent: process.env.AIDEV_AGENT || undefined,
+  // the engine starts this process in the session's project folder: remote_sync's default source
+  cwd: process.cwd(),
 };
 // approvals can take minutes and a build or test run longer: remote tools get their own ceiling
-const LONG_TOOLS = new Set(['remote_exec', 'remote_logs']);
+const LONG_TOOLS = new Set(['remote_exec', 'remote_logs', 'remote_sync']);
 const LONG_TIMEOUT_MS = 45 * 60_000;
 
 async function callApi(toolName: string, input: Record<string, unknown>) {
@@ -115,6 +117,24 @@ const tools: ToolDefinition[] = [
     },
   },
   {
+    name: 'remote_sync',
+    description: [
+      'Copy this project (the workspace folder of the current session, or `project`) to one of the user\'s machines before running it there with remote_exec.',
+      'Only changed files are sent (sha256); files deleted here are deleted there too, but only those an earlier sync wrote — the user\'s own files on the machine are never touched.',
+      'Honours .gitignore and .aidevignore; node_modules/.git/.venv are never copied, so install dependencies on the target (npm ci, pip install -r …).',
+      'Returns `dest` — use it as `cwd` for remote_exec. Default dest: <first allowed folder>/<project folder name>. Call it again after editing files here.',
+    ].join(' '),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string', description: 'Target name or id (optional when routed or only one is online).' },
+        project: { type: 'string', description: 'Project folder here (absolute, or a name under ~/workspace). Default: the current session\'s folder.' },
+        dest: { type: 'string', description: 'Folder on the target (absolute inside an allowed folder, or relative to the first allowed folder).' },
+        dryRun: { type: 'boolean', description: 'Only report what would be uploaded/deleted.' },
+      },
+    },
+  },
+  {
     name: 'remote_logs',
     description: 'State and last output of a remote run started with remote_exec (by remoteRunId). Pass waitSec to wait for it to finish.',
     inputSchema: {
@@ -145,6 +165,7 @@ async function callTool(name: string, args: Record<string, unknown>) {
     case 'remote_targets':
       return jsonResponse(await callApi(name, {}));
     case 'remote_exec':
+    case 'remote_sync':
     case 'remote_logs':
     case 'remote_stop':
       return jsonResponse(await callApi(name, args));

@@ -447,6 +447,33 @@ export function createAidevApi(deps: AidevDeps) {
       };
       // ---- remote runs (F-03): start a command on a target, list runs, read logs, stop ---------------
       const remoteRunView = (r: NonNullable<ReturnType<Store['remoteRunById']>>) => ({ ...r, artifacts: r.artifacts ? JSON.parse(r.artifacts) : null, live: deps.runners?.streamByRun(r.id) ?? null });
+      // ---- project sync (F-04): the runtime drives sync.manifest/write/delete on the runner ----------
+      const rpcMatch = rest.match(/^\/targets\/(\d+)\/(rpc|sync-report)$/);
+      if (rpcMatch && m === 'POST') {
+        const id = Number(rpcMatch[1]);
+        const target = store.target(uid, id);
+        if (!target) throw new HttpError(404, 'Target not found');
+        if (rpcMatch[2] === 'sync-report') {
+          const b = await readJson(req);
+          const dest = optStr(b.dest, 1000) ?? null;
+          const rr = store.addRemoteRun({ runId: typeof b.runId === 'number' && store.run(uid, b.runId) ? b.runId : null, targetId: id, userId: uid, kind: 'sync', cmd: `sync ${optStr(b.project, 200) ?? '?'} → ${dest ?? '?'}`, cwd: dest, approvedBy: session.sid.startsWith('runtime:') ? 'auto' : 'user' });
+          const art = { uploaded: Number(b.uploaded) || 0, deleted: Number(b.deleted) || 0, unchanged: Number(b.unchanged) || 0, bytes: Number(b.bytes) || 0, duration_ms: Number(b.ms) || 0, skipped: Array.isArray(b.skipped) ? (b.skipped as unknown[]).slice(0, 50) : [], error: optStr(b.error, 500) ?? undefined };
+          store.finishRemoteRun(rr, { exitCode: art.error ? 1 : 0, artifacts: art });
+          console.log(`[runner] target #${id} sync run #${rr} ${dest}: +${art.uploaded} -${art.deleted} =${art.unchanged} ${art.bytes}B ${art.duration_ms}ms${art.error ? ` ERROR ${art.error}` : ''}`);
+          return json(res, 200, { remoteRunId: rr }), true;
+        }
+        // file batches for sync.write reach 8 MB (base64 ~11 MB)
+        const b = await readJson(req, 12 * 1024 * 1024);
+        const method = str(b.method, 'method', 40);
+        const allowed = ['sync.manifest', 'sync.write', 'sync.delete', 'runner.capabilities', 'fs.resolve'];
+        if (!allowed.includes(method)) throw new HttpError(403, `method not allowed: ${method}`);
+        if (method !== 'sync.manifest' && method !== 'fs.resolve' && method !== 'runner.capabilities' && target.policy === 'deny') throw new HttpError(403, '이 대상의 실행 정책이 "실행 금지"입니다');
+        if (!deps.runners?.online(id)) throw new HttpError(409, `대상 ${target.name}이(가) 오프라인입니다`);
+        const params = b.params && typeof b.params === 'object' ? b.params as Record<string, unknown> : {};
+        if (typeof params.root === 'string') params.root = normalizeCwd(params.root, target.allowed_roots ? JSON.parse(target.allowed_roots) as string[] : []);
+        try { return json(res, 200, { result: await deps.runners.call(id, method, params, method === 'sync.manifest' ? 180_000 : 120_000) }), true; }
+        catch (error) { throw new HttpError(error instanceof RpcError && error.code === -32010 ? 409 : 400, error instanceof Error ? error.message : 'rpc failed'); }
+      }
       const execMatch = rest.match(/^\/targets\/(\d+)\/(exec|runs)$/);
       if (execMatch) {
         const id = Number(execMatch[1]);

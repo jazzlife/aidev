@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { CircleStop, Keyboard, Play, RefreshCw, Square, TerminalSquare, Wifi, WifiOff } from 'lucide-react';
+import { CircleStop, FolderSync, Keyboard, Play, RefreshCw, Square, TerminalSquare, Wifi, WifiOff } from 'lucide-react';
 import { FitAddon } from '@xterm/addon-fit';
 import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
@@ -44,7 +44,7 @@ export function requestRunFocus(request: { remoteRunId: number; targetId: number
   for (const fn of focusListeners) fn();
 }
 
-export function RunOutputPane({ isVisible = true }: { isVisible?: boolean }) {
+export function RunOutputPane({ isVisible = true, project = null }: { isVisible?: boolean; project?: { path: string; name: string } | null }) {
   const [targets, setTargets] = useState<Target[]>([]);
   const [targetId, setTargetId] = useState<number | null>(null);
   const [online, setOnline] = useState(false);
@@ -212,6 +212,19 @@ export function RunOutputPane({ isVisible = true }: { isVisible?: boolean }) {
     } catch (error) { setNote((error as Error).message); } finally { setBusy(false); }
   };
 
+  const [syncing, setSyncing] = useState(false);
+  const syncProject = async () => {
+    if (!targetId || !project) return;
+    setSyncing(true); setNote(null);
+    try {
+      const r = await readApiJson<{ data?: { dest: string; uploaded: number; deleted: number; unchanged: number; bytes: number; ms: number; skipped: string[] } } & { dest?: string }>(await api.targets.sync(targetId, project.path));
+      const d = (r.data ?? r) as { dest: string; uploaded: number; deleted: number; unchanged: number; bytes: number; ms: number; skipped: string[] };
+      setCwd(d.dest);
+      setNote(`동기화 완료: ${project.name} → ${d.dest} · 올림 ${d.uploaded} · 지움 ${d.deleted} · 그대로 ${d.unchanged} · ${Math.round(d.bytes / 1024)}KB · ${(d.ms / 1000).toFixed(1)}초${d.skipped?.length ? ` · 큰 파일 제외 ${d.skipped.length}` : ''}`);
+      if (targetId) loadRuns(targetId);
+    } catch (error) { setNote((error as Error).message); } finally { setSyncing(false); }
+  };
+
   const current = selected ? streams.find((s) => s.remoteRunId === selected.remoteRunId) ?? null : null;
   const signal = (sig: 'INT' | 'KILL') => {
     if (!current?.running || socket.current?.readyState !== WebSocket.OPEN) return;
@@ -237,6 +250,9 @@ export function RunOutputPane({ isVisible = true }: { isVisible?: boolean }) {
         <datalist id="aidev-run-roots">{(target?.allowed_roots ?? []).map((r) => <option key={r} value={r} />)}</datalist>
         <input aria-label="명령" list="aidev-run-history" value={cmd} onChange={(e) => setCmd(e.target.value)} onKeyDown={(e) => { if (e.key === 'Enter' && !e.nativeEvent.isComposing) void run(); }} placeholder={target?.capabilities?.os === 'windows' ? '예: npm test' : '예: npm test   ·   npm run dev'} className="h-7 min-w-[10rem] flex-1 rounded border border-border bg-background px-1.5 font-mono" />
         <datalist id="aidev-run-history">{history.map((h) => <option key={h} value={h} />)}</datalist>
+        {project ? (
+          <button type="button" onClick={() => void syncProject()} disabled={!online || syncing || target?.policy === 'deny'} title={`${project.name}의 변경된 파일을 이 PC(${target?.allowed_roots[0] ?? '허용 폴더'}/${project.name})로 복사하고, 작업 폴더를 그곳으로 맞춥니다`} className="flex h-7 items-center gap-1 whitespace-nowrap rounded border border-border px-2 disabled:opacity-40"><FolderSync size={13} className={syncing ? 'animate-pulse' : ''} /> {syncing ? '동기화 중…' : '프로젝트 동기화'}</button>
+        ) : null}
         <label className="flex items-center gap-1 whitespace-nowrap text-muted-foreground" title="대화형 터미널(pty): 입력·색상·크기 조절. 끄면 출력만 수집합니다.">
           <input type="checkbox" checked={pty} onChange={(e) => setPty(e.target.checked)} /><Keyboard size={13} /> 대화형
         </label>

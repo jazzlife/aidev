@@ -64,7 +64,7 @@ function getMcpApiUrl(): string {
   return `http://127.0.0.1:${port}/api/aidev-tools-mcp`;
 }
 
-async function callGateway(method: 'GET' | 'POST' | 'PATCH', apiPath: string, body?: unknown, timeoutMs = GATEWAY_TIMEOUT_MS): Promise<GatewayResponse> {
+export async function callGateway(method: 'GET' | 'POST' | 'PATCH', apiPath: string, body?: unknown, timeoutMs = GATEWAY_TIMEOUT_MS): Promise<GatewayResponse> {
   if (!runtimeName) {
     throw new Error('aidev platform is not available in this runtime (AIDEV_RUNTIME unset).');
   }
@@ -91,10 +91,10 @@ export type RemoteExecResult = {
   target: string; cmd: string; status: string; message?: string; remoteRunId?: number; running?: boolean; exitCode?: number | null; signal?: string | null;
   durationMs?: number | null; output?: string; approvedBy?: string; risk?: number; reasons?: string[];
 };
-type TargetInfo = { id: number; name: string; online: boolean; platform: string | null; policy: string };
+export type TargetInfo = { id: number; name: string; online: boolean; platform: string | null; policy: string; allowed_roots?: string[] };
 
 /** A target by id or name (case-insensitive); else the routed target; else the only online one. */
-async function resolveTarget(requested: string | number | undefined, routed: number | null): Promise<TargetInfo> {
+export async function resolveTarget(requested: string | number | undefined, routed: number | null): Promise<TargetInfo> {
   const list = ((await callGateway('GET', '/targets')).targets ?? []) as TargetInfo[];
   const names = list.map((t) => `${t.name}${t.online ? '' : ' (offline)'}`).join(', ') || '없음';
   if (requested !== undefined && requested !== null && String(requested).trim()) {
@@ -277,7 +277,7 @@ export function composeAgentInstructions(aidev: AidevTurnOptions): string {
     parts.push(`## 원격 실행 대상\n이 작업의 실행·테스트·디버깅은 사용자의 원격 PC \`${aidev.target.name}\` (${aidev.target.platform ?? 'unknown'}; tags ${aidev.target.tags.join(', ') || 'none'})에서 remote_* 도구로 수행한다.${aidev.scope.remoteAction && aidev.scope.remoteAction !== 'none' ? ` 요청된 원격 작업: ${aidev.scope.remoteAction}.` : ''}\n대상 capabilities: ${capabilities}`);
   }
   parts.push('## 판단 도구\n여러 후보(수정안·파일·접근법·위험도) 중 골라야 하면 추측 대신 `aidev_decide` 도구(kind agent.pick / agent.score / agent.yesno)로 판정한다.');
-  parts.push('## 사용자 PC에서 실행\n사용자가 자기 PC·Mac·원격 머신에서 실행·빌드·테스트·확인을 요청하면 이 작업공간의 셸이 아니라 `remote_targets`로 대상을 확인하고 `remote_exec`로 실행한다(허용 폴더 안에서, 결과의 종료 코드·출력을 근거로 판단). 테스트가 실패하면 원인을 고치고 다시 실행해 통과를 확인한다. 개발 서버처럼 계속 도는 명령은 `background:true` 후 `remote_logs`로 확인하고, 끝나면 `remote_stop`. 파일 삭제·sudo·설치·강제 push 같은 명령은 사용자 승인이 필요하므로 꼭 필요할 때만 쓰고, 거부되면 같은 명령을 반복하지 않는다.');
+  parts.push('## 사용자 PC에서 실행\n사용자가 자기 PC·Mac·원격 머신에서 실행·빌드·테스트·확인을 요청하면 이 작업공간의 셸이 아니라 `remote_targets`로 대상을 확인하고 `remote_exec`로 실행한다(허용 폴더 안에서, 결과의 종료 코드·출력을 근거로 판단). 이 작업공간의 프로젝트를 대상에서 돌려야 하면 먼저 `remote_sync`로 복사하고(돌려준 `dest`를 cwd로), 여기서 파일을 고친 뒤에는 다시 `remote_sync` 후 실행한다. 의존성은 복사되지 않으므로 대상에서 설치(npm ci 등)한다. 테스트가 실패하면 원인을 고치고 다시 실행해 통과를 확인한다. 개발 서버처럼 계속 도는 명령은 `background:true` 후 `remote_logs`로 확인하고, 끝나면 `remote_stop`. 파일 삭제·sudo·설치·강제 push 같은 명령은 사용자 승인이 필요하므로 꼭 필요할 때만 쓰고, 거부되면 같은 명령을 반복하지 않는다.');
   return parts.join('\n\n');
 }
 

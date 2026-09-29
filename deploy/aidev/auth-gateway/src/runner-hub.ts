@@ -34,7 +34,7 @@ export const hashToken = (token: string) => crypto.createHash('sha256').update(t
 const PING_MS = 20_000;
 const SILENCE_MS = 45_000;
 const CALL_TIMEOUT_MS = 30_000;
-const MAX_FRAME = 1024 * 1024;   // JSON-RPC text frames
+const MAX_FRAME = 16 * 1024 * 1024;   // JSON-RPC text frames (a sync manifest of a large project is several MB)
 const RING_BYTES = 256 * 1024;
 const LOG_MAX = 20 * 1024 * 1024;
 const KEEP_FINISHED = 20;

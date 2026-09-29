@@ -162,7 +162,7 @@ push.startReminders();
 // Remote PC runners (stage F): outbound WebSockets from `aidev-runner` on users' machines.
 // Command output logs (remote_runs) live next to the database unless REMOTE_LOG_DIR says otherwise.
 const remoteLogDir = process.env.REMOTE_LOG_DIR ?? path.join(path.dirname(process.env.DATABASE_PATH ?? '/data/auth.db'), 'remote-logs');
-const runners: RunnerHub = createRunnerHub(store, new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 }), { logDir: remoteLogDir });
+const runners: RunnerHub = createRunnerHub(store, new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 * 1024 }), { logDir: remoteLogDir });
 runners.resetStatuses();
 // Agents' remote commands pass the gate (risk, policy, approvals); remote test results feed the chat run's outcome.
 const gate = createRemoteGate({ store, laya, runners, push });

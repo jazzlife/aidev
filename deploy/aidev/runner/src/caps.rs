@@ -106,7 +106,7 @@ pub async fn collect(cfg: &crate::config::Config) -> Value {
         "devices": { "adb": adb, "sdb": sdb },
         "allowed_roots": cfg.allowed_roots.iter().map(|r| r.display().to_string()).collect::<Vec<_>>(),
         "screen": cfg.screen_consent,
-        "features": ["ping", "exec"],
+        "features": ["ping", "exec", "sync"],
         "limits": { "exec_running": crate::exec::MAX_RUNNING },
     })
 }

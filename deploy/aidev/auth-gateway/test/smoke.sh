@@ -180,6 +180,15 @@ if [ -x "$RUNNER_BIN" ]; then
   r=$(rpost "/targets/$TID/exec" '{"cmd":"touch second.txt"}'); check "$r" 'j.status==="started" && j.stream.by==="auto"' "policy auto: moderate command runs without asking"
   r=$(rpost "/targets/$TID/exec" '{"cmd":"git push --force origin main"}'); check "$r" 'j.status==="pending"' "policy auto: destructive command still asks"
   post "$A" "/api/aidev/targets/$TID" '{"policy":"deny"}' PATCH >/dev/null; r=$(rpost "/targets/$TID/exec" '{"cmd":"ls"}'); check "$r" 'j.status==="denied" && /실행 금지/.test(j.reason)' "policy deny: agent refused"; post "$A" "/api/aidev/targets/$TID" '{"policy":"ask"}' PATCH >/dev/null
+  # F-04: sync through the gateway RPC (runtime session): manifest → write → delete, report, policy
+  r=$(rpost "/targets/$TID/rpc" '{"method":"sync.write","params":{"root":"~/aidev-work/proj","files":[{"path":"src/a.txt","b64":"aGVsbG8="},{"path":"b.txt","b64":"Yg=="}]}}'); check "$r" 'j.result.written===2' "sync.write through the gateway (~ root resolved)"
+  r=$(rpost "/targets/$TID/rpc" '{"method":"sync.manifest","params":{"root":"~/aidev-work/proj"}}'); check "$r" 'j.result.exists && j.result.files.length===2 && j.result.files.every(f=>f.synced && f.sha256.length===64)' "sync.manifest lists synced files with sha256"
+  r=$(rpost "/targets/$TID/rpc" '{"method":"sync.delete","params":{"root":"~/aidev-work/proj","paths":["b.txt"]}}'); check "$r" 'j.result.deleted===1' "sync.delete removes a synced file"
+  r=$(rpost "/targets/$TID/rpc" '{"method":"exec.start","params":{"cmd":"id"}}'); check "$r" '/not allowed/.test(j.error)' "rpc endpoint only allows sync/fs methods"
+  r=$(rpost "/targets/$TID/rpc" '{"method":"sync.manifest","params":{"root":"~/aidev-work"}}'); check "$r" '/하위 폴더/.test(j.error)' "the allowed root itself is not a sync destination"
+  r=$(rpost "/targets/$TID/sync-report" '{"dest":"/x/proj","project":"proj","uploaded":2,"deleted":1,"unchanged":0,"bytes":6,"ms":12}'); check "$r" 'j.remoteRunId>0' "sync report recorded as a remote run"
+  r=$(get "$A" "/api/aidev/remote-runs/$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).remoteRunId')"); check "$r" 'j.run.kind==="sync" && j.run.artifacts.uploaded===2 && j.run.exit_code===0' "sync run visible to the user"
+  post "$A" "/api/aidev/targets/$TID" '{"policy":"deny"}' PATCH >/dev/null; r=$(rpost "/targets/$TID/rpc" '{"method":"sync.write","params":{"root":"~/aidev-work/proj","files":[]}}'); check "$r" '/실행 금지/.test(j.error)' "policy deny blocks sync writes"; post "$A" "/api/aidev/targets/$TID" '{"policy":"ask"}' PATCH >/dev/null
   # a command outlives a gateway restart: the runner keeps it, the new gateway adopts it by tag and catches up the output
   r=$(post "$A" "/api/aidev/targets/$TID/exec" '{"cmd":"echo before; sleep 3; echo after-restart; exit 5"}'); RR2=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).stream?.remoteRunId')
   sleep 0.5; kill "$GWPID"; sleep 0.5

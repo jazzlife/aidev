@@ -195,7 +195,11 @@ pub async fn handle(cfg: &Config, hub: &ExecHub, text: &str) -> Option<Value> {
     // notifications (no id) are not answered
     let id = id?;
     let params = msg.get("params").cloned().unwrap_or(Value::Null);
-    if let Some(result) = hub.rpc(cfg, method, &params).await {
+    let routed = match hub.rpc(cfg, method, &params).await {
+        Some(r) => Some(r),
+        None => crate::sync::rpc(cfg, method, &params).await,
+    };
+    if let Some(result) = routed {
         return Some(match result {
             Ok(value) => json!({ "jsonrpc": "2.0", "id": id, "result": value }),
             Err((code, message)) => json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } }),

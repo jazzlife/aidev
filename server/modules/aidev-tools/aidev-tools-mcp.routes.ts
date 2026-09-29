@@ -1,6 +1,7 @@
 import express from 'express';
 
 import { aidevToolsService } from '@/modules/aidev-tools/aidev-tools.service.js';
+import { remoteSync } from '@/modules/aidev-tools/remote-sync.service.js';
 
 /**
  * Local HTTP endpoint used only by the aidev-tools stdio MCP process
@@ -38,7 +39,7 @@ const asStringMap = (value: unknown): Record<string, string> | undefined => {
 const readTurn = (input: Record<string, unknown>) => {
   const turn = asRecord(input._turn);
   const int = (value: unknown) => (typeof value === 'number' && Number.isInteger(value) ? value : null);
-  return { runId: int(turn.runId), targetId: int(turn.targetId), agent: typeof turn.agent === 'string' ? turn.agent.slice(0, 41) : null };
+  return { runId: int(turn.runId), targetId: int(turn.targetId), agent: typeof turn.agent === 'string' ? turn.agent.slice(0, 41) : null, cwd: typeof turn.cwd === 'string' ? turn.cwd.slice(0, 1000) : null };
 };
 
 router.post('/tools/:toolName', async (req, res) => {
@@ -74,6 +75,14 @@ router.post('/tools/:toolName', async (req, res) => {
         }, readTurn(input));
         break;
       }
+      case 'remote_sync':
+        result = await remoteSync({
+          target: typeof input.target === 'string' || typeof input.target === 'number' ? input.target : undefined,
+          project: typeof input.project === 'string' ? input.project : undefined,
+          dest: typeof input.dest === 'string' ? input.dest : undefined,
+          dryRun: input.dryRun === true,
+        }, readTurn(input));
+        break;
       case 'remote_logs': {
         const remoteRunId = Number(input.remoteRunId);
         if (!Number.isInteger(remoteRunId)) throw new Error('remoteRunId must be an integer.');

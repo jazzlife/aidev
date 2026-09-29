@@ -5,12 +5,29 @@ import { lessonCuratorService } from '@/modules/aidev-tools/lesson-curator.servi
 import { claudeLoginService } from '@/modules/aidev-tools/claude-login.service.js';
 import { handoffService } from '@/modules/aidev-tools/handoff.service.js';
 import { knowledgeCheckService } from '@/modules/aidev-tools/knowledge-check.service.js';
+import { remoteSync } from '@/modules/aidev-tools/remote-sync.service.js';
 
 /**
  * Gateway → runtime calls made on behalf of the user (mounted at /api/aidev-tools behind
  * authenticateToken). The gateway reaches these through the same proxy path as the browser.
  */
 const router = express.Router();
+
+/** Workbench "프로젝트 동기화" (F-04): copy a project of this runtime to one of the user's machines. */
+router.post('/remote-sync', asyncHandler(async (req: Request, res: Response) => {
+  const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
+  try {
+    const result = await remoteSync({
+      target: typeof body.targetId === 'number' || typeof body.targetId === 'string' ? body.targetId : undefined,
+      project: typeof body.projectPath === 'string' ? body.projectPath : undefined,
+      dest: typeof body.dest === 'string' ? body.dest : undefined,
+      dryRun: body.dryRun === true,
+    });
+    res.json(createApiSuccessResponse(result));
+  } catch (error) {
+    res.status(400).json({ success: false, error: error instanceof Error ? error.message : 'sync failed' });
+  }
+}));
 
 router.post('/curate', asyncHandler(async (req: Request, res: Response) => {
   const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;

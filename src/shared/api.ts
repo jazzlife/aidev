@@ -560,6 +560,8 @@ export const api = {
     /** F-03: run a command on the target (the user's own hand; agents use remote_exec with approval). */
     exec: (targetId: number, input: { cmd: string; cwd?: string; pty?: boolean; cols?: number; rows?: number; timeoutSec?: number }) => post(`/api/aidev/targets/${targetId}/exec`, input),
     runs: (targetId: number, limit = 30) => get(`/api/aidev/targets/${targetId}/runs?limit=${limit}`),
+    /** F-04: copy a project of this runtime to the target (only changed files; runtime route). */
+    sync: (targetId: number, projectPath: string, opts: { dest?: string; dryRun?: boolean } = {}) => post('/api/aidev-tools/remote-sync', { targetId, projectPath, ...opts }),
     /** Remote runs across all targets (mobile result cards). */
     remoteRuns: (limit = 30) => get(`/api/aidev/remote-runs?limit=${limit}`),
     remoteRun: (remoteRunId: number) => get(`/api/aidev/remote-runs/${remoteRunId}`),

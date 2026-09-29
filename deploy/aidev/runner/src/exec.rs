@@ -663,7 +663,7 @@ mod tests {
         let (tx, mut rx) = mpsc::channel(256);
         hub.attach(tx);
         std::env::set_var("AIDEV_SECRET_TEST", "leak");
-        let r = hub.rpc(&cfg(&dir), "exec.start", &json!({ "cmd": "echo hi-$FOO; echo err 1>&2; pwd; echo [$AIDEV_SECRET_TEST]; exit 7", "env": { "FOO": "bar" }, "streamId": 5, "tag": "rr:42" })).await.unwrap().unwrap();
+        let r = hub.rpc(&cfg(&dir), "exec.start", &json!({ "cmd": "echo hi-$FOO; echo err 1>&2; pwd; echo \"[$AIDEV_SECRET_TEST]\"; exit 7", "env": { "FOO": "bar" }, "streamId": 5, "tag": "rr:42" })).await.unwrap().unwrap();
         assert_eq!(r["streamId"], 5);
         let (out, exit) = collect(&mut rx, 5).await;
         assert!(out.contains("hi-bar"), "{out}");
