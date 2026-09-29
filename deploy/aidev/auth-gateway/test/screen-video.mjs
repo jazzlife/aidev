@@ -1,12 +1,15 @@
-// Live screen as video + remote control (F-07b), against a real X display (Xvfb) captured by ffmpeg x11grab:
-//   node test/screen-video.mjs <gateway> <token> <targetId> <display :99> <outDir>
-// → JSON: codec, frames, first frame is an H.264 keyframe with SPS, the access units decode with ffmpeg,
-//   a late viewer starts at a keyframe, control on → the mouse moves on the display (xdotool), control off.
+// A program window as live video + remote control (F-07b/F-07c), against a real X display (Xvfb): the runner
+// captures the window itself and encodes H.264 inside (OpenH264).
+//   node test/screen-video.mjs <gateway> <token> <targetId> <display :99> <outDir> <win "id[,x,y,w,h]"> [refuse|close]
+// → JSON: codec, frames, first frame is an H.264 keyframe with SPS, the access units decode (ffprobe), a late
+//   viewer starts at a keyframe, control on → the pointer lands at the same spot of the window (xdotool).
+//   refuse: control without the owner's consent.  close: KILL_PID's window closes → the stream ends with an error.
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import { WebSocket } from 'ws';
-const [gw, token, tid, display, outDir, only] = process.argv.slice(2);
-const url = (q) => `${gw.replace(/^http/, 'ws')}/api/aidev/targets/${tid}/screen?token=${token}&${q}`;
+const [gw, token, tid, display, outDir, winArg, only] = process.argv.slice(2);
+const [wid, wx, wy, ww, wh] = String(winArg).split(',').map(Number);
+const url = (q) => `${gw.replace(/^http/, 'ws')}/api/aidev/targets/${tid}/screen?token=${token}&window=${wid}&${q}`;
 const out = { frames: 0, keys: 0 };
 const finish = (extra = {}) => { console.log(JSON.stringify({ ...out, ...extra })); process.exit(0); };
 setTimeout(() => finish({ timeout: true }), 30000);
@@ -20,13 +23,20 @@ if (only === 'refuse') {   // no consent: asking for control must be refused, th
     if (m.type === 'error') finish({ error: m.message });
     if (m.type === 'control') finish({ controlOn: m.on });
   });
+} else if (only === 'close') {   // the program exits while watched
+  const w = new WebSocket(url('mode=video&fps=10&maxWidth=640&bitrate=800'), { headers: { origin: gw } });
+  w.on('message', (d, bin) => {
+    if (bin) { out.frames++; if (out.frames === 3) process.kill(Number(process.env.KILL_PID)); return; }
+    const m = JSON.parse(String(d));
+    if (m.type === 'error') finish({ error: m.message });
+  });
 } else {
 const a = new WebSocket(url('mode=video&fps=15&maxWidth=640&bitrate=1500'), { headers: { origin: gw } });
 let lateStarted = false; let controlled = false;
 a.on('message', (d, bin) => {
   if (!bin) {
     const m = JSON.parse(String(d));
-    if (m.type === 'format') out.codec = m.codec;
+    if (m.type === 'format') { out.codec = m.codec; out.width = m.width; out.height = m.height; }
     if (m.type === 'started') out.controlAvailable = m.control;
     if (m.type === 'error') out.error = m.message;
     if (m.type === 'control') {
@@ -36,12 +46,15 @@ a.on('message', (d, bin) => {
         a.send(JSON.stringify({ op: 'input', ev: { t: 'button', b: 'left', down: true, x: 0.25, y: 0.5 } }));
         a.send(JSON.stringify({ op: 'input', ev: { t: 'button', b: 'left', down: false, x: 0.25, y: 0.5 } }));
         a.send(JSON.stringify({ op: 'input', ev: { t: 'key', key: 'a', code: 'KeyA', mods: { ctrl: true } } }));
+        // a browser cannot aim at another window: its `win` is replaced by the gateway with the watched one
+        a.send(JSON.stringify({ op: 'input', ev: { t: 'move', x: 0.25, y: 0.5, win: 1 } }));
         setTimeout(() => {
           const loc = execFileSync('xdotool', ['getmouselocation'], { env: { ...process.env, DISPLAY: display } }).toString();
           out.mouse = loc.trim();
-          const size = execFileSync('xdotool', ['getdisplaygeometry'], { env: { ...process.env, DISPLAY: display } }).toString().trim().split(' ').map(Number);
           const x = Number(/x:(\d+)/.exec(loc)?.[1]); const y = Number(/y:(\d+)/.exec(loc)?.[1]);
-          out.mouseAtQuarter = Math.abs(x - Math.round(0.25 * (size[0] - 1))) <= 1 && Math.abs(y - Math.round(0.5 * (size[1] - 1))) <= 1;
+          const ex = wx + Math.round(0.25 * (ww - 1)); const ey = wy + Math.round(0.5 * (wh - 1));
+          out.expected = `x:${ex} y:${ey}`;
+          out.mouseInWindow = Math.abs(x - ex) <= 1 && Math.abs(y - ey) <= 1;
           a.send(JSON.stringify({ op: 'control', on: false }));
           setTimeout(() => finish(), 500);
         }, 700);

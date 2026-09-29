@@ -3,7 +3,7 @@
 import { execFileSync } from 'node:child_process';
 import { WebSocket } from 'ws';
 const [gw, token, tid, src] = process.argv.slice(2);
-const url = `${gw.replace(/^http/, 'ws')}/api/aidev/targets/${tid}/screen?token=${token}&mode=jpeg&fps=10&maxWidth=320`;
+const url = `${gw.replace(/^http/, 'ws')}/api/aidev/targets/${tid}/screen?token=${token}&window=1&mode=jpeg&fps=10&maxWidth=320`;
 const open = () => new WebSocket(url, { headers: { origin: gw } });
 const out = { frames1: 0, frames2: 0 };
 const jpeg = (d) => d[0] === 3 && d[2] === 0xff && d[3] === 0xd8;   // [kind 3 = JPEG][flags][JPEG]

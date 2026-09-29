@@ -1,17 +1,19 @@
-// The workbench/mobile screen core in a real browser (F-07b): Chromium + WebCodecs decoding the runner's
-// VP8 stream (this Chromium has no H.264; the production path is the same code with H.264), then remote
-// control with real mouse and keyboard events on the canvas → the X display's pointer moves.
-//   node test/screen-browser.mjs <gateway> <token> <targetId> <display :99> <staticDir>
+// The workbench/mobile screen core in a real browser (F-07b/F-07c): one program window drawn on a canvas
+// (JPEG frames — this Chromium build has no H.264 decoder; the H.264 bitstream is checked with ffprobe in
+// screen-video.mjs), then remote control with real mouse and keyboard events on the canvas → the X
+// display's pointer lands on the same spot of that window.
+//   node test/screen-browser.mjs <gateway> <token> <targetId> <display :99> <staticDir> <win "id,x,y,w,h">
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
 import path from 'node:path';
-const [gw, token, tid, display, staticDir] = process.argv.slice(2);
+const [gw, token, tid, display, staticDir, winArg] = process.argv.slice(2);
+const [wid, wx, wy, ww, wh] = String(winArg).split(',').map(Number);
 const repo = path.resolve(new URL('.', import.meta.url).pathname, '../../../..');
 const entry = path.join(staticDir, 'screen-test-entry.ts');
 fs.writeFileSync(entry, `import { RemoteScreenSession, screenSocketUrl, bindRemoteInput } from '@/modules/remote-screen';
 const canvas = document.querySelector('canvas'); const keys = document.querySelector('textarea');
 window.__state = null;
-const s = new RemoteScreenSession((o) => screenSocketUrl(${Number(tid)}, o), canvas, { mode: 'video', display: 1, fps: 15, maxWidth: 640, bitrate: 1500, codec: 'vp8' }, (st) => { window.__state = st; });
+const s = new RemoteScreenSession((o) => screenSocketUrl(${Number(tid)}, o), canvas, { mode: 'jpeg', window: ${wid}, display: 1, fps: 10, maxWidth: 640, bitrate: 0 }, (st) => { window.__state = st; });
 window.__session = s;
 window.__bind = () => bindRemoteInput(canvas, keys, (ev) => s.input(ev));`);
 execFileSync(path.join(repo, 'node_modules/.bin/esbuild'), [entry, '--bundle', '--format=esm', `--alias:@=${path.join(repo, 'src')}`, `--outfile=${path.join(staticDir, 'screen-test.js')}`, '--log-level=error']);
@@ -40,10 +42,9 @@ try {
   await page.keyboard.press('Control+a');
   await page.waitForTimeout(600);
   const loc = execFileSync('xdotool', ['getmouselocation'], { env: { ...process.env, DISPLAY: display } }).toString();
-  const size = execFileSync('xdotool', ['getdisplaygeometry'], { env: { ...process.env, DISPLAY: display } }).toString().trim().split(' ').map(Number);
   const x = Number(/x:(\d+)/.exec(loc)?.[1]); const y = Number(/y:(\d+)/.exec(loc)?.[1]);
   out.mouse = loc.trim();
-  out.pointerFollows = Math.abs(x - 0.75 * (size[0] - 1)) <= 3 && Math.abs(y - 0.25 * (size[1] - 1)) <= 3;
+  out.pointerFollows = Math.abs(x - (wx + 0.75 * (ww - 1))) <= 3 && Math.abs(y - (wy + 0.25 * (wh - 1))) <= 3;
   out.error = await page.evaluate(() => window.__state.error);
   await page.evaluate(() => window.__session.close());
 } catch (e) { out.error = String(e).slice(0, 300); }

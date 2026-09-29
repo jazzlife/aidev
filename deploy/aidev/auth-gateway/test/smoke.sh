@@ -210,35 +210,49 @@ if [ -x "$RUNNER_BIN" ]; then
   SRC="$T/screen.png"; node test/make-png.mjs "$SRC" 10
   HOME="$RH" AIDEV_SCREEN_CMD="cp $SRC {out}" "$RUNNER_BIN" start > "$T/runner-screen.log" 2>&1 & RPID=$!
   for i in $(seq 1 40); do r=$(get "$A" /api/aidev/targets); echo "$r" | node -e "const j=JSON.parse(require('fs').readFileSync(0));process.exit(j.targets.find(t=>t.id===$TID)?.online && j.targets.find(t=>t.id===$TID).capabilities.screen ? 0 : 1)" && break; sleep 0.25; done
-  r=$(get "$A" "/api/aidev/targets/$TID/screens"); check "$r" 'j.displays.length>=1 && j.displays[0].id===1' "displays listed"
+  r=$(get "$A" "/api/aidev/targets/$TID/windows"); check "$r" 'j.perWindow && j.windows.length>=1 && j.windows[0].id===1' "program windows listed (runner 0.7: per window)"
   r=$(post "$A" "/api/aidev/targets/$TID/screenshot" '{"maxWidth":320}'); check "$r" 'j.mime==="image/jpeg" && j.width===320 && j.height===180 && j.image.length>100 && j.remoteRunId>0' "screenshot scaled to 320x180 JPEG, recorded as a run"
   curl -s "$G/api/aidev/targets/$TID/screenshot.jpg?maxWidth=400" -H "authorization: Bearer $A" -o "$T/shot.jpg"; n=$(head -c 2 "$T/shot.jpg" | od -An -tx1 | tr -d ' '); check "{\"magic\":\"$n\"}" 'j.magic==="ffd8"' "screenshot.jpg serves image bytes (for <img>)"
   r=$(get "$A" "/api/aidev/remote-runs/$(post "$A" "/api/aidev/targets/$TID/screenshot" '{}' | node -pe 'JSON.parse(require("fs").readFileSync(0)).remoteRunId')"); check "$r" 'j.run.kind==="screenshot" && j.run.approved_by==="user" && j.run.artifacts.width>0' "screen captures leave a trace (kind screenshot, by user)"
   r=$(node test/screen-client.mjs "$G" "$A" "$TID" "$SRC" || true); check "$r" 'j.started && j.frames1>=2 && j.lateViewerGotLastFrame && j.changedFrame && !j.error' "live screen: shared stream, last frame for a late viewer, new frame on change ($(echo "$r" | cut -c1-120))"
   r=$(curl -s -o /dev/null -w '%{http_code}' -H 'connection: upgrade' -H 'upgrade: websocket' -H 'sec-websocket-version: 13' -H 'sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==' -H "origin: http://evil.example" "$G/api/aidev/targets/$TID/screen?token=$A"); check "{\"code\":$r}" 'j.code===401' "screen socket from another origin refused"
-  # F-07b: live video (ffmpeg x11grab + x264 on a real X display) and remote control (enigo → X11)
-  if command -v Xvfb >/dev/null && command -v ffmpeg >/dev/null && command -v xdotool >/dev/null; then
+  # F-07b/F-07c: a real program window on an X display (Xvfb) — the runner lists and captures it itself (x11rb),
+  # encodes H.264 inside (OpenH264; nothing to install on the PC), and replays control relative to the window.
+  # ffprobe only checks the bitstream here; ImageMagick `animate` is the program (a window that keeps changing).
+  if command -v Xvfb >/dev/null && command -v animate >/dev/null && command -v xdotool >/dev/null && command -v ffprobe >/dev/null; then
     Xvfb :99 -screen 0 1280x720x24 >/dev/null 2>&1 & XPID=$!; sleep 0.8
-    # a picture on the desktop so the stream is not all black (ImageMagick reads PPM without delegates)
-    node -e "const w=1280,h=720,b=Buffer.alloc(w*h*3);for(let i=0;i<w*h;i++){b[i*3]=i%256;b[i*3+1]=(i>>8)%256;b[i*3+2]=140}require('fs').writeFileSync(process.argv[1],Buffer.concat([Buffer.from('P6\\n'+w+' '+h+'\\n255\\n'),b]))" "$T/desk.ppm"
-    { command -v display >/dev/null && DISPLAY=:99 display -window root "$T/desk.ppm" 2>/dev/null; } || true
-    r=$(node test/screen-video.mjs "$G" "$A" "$TID" :99 "$T" refuse || true)
+    node -e "const [dir]=process.argv.slice(1),w=640,h=360;for(let f=0;f<8;f++){const b=Buffer.alloc(w*h*3);for(let i=0;i<w*h;i++){const x=i%w,y=(i/w)|0;const bar=Math.abs(x-f*80)<40;b[i*3]=bar?250:x%256;b[i*3+1]=bar?250:y%256;b[i*3+2]=140}require('fs').writeFileSync(dir+'/anim-'+f+'.ppm',Buffer.concat([Buffer.from('P6\\n'+w+' '+h+'\\n255\\n'),b]))}" "$T"
+    DISPLAY=:99 animate -geometry +200+100 -delay 4 "$T"/anim-*.ppm >/dev/null 2>&1 & APID=$!; sleep 1.5
+    r=$(node test/screen-video.mjs "$G" "$A" "$TID" :99 "$T" 1 refuse || true)
     check "$r" 'j.controlAvailable===false && /허용하지 않았습니다/.test(j.error||"")' "control without the owner's consent refused"
     kill $RPID 2>/dev/null; wait $RPID 2>/dev/null || true
     HOME="$RH" "$RUNNER_BIN" consent control on >/dev/null
-    HOME="$RH" DISPLAY=:99 AIDEV_SCREEN_CMD="cp $SRC {out}" "$RUNNER_BIN" start > "$T/runner-video.log" 2>&1 & RPID=$!
+    HOME="$RH" DISPLAY=:99 "$RUNNER_BIN" start > "$T/runner-video.log" 2>&1 & RPID=$!
     for i in $(seq 1 40); do r=$(get "$A" /api/aidev/targets); echo "$r" | node -e "const j=JSON.parse(require('fs').readFileSync(0));const t=j.targets.find(t=>t.id===$TID);process.exit(t?.online && t.capabilities.control ? 0 : 1)" && break; sleep 0.25; done
-    r=$(node test/screen-video.mjs "$G" "$A" "$TID" :99 "$T" || true)
-    check "$r" 'j.codec==="h264" && j.firstKind===1 && j.firstKey && j.firstNal===7 && j.frames>=45 && j.decoded>=40' "live video: H.264 from a real display, starts at a keyframe with SPS, decodes with ffmpeg ($(echo "$r" | node -pe 'const j=JSON.parse(require("fs").readFileSync(0)); j.frames+" AUs, decoded "+j.decoded+", keys "+j.keys'))"
+    r=$(get "$A" "/api/aidev/targets/$TID/windows")
+    WIN=$(echo "$r" | node -pe 'const w=(JSON.parse(require("fs").readFileSync(0)).windows||[]).find(w=>/animate|imagemagick/i.test(w.app+" "+w.title)); w ? [w.id,w.x,w.y,w.width,w.height].join(",") : ""')
+    check "{\"win\":\"$WIN\"}" '/^\d+,20[0-4],10[0-4],640,360$/.test(j.win)' "the program's window is listed with its content bounds (inside its X border) ($WIN; $(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).windows.map(w=>w.app+":"+w.title).join(" | ").slice(0,120)'))"
+    WID=${WIN%%,*}
+    r=$(post "$A" "/api/aidev/targets/$TID/screenshot" '{"query":"animate","maxWidth":640}'); check "$r" 'j.width===640 && j.height===360 && j.window && /animate|imagemagick/i.test(j.window.app+j.window.title) && j.image.length>1000' "screenshot of one program window found by name (query)"
+    r=$(get "$A" "/api/aidev/targets/$TID/runs?limit=5"); check "$r" 'j.runs.some(x=>x.kind==="screenshot" && /window #\d+/.test(x.cmd))' "the capture's trace names the window"
+    r=$(node test/screen-video.mjs "$G" "$A" "$TID" :99 "$T" "$WIN" || true)
+    check "$r" 'j.codec==="h264" && j.firstKind===1 && j.firstKey && j.firstNal===7 && j.frames>=45 && j.decoded>=40 && j.width===640' "live video of the window: H.264 made inside the runner, starts at a keyframe with SPS, the bitstream decodes ($(echo "$r" | node -pe 'const j=JSON.parse(require("fs").readFileSync(0)); j.frames+" AUs, decoded "+j.decoded+", keys "+j.keys+", "+j.width+"x"+j.height'))"
     check "$r" 'j.lateFirstKey===true' "late viewer starts at a keyframe (GOP replay)"
-    check "$r" 'j.controlAvailable===true && j.controlOn===false && j.mouseAtQuarter===true && !j.error' "remote control: the mouse moves on the PC's display ($(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).mouse'))"
-    r=$(get "$A" "/api/aidev/targets/$TID/runs?limit=20"); check "$r" 'j.runs.some(x=>x.kind==="control" && x.approved_by==="user" && x.artifacts && x.artifacts.events>=4)' "control session recorded (kind control, events counted)"
+    check "$r" 'j.controlAvailable===true && j.controlOn===false && j.mouseInWindow===true && !j.error' "remote control: the pointer lands at the same spot of the window on the PC ($(echo "$r" | node -pe 'const j=JSON.parse(require("fs").readFileSync(0)); j.mouse+" expected "+j.expected'))"
+    r=$(get "$A" "/api/aidev/targets/$TID/runs?limit=20"); check "$r" 'j.runs.some(x=>x.kind==="control" && x.approved_by==="user" && /window #/.test(x.cmd) && x.artifacts && x.artifacts.events>=4)' "control session recorded (kind control, which window, events counted)"
     PWDIR="$(npm root -g)/playwright"; if [ -d "$PWDIR" ]; then
-      r=$(PLAYWRIGHT_DIR="$PWDIR" node test/screen-browser.mjs "$G" "$A" "$TID" :99 "$T/dist" || true)
-      check "$r" 'j.codec==="vp8" && j.width===640 && j.litSamples>50 && j.controlAvailable && j.pointerFollows && !j.error' "browser: WebCodecs decodes the live stream on a canvas, real clicks on it move the PC's pointer ($(echo "$r" | cut -c1-160))"
+      r=$(PLAYWRIGHT_DIR="$PWDIR" node test/screen-browser.mjs "$G" "$A" "$TID" :99 "$T/dist" "$WIN" || true)
+      check "$r" 'j.codec==="jpeg" && j.width===640 && j.litSamples>50 && j.controlAvailable && j.pointerFollows && !j.error' "browser: the screen core draws the window on a canvas, real clicks on it land on the window on the PC ($(echo "$r" | cut -c1-160))"
     fi
+    r=$(KILL_PID=$APID node test/screen-video.mjs "$G" "$A" "$TID" :99 "$T" "$WIN" close || true)
+    check "$r" 'j.frames>=1 && /창/.test(j.error||"")' "closing the program ends its stream with a message ($(echo "$r" | cut -c1-120))"
+    r=$(get "$A" "/api/aidev/targets/$TID/windows"); check "$r" '!j.windows.some(w=>w.id==='"${WID:-0}"')' "the closed window leaves the list"
     kill $XPID 2>/dev/null
-  else echo "SKIP video/control checks (needs Xvfb, ffmpeg, xdotool)"; fi
+    # back to the stand-in window for the checks below
+    kill $RPID 2>/dev/null; wait $RPID 2>/dev/null || true
+    HOME="$RH" AIDEV_SCREEN_CMD="cp $SRC {out}" "$RUNNER_BIN" start > "$T/runner-screen2.log" 2>&1 & RPID=$!
+    for i in $(seq 1 40); do r=$(get "$A" /api/aidev/targets); echo "$r" | node -e "const j=JSON.parse(require('fs').readFileSync(0));process.exit(j.targets.find(t=>t.id===$TID)?.online ? 0 : 1)" && break; sleep 0.25; done
+  else echo "SKIP window video/control checks (needs Xvfb, ImageMagick animate, xdotool, ffprobe)"; fi
   r=$(post "$B" "/api/aidev/targets/$TID/screenshot" '{}'); check "$r" 'j.error' "another user cannot see the screen"
   r=$(rpost "/targets/$TID/screenshot" '{"maxWidth":320}'); check "$r" 'j.image && j.width===320' "agent (runtime session) takes a screenshot"
   post "$A" "/api/aidev/targets/$TID" '{"policy":"deny"}' PATCH >/dev/null; r=$(rpost "/targets/$TID/screenshot" '{}'); check "$r" '/실행 금지/.test(j.error)' "policy deny: agent screenshots refused"; post "$A" "/api/aidev/targets/$TID" '{"policy":"ask"}' PATCH >/dev/null

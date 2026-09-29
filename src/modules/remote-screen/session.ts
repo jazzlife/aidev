@@ -1,7 +1,8 @@
 /**
- * Live screen session (IMPLEMENTATION-PLAN §3.12, F-07b), non-visual: one WebSocket to
- * `/api/aidev/targets/:id/screen`, frames `[kind][flags][data]` (1 = H.264 access unit, 2 = VP8 frame,
- * 3 = JPEG; flags bit 0 = keyframe) drawn on a canvas. Video is decoded with WebCodecs `VideoDecoder`
+ * Live screen session (IMPLEMENTATION-PLAN §3.12, F-07b/F-07c), non-visual: one WebSocket to
+ * `/api/aidev/targets/:id/screen` for one program window on the PC (`window`; runners before 0.7 stream a
+ * whole `display`), frames `[kind][flags][data]` (1 = H.264 access unit from the runner's built-in encoder,
+ * 2 = VP8 frame from 0.6 runners, 3 = JPEG; flags bit 0 = keyframe) drawn on a canvas. Video is decoded with WebCodecs `VideoDecoder`
  * (hardware where available; Annex B H.264 needs no `description`); without WebCodecs the session asks
  * for JPEG frames instead. Remote control: `setControl(true)` then `input(ev)` (mouse/keyboard events in
  * the runner's vocabulary, see runner input.rs).
@@ -9,9 +10,9 @@
 import { getStoredAuthToken } from '@/shared/authToken';
 
 export type ScreenMode = 'video' | 'jpeg';
-export type ScreenOptions = { mode: ScreenMode; display: number; fps: number; maxWidth: number; bitrate: number; codec?: 'h264' | 'vp8' };
+export type ScreenOptions = { mode: ScreenMode; window: number | null; display: number; fps: number; maxWidth: number; bitrate: number; codec?: 'h264' | 'vp8' };
 export type InputEvent =
-  | { t: 'move'; x: number; y: number }
+  | { t: 'move'; x: number; y: number }   // x, y ∈ [0,1] of the picture (the window); the gateway adds which window
   | { t: 'button'; b: 'left' | 'right' | 'middle'; down: boolean; x?: number; y?: number }
   | { t: 'wheel'; dx: number; dy: number }
   | { t: 'key'; key: string; code: string; mods: { shift?: boolean; ctrl?: boolean; alt?: boolean; meta?: boolean } }
@@ -51,7 +52,7 @@ export function avcCodecFromAnnexB(au: Uint8Array): string | null {
 export function screenSocketUrl(targetId: number, o: ScreenOptions) {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const token = getStoredAuthToken();
-  const q = new URLSearchParams({ mode: o.mode, display: String(o.display), fps: String(o.fps), maxWidth: String(o.maxWidth), bitrate: String(o.bitrate), codec: o.codec ?? 'h264', ...(token ? { token } : {}) });
+  const q = new URLSearchParams({ mode: o.mode, ...(o.window !== null ? { window: String(o.window) } : {}), display: String(o.display), fps: String(o.fps), maxWidth: String(o.maxWidth), bitrate: String(o.bitrate), codec: o.codec ?? 'h264', ...(token ? { token } : {}) });
   return `${protocol}//${window.location.host}/api/aidev/targets/${targetId}/screen?${q}`;
 }
 
@@ -159,7 +160,7 @@ export class RemoteScreenSession {
 
   private send(obj: unknown) { if (this.ws?.readyState === WebSocket.OPEN) this.ws.send(JSON.stringify(obj)); }
 
-  /** New display / quality: the gateway moves this viewer to the matching stream. */
+  /** New window / quality: the gateway moves this viewer to the matching stream. */
   setOptions(opts: ScreenOptions) {
     this.opts = opts.mode === 'video' && !webCodecsAvailable() ? { ...opts, mode: 'jpeg', fps: 5 } : opts;
     this.resetDecoder();

@@ -1620,3 +1620,35 @@ type TaskStatus =
 
 /** A TaskMaster task's priority; high, medium and low are the known values and the string fallback tolerates anything else TaskMaster emits. */
 type TaskPriority = 'high' | 'medium' | 'low' | string;
+
+// ---------------------------
+
+//----------------- REMOTE SCREEN ------------
+
+/** A program window on a remote PC as the runner lists it (`screen.list`, runner ≥ 0.7): what the workbench and mobile screen views offer to watch and control; x/y/width/height are in the PC's input coordinates. */
+export type RemoteWindow = {
+  id: number;
+  pid: number;
+  app: string;
+  title: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  minimized: boolean;
+  focused: boolean;
+};
+
+/** A command running on a remote PC through the runner (its console), offered next to the windows: `pty` ones take keyboard input. */
+export type RemoteConsoleSource = {
+  remoteRunId: number;
+  streamId: number;
+  cmd: string;
+  pty: boolean;
+};
+
+/** What a remote screen view shows: one program window (video), one running console (terminal), or a whole display (runners before 0.7). */
+export type RemoteScreenSource =
+  | { kind: 'window'; id: number }
+  | { kind: 'console'; streamId: number; remoteRunId: number; pty: boolean }
+  | { kind: 'display'; id: number };

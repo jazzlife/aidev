@@ -572,17 +572,10 @@ export const api = {
     openPreview: (targetId: number, port: number, label?: string) => post(`/api/aidev/targets/${targetId}/preview`, { port, label }),
     closePreview: (targetId: number, port: number) => del(`/api/aidev/targets/${targetId}/preview/${port}`),
     previews: () => get('/api/aidev/previews'),
-    /** F-07: the target's displays and a live view (JPEG frames over a WebSocket) / one screenshot. */
-    screens: (targetId: number) => get(`/api/aidev/targets/${targetId}/screens`),
-    screenshotUrl: (targetId: number, opts: { display?: number; maxWidth?: number } = {}) => `/api/aidev/targets/${targetId}/screenshot.jpg?display=${opts.display ?? 1}&maxWidth=${opts.maxWidth ?? 1440}&t=${Date.now()}`,
-    screenUrl: (targetId: number, opts: { mode?: string; display?: number; fps?: number; maxWidth?: number; bitrate?: number; codec?: string } = {}) => {
-      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-      const token = getStoredAuthToken();
-      const q = new URLSearchParams({ mode: opts.mode ?? 'video', display: String(opts.display ?? 1), fps: String(opts.fps ?? 30), maxWidth: String(opts.maxWidth ?? 1440), bitrate: String(opts.bitrate ?? 4000), codec: opts.codec ?? 'h264', ...(token ? { token } : {}) });
-      return `${protocol}//${window.location.host}/api/aidev/targets/${targetId}/screen?${q}`;
-    },
-    /** One screenshot as JSON (base64 JPEG). */
-    screenshot: (targetId: number, opts: { display?: number; maxWidth?: number } = {}) => post(`/api/aidev/targets/${targetId}/screenshot`, opts),
+    /** F-07c: the program windows on the target ({windows, perWindow}; runners before 0.7 answer {displays}). */
+    windows: (targetId: number) => get(`/api/aidev/targets/${targetId}/windows`),
+    /** One screenshot as JSON (base64 JPEG) of a window (id or `query` = part of its app/title; default the focused one). */
+    screenshot: (targetId: number, opts: { window?: number | null; query?: string; display?: number; maxWidth?: number } = {}) => post(`/api/aidev/targets/${targetId}/screenshot`, opts),
     /** WebSocket URL of a target's run streams (same origin; the session cookie or stored token authenticates). */
     streamUrl: (targetId: number) => {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';

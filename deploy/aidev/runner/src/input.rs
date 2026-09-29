@@ -3,7 +3,10 @@
 //! `aidev-runner consent control on`; only the person in the workbench/app sends these (agents cannot).
 //! JSON-RPC *notifications* (no reply, low latency), handled on one input thread (enigo: CGEvent on macOS,
 //! SendInput on Windows, X11 on Linux):
-//!   input.event {t:"move", x, y}                         x, y ∈ [0,1] of the main display
+//!   input.event {t:"move", x, y, win?}                   x, y ∈ [0,1] of window `win` (F-07c; the main
+//!                                                        display when absent). The window is brought to the
+//!                                                        front on the first event and on a click while
+//!                                                        another window has the focus.
 //!   input.event {t:"button", b:"left"|"right"|"middle", down, x?, y?}
 //!   input.event {t:"wheel", dx, dy}                      browser pixels (≈100 per notch)
 //!   input.event {t:"key", key, code, mods:{shift,ctrl,alt,meta}}   a press+release with the modifiers held
@@ -17,6 +20,7 @@ use enigo::{Axis, Button, Coordinate, Direction, Enigo, Key, Keyboard, Mouse, Se
 use serde_json::{json, Value};
 use std::sync::mpsc::{channel, Sender};
 use std::sync::{Mutex, OnceLock};
+use std::time::{Duration, Instant};
 use tokio_tungstenite::tungstenite::Message;
 
 enum Job {
@@ -101,6 +105,22 @@ struct Session {
     failed: bool,
     wheel_x: f64,
     wheel_y: f64,
+    /// the controlled window's bounds, refreshed at most every 300 ms (windows move)
+    win: Option<(crate::appwin::WinInfo, Instant)>,
+    activated: Option<u32>,
+}
+
+impl Default for Session {
+    fn default() -> Self {
+        Session { enigo: None, failed: false, wheel_x: 0.0, wheel_y: 0.0, win: None, activated: None }
+    }
+}
+
+/// Normalized position on a window (or the display) → absolute input coordinates.
+pub fn map_point(nx: f64, ny: f64, x0: i32, y0: i32, w: u32, h: u32) -> (i32, i32) {
+    let px = x0 + (nx.clamp(0.0, 1.0) * f64::from(w.saturating_sub(1))).round() as i32;
+    let py = y0 + (ny.clamp(0.0, 1.0) * f64::from(h.saturating_sub(1))).round() as i32;
+    (px, py)
 }
 
 impl Session {
@@ -118,12 +138,47 @@ impl Session {
         self.enigo.as_mut()
     }
 
+    /// The window this event targets (fresh bounds), activating it the first time.
+    fn window(&mut self, ev: &Value) -> Option<crate::appwin::WinInfo> {
+        let id = ev.get("win").and_then(Value::as_u64)? as u32;
+        let stale = match &self.win { Some((w, at)) => w.id != id || at.elapsed() > Duration::from_millis(300), None => true };
+        if stale {
+            match crate::appwin::info(id) {
+                Some(w) => self.win = Some((w, Instant::now())),
+                None => {
+                    if self.win.as_ref().is_some_and(|(w, _)| w.id == id) {
+                        self.win = None;
+                    }
+                    report(&format!("창 #{id}을(를) 찾을 수 없습니다 (닫혔거나 최소화됨)"));
+                    return None;
+                }
+            }
+        }
+        let w = self.win.as_ref()?.0.clone();
+        if self.activated != Some(id) {
+            crate::appwin::activate(&w);
+            self.activated = Some(id);
+        }
+        Some(w)
+    }
+
     fn at(&mut self, ev: &Value) {
         let (Some(x), Some(y)) = (ev.get("x").and_then(Value::as_f64), ev.get("y").and_then(Value::as_f64)) else { return };
+        let target = if ev.get("win").is_some() {
+            let Some(w) = self.window(ev) else { return };
+            Some((w.x, w.y, w.width, w.height))
+        } else {
+            None
+        };
         let Some(e) = self.enigo() else { return };
-        let Ok((w, h)) = e.main_display() else { return };
-        let px = (x.clamp(0.0, 1.0) * f64::from(w - 1)).round() as i32;
-        let py = (y.clamp(0.0, 1.0) * f64::from(h - 1)).round() as i32;
+        let (x0, y0, w, h) = match target {
+            Some(t) => t,
+            None => {
+                let Ok((w, h)) = e.main_display() else { return };
+                (0, 0, w as u32, h as u32)
+            }
+        };
+        let (px, py) = map_point(x, y, x0, y0, w, h);
         if let Err(err) = e.move_mouse(px, py, Coordinate::Abs) {
             report(&format!("마우스 이동 실패: {err}"));
         }
@@ -134,6 +189,16 @@ impl Session {
         match t {
             "move" => self.at(ev),
             "button" => {
+                let down = ev.get("down").and_then(Value::as_bool).unwrap_or(false);
+                if down {
+                    // a click on a window behind another one: bring it forward first (like a local click)
+                    if let Some(id) = ev.get("win").and_then(Value::as_u64) {
+                        if crate::appwin::info(id as u32).is_some_and(|w| !w.focused) {
+                            self.activated = None;
+                            self.win = None;
+                        }
+                    }
+                }
                 self.at(ev);
                 let b = match ev.get("b").and_then(Value::as_str) { Some("right") => Button::Right, Some("middle") => Button::Middle, _ => Button::Left };
                 let d = if ev.get("down").and_then(Value::as_bool).unwrap_or(false) { Direction::Press } else { Direction::Release };
@@ -150,6 +215,13 @@ impl Session {
                     if ny != 0 { let _ = e.scroll(ny, Axis::Vertical); }
                     if nx != 0 { let _ = e.scroll(nx, Axis::Horizontal); }
                 }
+            }
+            "key" | "text" if ev.get("win").is_some() && self.activated.is_none() => {
+                // typing goes to the window being watched
+                let _ = self.window(ev);
+                let mut ev = ev.clone();
+                ev.as_object_mut().map(|o| o.remove("win"));
+                self.event(&ev);
             }
             "key" => {
                 let key = ev.get("key").and_then(Value::as_str).unwrap_or("");
@@ -189,12 +261,12 @@ fn sender() -> Sender<Job> {
     std::thread::Builder::new()
         .name("aidev-input".into())
         .spawn(move || {
-            let mut s = Session { enigo: None, failed: false, wheel_x: 0.0, wheel_y: 0.0 };
+            let mut s = Session::default();
             while let Ok(job) = rx.recv() {
                 match job {
                     Job::Event(ev) => s.event(&ev),
                     // dropping Enigo releases any held keys/buttons; a new session may retry permissions
-                    Job::End => s = Session { enigo: None, failed: false, wheel_x: 0.0, wheel_y: 0.0 },
+                    Job::End => s = Session::default(),
                 }
             }
         })
@@ -229,6 +301,14 @@ mod tests {
         assert_eq!(key_of("ArrowLeft", "ArrowLeft"), Some(Key::LeftArrow));
         assert_eq!(key_of("/", "Slash"), Some(Key::Unicode('/')));
         assert_eq!(key_of("Unidentified", ""), None);
+    }
+
+    #[test]
+    fn window_mapping() {
+        assert_eq!(map_point(0.0, 0.0, 100, 50, 801, 601), (100, 50));
+        assert_eq!(map_point(1.0, 1.0, 100, 50, 801, 601), (900, 650));
+        assert_eq!(map_point(0.5, 0.5, -1920, 0, 1921, 1081), (-960, 540));
+        assert_eq!(map_point(2.0, -1.0, 0, 0, 100, 100), (99, 0));
     }
 
     #[test]

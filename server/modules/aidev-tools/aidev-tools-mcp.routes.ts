@@ -99,9 +99,16 @@ router.post('/tools/:toolName', async (req, res) => {
         }, readTurn(input));
         break;
       }
+      case 'remote_windows':
+        result = await aidevToolsService.remoteWindows({
+          target: typeof input.target === 'string' || typeof input.target === 'number' ? input.target : undefined,
+        }, readTurn(input));
+        break;
       case 'remote_screenshot':
         result = await aidevToolsService.remoteScreenshot({
           target: typeof input.target === 'string' || typeof input.target === 'number' ? input.target : undefined,
+          window: typeof input.window === 'number' && Number.isInteger(input.window) ? input.window : undefined,
+          query: typeof input.query === 'string' && input.query.trim() ? input.query.trim().slice(0, 200) : undefined,
           display: typeof input.display === 'number' ? input.display : undefined,
           maxWidth: typeof input.maxWidth === 'number' ? input.maxWidth : undefined,
         }, readTurn(input));

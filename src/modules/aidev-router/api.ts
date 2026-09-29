@@ -233,8 +233,9 @@ export const aidevApi = {
   handoffBrief: (sessionId: string, input: { from_engine?: string | null; to_engine?: string | null; reason?: string | null }) => post('/api/aidev-tools/handoff', { session_id: sessionId, ...input }).then((response) => readRuntimeData<{ text: string; files: string[]; userTurns: number }>(response)),
   targets: () => authenticatedFetch('/api/aidev/targets').then((response) => readJson<{ targets: Array<Record<string, unknown>> }>(response)),
   /** Remote runs (F-03) across targets, newest first — mobile result cards. */
-  /** F-07: one screenshot of a remote PC (JPEG base64; the PC owner must have allowed capture). */
-  screenshot: (targetId: number, opts: { display?: number; maxWidth?: number } = {}) => post(`/api/aidev/targets/${targetId}/screenshot`, opts).then((response) => readJson<{ image: string; mime: string; width: number; height: number; ms: number; display: number }>(response)),
+  /** F-07/F-07c: one screenshot of a program window on a remote PC (id, or `query` = part of its app/title,
+   *  default the focused one; JPEG base64; the PC owner must have allowed capture). */
+  screenshot: (targetId: number, opts: { window?: number | null; query?: string; display?: number; maxWidth?: number } = {}) => post(`/api/aidev/targets/${targetId}/screenshot`, opts).then((response) => readJson<{ image: string; mime: string; width: number; height: number; ms: number; display?: number; window?: { id: number; app: string; title: string } }>(response)),
   remoteRuns: (limit = 10) => authenticatedFetch(`/api/aidev/remote-runs?limit=${limit}`).then((response) => readJson<{ runs: RemoteRun[] }>(response)),
   remoteRun: (id: number) => authenticatedFetch(`/api/aidev/remote-runs/${id}`).then((response) => readJson<{ run: RemoteRun }>(response)),
   /** Last output as plain text (ANSI codes stripped). */

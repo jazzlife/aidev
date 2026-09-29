@@ -4,8 +4,10 @@
 #   ./runner/build.sh                 # mac + win-x64 + linux-arm64 (skips what is not installed)
 #   ./runner/build.sh mac             # macOS only
 # Needs the source in ../aidev (run ./push-source.sh first so it is current) and Rust (https://rustup.rs).
-# Windows/Linux cross builds also need:  brew install zig && cargo install cargo-zigbuild
+# Windows/Linux cross builds also need:  brew install zig nasm && cargo install cargo-zigbuild
 #                                         rustup target add x86_64-pc-windows-gnu aarch64-unknown-linux-gnu
+# The runner has H.264 built in (OpenH264, compiled from source — a C++ compiler comes with Xcode's command
+# line tools). nasm gives it SIMD on x86 (Windows, the Intel Mac slice); Apple Silicon uses NEON without it.
 set -euo pipefail
 OPS=$(cd "$(dirname "$0")/.." && pwd)
 REPO=${AIDEV_REPO:-$OPS/../aidev}

@@ -376,14 +376,14 @@ server.on('upgrade', async (req, socket, head) => {
     if (runners.upgrade(req, socket, head, pathname)) return;
     if (preview.upgrade(req, socket, head, new URL(req.url ?? '/', origin))) return;
     // Remote run streams for the workbench (F-03): session cookie + same origin + the caller's own target.
-    // Remote screen (F-07): same checks as the run streams; frames are JPEGs.
+    // Remote screen (F-07): same checks as the run streams; one program window (F-07c) as H.264 or JPEG frames.
     const screenMatch = pathname.match(/^\/api\/aidev\/targets\/(\d+)\/screen$/);
     if (screenMatch) {
       if (req.headers.origin !== origin) throw new Error('Origin rejected');
       const session = authenticate(req);
       if (!session || !store.target(session.user.id, Number(screenMatch[1]))) throw new Error('Authentication required');
       const q = new URL(req.url ?? '/', origin).searchParams;
-      runners.attachScreen(req, socket, head, Number(screenMatch[1]), session.user.id, () => Boolean(store.session(session.sid)), screenOpts({ mode: q.get('mode'), display: q.get('display'), fps: q.get('fps'), maxWidth: q.get('maxWidth'), bitrate: q.get('bitrate'), codec: q.get('codec') }));
+      runners.attachScreen(req, socket, head, Number(screenMatch[1]), session.user.id, () => Boolean(store.session(session.sid)), screenOpts({ mode: q.get('mode'), window: q.get('window'), display: q.get('display'), fps: q.get('fps'), maxWidth: q.get('maxWidth'), bitrate: q.get('bitrate'), codec: q.get('codec') }));
       return;
     }
     const streamMatch = pathname.match(/^\/api\/aidev\/targets\/(\d+)\/stream$/);

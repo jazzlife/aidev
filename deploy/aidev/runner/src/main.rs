@@ -2,9 +2,11 @@
 //! test, preview, show and debug code here (IMPLEMENTATION-PLAN §3.12, stage F).
 //! Outbound WebSocket only; everything it touches is confined to `allowed_roots`.
 
+mod appwin;
 mod caps;
 mod config;
 mod conn;
+mod encoder;
 mod exec;
 mod input;
 mod pair;
@@ -13,7 +15,6 @@ mod screen;
 mod service;
 mod sync;
 mod tunnel;
-mod video;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -72,6 +73,10 @@ enum RootsCmd {
 }
 
 fn main() -> ExitCode {
+    // Windows: window bounds, window captures and mouse input all in physical pixels (no DPI virtualization
+    // on 125–150 % displays, where they would disagree). The runner has no UI, so nothing else is affected.
+    #[cfg(windows)]
+    let _ = enigo::set_dpi_awareness();
     let cli = Cli::parse();
     match run(cli) {
         Ok(code) => code,

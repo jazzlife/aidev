@@ -10,11 +10,18 @@ cd "$(dirname "$0")"
 ver=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
 mkdir -p dist
 have_std() { rustup target list --installed 2>/dev/null | grep -qx "$1"; }
-zig_ok() { command -v zig >/dev/null && cargo zigbuild --version >/dev/null 2>&1; }
+# zig on PATH or the `ziglang` pip package (cargo-zigbuild finds either); `cargo zigbuild --version` is not a flag
+zig_ok() { { command -v zig >/dev/null || python3 -m ziglang version >/dev/null 2>&1; } && cargo zigbuild --help >/dev/null 2>&1; }
 built=()
 build() {   # label rust-target [zig-suffix]
   local label=$1 target=$2 suffix=${3:-} ext=""; [[ $target == *windows* ]] && ext=.exe
   if ! have_std "$target"; then echo "skip $label: rustup target add $target"; return; fi
+  # OpenH264 (built in) silently drops its SIMD assembly without nasm on x86 — 3x slower encoding
+  # (Apple Silicon uses NEON through clang, no nasm needed; the Intel slice of the mac build only warns)
+  if [[ $target == x86_64* ]] && ! command -v nasm >/dev/null; then
+    if [[ $target == *apple* ]]; then echo "warning $label: no nasm — the Intel Mac slice encodes without SIMD (brew install nasm)"
+    else echo "error $label: nasm is required for x86 builds (apt install nasm)"; exit 1; fi
+  fi
   if [[ $target == *apple* ]]; then cargo build --release --target "$target"
   elif zig_ok; then cargo zigbuild --release --target "$target$suffix"
   elif [ "$target" = "$(rustc -vV | sed -n 's/host: //p')" ]; then cargo build --release --target "$target"

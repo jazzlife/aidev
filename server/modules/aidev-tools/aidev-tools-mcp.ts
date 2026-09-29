@@ -13,7 +13,8 @@ import '../../load-env.js';
  *   remote_logs     — state + last output of a remote run (optionally wait for it)
  *   remote_stop     — interrupt / kill a remote run
  *   remote_preview  — show a dev server running on a target in the workbench preview panel (F-06)
- *   remote_screenshot — look at a target's screen (image content; needs the PC owner's consent) (F-07)
+ *   remote_windows  — the program windows open on a target (id, app, title) (F-07c)
+ *   remote_screenshot — look at one program window on a target (image content; needs the PC owner's consent) (F-07)
  * The turn context (chat run id, routed target, agent) comes from this process's env and is sent
  * with every call, so remote results count toward the run's outcome.
  */
@@ -174,16 +175,26 @@ const tools: ToolDefinition[] = [
     },
   },
   {
+    name: 'remote_windows',
+    description: 'List the program windows open on one of the user\'s machines (id, app, title, size; the focused one first) — pick one for remote_screenshot. Needs the owner\'s screen-capture consent on that PC.',
+    inputSchema: {
+      type: 'object',
+      properties: { target: { type: 'string', description: 'Target name or id (optional when routed or only one is online).' } },
+    },
+  },
+  {
     name: 'remote_screenshot',
     description: [
-      'Take a screenshot of one of the user\'s machines and look at it (returned as an image) — e.g. to check a desktop/mobile app window, a dialog, or what a running program shows.',
+      'Take a screenshot of one program window on one of the user\'s machines and look at it (returned as an image) — e.g. to check a desktop/mobile app window, an emulator, a dialog, or what a running program shows.',
+      'Choose the window with `window` (id from remote_windows) or `query` (part of the app name or title, e.g. "Simulator"); without either, the focused window.',
       'Works only when the owner allowed screen capture on that PC (`aidev-runner consent screen on`); every capture is recorded in the target\'s history. View only: you cannot click or type.',
     ].join(' '),
     inputSchema: {
       type: 'object',
       properties: {
         target: { type: 'string', description: 'Target name or id (optional when routed or only one is online).' },
-        display: { type: 'number', description: 'Display number (1 = main).' },
+        window: { type: 'number', description: 'Window id from remote_windows.' },
+        query: { type: 'string', description: 'Part of the app name or window title (case-insensitive); the first match is captured.' },
         maxWidth: { type: 'number', description: 'Scale down to this width (320-2560, default 1440; smaller = cheaper to look at).' },
       },
     },
@@ -210,6 +221,7 @@ async function callTool(name: string, args: Record<string, unknown>) {
     case 'remote_logs':
     case 'remote_stop':
     case 'remote_preview':
+    case 'remote_windows':
       return jsonResponse(await callApi(name, args));
     case 'remote_screenshot':
       return imageResponse(await callApi(name, args));

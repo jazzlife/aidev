@@ -136,3 +136,18 @@ test('remote_screenshot (F-07): captures on the routed target and returns the im
   assert.equal(r.width, 1440);
   assert.deepEqual(sent, { maxWidth: 1440, runId: 12 });
 });
+
+test('remote_windows / remote_screenshot{query} (F-07c): program windows, then one window by name', async () => {
+  let sent: Record<string, unknown> = {};
+  handler = (method, path, body) => {
+    if (path === '/targets') return targets;
+    if (method === 'GET' && path === '/targets/7/windows') return { windows: [{ id: 42, pid: 9, app: 'Simulator', title: 'iPhone 16', x: 0, y: 0, width: 400, height: 860, focused: true }], displays: null, perWindow: true };
+    if (method === 'POST' && path === '/targets/7/screenshot') { sent = body; return { image: '/9j/BBBB', mime: 'image/jpeg', width: 400, height: 860, bytes: 4, ms: 90, window: { id: 42, app: 'Simulator', title: 'iPhone 16' }, remoteRunId: 41 }; }
+    throw new Error(`unexpected ${method} ${path}`);
+  };
+  const w = await aidevToolsService.remoteWindows({}, { targetId: 7 }) as { windows: Array<Record<string, unknown>> };
+  assert.deepEqual(w.windows, [{ id: 42, app: 'Simulator', title: 'iPhone 16', width: 400, height: 860, focused: true }]);
+  const r = await aidevToolsService.remoteScreenshot({ query: 'simulator' }, { targetId: 7, runId: 12 }) as Record<string, unknown>;
+  assert.deepEqual(sent, { query: 'simulator', runId: 12 });
+  assert.equal((r.window as { id: number }).id, 42);
+});
