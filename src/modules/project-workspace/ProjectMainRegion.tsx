@@ -5,6 +5,7 @@ import type { SessionEstablishedContext, SessionNavigationOptions,ProjectWorkspa
 import WorkspaceMain from '@/modules/project-workspace/WorkspaceMain';
 import { WorkbenchLayout, useWorkbenchActive } from '@/modules/workbench';
 import { Sidebar } from '@/modules/sidebar';
+import { RemoteApprovalCards } from '@/modules/remote-target';
 
 /** Rendered by ProjectWorkspaceShell to bind this module's project state to WorkspaceMain. */
 function ProjectMainRegion({
@@ -81,7 +82,11 @@ function ProjectMainRegion({
     );
   }
 
+  // the narrow tabbed layout also shows agent remote commands waiting for approval (F-05)
   return (
+    <div className="flex h-full min-h-0 flex-col">
+    <RemoteApprovalCards />
+    <div className="min-h-0 flex-1">
     <WorkspaceMain
       selectedProject={selectedProject}
       selectedSession={selectedSession}
@@ -100,6 +105,8 @@ function ProjectMainRegion({
       onProjectSelect={handleProjectSelect}
       onProjectsRefresh={handleProjectsRefresh}
     />
+    </div>
+    </div>
   );
 }
 
