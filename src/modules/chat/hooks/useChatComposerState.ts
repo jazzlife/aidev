@@ -11,7 +11,7 @@ import type {
 } from 'react';
 import { useDropzone } from 'react-dropzone';
 
-import { useAidevRouting } from '@/modules/aidev-router';
+import { useAidevRouting, usePrejudge } from '@/modules/aidev-router';
 import { api } from '@/shared/api';
 import { PROVIDER_PERMISSION_PREFERENCE_KEYS } from '@/shared/constants';
 import { readUserPreference } from '@/shared/userSettings';
@@ -616,6 +616,8 @@ export function useChatComposerState({
   // agent, engine and model tier for this turn (IMPLEMENTATION-PLAN §3.6). Failures
   // never block the send — the message goes out exactly as an unrouted send would.
   const { beforeSend: aidevBeforeSend } = useAidevRouting();
+  // …and while the user is still typing, the specialist judge already looks at the draft
+  usePrejudge(input, typeof selectedProject?.displayName === 'string' ? selectedProject.displayName : (typeof selectedProject?.name === 'string' ? selectedProject.name : null));
 
   const handleSubmit = useCallback(
     async (

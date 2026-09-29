@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
 
 import { api, useChatRealtimeHandlers, useSessionStore, useWebSocket, type LLMProvider, type NormalizedMessage, type PendingPermissionRequest, type ProjectSession } from '@/modules/chat-core';
-import { AgentCreateCard, useAgentCreation, useAidevRouting, useEscalation, type Engine } from '@/modules/aidev-router';
+import { AgentCreateCard, useAgentCreation, useAidevRouting, useEscalation, usePrejudge, type Engine } from '@/modules/aidev-router';
 import { Composer } from '@m/components/Composer';
 import { MessageList } from '@m/components/MessageList';
 import { PermissionSheet } from '@m/components/PermissionSheet';
@@ -28,6 +28,7 @@ export function ChatScreen() {
   const { ws, sendMessage, subscribe, isConnected } = useWebSocket();
   const sessionStore = useSessionStore();
   const { beforeSend, reportOutcome } = useAidevRouting();
+  const [draft, setDraft] = useState('');
 
   const [meta, setMeta] = useState<SessionMeta | null>(null);
   const [project, setProject] = useState<PickedProject | null>(() => readLastProject());
@@ -54,6 +55,7 @@ export function ChatScreen() {
   const statusCheckSentAtRef = useRef(new Map<string, number>());
 
   const sessionId = meta?.id ?? null;
+  usePrejudge(draft, meta?.projectName || project?.displayName || null);
   const provider: LLMProvider = meta?.provider ?? readProvider();
   const selectedSession: ProjectSession | null = meta ? { id: meta.id, provider: meta.provider, __provider: meta.provider } : null;
 
@@ -190,7 +192,7 @@ export function ChatScreen() {
       {escalation.escalation && !busy ? <EscalationPrompt next={escalation.escalation.next} label={escalation.label} busy={escalation.busy} error={escalation.error} onRun={() => { void escalation.run(); }} onDismiss={escalation.dismiss} /> : null}
       {lastRunFinished && !busy ? <RunFeedback key={lastRunFinished} onFeedback={(value) => { void reportOutcome({ user_feedback: value }); }} /> : null}
       <RouterChip sessionId={sessionId} />
-      <Composer busy={busy} disabled={!isConnected} onSend={(text) => { void send(text); }} onAbort={abort} placeholder={meta ? undefined : '무엇을 만들까요?'} />
+      <Composer busy={busy} disabled={!isConnected} onDraftChange={setDraft} onSend={(text) => { void send(text); }} onAbort={abort} placeholder={meta ? undefined : '무엇을 만들까요?'} />
       <PermissionSheet request={pendingPermissionRequests[0] ?? null} onDecide={decidePermission} />
       <ProjectPicker open={pickingProject} onClose={() => setPickingProject(false)} onPick={(picked) => { setProject(picked); setPickingProject(false); }} />
     </div>

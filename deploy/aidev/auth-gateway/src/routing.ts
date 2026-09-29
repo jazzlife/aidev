@@ -154,6 +154,69 @@ function cosine(a: string[], b: string[]) {
   return na && nb ? dot / (na * nb) : 0;
 }
 const SIMILAR_JUDGED = 0.8;
+/** How long a send waits for the judge (env AIDEV_JUDGE_WAIT_MS). A slower verdict is still cached for the next send. */
+const JUDGE_WAIT_MS = Number(process.env.AIDEV_JUDGE_WAIT_MS ?? 20_000);
+const MAX_PREJUDGE_PER_USER = 3;
+
+/** Running judge calls, keyed by user + catalog + command: the typing-time pre-judge and the send share one call. */
+const judging = new Map<string, Promise<JudgeVerdict | null>>();
+
+type JudgeContext = { specialists: ReturnType<Store['agents']>; catalogSig: string; textNorm: string; key: string; known: JudgeVerdict | null };
+/** What the judge would be asked, and a verdict that is already known (cache, or a judge-confirmed similar command). */
+function judgeContext(store: Store, userId: number, text: string, nbTop: { choice: string | null; probability: number }): JudgeContext {
+  const specialists = store.agents(userId).filter((a) => a.domain !== 'meta' && a.name !== 'generalist');
+  const catalogSig = crypto.createHash('sha1').update(specialists.map((a) => `${a.name}@${a.version}`).sort().join(',')).digest('hex').slice(0, 16);
+  const textNorm = normText(text);
+  let known = store.judgeCached(userId, textNorm, catalogSig) as JudgeVerdict | null;
+  if (known) known = { ...known, source: 'cache' };
+  if (!known && nbTop.choice && nbTop.probability >= 0.9) {
+    const candidate = specialists.find((a) => a.name === nbTop.choice);
+    const tokens = tokenize(text);
+    const best = candidate ? Math.max(0, ...store.judgedExamples(candidate.id).map((ex) => cosine(tokens, tokenize(ex)))) : 0;
+    if (candidate && best >= SIMILAR_JUDGED) known = { agent: candidate.name, fit: 0.9, reason: `judge confirmed a similar command (${best.toFixed(2)})`, new: null, source: 'similar' };
+  }
+  return { specialists, catalogSig, textNorm, key: `${userId}|${catalogSig}|${textNorm}`, known };
+}
+
+/** Start (or join) the judge for this command. The verdict is cached when it arrives, even if nobody waits any more. */
+function startJudge(store: Store, userId: number, ctx: JudgeContext, text: string, projectHint: string | null, judge: SpecialistJudge): Promise<JudgeVerdict | null> {
+  const running = judging.get(ctx.key);
+  if (running) return running;
+  const promise = judge({ command: text, candidates: ctx.specialists.map((a) => ({ name: a.name, description: a.description })), project: projectHint })
+    .then((v) => (v ? { ...v, source: 'llm' as const } : null))
+    .catch(() => null)
+    .then((v) => {
+      if (v) store.cacheJudge(userId, ctx.textNorm, ctx.catalogSig, { agent: v.agent, fit: v.fit, reason: v.reason, new: v.new, engine: v.engine });
+      return v;
+    })
+    .finally(() => judging.delete(ctx.key));
+  judging.set(ctx.key, promise);
+  return promise;
+}
+
+const waitAtMost = <T>(promise: Promise<T>, ms: number, onTimeout: T) => new Promise<T>((resolve) => {
+  const timer = setTimeout(() => resolve(onTimeout), ms);
+  promise.then((value) => { clearTimeout(timer); resolve(value); }, () => { clearTimeout(timer); resolve(onTimeout); });
+});
+
+/**
+ * Typing-time pre-judge (§3.1): the composer calls this when the user pauses typing, so the verdict is usually
+ * cached by the time they press send (the judge takes ~3 s; Laya ~0.3 s). Never waits for the verdict.
+ */
+export function prejudge(store: Store, userId: number, input: { text: string; projectHint?: string | null }, judge: SpecialistJudge | undefined) {
+  const text = input.text.trim();
+  if (text.length < 4) return { status: 'skipped' as const, reason: 'too short' };
+  if (!judge) return { status: 'skipped' as const, reason: 'no engine for the judge' };
+  const names = store.agents(userId).filter((a) => a.domain !== 'meta').map((a) => a.name);
+  const ctx = judgeContext(store, userId, text, topChoice({ probabilities: lexicalPrior(store, text, names) }));
+  if (!ctx.specialists.length) return { status: 'skipped' as const, reason: 'no specialists' };
+  if (ctx.known) return { status: ctx.known.source === 'cache' ? 'cached' as const : 'similar' as const, agent: ctx.known.agent };
+  if (judging.has(ctx.key)) return { status: 'running' as const };
+  // a fast typist would otherwise start one judge per pause; the latest few are enough
+  if ([...judging.keys()].filter((k) => k.startsWith(`${userId}|`)).length >= MAX_PREJUDGE_PER_USER) return { status: 'skipped' as const, reason: 'busy' };
+  void startJudge(store, userId, ctx, text, input.projectHint ?? null, judge);
+  return { status: 'started' as const };
+}
 
 export async function route(store: Store, laya: LayaClient, userId: number, engines: EngineAvailability, input: RouteInput, opts: { judge?: SpecialistJudge } = {}) {
   const t0 = Date.now();
@@ -198,21 +261,13 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   const kindProbs = kindPrior(store, text);
   let layaProbs: Record<string, number> | null = null;
   // ---- specialist judge: cached verdict → a judge-confirmed similar command → an LLM turn (runs alongside Laya)
-  const specialists = all.filter((a) => a.name !== 'generalist');
-  const catalogSig = crypto.createHash('sha1').update(specialists.map((a) => `${a.name}@${a.version}`).sort().join(',')).digest('hex').slice(0, 16);
-  const textNorm = normText(text);
-  let verdict: JudgeVerdict | null = input.forceAgent ? null : (store.judgeCached(userId, textNorm, catalogSig) as JudgeVerdict | null);
-  if (verdict) verdict = { ...verdict, source: 'cache' };
-  if (!verdict && !input.forceAgent && nbTop.choice && nbTop.probability >= 0.9) {
-    const candidate = specialists.find((a) => a.name === nbTop.choice);
-    const tokens = tokenize(text);
-    const best = candidate ? Math.max(0, ...store.judgedExamples(candidate.id).map((ex) => cosine(tokens, tokenize(ex)))) : 0;
-    if (candidate && best >= SIMILAR_JUDGED) verdict = { agent: candidate.name, fit: 0.9, reason: `judge confirmed a similar command (${best.toFixed(2)})`, new: null, source: 'similar' };
-  }
-  const judgePromise: Promise<JudgeVerdict | null> = verdict || input.forceAgent || !opts.judge || !specialists.length
+  const jctx = judgeContext(store, userId, text, nbTop);
+  let verdict: JudgeVerdict | null = input.forceAgent ? null : jctx.known;
+  const judgeT0 = Date.now();
+  const joined = !verdict && !input.forceAgent && judging.has(jctx.key);
+  const judgePromise: Promise<JudgeVerdict | null> = verdict || input.forceAgent || !opts.judge || !jctx.specialists.length
     ? Promise.resolve(verdict)
-    : opts.judge({ command: text, candidates: specialists.map((a) => ({ name: a.name, description: a.description })), project: input.projectHint ?? null })
-      .then((v) => (v ? { ...v, source: 'llm' as const } : null)).catch(() => null);
+    : waitAtMost(startJudge(store, userId, jctx, text, input.projectHint ?? null, opts.judge), JUDGE_WAIT_MS, null);
   try {
     const r = await laya.predict(state, questions);
     latency = r.latency_ms ?? null; device = r.device ?? null;
@@ -248,7 +303,8 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   let agentName = agentTop.choice && catalog[agentTop.choice] ? agentTop.choice : 'generalist';
   let decision: 'use' | 'generalist' | 'create' | 'create_background' = 'use';
   verdict = await judgePromise;
-  if (verdict?.source === 'llm') store.cacheJudge(userId, textNorm, catalogSig, { agent: verdict.agent, fit: verdict.fit, reason: verdict.reason, new: verdict.new, engine: verdict.engine });
+  const judgeWaitMs = Date.now() - judgeT0;
+  if (!verdict && !input.forceAgent && opts.judge && jctx.specialists.length) reason.push(judgeWaitMs >= JUDGE_WAIT_MS ? `specialist judge still running after ${Math.round(judgeWaitMs / 1000)}s — its verdict is cached for the next send` : 'specialist judge failed');
   let proposal: JudgeVerdict['new'] = null;
   if (input.forceAgent) { /* handled below */ }
   else if (verdict) {
@@ -409,7 +465,7 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   return {
     decision_id: decisionId,
     decision, fallback, laya_error: layaError, create,
-    judge: verdict ? { agent: verdict.agent, fit: verdict.fit, reason: verdict.reason, source: verdict.source ?? null, engine: verdict.engine ?? null, ms: verdict.ms ?? null, proposal: verdict.new } : null,
+    judge: verdict ? { agent: verdict.agent, fit: verdict.fit, reason: verdict.reason, source: verdict.source ?? null, engine: verdict.engine ?? null, ms: verdict.ms ?? null, wait_ms: judgeWaitMs, prejudged: joined, proposal: verdict.new } : null,
     scope: { depth, depth_raw: depthRaw, task_kind: taskKind, task_kind_probability: taskKindP, risk, multi_domain: multiDomain, clarify, remote_action: remoteAction, needs_llm_analysis: needsLlmAnalysis, ask_clarify: askClarify },
     agent: { id: agent.id, name: agent.name, version: agent.version, domain: agent.domain, description: agent.description, probability: agentTop.probability, confidence: agentTop.confidence,
       definition: { prompt, tools: agent.tools ? JSON.parse(agent.tools) as string[] : null, model: agent.model, maxTurns: agent.max_turns, skills: agent.skills ? JSON.parse(agent.skills) as string[] : null, mcpServers: agent.mcp_servers ? JSON.parse(agent.mcp_servers) as Record<string, unknown> : null } },

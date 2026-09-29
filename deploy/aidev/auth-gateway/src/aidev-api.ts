@@ -13,8 +13,9 @@ import { createKnowledgeRefresher, decideProposal } from './knowledge-refresh.js
 import { decideNext, type NextAction } from './escalation.js';
 import { decide, listKinds } from './laya-questions.js';
 import fs from 'node:fs';
-import { evaluateRouting, route, TIER_TABLE, type EngineAvailability, type JudgeVerdict, type RouteInput, type SpecialistJudge } from './routing.js';
-const JUDGE_TIMEOUT_MS = Number(process.env.AIDEV_JUDGE_TIMEOUT_MS ?? 30_000);
+import { evaluateRouting, prejudge, route, TIER_TABLE, type EngineAvailability, type JudgeVerdict, type RouteInput, type SpecialistJudge } from './routing.js';
+/** Hard limit of one judge call in the runtime; a send waits less (routing.ts AIDEV_JUDGE_WAIT_MS) and the rest is cached. */
+const JUDGE_TIMEOUT_MS = Number(process.env.AIDEV_JUDGE_TIMEOUT_MS ?? 60_000);
 
 /**
  * /api/aidev/* — routing, decisions, agent catalog, runs, lessons, knowledge, engines, targets
@@ -97,6 +98,17 @@ export function createAidevApi(deps: AidevDeps) {
     return out;
   }
 
+  /** The specialist judge runs in the user's runtime (their Claude/Codex login); off when no engine is usable. */
+  function judgeFor(session: Session, engines: EngineAvailability): SpecialistJudge | undefined {
+    if (!((engines.claude.allowed && engines.claude.authenticated) || (engines.codex.allowed && engines.codex.authenticated))) return undefined;
+    return async (payload) => {
+      const r = await deps.runtimeFetch(session, '/api/aidev-tools/specialist-judge', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }, JUDGE_TIMEOUT_MS);
+      const body = await r.json().catch(() => ({})) as { success?: boolean; data?: JudgeVerdict; error?: string };
+      if (!r.ok || !body.data) { console.warn(`[aidev] specialist judge unavailable: ${body.error ?? r.status}`); return null; }
+      return body.data;
+    };
+  }
+
   // E-04: weekly knowledge re-check on the owner's runtime (and on demand from the catalog).
   const asSession = (account: { id: number; username: string; runtime: string }): Session => ({ user: { id: account.id, username: account.username, runtime: account.runtime }, sid: 'knowledge-refresh' });
   const knowledgeRefresher = createKnowledgeRefresher({
@@ -149,6 +161,12 @@ export function createAidevApi(deps: AidevDeps) {
 
       // ---- routing --------------------------------------------------------------------------
       if (rest === '/kinds' && m === 'GET') return json(res, 200, { kinds: listKinds() }), true;
+      // typing-time pre-judge: warm the specialist judge's cache while the user is still typing
+      if (rest === '/route/prejudge' && m === 'POST') {
+        const b = await readJson(req);
+        const engines = await engineAvailability(session);
+        return json(res, 202, prejudge(store, uid, { text: str(b.text, 'text', 32000), projectHint: optStr(b.projectHint, 400) }, judgeFor(session, engines))), true;
+      }
       if (rest === '/route' && m === 'POST') {
         const b = await readJson(req);
         const input: RouteInput = { text: str(b.text, 'text', 32000), sessionId: optStr(b.sessionId, 200), sessionEngine: ENGINES.includes(b.sessionEngine as Engine) ? b.sessionEngine as Engine : null,
@@ -156,15 +174,7 @@ export function createAidevApi(deps: AidevDeps) {
           forceAgent: optStr(b.forceAgent, 41) ?? null, projectHint: optStr(b.projectHint, 400), recentFiles: Array.isArray(b.recentFiles) ? (b.recentFiles as unknown[]).map(String).slice(0, 10) : null, model: optStr(b.model, 100), effort: optStr(b.effort, 20),
           effortCap: b.effortCap && typeof b.effortCap === 'object' ? { claude: optStr((b.effortCap as Record<string, unknown>).claude, 20), codex: optStr((b.effortCap as Record<string, unknown>).codex, 20) } as Partial<Record<Engine, string>> : null };
         const engines = await engineAvailability(session);
-        // the specialist judge runs in the user's runtime (their Claude/Codex login); off when no engine is usable
-        const judge: SpecialistJudge | undefined = (engines.claude.allowed && engines.claude.authenticated) || (engines.codex.allowed && engines.codex.authenticated)
-          ? async (payload) => {
-            const r = await deps.runtimeFetch(session, '/api/aidev-tools/specialist-judge', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }, JUDGE_TIMEOUT_MS);
-            const body = await r.json().catch(() => ({})) as { success?: boolean; data?: JudgeVerdict; error?: string };
-            if (!r.ok || !body.data) { console.warn(`[aidev] specialist judge unavailable: ${body.error ?? r.status}`); return null; }
-            return body.data;
-          }
-          : undefined;
+        const judge = judgeFor(session, engines);
         return json(res, 200, await route(store, laya, uid, engines, input, { judge })), true;
       }
       // a chat's own effort ceiling (the account default lives in /settings/effort-cap)

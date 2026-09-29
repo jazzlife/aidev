@@ -8,6 +8,7 @@ export { useRemoteApprovals, focusRemoteRun, REMOTE_RUN_FOCUS_EVENT } from '@/mo
 export { routingStore, useRoutingState } from '@/modules/aidev-router/store';
 export type { RoutingMode, RoutingOverrides, RoutingState } from '@/modules/aidev-router/store';
 export { useAidevRouting } from '@/modules/aidev-router/hooks/useAidevRouting';
+export { usePrejudge } from '@/modules/aidev-router/hooks/usePrejudge';
 export type { AidevSendDecoration, BeforeSendContext } from '@/modules/aidev-router/hooks/useAidevRouting';
 export { useAidevDecide } from '@/modules/aidev-router/hooks/useAidevDecide';
 // Workbench-only UI (the mobile app has its own chip in src-mobile).

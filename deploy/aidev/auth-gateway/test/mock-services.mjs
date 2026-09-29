@@ -96,11 +96,13 @@ const manager = http.createServer(async (req, res) => {
     if (path === '/api/aidev-tools/specialist-judge') {
       // stands in for the runtime's haiku judge: keyword rules over the catalog it is given
       const b = await read(req); judgeCalls++;
+      const slow = /slow-judge-(\d+)/.exec(b.command); if (slow) await new Promise((r) => setTimeout(r, Number(slow[1])));
       const names = new Set(b.candidates.map((c) => c.name));
       const rules = [[/unity|셰이더/i, [...names].find((n) => n.includes('unity')) ?? null, { name: 'unity-shader', domain: 'unity-graphics', description: 'Unity shaders and URP', technologies: ['Unity', 'HLSL'] }],
         [/verilog|fpga/i, null, { name: 'fpga-verilog', domain: 'hardware', description: 'Verilog / FPGA', technologies: ['Verilog'] }],
         [/swiftui|ios/i, null, { name: 'ios-swift', domain: 'ios', description: 'SwiftUI / iOS apps', technologies: ['Swift', 'SwiftUI'] }],
         [/react|컴포넌트|훅/i, 'frontend-react'], [/express|rate limit|middleware|미들웨어/i, 'backend-node'], [/docker/i, 'devops'], [/adb|logcat|android/i, 'android-device'],
+        [/blender/i, null, { name: 'blender-addon', domain: 'blender', description: 'Blender add-ons (bpy)', technologies: ['Blender', 'Python'] }],
         [/db|migration|마이그레이션|index|인덱스|sql/i, 'database']];
       for (const [re, agent, proposal] of rules) if (re.test(b.command)) return send(res, 200, { success: true, data: agent ? { agent, fit: 0.95, reason: 'mock rule', new: null, engine: 'mock', ms: 5 } : { agent: null, fit: 0, reason: 'mock: no specialist', new: proposal, engine: 'mock', ms: 5 } });
       return send(res, 200, { success: true, data: { agent: 'generalist', fit: 0.7, reason: 'mock: general request', new: null, engine: 'mock', ms: 5 } });

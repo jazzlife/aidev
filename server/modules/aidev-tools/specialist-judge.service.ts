@@ -1,5 +1,6 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { Codex } from '@openai/codex-sdk';
+import { createHash } from 'node:crypto';
 import os from 'node:os';
 
 /**
@@ -35,12 +36,37 @@ Rules:
 Output ONLY this JSON (no prose):
 {"agent": "<existing name>" | "generalist" | null, "fit": <0..1 how precisely the chosen agent's domain covers the command>, "reason": "<short>", "new": null | {"name": "<kebab-case>", "domain": "<domain>", "description": "<one line>", "technologies": ["..."]}}`;
 
+/** The first balanced `{…}` in `text` once it is complete and parses (strings and escapes respected), else null. */
+export function firstCompleteJson(text: string): Record<string, unknown> | null {
+  const start = text.indexOf('{');
+  if (start < 0) return null;
+  let depth = 0; let inString = false; let escaped = false;
+  for (let i = start; i < text.length; i += 1) {
+    const ch = text[i];
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{') depth += 1;
+    else if (ch === '}') {
+      depth -= 1;
+      if (depth === 0) {
+        try { const value = JSON.parse(text.slice(start, i + 1)) as unknown; return value && typeof value === 'object' ? value as Record<string, unknown> : null; } catch { return null; }
+      }
+    }
+  }
+  return null;
+}
+
 export function parseJudge(text: string, names: Set<string>): Omit<JudgeResult, 'engine' | 'ms'> | null {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(text);
   const body = fenced?.[1] ?? /\{[\s\S]*\}/.exec(text)?.[0];
   if (!body) return null;
   try {
-    const raw = JSON.parse(body.trim()) as Record<string, unknown>;
+    const raw = (firstCompleteJson(body) ?? JSON.parse(body.trim())) as Record<string, unknown>;
     let agent = typeof raw.agent === 'string' ? raw.agent.trim() : null;
     if (agent && agent !== 'generalist' && !names.has(agent)) agent = null;   // an invented name is "none fits"
     const fit = typeof raw.fit === 'number' && Number.isFinite(raw.fit) ? Math.max(0, Math.min(1, raw.fit)) : agent ? 0.7 : 0;
@@ -59,29 +85,67 @@ export function parseJudge(text: string, names: Set<string>): Omit<JudgeResult, 
   }
 }
 
+/**
+ * Latency (server bench 2026-09-29, 12 specialists, 18 commands): with the CLI's default adaptive thinking the
+ * judge took median 7.7 s and up to 74 s (a thinking blow-up) — two of twelve server calls passed the 30 s route
+ * timeout. Thinking off + streaming + stopping at the first complete JSON object: median 2.8 s, max 4.1 s, same
+ * 18/18 accuracy (the decision is a lookup against declared domains, not a reasoning task).
+ */
+const HARD_TIMEOUT_MS = 45_000;
+
 async function askClaude(prompt: string): Promise<string> {
   let output = '';
-  const stream = query({
-    prompt,
-    options: { cwd: os.homedir(), maxTurns: 1, model: 'haiku', allowedTools: [], tools: [], permissionMode: 'bypassPermissions', systemPrompt: JUDGE_PROMPT, settingSources: [], persistSession: false },
-  });
-  for await (const message of stream) {
-    const record = message as { type?: string; message?: { content?: Array<{ type?: string; text?: string }> }; result?: string };
-    if (record.type === 'assistant') for (const block of record.message?.content ?? []) if (block.type === 'text' && block.text) output += block.text;
-    if (record.type === 'result' && typeof record.result === 'string' && !output) output = record.result;
+  const abortController = new AbortController();
+  const timer = setTimeout(() => abortController.abort(), HARD_TIMEOUT_MS);
+  try {
+    const stream = query({
+      prompt,
+      options: {
+        cwd: os.homedir(), maxTurns: 1, model: 'haiku', allowedTools: [], tools: [], permissionMode: 'bypassPermissions', systemPrompt: JUDGE_PROMPT,
+        settingSources: [], persistSession: false, thinking: { type: 'disabled' }, includePartialMessages: true, abortController,
+      },
+    });
+    let streamed = '';
+    for await (const message of stream) {
+      const record = message as { type?: string; event?: { type?: string; delta?: { text?: string } }; message?: { content?: Array<{ type?: string; text?: string }> }; result?: string };
+      if (record.type === 'stream_event' && record.event?.type === 'content_block_delta' && record.event.delta?.text) {
+        streamed += record.event.delta.text;
+        // the verdict is complete: stop here instead of waiting for any prose the model adds after it
+        if (firstCompleteJson(streamed)) { output = streamed; abortController.abort(); break; }
+      }
+      if (record.type === 'assistant') for (const block of record.message?.content ?? []) if (block.type === 'text' && block.text) output += block.text;
+      if (record.type === 'result' && typeof record.result === 'string' && !output) output = record.result;
+    }
+    return output || streamed;
+  } catch (error) {
+    if (output) return output;
+    throw error;
+  } finally {
+    clearTimeout(timer);
   }
-  return output;
 }
 
 async function askCodex(prompt: string): Promise<string> {
   const codex = new Codex({ config: { developer_instructions: JUDGE_PROMPT } as never });
-  const thread = codex.startThread({ workingDirectory: os.homedir(), skipGitRepoCheck: true, sandboxMode: 'read-only', approvalPolicy: 'never', model: 'gpt-5.4-mini' });
-  const turn = await thread.run(prompt);
+  const thread = codex.startThread({ workingDirectory: os.homedir(), skipGitRepoCheck: true, sandboxMode: 'read-only', approvalPolicy: 'never', model: 'gpt-5.4-mini', modelReasoningEffort: 'low' });
+  const turn = await thread.run(prompt, { signal: AbortSignal.timeout(HARD_TIMEOUT_MS) });
   return turn.finalResponse ?? '';
 }
 
+/** The same command against the same catalog is judged once at a time (the typing-time pre-judge and the send share it). */
+const inflight = new Map<string, Promise<JudgeResult>>();
+
 export const specialistJudgeService = {
-  async judge(input: JudgeInput): Promise<JudgeResult> {
+  judge(input: JudgeInput): Promise<JudgeResult> {
+    const key = createHash('sha1').update(JSON.stringify([input.command.trim(), input.project ?? null, input.candidates.map((c) => [c.name, c.description])])).digest('hex');
+    const running = inflight.get(key);
+    if (running) return running;
+    const promise = this.judgeOnce(input).finally(() => inflight.delete(key));
+    inflight.set(key, promise);
+    return promise;
+  },
+
+  async judgeOnce(input: JudgeInput): Promise<JudgeResult> {
     const t0 = Date.now();
     const candidates = input.candidates.filter((c) => c.name && c.name !== 'generalist').slice(0, 60);
     const names = new Set(candidates.map((c) => c.name));

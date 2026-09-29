@@ -1,11 +1,12 @@
 import { useRef, useState, type KeyboardEvent } from 'react';
 import { ArrowUp, Square } from 'lucide-react';
 
-type ComposerProps = { disabled?: boolean; busy: boolean; onSend: (text: string) => void; onAbort: () => void; placeholder?: string };
+type ComposerProps = { disabled?: boolean; busy: boolean; onSend: (text: string) => void; onAbort: () => void; placeholder?: string; /** the draft as typed (ChatScreen pre-judges it) */ onDraftChange?: (text: string) => void };
 
 /** Used by ChatScreen: bottom-anchored input with auto-grow, send/stop button, safe-area padding. */
-export function Composer({ disabled, busy, onSend, onAbort, placeholder }: ComposerProps) {
-  const [value, setValue] = useState('');
+export function Composer({ disabled, busy, onSend, onAbort, placeholder, onDraftChange }: ComposerProps) {
+  const [value, setValueState] = useState('');
+  const setValue = (next: string) => { setValueState(next); onDraftChange?.(next); };
   const ref = useRef<HTMLTextAreaElement>(null);
   const grow = () => { const element = ref.current; if (!element) return; element.style.height = 'auto'; element.style.height = `${Math.min(element.scrollHeight, 160)}px`; };
   const send = () => { const text = value.trim(); if (!text || disabled) return; onSend(text); setValue(''); requestAnimationFrame(grow); };

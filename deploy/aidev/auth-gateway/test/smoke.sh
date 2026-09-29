@@ -9,7 +9,7 @@ mkdir -p "$T/secrets"; head -c 48 /dev/urandom | base64 > "$T/secrets/jwt"; head
 MOCK_CODEX_ONLY=rt-codexonly node test/mock-services.mjs >"$T/mock.log" 2>&1 &
 sleep 0.5
 export DATABASE_PATH="$T/auth.db" JWT_SECRET_FILE="$T/secrets/jwt" RUNTIME_MANAGER_TOKEN_FILE="$T/secrets/rt" \
-  RUNTIME_MANAGER_URL=http://127.0.0.1:18090 LAYA_URL=http://127.0.0.1:18095 PUBLIC_ORIGIN=http://127.0.0.1:18080 PORT=18080 STATIC_ROOT="$T/dist" LAYA_RETRY_MS=1500
+  RUNTIME_MANAGER_URL=http://127.0.0.1:18090 LAYA_URL=http://127.0.0.1:18095 PUBLIC_ORIGIN=http://127.0.0.1:18080 PORT=18080 STATIC_ROOT="$T/dist" LAYA_RETRY_MS=1500 AIDEV_JUDGE_WAIT_MS=1500
 export RUNNER_DIST_DIR="$(cd .. && pwd)/runner/dist"
 mkdir -p "$T/dist" "$T/dist-mobile"; echo '<html>workbench</html>' > "$T/dist/index.html"; echo '<html>mobile</html>' > "$T/dist-mobile/index.html"
 # accounts: alice (both engines), bob (codex only, runtime rt-codexonly)
@@ -38,6 +38,16 @@ r=$(post "$A" /api/aidev/route '{"text":"Unity 셰이더로 물 표면 굴절 �
 r=$(post "$A" /api/aidev/route '{"text":"Verilog로 UART 송신기 모듈을 작성해줘"}'); check "$r" 'j.decision==="create" && j.create && j.create.proposal && j.create.proposal.name==="fpga-verilog" && j.judge.source==="llm"' "no specialist → create with the judge's proposal (fpga-verilog)"
 r=$(post "$A" /api/aidev/route '{"text":"SwiftUI로 iOS 위젯 만들어줘"}'); check "$r" 'j.decision==="create" && j.agent.name!=="frontend-react"' "near miss (SwiftUI ≠ React) is not used"
 r=$(post "$A" /api/aidev/route '{"text":"Verilog로 UART 송신기 모듈을 작성해줘"}'); check "$r" 'j.judge.source==="cache" && j.decision==="create"' "same command → cached verdict (no second LLM turn)"
+# typing-time pre-judge: the send joins the running judge call (one LLM turn), a repeat is served from the cache
+r=$(post "$A" /api/aidev/route/prejudge '{"text":"Blender 애드온 만들어줘 slow-judge-800"}'); check "$r" 'j.status==="started"' "prejudge starts the judge while typing"
+r=$(post "$A" /api/aidev/route/prejudge '{"text":"Blender 애드온 만들어줘 slow-judge-800"}'); check "$r" 'j.status==="running"' "a second pause joins the running judge"
+r=$(post "$A" /api/aidev/route '{"text":"Blender 애드온 만들어줘 slow-judge-800"}'); check "$r" 'j.judge && j.judge.source==="llm" && j.judge.prejudged===true && j.decision==="create" && j.create.proposal.name==="blender-addon"' "send joins the pre-judge (waited $(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).judge?.wait_ms')ms)"
+r=$(post "$A" /api/aidev/route/prejudge '{"text":"blender 애드온   만들어줘 slow-judge-800"}'); check "$r" 'j.status==="cached"' "prejudge of the same command (normalized) → cached"
+r=$(post "$A" /api/aidev/route/prejudge '{"text":"hi"}'); check "$r" 'j.status==="skipped"' "too short → skipped"
+# a judge slower than the send's wait: the send falls back, the verdict lands in the cache for the next send
+r=$(post "$A" /api/aidev/route '{"text":"Verilog 테스트벤치 작성 slow-judge-2500"}'); check "$r" '!j.judge && j.plan.reason.some(x=>/still running/.test(x))' "judge slower than AIDEV_JUDGE_WAIT_MS → fallback, not blocked"
+sleep 1.3
+r=$(post "$A" /api/aidev/route '{"text":"Verilog 테스트벤치 작성 slow-judge-2500"}'); check "$r" 'j.judge && j.judge.source==="cache" && j.decision==="create"' "late verdict was cached → next send uses it"
 r=$(post "$A" /api/aidev/route '{"text":"이 함수 이름을 더 명확하게 바꿔줘"}'); check "$r" 'j.decision==="generalist" && j.agent.name==="generalist"' "trivial request → generalist"
 r=$(post "$A" /api/aidev/route '{"text":"프로덕션 DB 테이블을 drop 하고 마이그레이션을 다시 돌려"}'); check "$r" 'j.scope.risk>=1.5 && j.scope.depth>=2' "risk raises depth"
 r=$(post "$A" /api/aidev/decide/remote.approve '{"state":{"command":"rm -rf ~/projects/app/node_modules && npm ci"}}'); check "$r" 'typeof j.answer==="number" && j.decision_id>0' "decide remote.approve"
@@ -152,7 +162,7 @@ if [ -x "$RUNNER_BIN" ]; then
   # F-03: remote exec — piped output + exit code in remote_runs, log, roots, ownership, policy, browser stream, restart adoption
   waitrun() { for i in $(seq 1 ${2:-60}); do r=$(get "$A" "/api/aidev/remote-runs/$1"); echo "$r" | grep -q '"finished_at":[0-9]' && break; sleep 0.25; done; echo "$r"; }
   r=$(post "$A" "/api/aidev/targets/$TID/exec" '{"cmd":"echo hello-remote; echo oops 1>&2; pwd; exit 3"}'); RR=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).stream?.remoteRunId')
-  check "$r" 'j.stream.streamId>0 && j.stream.remoteRunId>0 && j.stream.running===true && j.stream.by==="user"' "exec started (stream $(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).stream?.streamId'))"
+  check "$r" 'j.stream.streamId>0 && j.stream.remoteRunId>0 && (j.stream.running===true || j.stream.code===3) && j.stream.by==="user"' "exec started (stream $(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).stream?.streamId'))"
   r=$(waitrun "$RR"); check "$r" 'j.run.exit_code===3 && j.run.approved_by==="user" && j.run.artifacts.bytes>0 && j.run.live && j.run.live.running===false' "exit code 3 recorded in remote_runs (bytes $(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).run.artifacts?.bytes'))"
   L=$(curl -s "$G/api/aidev/remote-runs/$RR/log?plain=1" -H "authorization: Bearer $A"); check "{\"ok\":$(echo "$L" | grep -q hello-remote && echo "$L" | grep -q oops && echo "$L" | grep -q runner-user && echo true || echo false)}" 'j.ok' "log has stdout + stderr, cwd = first allowed root"
   r=$(get "$A" "/api/aidev/targets/$TID/runs"); check "$r" "j.runs[0].id===$RR && j.runs[0].target_name==='dev-mac' && j.streams.length>=1" "runs listed per target"

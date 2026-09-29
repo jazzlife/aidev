@@ -39,7 +39,7 @@ export type RouteResult = {
   /** Present when no fitting agent exists: what to send to the agent-architect first (§3.7). */
   create: { architect: ArchitectDefinition; catalog: string; background: boolean; proposal?: SpecialistProposal | null } | null;
   /** Specialist judge verdict (LLM / cache / judge-confirmed similar command); null when unavailable. */
-  judge?: { agent: string | null; fit: number; reason: string; source: 'llm' | 'cache' | 'similar' | null; engine: string | null; ms: number | null; proposal: SpecialistProposal | null } | null;
+  judge?: { agent: string | null; fit: number; reason: string; source: 'llm' | 'cache' | 'similar' | null; engine: string | null; ms: number | null; wait_ms?: number; prejudged?: boolean; proposal: SpecialistProposal | null } | null;
   fallback: boolean;
   laya_error: string | null;
   scope: RouteScope;
@@ -213,6 +213,8 @@ export type ClaudeLoginStatus = { token: { issuedAt: number; expiresAt: number }
 /** Used by the aidev-router hooks, the workbench router bar and the mobile router chip. */
 export const aidevApi = {
   route: (input: RouteRequest) => post('/api/aidev/route', input).then((response) => readJson<RouteResult>(response)),
+  /** typing-time pre-judge: starts the specialist judge for a draft; never waits for the verdict */
+  prejudge: (input: { text: string; projectHint?: string | null }) => post('/api/aidev/route/prejudge', input).then((response) => readJson<{ status: 'started' | 'running' | 'cached' | 'similar' | 'skipped'; reason?: string; agent?: string | null }>(response)),
   decide: (kind: string, state: Record<string, unknown>, options?: Record<string, string>) =>
     post(`/api/aidev/decide/${encodeURIComponent(kind)}`, { state, options }).then((response) => readJson<DecideResult>(response)),
   overrideDecision: (id: number, patch: { final_agent?: string; final_engine?: Engine; final_model?: string; final_target?: string; final_answer?: unknown }) =>
