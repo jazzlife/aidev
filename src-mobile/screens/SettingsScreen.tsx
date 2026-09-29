@@ -4,6 +4,7 @@ import { useAuth } from '@/modules/chat-core';
 import { aidevApi, claudeAuth, EFFORT_LABEL, routingStore, useClaudeAuth, useEffortCap, useRoutingState, type EnginesResult, type RoutingMode } from '@/modules/aidev-router';
 import { ClaudeLoginSheet } from '@m/components/ClaudeLoginSheet';
 import { KnowledgeSection } from '@m/components/KnowledgeSection';
+import { RemoteRunsSection } from '@m/components/RemoteRunCard';
 import { disablePush, enablePush, pushState, type PushState } from '@m/lib/push';
 
 const PUSH_LABEL: Record<PushState, string> = { on: '켜짐', off: '꺼짐', denied: '브라우저에서 차단됨 (설정에서 허용)', needs_install: '홈 화면에 추가한 앱에서 켤 수 있습니다', unsupported: '이 브라우저는 지원하지 않습니다' };
@@ -103,6 +104,7 @@ export function SettingsScreen() {
           {pushNote ? <div className="text-[12px] text-muted mt-2">{pushNote}</div> : null}
         </section>
         <KnowledgeSection />
+        <RemoteRunsSection />
         <section>
           <div className="text-[12px] uppercase tracking-wide text-muted mb-2">화면</div>
           <button type="button" onClick={switchToWorkbench} className="w-full rounded-xl2 border border-line bg-surface px-4 py-3 text-left text-[15px]">데스크탑 작업대(IDE)로 전환</button>

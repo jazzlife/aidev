@@ -5,6 +5,7 @@
 mod caps;
 mod config;
 mod conn;
+mod exec;
 mod pair;
 mod roots;
 mod service;

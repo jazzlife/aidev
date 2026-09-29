@@ -4,7 +4,7 @@ import type { openStore } from './store.js';
 import { EFFORT_LADDER, ENGINES, type Engine } from './store-aidev.js';
 import type { LayaClient } from './laya.js';
 import type { Push } from './push.js';
-import type { RunnerHub } from './runner-hub.js';
+import { RpcError, type RunnerHub } from './runner-hub.js';
 import { applyLessonOutcome, promote } from './lesson-loop.js';
 import { downgradeEnabled, runTierPolicy, setTierPolicy } from './tier-policy.js';
 import { runEngineWeights } from './engine-weights.js';
@@ -410,6 +410,79 @@ export function createAidevApi(deps: AidevDeps) {
         const code = crypto.randomBytes(4).toString('hex').toUpperCase();
         const id = store.addTarget({ userId: uid, name: str(b.name, 'name', 41), platform: optStr(b.platform, 20) ?? null, tags: Array.isArray(b.tags) ? (b.tags as unknown[]).map(String).slice(0, 20) : [], description: optStr(b.description, 600) ?? '', policy: optStr(b.policy, 10), pairingCode: code, pairingExpires: Date.now() + 10 * 60_000 });
         return json(res, 201, { target: { id, pairing_code: code, expires_in: 600 } }), true;
+      }
+      // ---- remote runs (F-03): start a command on a target, list runs, read logs, stop ---------------
+      const remoteRunView = (r: NonNullable<ReturnType<Store['remoteRunById']>>) => ({ ...r, artifacts: r.artifacts ? JSON.parse(r.artifacts) : null, live: deps.runners?.streamByRun(r.id) ?? null });
+      const execMatch = rest.match(/^\/targets\/(\d+)\/(exec|runs)$/);
+      if (execMatch) {
+        const id = Number(execMatch[1]);
+        const target = store.target(uid, id);
+        if (!target) throw new HttpError(404, 'Target not found');
+        if (execMatch[2] === 'runs' && m === 'GET') {
+          const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 30, 1), 200);
+          return json(res, 200, { runs: store.remoteRuns(uid, id, limit).map(remoteRunView), streams: deps.runners?.streams(id) ?? [] }), true;
+        }
+        if (execMatch[2] === 'exec' && m === 'POST') {
+          // agents go through remote_exec + approval (F-05); this endpoint is the user's own hand
+          if (session.sid.startsWith('runtime:')) throw new HttpError(403, 'agent의 원격 실행은 승인 절차(remote_exec, F-05)를 거쳐야 합니다');
+          if (target.policy === 'deny') throw new HttpError(403, '이 대상의 실행 정책이 "거부"입니다 — 원격 대상에서 정책을 바꾸세요');
+          if (!deps.runners) throw new HttpError(503, 'runner hub unavailable');
+          const b = await readJson(req);
+          const cmd = str(b.cmd, 'cmd', 16000);
+          let env: Record<string, string> | undefined;
+          if (b.env !== undefined) {
+            if (!b.env || typeof b.env !== 'object' || Array.isArray(b.env)) throw new HttpError(400, 'env must be an object');
+            const entries = Object.entries(b.env as Record<string, unknown>);
+            if (entries.length > 50 || entries.some(([k, v]) => !/^[A-Za-z_][A-Za-z0-9_]{0,127}$/.test(k) || typeof v !== 'string' || v.length > 8192)) throw new HttpError(400, 'env: up to 50 NAME=string pairs');
+            env = Object.fromEntries(entries) as Record<string, string>;
+          }
+          const int = (v: unknown, lo: number, hi: number) => (v === undefined || v === null ? undefined : Math.min(Math.max(Math.round(num(v, 'number')), lo), hi));
+          try {
+            const stream = await deps.runners.exec(id, uid, { cmd, cwd: optStr(b.cwd, 1000) || null, pty: b.pty === true, cols: int(b.cols, 10, 500), rows: int(b.rows, 4, 300), env, timeoutSec: int(b.timeoutSec, 1, 86400) }, { approvedBy: 'user' });
+            return json(res, 201, { stream }), true;
+          } catch (error) {
+            if (error instanceof HttpError) throw error;
+            throw new HttpError(error instanceof RpcError && error.code === -32010 ? 409 : 400, error instanceof Error ? error.message : 'exec failed');
+          }
+        }
+      }
+      if (rest === '/remote-runs' && m === 'GET') {
+        const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 30, 1), 200);
+        return json(res, 200, { runs: store.remoteRuns(uid, undefined, limit).map(remoteRunView) }), true;
+      }
+      const remoteRunMatch = rest.match(/^\/remote-runs\/(\d+)(\/log|\/signal)?$/);
+      if (remoteRunMatch) {
+        const row = store.remoteRunById(uid, Number(remoteRunMatch[1]));
+        if (!row) throw new HttpError(404, 'Remote run not found');
+        if (!remoteRunMatch[2] && m === 'GET') return json(res, 200, { run: remoteRunView(row) }), true;
+        if (remoteRunMatch[2] === '/log' && m === 'GET') {
+          // last N bytes: the live ring while it runs (or is still in memory), else the log file
+          const want = Math.min(Math.max(Number(url.searchParams.get('bytes')) || 65536, 1024), 1024 * 1024);
+          const live = deps.runners?.streamByRun(row.id);
+          let data = live ? deps.runners!.tail(row.target_id, live.streamId) : null;
+          if (!data) {
+            const file = deps.runners?.logPath(row.id);
+            const stat = file ? await fs.promises.stat(file).catch(() => null) : null;
+            if (file && stat?.isFile()) {
+              const fh = await fs.promises.open(file, 'r');
+              try { const len = Math.min(stat.size, want); data = Buffer.alloc(len); await fh.read(data, 0, len, stat.size - len); } finally { await fh.close(); }
+            }
+          }
+          let text = (data ?? Buffer.alloc(0)).subarray(-want).toString('utf8');
+          // ?plain=1 → no ANSI colour/cursor codes (mobile cards, agents)
+          if (url.searchParams.get('plain') === '1') text = text.replace(/\x1b\[[0-?]*[ -/]*[@-~]/g, '').replace(/\x1b\][^\x07\x1b]*(\x07|\x1b\\)/g, '').replace(/\r(?!\n)/g, '\n');
+          res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'cache-control': 'no-store', 'x-remote-run-running': live?.running ? '1' : '0' });
+          res.end(text);
+          return true;
+        }
+        if (remoteRunMatch[2] === '/signal' && m === 'POST') {
+          const b = await readJson(req);
+          const signal = typeof b.signal === 'string' && /^(INT|TERM|KILL)$/.test(b.signal) ? b.signal : 'INT';
+          const live = deps.runners?.streamByRun(row.id);
+          if (!live?.running) throw new HttpError(409, '실행 중이 아닙니다');
+          try { await deps.runners!.control(row.target_id, live.streamId, 'signal', { signal }); } catch (error) { throw new HttpError(409, error instanceof Error ? error.message : 'signal failed'); }
+          return json(res, 200, { ok: true }), true;
+        }
       }
       const targetMatch = rest.match(/^\/targets\/(\d+)(\/pair\/refresh|\/ping|\/refresh-caps)?$/);
       if (targetMatch) {

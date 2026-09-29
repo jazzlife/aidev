@@ -159,7 +159,9 @@ async function proxyHttp(req: IncomingMessage, res: ServerResponse, session: Ses
 const push = createPush(store, origin.startsWith('https:') ? origin : 'mailto:aidev@localhost');   // web-push requires https: or mailto:
 push.startReminders();
 // Remote PC runners (stage F): outbound WebSockets from `aidev-runner` on users' machines.
-const runners: RunnerHub = createRunnerHub(store, new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 }));
+// Command output logs (remote_runs) live next to the database unless REMOTE_LOG_DIR says otherwise.
+const remoteLogDir = process.env.REMOTE_LOG_DIR ?? path.join(path.dirname(process.env.DATABASE_PATH ?? '/data/auth.db'), 'remote-logs');
+const runners: RunnerHub = createRunnerHub(store, new WebSocketServer({ noServer: true, maxPayload: 1024 * 1024 }), { logDir: remoteLogDir });
 runners.resetStatuses();
 const aidev = createAidevApi({
   runners,
@@ -363,6 +365,15 @@ server.on('upgrade', async (req, socket, head) => {
   try {
     const pathname = new URL(req.url ?? '/', origin).pathname;
     if (runners.upgrade(req, socket, head, pathname)) return;
+    // Remote run streams for the workbench (F-03): session cookie + same origin + the caller's own target.
+    const streamMatch = pathname.match(/^\/api\/aidev\/targets\/(\d+)\/stream$/);
+    if (streamMatch) {
+      if (req.headers.origin !== origin) throw new Error('Origin rejected');
+      const session = authenticate(req);
+      if (!session || !store.target(session.user.id, Number(streamMatch[1]))) throw new Error('Authentication required');
+      runners.attachBrowser(req, socket, head, Number(streamMatch[1]), () => Boolean(store.session(session.sid)));
+      return;
+    }
     if (!['/ws', '/shell', '/desktop-notifications'].includes(pathname) && !/^\/plugin-ws\/[a-zA-Z0-9_-]+$/.test(pathname)) throw new Error('Unknown WS endpoint');
     if (req.headers.origin !== origin) throw new Error('Origin rejected');
     const session = authenticate(req);

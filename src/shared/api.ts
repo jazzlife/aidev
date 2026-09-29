@@ -557,6 +557,21 @@ export const api = {
     refreshCapabilities: (targetId: number) => post(`/api/aidev/targets/${targetId}/refresh-caps`),
     /** aidev-runner binaries shipped with the active release (served by the gateway without a session). */
     runnerDownloads: () => get('/_runner/download'),
+    /** F-03: run a command on the target (the user's own hand; agents use remote_exec with approval). */
+    exec: (targetId: number, input: { cmd: string; cwd?: string; pty?: boolean; cols?: number; rows?: number; timeoutSec?: number }) => post(`/api/aidev/targets/${targetId}/exec`, input),
+    runs: (targetId: number, limit = 30) => get(`/api/aidev/targets/${targetId}/runs?limit=${limit}`),
+    /** Remote runs across all targets (mobile result cards). */
+    remoteRuns: (limit = 30) => get(`/api/aidev/remote-runs?limit=${limit}`),
+    remoteRun: (remoteRunId: number) => get(`/api/aidev/remote-runs/${remoteRunId}`),
+    /** Last output of a run as text (`plain` strips ANSI codes). */
+    remoteRunLog: (remoteRunId: number, opts: { bytes?: number; plain?: boolean } = {}) => get(`/api/aidev/remote-runs/${remoteRunId}/log?bytes=${opts.bytes ?? 65536}${opts.plain ? '&plain=1' : ''}`),
+    signal: (remoteRunId: number, signal: 'INT' | 'TERM' | 'KILL' = 'INT') => post(`/api/aidev/remote-runs/${remoteRunId}/signal`, { signal }),
+    /** WebSocket URL of a target's run streams (same origin; the session cookie or stored token authenticates). */
+    streamUrl: (targetId: number) => {
+      const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+      const token = getStoredAuthToken();
+      return `${protocol}//${window.location.host}/api/aidev/targets/${targetId}/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`;
+    },
   },
 };
 

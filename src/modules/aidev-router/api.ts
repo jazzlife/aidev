@@ -181,6 +181,14 @@ export type TierPolicyCell = { domain: string; depth: number; engine: Engine; mo
 export type EngineWeightRow = { task_kind: string; engine: Engine; weight: number; prior: number | null; pinned: number; success_n: number; fail_n: number; avg_ms: number | null; updated_at: number | null };
 export type TierPolicyView = { downgrade?: boolean; cells: TierPolicyCell[]; log: Array<{ id: number; at: number; domain: string; depth: number; engine: string; from_model: string; to_model: string; reason: string; actor: string }>; last_run: number | null; table: Record<number, Record<Engine, { model: string; effort: string }>> };
 
+/** A command run on a remote PC (remote_runs row + the live stream while the gateway holds it). */
+export type RemoteRun = {
+  id: number; target_id: number; target_name: string | null; kind: string; cmd: string | null; cwd: string | null; approved_by: string | null;
+  started_at: number; finished_at: number | null; exit_code: number | null;
+  artifacts: { signal?: string | null; lost?: boolean; error?: string; bytes?: number; duration_ms?: number } | null;
+  live: { streamId: number; running: boolean; code: number | null; signal: string | null; durationMs: number | null; pty: boolean } | null;
+};
+
 /** Platform-managed Claude subscription login state (runtime `/api/aidev-tools/claude-login`). */
 export type ClaudeLoginStatus = { token: { issuedAt: number; expiresAt: number } | null; failure: { at: number; message: string } | null };
 
@@ -204,6 +212,12 @@ export const aidevApi = {
   runOutcome: (runId: number, outcome: Record<string, unknown>) => post(`/api/aidev/runs/${runId}/outcome`, outcome, 'PATCH').then((response) => readJson<{ run: Record<string, unknown>; next?: NextAction | null }>(response)),
   handoffBrief: (sessionId: string, input: { from_engine?: string | null; to_engine?: string | null; reason?: string | null }) => post('/api/aidev-tools/handoff', { session_id: sessionId, ...input }).then((response) => readRuntimeData<{ text: string; files: string[]; userTurns: number }>(response)),
   targets: () => authenticatedFetch('/api/aidev/targets').then((response) => readJson<{ targets: Array<Record<string, unknown>> }>(response)),
+  /** Remote runs (F-03) across targets, newest first — mobile result cards. */
+  remoteRuns: (limit = 10) => authenticatedFetch(`/api/aidev/remote-runs?limit=${limit}`).then((response) => readJson<{ runs: RemoteRun[] }>(response)),
+  remoteRun: (id: number) => authenticatedFetch(`/api/aidev/remote-runs/${id}`).then((response) => readJson<{ run: RemoteRun }>(response)),
+  /** Last output as plain text (ANSI codes stripped). */
+  remoteRunLog: (id: number, bytes = 16384) => authenticatedFetch(`/api/aidev/remote-runs/${id}/log?plain=1&bytes=${bytes}`).then(async (response) => { if (!response.ok) throw new Error(`log ${response.status}`); return response.text(); }),
+  remoteRunSignal: (id: number, signal: 'INT' | 'KILL' = 'INT') => post(`/api/aidev/remote-runs/${id}/signal`, { signal }).then((response) => readJson<{ ok: boolean }>(response)),
   agentExamples: (id: number) => authenticatedFetch(`/api/aidev/agents/${id}/examples`).then((response) => readJson<{ examples: Array<{ id: number; text: string; source: string }> }>(response)),
   addAgentExamples: (id: number, examples: string[]) => post(`/api/aidev/agents/${id}/examples`, { examples }).then((response) => readJson<{ added: number }>(response)),
   updateLesson: (id: number, patch: { status?: string; rule?: string; trigger?: string; promote?: boolean }) => post(`/api/aidev/lessons/${id}`, patch, 'PATCH').then((response) => readJson<{ lesson: Record<string, unknown>; promoted: string | null }>(response)),

@@ -17,7 +17,7 @@ node -e "
 const {openStore}=await import('./dist/store.js'); const s=openStore(process.env.DATABASE_PATH);
 await s.add('alice','pw1234','rt-alice',1); await s.add('bob','pw1234','rt-codexonly',1); await s.add('admin','pw1234','rt-admin',1);
 s.setAccountEngines('bob',['codex']); s.setRole('admin','admin'); s.db.close();" --input-type=module
-node dist/auth-gateway.js >"$T/gw.log" 2>&1 &
+node dist/auth-gateway.js >"$T/gw.log" 2>&1 & GWPID=$!
 for i in $(seq 1 30); do curl -sf http://127.0.0.1:18080/_gateway/health >/dev/null && break; sleep 0.2; done
 G=http://127.0.0.1:18080
 login() { curl -s -X POST "$G/api/auth/login" -H 'content-type: application/json' -d "{\"username\":\"$1\",\"password\":\"pw1234\"}" | node -pe 'JSON.parse(require("fs").readFileSync(0)).token'; }
@@ -132,6 +132,28 @@ if [ -x "$RUNNER_BIN" ]; then
   r=$(post "$A" "/api/aidev/targets/$TID/ping" '{}'); check "$r" 'j.ok===true && j.result.pong===true && j.rtt_ms>=0' "ping through the hub ($(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).rtt_ms')ms)"
   r=$(post "$A" "/api/aidev/targets/$TID/refresh-caps" '{}'); check "$r" 'j.target.capabilities.runner' "capabilities refreshed on demand"
   r=$(post "$B" "/api/aidev/targets/$TID/ping" '{}'); check "$r" 'j.error' "another user cannot reach the target"
+  # F-03: remote exec — piped output + exit code in remote_runs, log, roots, ownership, policy, browser stream, restart adoption
+  waitrun() { for i in $(seq 1 ${2:-60}); do r=$(get "$A" "/api/aidev/remote-runs/$1"); echo "$r" | grep -q '"finished_at":[0-9]' && break; sleep 0.25; done; echo "$r"; }
+  r=$(post "$A" "/api/aidev/targets/$TID/exec" '{"cmd":"echo hello-remote; echo oops 1>&2; pwd; exit 3"}'); RR=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).stream?.remoteRunId')
+  check "$r" 'j.stream.streamId>0 && j.stream.remoteRunId>0 && j.stream.running===true && j.stream.by==="user"' "exec started (stream $(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).stream?.streamId'))"
+  r=$(waitrun "$RR"); check "$r" 'j.run.exit_code===3 && j.run.approved_by==="user" && j.run.artifacts.bytes>0 && j.run.live && j.run.live.running===false' "exit code 3 recorded in remote_runs (bytes $(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).run.artifacts?.bytes'))"
+  L=$(curl -s "$G/api/aidev/remote-runs/$RR/log?plain=1" -H "authorization: Bearer $A"); check "{\"ok\":$(echo "$L" | grep -q hello-remote && echo "$L" | grep -q oops && echo "$L" | grep -q runner-user && echo true || echo false)}" 'j.ok' "log has stdout + stderr, cwd = first allowed root"
+  r=$(get "$A" "/api/aidev/targets/$TID/runs"); check "$r" "j.runs[0].id===$RR && j.runs[0].target_name==='dev-mac' && j.streams.length>=1" "runs listed per target"
+  r=$(post "$A" "/api/aidev/targets/$TID/exec" '{"cmd":"ls","cwd":"/etc"}'); check "$r" '/허용된 폴더 밖/.test(j.error)' "cwd outside allowed_roots refused"
+  r=$(post "$A" "/api/aidev/targets/$TID/exec" '{"cmd":"ls","env":{"BAD-NAME":"x"}}'); check "$r" 'j.error' "bad env name refused"
+  r=$(post "$B" "/api/aidev/targets/$TID/exec" '{"cmd":"id"}'); check "$r" 'j.error' "another user cannot run commands on the target"
+  r=$(get "$B" "/api/aidev/remote-runs/$RR"); check "$r" 'j.error' "another user cannot read the run"
+  post "$A" "/api/aidev/targets/$TID" '{"policy":"deny"}' PATCH >/dev/null; r=$(post "$A" "/api/aidev/targets/$TID/exec" '{"cmd":"true"}'); check "$r" '/거부/.test(j.error)' "policy deny blocks exec"; post "$A" "/api/aidev/targets/$TID" '{"policy":"ask"}' PATCH >/dev/null
+  r=$(node test/stream-client.mjs "$G" "$A" "$TID" || true); check "$r" 'j.hello && j.started && j.attached && j.echoed && j.sizeSeen && j.exit && j.exit.code!==0 && j.replay' "browser stream: pty input, resize, Ctrl+C, late viewer replay ($(echo "$r" | cut -c1-160))"
+  r=$(curl -s -o /dev/null -w '%{http_code}' -H 'connection: upgrade' -H 'upgrade: websocket' -H 'sec-websocket-version: 13' -H 'sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==' -H "origin: http://evil.example" "$G/api/aidev/targets/$TID/stream?token=$A"); check "{\"code\":$r}" 'j.code===401' "stream socket from another origin refused"
+  r=$(curl -s -o /dev/null -w '%{http_code}' -H 'connection: upgrade' -H 'upgrade: websocket' -H 'sec-websocket-version: 13' -H 'sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==' -H "origin: $G" "$G/api/aidev/targets/$TID/stream?token=$B"); check "{\"code\":$r}" 'j.code===401' "stream socket for someone else's target refused"
+  # a command outlives a gateway restart: the runner keeps it, the new gateway adopts it by tag and catches up the output
+  r=$(post "$A" "/api/aidev/targets/$TID/exec" '{"cmd":"echo before; sleep 3; echo after-restart; exit 5"}'); RR2=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).stream?.remoteRunId')
+  sleep 0.5; kill "$GWPID"; sleep 0.5
+  node dist/auth-gateway.js >>"$T/gw.log" 2>&1 & GWPID=$!
+  for i in $(seq 1 30); do curl -sf "$G/_gateway/health" >/dev/null && break; sleep 0.2; done
+  r=$(waitrun "$RR2" 120); L=$(curl -s "$G/api/aidev/remote-runs/$RR2/log?plain=1" -H "authorization: Bearer $A")
+  check "$r" "j.run.exit_code===5 && $(echo "$L" | grep -q after-restart && echo true || echo false)" "run survives a gateway restart (adopted, exit 5, output caught up)"
   r=$(curl -s -o /dev/null -w '%{http_code}' -H 'authorization: Bearer '"$(printf 'c%.0s' $(seq 1 64))" -H 'connection: upgrade' -H 'upgrade: websocket' -H 'sec-websocket-version: 13' -H 'sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==' "$G/_runner/ws"); check "{\"code\":$r}" 'j.code===401' "runner socket with a wrong token refused"
   # re-pair: a new code, paired again → the old connection is cut (4401) and that runner exits 3
   CODE2=$(post "$A" "/api/aidev/targets/$TID/pair/refresh" '{}' | node -pe 'JSON.parse(require("fs").readFileSync(0)).pairing_code')

@@ -3,11 +3,12 @@
 //! Heartbeat every 15 s; a silent link (45 s) or any error reconnects with jittered backoff (1 s → 60 s).
 //! A 401/403 at the handshake means the token was revoked: the runner stops and asks for pairing.
 
-use crate::{caps, config::Config};
+use crate::{caps, config::Config, exec::ExecHub};
 use futures_util::{SinkExt, StreamExt};
 use rand::Rng;
 use serde_json::{json, Value};
 use std::time::{Duration, Instant};
+use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::{client::IntoClientRequest, http::HeaderValue, Error as WsError, Message};
 
 const HEARTBEAT: Duration = Duration::from_secs(15);
@@ -42,16 +43,32 @@ fn chrono_now() -> String {
 
 /// Runs until shutdown or revocation, reconnecting as needed.
 pub async fn run(cfg: Config) -> Exit {
+    let hub = ExecHub::default();
+    let exit = run_with(&cfg, &hub).await;
+    // nothing keeps running unattended once the runner itself stops
+    if hub.running() > 0 {
+        hub.kill_all();
+        tokio::time::sleep(Duration::from_millis(300)).await;
+    }
+    exit
+}
+
+async fn run_with(cfg: &Config, hub: &ExecHub) -> Exit {
     let mut backoff = Duration::from_secs(1);
     loop {
         let started = Instant::now();
-        tokio::select! {
-            outcome = session(&cfg) => match outcome {
+        let outcome = tokio::select! {
+            outcome = session(cfg, hub) => Some(outcome),
+            _ = shutdown_signal() => None,
+        };
+        hub.detach();
+        match outcome {
+            None => return Exit::Shutdown,
+            Some(outcome) => match outcome {
                 Ok(()) => log("연결이 끊어졌습니다"),
                 Err(SessionError::Unauthorized) => return Exit::Unauthorized,
                 Err(SessionError::Other(e)) => log(&format!("연결 오류: {e}")),
             },
-            _ = shutdown_signal() => return Exit::Shutdown,
         }
         // a connection that lasted a while starts the backoff over
         if started.elapsed() > Duration::from_secs(60) {
@@ -77,7 +94,7 @@ enum SessionError {
     Other(String),
 }
 
-async fn session(cfg: &Config) -> Result<(), SessionError> {
+async fn session(cfg: &Config, hub: &ExecHub) -> Result<(), SessionError> {
     let url = ws_url(&cfg.gateway);
     let mut request = url.as_str().into_client_request().map_err(|e| SessionError::Other(e.to_string()))?;
     let auth = HeaderValue::from_str(&format!("Bearer {}", cfg.token)).map_err(|e| SessionError::Other(e.to_string()))?;
@@ -94,6 +111,30 @@ async fn session(cfg: &Config) -> Result<(), SessionError> {
     let hello = json!({ "jsonrpc": "2.0", "method": "runner.hello", "params": { "target_id": cfg.target_id, "capabilities": caps::collect(cfg).await } });
     tx.send(Message::Text(hello.to_string())).await.map_err(|e| SessionError::Other(e.to_string()))?;
 
+    // Every outgoing frame (replies, stream output, notifications, pings) goes through one queue so
+    // processes can write from their own tasks; the bounded queue pushes back on chatty commands.
+    let (out, mut queue) = mpsc::channel::<Message>(256);
+    let writer = tokio::spawn(async move {
+        while let Some(msg) = queue.recv().await {
+            if tx.send(msg).await.is_err() {
+                break;
+            }
+        }
+        let _ = tx.close().await;
+    });
+    hub.attach(out.clone());
+    let result = read_loop(cfg, hub, &out, &mut rx).await;
+    hub.detach();
+    drop(out);
+    writer.abort();
+    result
+}
+
+async fn read_loop<S>(cfg: &Config, hub: &ExecHub, out: &mpsc::Sender<Message>, rx: &mut S) -> Result<(), SessionError>
+where
+    S: futures_util::Stream<Item = Result<Message, WsError>> + Unpin,
+{
+    let send = |m: Message| async move { out.send(m).await.map_err(|_| SessionError::Other("송신 채널 닫힘".into())) };
     let mut heartbeat = tokio::time::interval(HEARTBEAT);
     heartbeat.tick().await;
     let mut last_seen = Instant::now();
@@ -103,7 +144,7 @@ async fn session(cfg: &Config) -> Result<(), SessionError> {
                 if last_seen.elapsed() > SILENCE_LIMIT {
                     return Err(SessionError::Other("게이트웨이 응답 없음(45초)".into()));
                 }
-                tx.send(Message::Ping(Vec::new())).await.map_err(|e| SessionError::Other(e.to_string()))?;
+                send(Message::Ping(Vec::new())).await?;
             }
             frame = rx.next() => {
                 let Some(frame) = frame else { return Ok(()) };
@@ -111,11 +152,11 @@ async fn session(cfg: &Config) -> Result<(), SessionError> {
                 last_seen = Instant::now();
                 match frame {
                     Message::Text(text) => {
-                        if let Some(reply) = handle(cfg, &text).await {
-                            tx.send(Message::Text(reply.to_string())).await.map_err(|e| SessionError::Other(e.to_string()))?;
+                        if let Some(reply) = handle(cfg, hub, &text).await {
+                            send(Message::Text(reply.to_string())).await?;
                         }
                     }
-                    Message::Ping(payload) => { tx.send(Message::Pong(payload)).await.map_err(|e| SessionError::Other(e.to_string()))?; }
+                    Message::Ping(payload) => send(Message::Pong(payload)).await?,
                     Message::Close(frame) => {
                         // 4401 = token revoked / target deleted by the user
                         if frame.as_ref().map(|f| u16::from(f.code)) == Some(4401) { return Err(SessionError::Unauthorized); }
@@ -128,8 +169,8 @@ async fn session(cfg: &Config) -> Result<(), SessionError> {
     }
 }
 
-/// JSON-RPC requests from the gateway. F-01: liveness and capabilities; exec/fs/sync/… arrive in F-03+.
-pub async fn handle(cfg: &Config, text: &str) -> Option<Value> {
+/// JSON-RPC requests from the gateway: liveness, capabilities, fs.resolve and exec.* (F-03).
+pub async fn handle(cfg: &Config, hub: &ExecHub, text: &str) -> Option<Value> {
     let msg: Value = match serde_json::from_str(text) {
         Ok(v) => v,
         Err(_) => return Some(json!({ "jsonrpc": "2.0", "id": null, "error": { "code": -32700, "message": "parse error" } })),
@@ -138,6 +179,13 @@ pub async fn handle(cfg: &Config, text: &str) -> Option<Value> {
     let method = msg.get("method").and_then(Value::as_str)?;
     // notifications (no id) are not answered
     let id = id?;
+    let params = msg.get("params").cloned().unwrap_or(Value::Null);
+    if let Some(result) = hub.rpc(cfg, method, &params).await {
+        return Some(match result {
+            Ok(value) => json!({ "jsonrpc": "2.0", "id": id, "result": value }),
+            Err((code, message)) => json!({ "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": message } }),
+        });
+    }
     let result = match method {
         "runner.ping" => Ok(json!({ "pong": true, "time": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0) })),
         "runner.capabilities" => Ok(caps::collect(cfg).await),
@@ -167,13 +215,14 @@ mod tests {
     #[tokio::test]
     async fn rpc() {
         let cfg = Config { allowed_roots: vec![std::env::temp_dir()], ..Default::default() };
-        let r = handle(&cfg, r#"{"jsonrpc":"2.0","id":1,"method":"runner.ping"}"#).await.unwrap();
+        let hub = ExecHub::default();
+        let r = handle(&cfg, &hub, r#"{"jsonrpc":"2.0","id":1,"method":"runner.ping"}"#).await.unwrap();
         assert_eq!(r["result"]["pong"], true);
-        let r = handle(&cfg, r#"{"jsonrpc":"2.0","id":2,"method":"nope"}"#).await.unwrap();
+        let r = handle(&cfg, &hub, r#"{"jsonrpc":"2.0","id":2,"method":"nope"}"#).await.unwrap();
         assert_eq!(r["error"]["code"], -32601);
-        let r = handle(&cfg, r#"{"jsonrpc":"2.0","id":3,"method":"fs.resolve","params":{"path":"/etc/passwd"}}"#).await.unwrap();
+        let r = handle(&cfg, &hub, r#"{"jsonrpc":"2.0","id":3,"method":"fs.resolve","params":{"path":"/etc/passwd"}}"#).await.unwrap();
         assert_eq!(r["error"]["code"], -32001);
-        assert!(handle(&cfg, r#"{"jsonrpc":"2.0","method":"runner.ping"}"#).await.is_none());
-        assert_eq!(handle(&cfg, "{bad").await.unwrap()["error"]["code"], -32700);
+        assert!(handle(&cfg, &hub, r#"{"jsonrpc":"2.0","method":"runner.ping"}"#).await.is_none());
+        assert_eq!(handle(&cfg, &hub, "{bad").await.unwrap()["error"]["code"], -32700);
     }
 }

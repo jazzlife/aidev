@@ -22,6 +22,7 @@ export const DEFAULT_EFFORT_CAP: Record<Engine, string> = { claude: 'xhigh', cod
 export type TierPolicyRow = { domain: string; depth: number; engine: string; model: string | null; effort: string | null; success_n: number; fail_n: number; avg_ms: number | null; level: number | null; pinned: number; updated_at: number | null };
 export type LessonRow = { id: number; agent_id: number; engine: string | null; trigger: string; rule: string; evidence_run_id: number | null; status: string; hits: number; owner_id: number | null; promoted_to_prompt: number; fails: number; verified_by: string | null; promoted_version: number | null; created_at: number };
 export type RunRow = { id: number; user_id: number; session_id: string | null; decision_id: number | null; agent_id: number | null; agent_version: number | null; engine: string | null; model: string | null; effort: string | null; depth: number | null; task_kind: string | null; risk: number | null; target_id: number | null; started_at: number; finished_at: number | null; exit_code: number | null; tool_errors: number; user_feedback: string | null; reverted: number; reasked: number; test_result: string | null; cost_tokens: number | null; escalated_from_run: number | null; outcome: string | null };
+export type RemoteRunRow = { id: number; run_id: number | null; target_id: number; user_id: number; kind: string; cmd: string | null; cwd: string | null; risk: number | null; approved_by: string | null; started_at: number; finished_at: number | null; exit_code: number | null; artifacts: string | null; target_name?: string | null };
 export type TargetRow = { id: number; user_id: number; name: string; platform: string | null; arch: string | null; tags: string | null; description: string; token_hash: string | null; pairing_code: string | null; pairing_expires: number | null; policy: string; allowed_roots: string | null; capabilities: string | null; status: string; last_seen: number | null; created_at: number };
 
 const agentName = /^[a-z0-9][a-z0-9-]{1,40}$/;
@@ -538,7 +539,14 @@ export function aidevMethods(db: Database.Database) {
       db.prepare('UPDATE remote_runs SET finished_at=?, exit_code=COALESCE(?,exit_code), artifacts=COALESCE(?,artifacts), approved_by=COALESCE(?,approved_by) WHERE id=?').run(Date.now(), p.exitCode ?? null, json(p.artifacts), p.approvedBy ?? null, id);
     },
     remoteRuns(userId: number, targetId?: number, limit = 50) {
-      return db.prepare(`SELECT * FROM remote_runs WHERE user_id=? ${targetId ? 'AND target_id=?' : ''} ORDER BY id DESC LIMIT ?`).all(...(targetId ? [userId, targetId, limit] : [userId, limit]));
+      return db.prepare(`SELECT r.*, t.name AS target_name FROM remote_runs r LEFT JOIN targets t ON t.id=r.target_id WHERE r.user_id=? ${targetId ? 'AND r.target_id=?' : ''} ORDER BY r.id DESC LIMIT ?`).all(...(targetId ? [userId, targetId, limit] : [userId, limit])) as RemoteRunRow[];
+    },
+    remoteRunById(userId: number, id: number) {
+      return db.prepare('SELECT r.*, t.name AS target_name FROM remote_runs r LEFT JOIN targets t ON t.id=r.target_id WHERE r.id=? AND r.user_id=?').get(id, userId) as RemoteRunRow | undefined;
+    },
+    /** exec runs the gateway has not seen finish (a restart in between) — reconciled when the runner says hello. */
+    unfinishedRemoteRuns(targetId: number) {
+      return db.prepare("SELECT * FROM remote_runs WHERE target_id=? AND kind='exec' AND finished_at IS NULL ORDER BY id").all(targetId) as RemoteRunRow[];
     },
   };
   return m;
