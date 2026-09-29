@@ -89,6 +89,16 @@ router.post('/tools/:toolName', async (req, res) => {
         result = await aidevToolsService.remoteLogs(remoteRunId, typeof input.waitSec === 'number' ? input.waitSec : 0, typeof input.outputBytes === 'number' ? input.outputBytes : undefined);
         break;
       }
+      case 'remote_preview': {
+        const port = Number(input.port);
+        if (!Number.isInteger(port) || port < 1024 || port > 65535) throw new Error('port must be an integer 1024-65535.');
+        result = await aidevToolsService.remotePreview({
+          target: typeof input.target === 'string' || typeof input.target === 'number' ? input.target : undefined,
+          port,
+          label: typeof input.label === 'string' ? input.label.slice(0, 120) : undefined,
+        }, readTurn(input));
+        break;
+      }
       case 'remote_stop': {
         const remoteRunId = Number(input.remoteRunId);
         if (!Number.isInteger(remoteRunId)) throw new Error('remoteRunId must be an integer.');

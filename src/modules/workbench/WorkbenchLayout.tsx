@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { Bot, Code2, FolderTree, GitBranch, Globe, ListChecks, MessageSquare, MessagesSquare, MonitorPlay, MonitorSmartphone, PanelBottom, PanelLeft, PanelRight, Settings, SlidersHorizontal, TerminalSquare, X } from 'lucide-react';
+import { AppWindow, Bot, Code2, FolderTree, GitBranch, Globe, ListChecks, MessageSquare, MessagesSquare, MonitorPlay, MonitorSmartphone, PanelBottom, PanelLeft, PanelRight, Settings, SlidersHorizontal, TerminalSquare, X } from 'lucide-react';
 
 import { ChatInterface } from '@/modules/chat';
 import { FileTree } from '@/modules/file-tree';
@@ -14,7 +14,7 @@ import { useUiPreferences } from '@/shared/context/UiPreferencesContext';
 import { useFileOpenResolver, WorkspaceErrorBoundary, WorkspaceStateView } from '@/modules/project-workspace';
 import type { DirectoryRevealRequest, WorkspaceMainProps } from '@/shared/types';
 import { AgentCatalog } from '@/modules/aidev-router';
-import { RemoteApprovalCards, requestRunFocus, RunOutputPane, TargetsPanel } from '@/modules/remote-target';
+import { PreviewPane, RemoteApprovalCards, requestRunFocus, RunOutputPane, TargetsPanel, usePreviewList } from '@/modules/remote-target';
 import { REMOTE_RUN_FOCUS_EVENT } from '@/modules/aidev-router';
 import { EditorGroup, useEditorGroup } from '@/modules/workbench/EditorGroup';
 import { SplitHandle } from '@/modules/workbench/SplitHandle';
@@ -39,9 +39,10 @@ const BOTTOM_TABS: Array<{ id: BottomTab; title: string; icon: typeof TerminalSq
   { id: 'browser', title: '브라우저', icon: Globe },
   { id: 'tasks', title: '작업', icon: ListChecks },
   { id: 'run_output', title: '원격 실행', icon: MonitorPlay },
+  { id: 'preview', title: '미리보기', icon: AppWindow },
 ];
 const TABLET_PANES: Array<{ id: TabletPane; title: string }> = [
-  { id: 'files', title: '파일' }, { id: 'terminal', title: '터미널' }, { id: 'git', title: 'Git' }, { id: 'remote', title: '원격 실행' }, { id: 'browser', title: '브라우저' },
+  { id: 'files', title: '파일' }, { id: 'terminal', title: '터미널' }, { id: 'git', title: 'Git' }, { id: 'remote', title: '원격 실행' }, { id: 'preview', title: '미리보기' }, { id: 'browser', title: '브라우저' },
 ];
 
 /**
@@ -117,6 +118,16 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
     window.addEventListener(REMOTE_RUN_FOCUS_EVENT, onFocus);
     return () => window.removeEventListener(REMOTE_RUN_FOCUS_EVENT, onFocus);
   }, [tier]);
+  // A preview an agent opened (remote_preview) comes forward on its own, once.
+  const { previews } = usePreviewList(!noProject, 8000);
+  const previewSeenRef = useRef<number>(Date.now());
+  useEffect(() => {
+    const fresh = previews.find((p) => p.by === 'agent' && p.createdAt > previewSeenRef.current);
+    if (!fresh) return;
+    previewSeenRef.current = Math.max(...previews.map((p) => p.createdAt));
+    if (tier === 'tablet') layoutStore.patch('tablet', { tabletShowChat: false, tabletPane: 'preview' });
+    else layoutStore.patch('desktop', { workOpen: true, bottomOpen: true, bottomTab: 'preview' });
+  }, [previews, tier]);
   // The legacy tab state still drives a few upstream effects (task banner, palette); keep it on chat.
   useEffect(() => { setActiveTab('chat'); }, [setActiveTab]);
 
@@ -203,6 +214,7 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
           <div className={`absolute inset-0 ${!layout.tabletShowChat && pane === 'terminal' ? '' : 'hidden'}`}>{terminal(!layout.tabletShowChat && pane === 'terminal')}</div>
           {!layout.tabletShowChat && pane === 'git' ? <div className="absolute inset-0">{git}</div> : null}
           {!layout.tabletShowChat && pane === 'remote' ? <div className="absolute inset-0"><RunOutputPane isVisible project={remoteProject} /></div> : null}
+          {!layout.tabletShowChat && pane === 'preview' ? <div className="absolute inset-0"><PreviewPane isVisible /></div> : null}
           {!layout.tabletShowChat && pane === 'browser' && browserUseEnabled ? <div className="absolute inset-0"><BrowserUsePanel isVisible onShowSettings={onShowSettings} /></div> : null}
         </div>
       </div>
@@ -271,6 +283,7 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
                 {shouldShowTasks ? <div className={`absolute inset-0 ${bottomTab === 'tasks' ? '' : 'hidden'}`}><TaskMasterPanel isVisible={workVisible && bottomTab === 'tasks'} /></div> : null}
                 {browserUseEnabled && bottomTab === 'browser' ? <div className="absolute inset-0"><BrowserUsePanel isVisible={workVisible} onShowSettings={onShowSettings} /></div> : null}
                 {bottomTab === 'run_output' ? <div className="absolute inset-0"><RunOutputPane isVisible={workVisible} project={remoteProject} /></div> : null}
+                {bottomTab === 'preview' ? <div className="absolute inset-0"><PreviewPane isVisible={workVisible} /></div> : null}
               </div>
             </div>
           </>

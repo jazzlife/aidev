@@ -10,6 +10,7 @@ import { createAidevApi } from './aidev-api.js';
 import { createPush } from './push.js';
 import { createRemoteGate } from './remote-gate.js';
 import { createRunnerHub, type RunnerHub } from './runner-hub.js';
+import { createPreview } from './preview.js';
 import { startTierPolicySchedule } from './tier-policy.js';
 import { seedAgents } from './seed-agents.js';
 
@@ -167,8 +168,10 @@ runners.resetStatuses();
 // Agents' remote commands pass the gate (risk, policy, approvals); remote test results feed the chat run's outcome.
 const gate = createRemoteGate({ store, laya, runners, push });
 runners.onFinish((stream, userId) => gate.onFinished(stream, userId, stream.runId));
+// Dev-server previews on the user's PCs (F-06): /p/<cap>/… over runner tunnels.
+const preview = createPreview({ store, runners, secret });
 const aidev = createAidevApi({
-  runners, gate,
+  runners, gate, preview, publicOrigin: origin,
   store, laya, json, push,
   async runtimeFetch(session, path, init, timeoutMs = 10_000) {
     const runtime = await ready(session.user.runtime);
@@ -294,6 +297,8 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'HEAD') return res.end();
       return fs.createReadStream(file).pipe(res);
     }
+    // Previews carry their own capability in the path (no session, sandboxed, see preview.ts).
+    if (await preview.http(req, res, url)) return;
     // Runner pairing: the one-time code is the credential (no session; runners send no Origin).
     if (url.pathname === '/_runner/pair' && req.method === 'POST') {
       if (req.headers.origin) return json(res, 403, { error: 'Origin rejected' });
@@ -369,6 +374,7 @@ server.on('upgrade', async (req, socket, head) => {
   try {
     const pathname = new URL(req.url ?? '/', origin).pathname;
     if (runners.upgrade(req, socket, head, pathname)) return;
+    if (preview.upgrade(req, socket, head, new URL(req.url ?? '/', origin))) return;
     // Remote run streams for the workbench (F-03): session cookie + same origin + the caller's own target.
     const streamMatch = pathname.match(/^\/api\/aidev\/targets\/(\d+)\/stream$/);
     if (streamMatch) {

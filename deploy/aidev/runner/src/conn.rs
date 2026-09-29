@@ -1,5 +1,6 @@
 //! The runner's only connection: an outbound WebSocket to `<gateway>/_runner/ws` (no inbound port on
-//! this PC). JSON-RPC 2.0 text frames; binary frames `[streamId u32 BE][payload]` for streams (F-03+).
+//! this PC). JSON-RPC 2.0 text frames; binary frames `[streamId u32 BE][payload]` for streams (F-03+)
+//! and, in both directions, for preview tunnels (F-06).
 //! Heartbeat every 15 s; a silent link (45 s) or any error reconnects with jittered backoff (1 s → 60 s).
 //! A 401/403 at the handshake means the token was revoked: the runner stops and asks for pairing.
 
@@ -134,8 +135,10 @@ async fn session(cfg: &Config, hub: &ExecHub) -> Result<(), SessionError> {
         let _ = tx.close().await;
     });
     hub.attach(out.clone());
+    crate::tunnel::attach(out.clone());
     let result = read_loop(cfg, hub, &out, &mut rx).await;
     hub.detach();
+    crate::tunnel::detach();
     drop(out);
     writer.abort();
     result
@@ -167,6 +170,8 @@ where
                             send(Message::Text(reply.to_string())).await?;
                         }
                     }
+                    // tunnel bytes from the platform (F-06): [streamId u32 BE][bytes]
+                    Message::Binary(b) if b.len() >= 4 => crate::tunnel::write(u32::from_be_bytes([b[0], b[1], b[2], b[3]]), &b[4..]),
                     Message::Ping(payload) => send(Message::Pong(payload)).await?,
                     Message::Close(frame) => {
                         let code = frame.as_ref().map(|f| u16::from(f.code));
@@ -197,7 +202,10 @@ pub async fn handle(cfg: &Config, hub: &ExecHub, text: &str) -> Option<Value> {
     let params = msg.get("params").cloned().unwrap_or(Value::Null);
     let routed = match hub.rpc(cfg, method, &params).await {
         Some(r) => Some(r),
-        None => crate::sync::rpc(cfg, method, &params).await,
+        None => match crate::tunnel::rpc(method, &params).await {
+            Some(r) => Some(r),
+            None => crate::sync::rpc(cfg, method, &params).await,
+        },
     };
     if let Some(result) = routed {
         return Some(match result {

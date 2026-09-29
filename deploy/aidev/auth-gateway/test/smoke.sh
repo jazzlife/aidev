@@ -174,6 +174,35 @@ if [ -x "$RUNNER_BIN" ]; then
   r=$(node test/stream-client.mjs "$G" "$A" "$TID" || true); check "$r" 'j.hello && j.started && j.attached && j.echoed && j.sizeSeen && j.exit && j.exit.code!==0 && j.replay' "browser stream: pty input, resize, Ctrl+C, late viewer replay ($(echo "$r" | cut -c1-160))"
   r=$(curl -s -o /dev/null -w '%{http_code}' -H 'connection: upgrade' -H 'upgrade: websocket' -H 'sec-websocket-version: 13' -H 'sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==' -H "origin: http://evil.example" "$G/api/aidev/targets/$TID/stream?token=$A"); check "{\"code\":$r}" 'j.code===401' "stream socket from another origin refused"
   r=$(curl -s -o /dev/null -w '%{http_code}' -H 'connection: upgrade' -H 'upgrade: websocket' -H 'sec-websocket-version: 13' -H 'sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==' -H "origin: $G" "$G/api/aidev/targets/$TID/stream?token=$B"); check "{\"code\":$r}" 'j.code===401' "stream socket for someone else's target refused"
+  # F-06: preview — dev server on the runner's loopback through /p/<cap>/ (strip + keep modes, HMR socket, isolation)
+  rpost() { curl -s -X POST "$G/internal/aidev$1" -H 'authorization: Bearer rtjwt-rt-alice' -H 'x-aidev-runtime: rt-alice' -H 'content-type: application/json' -d "$2"; }
+  PP=$((20000 + RANDOM % 20000)); PK=$((PP + 1))
+  node test/fake-devserver.mjs "$PP" > "$T/dev1.log" 2>&1 & DEV1=$!; sleep 0.4
+  r=$(post "$A" "/api/aidev/targets/$TID/preview" "{\"port\":$PP,\"label\":\"plain\"}"); PB=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).preview?.base')
+  check "$r" 'j.preview.mode==="strip" && /^\/p\/\d+-\d+-[A-Za-z0-9_-]{16}\/$/.test(j.preview.base) && j.preview.url.endsWith(j.preview.base) && /base/.test(j.hint)' "preview opened (strip mode, base $PB)"
+  H=$(curl -s -D "$T/ph.txt" "$G$PB" -H "cookie: __Host-aidev-session=secret-cookie" -H "authorization: Bearer $A")
+  check "{\"ok\":$(echo "$H" | grep -q "src=\"${PB}src/main.js\"" && echo "$H" | grep -q "href=\"${PB}about\"" && echo "$H" | grep -q 'src="//cdn.example' && echo "$H" | grep -q 'data-aidev-preview' && echo true || echo false)}" 'j.ok' "HTML: absolute paths rewritten under the prefix, shim injected, //cdn untouched"
+  check "{\"ok\":$(grep -qi '^content-security-policy: sandbox allow-scripts' "$T/ph.txt" && ! grep -qi 'allow-same-origin' "$T/ph.txt" && grep -qi '^access-control-allow-origin: \*' "$T/ph.txt" && echo true || echo false)}" 'j.ok' "preview is sandboxed (opaque origin, no allow-same-origin) with CORS"
+  r=$(curl -s "$G${PB}seen"); check "$r" "j.length>=1 && j.every(x=>x.host==='localhost:$PP' && x.cookie===null && x.auth===null)" "browser cookie/authorization never reach the dev server, Host = localhost:port"
+  r=$(curl -s "$G${PB}src/main.js"); check "{\"ok\":$(echo "$r" | grep -q 'console.log' && echo true || echo false)}" 'j.ok' "module script proxied"
+  curl -s -o /dev/null -D "$T/pr.txt" "$G${PB}redirect"; check "{\"ok\":$(grep -qi "^location: ${PB}login" "$T/pr.txt" && grep -qi "set-cookie: sid=1; Path=${PB}" "$T/pr.txt" && echo true || echo false)}" 'j.ok' "redirect to http://localhost:port/… and cookie path rewritten under the prefix"
+  r=$(curl -s -X POST "$G${PB}post" -d 'abc'); check "{\"ok\":$([ "$r" = "got:abc" ] && echo true || echo false)}" 'j.ok' "request body forwarded (POST)"
+  r=$(node test/preview-ws.mjs "$G" "${PB}hmr?token=x" || true); check "$r" "j.hello && j.hello.path==='/hmr?token=x' && j.hello.origin==='http://localhost:$PP' && j.echo==='echo:ping-hmr'" "WebSocket (HMR) through the tunnel, Origin rewritten"
+  BAD=$(echo "$PB" | sed -E 's/-[A-Za-z0-9_-]{16}\/$/-AAAAAAAAAAAAAAAA\//'); r=$(curl -s -o /dev/null -w '%{http_code}' "$G$BAD"); check "{\"code\":$r}" 'j.code===404' "forged capability refused"
+  OTHER=$(echo "$PB" | sed -E "s/-$PP-/-$PK-/"); r=$(curl -s -o /dev/null -w '%{http_code}' "$G$OTHER"); check "{\"code\":$r}" 'j.code===404' "a capability does not work for another port"
+  r=$(post "$A" "/api/aidev/targets/$TID/preview" "{\"port\":$PK}"); KB=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).preview?.base')
+  check "$r" 'j.preview.error && /포트/.test(j.preview.error) && j.preview.base && /base/.test(j.hint)' "nothing listening → error with the base to start the server with"
+  node test/fake-devserver.mjs "$PK" "$KB" > "$T/dev2.log" 2>&1 & DEV2=$!; sleep 0.4
+  r=$(post "$A" "/api/aidev/targets/$TID/preview" "{\"port\":$PK}"); check "$r" 'j.preview.mode==="keep" && !j.preview.error' "server started with the base → keep mode"
+  H=$(curl -s "$G$KB"); check "{\"ok\":$(echo "$H" | grep -q "src=\"${KB}src/main.js\"" && ! echo "$H" | grep -q "${KB}${KB#/}" && echo true || echo false)}" 'j.ok' "keep mode: paths already under the base are not prefixed twice"
+  r=$(node test/preview-ws.mjs "$G" "${KB}?token=y" || true); check "$r" "j.hello && j.hello.path==='${KB}?token=y' && j.echo==='echo:ping-hmr'" "keep mode: HMR socket gets the full base path"
+  r=$(get "$A" /api/aidev/previews); check "$r" "j.previews.length>=2 && j.previews[0].port===$PK && j.previews.every(p=>p.online)" "previews listed for the user"
+  r=$(get "$B" /api/aidev/previews); check "$r" 'j.previews.length===0' "another user sees none"
+  r=$(post "$B" "/api/aidev/targets/$TID/preview" "{\"port\":$PP}"); check "$r" 'j.error' "another user cannot open a preview on the target"
+  r=$(rpost "/targets/$TID/preview" "{\"port\":$PP,\"label\":\"agent app\"}"); check "$r" 'j.preview.by==="agent" && j.preview.mode==="strip"' "agent (runtime session) opens a preview"
+  post "$A" "/api/aidev/targets/$TID" '{"policy":"deny"}' PATCH >/dev/null; r=$(curl -s -o /dev/null -w '%{http_code}' "$G$PB"); check "{\"code\":$r}" 'j.code===403' "policy deny blocks the preview"; post "$A" "/api/aidev/targets/$TID" '{"policy":"ask"}' PATCH >/dev/null
+  kill $DEV1 $DEV2 2>/dev/null
+  r=$(curl -s -w '|%{http_code}' "$G$PB"); check "{\"ok\":$(echo "$r" | grep -q '연결할 수 없습니다' && echo "$r" | grep -q '|502' && echo true || echo false)}" 'j.ok' "dev server stopped → 502 page"
   # F-05: agent (runtime session) → gate: safe commands run, risky ones wait for the user, tests feed the chat run
   rpost() { curl -s -X POST "$G/internal/aidev$1" -H 'authorization: Bearer rtjwt-rt-alice' -H 'x-aidev-runtime: rt-alice' -H 'content-type: application/json' -d "$2"; }
   rget() { curl -s "$G/internal/aidev$1" -H 'authorization: Bearer rtjwt-rt-alice' -H 'x-aidev-runtime: rt-alice'; }

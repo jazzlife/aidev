@@ -13,6 +13,7 @@ import { createKnowledgeRefresher, decideProposal } from './knowledge-refresh.js
 import { decideNext, type NextAction } from './escalation.js';
 import { decide, listKinds } from './laya-questions.js';
 import fs from 'node:fs';
+import type { Preview } from './preview.js';
 import { evaluateRouting, prejudge, route, TIER_TABLE, type EngineAvailability, type JudgeVerdict, type RouteInput, type SpecialistJudge } from './routing.js';
 /** Hard limit of one judge call in the runtime; a send waits less (routing.ts AIDEV_JUDGE_WAIT_MS) and the rest is cached. */
 const JUDGE_TIMEOUT_MS = Number(process.env.AIDEV_JUDGE_TIMEOUT_MS ?? 60_000);
@@ -34,6 +35,10 @@ export type AidevDeps = {
   runners?: RunnerHub;
   /** Agent remote execution gate: risk, policy, approvals (F-05). */
   gate?: RemoteGate;
+  /** Dev-server previews over runner tunnels (F-06). */
+  preview?: Preview;
+  /** https://<host> the browser uses (preview URLs). */
+  publicOrigin?: string;
 };
 
 /**
@@ -509,6 +514,32 @@ export function createAidevApi(deps: AidevDeps) {
         if (typeof params.root === 'string') params.root = normalizeCwd(params.root, target.allowed_roots ? JSON.parse(target.allowed_roots) as string[] : []);
         try { return json(res, 200, { result: await deps.runners.call(id, method, params, method === 'sync.manifest' ? 180_000 : 120_000) }), true; }
         catch (error) { throw new HttpError(error instanceof RpcError && error.code === -32010 ? 409 : 400, error instanceof Error ? error.message : 'rpc failed'); }
+      }
+      // ---- previews (F-06): a dev server on the target's loopback, shown in the workbench -----------------
+      if (rest === '/previews' && m === 'GET') {
+        return json(res, 200, { previews: (deps.preview?.list(uid) ?? []).map((p) => ({ ...p, online: Boolean(deps.runners?.online(p.targetId)) })) }), true;
+      }
+      const previewMatch = rest.match(/^\/targets\/(\d+)\/preview(?:\/(\d{4,5}))?$/);
+      if (previewMatch) {
+        if (!deps.preview) throw new HttpError(503, 'preview unavailable');
+        const id = Number(previewMatch[1]);
+        const target = store.target(uid, id);
+        if (!target) throw new HttpError(404, 'Target not found');
+        if (m === 'DELETE' && previewMatch[2]) { deps.preview.forget(uid, id, Number(previewMatch[2])); return json(res, 200, { ok: true }), true; }
+        if (m === 'POST' && !previewMatch[2]) {
+          const b = await readJson(req);
+          const port = Math.round(num(b.port, 'port'));
+          if (port < 1024 || port > 65535) throw new HttpError(400, 'port must be 1024-65535');
+          if (target.policy === 'deny') throw new HttpError(403, '이 대상의 실행 정책이 "실행 금지"입니다');
+          const agentCall = session.sid.startsWith('runtime:');
+          const entry = await deps.preview.open(target, port, agentCall ? 'agent' : 'user', optStr(b.label, 120) ?? null, deps.publicOrigin ?? '');
+          const hint = entry.error
+            ? `미리보기 준비 실패: ${entry.error}. 개발 서버를 base ${entry.base} 로 시작한 뒤 다시 호출하세요 (Vite: npm run dev -- --base ${entry.base} --port ${port}, Next.js: basePath).`
+            : entry.mode === 'keep'
+              ? `개발 서버가 base ${entry.base} 로 실행 중 — 그대로 동작합니다(HMR 포함).`
+              : `개발 서버가 루트(/) 경로로 실행 중입니다. 정적 페이지는 보이지만 Vite·webpack 앱은 모듈 경로가 깨질 수 있습니다 — base를 ${entry.base} 로 두고 다시 실행하세요 (Vite: npm run dev -- --base ${entry.base} --port ${port}, Next.js: basePath).`;
+          return json(res, 200, { preview: entry, hint }), true;
+        }
       }
       const execMatch = rest.match(/^\/targets\/(\d+)\/(exec|runs)$/);
       if (execMatch) {

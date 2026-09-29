@@ -12,6 +12,7 @@ import '../../load-env.js';
  *   remote_exec     — run a shell command on one of them (gateway gate: safe → runs, risky → user approval)
  *   remote_logs     — state + last output of a remote run (optionally wait for it)
  *   remote_stop     — interrupt / kill a remote run
+ *   remote_preview  — show a dev server running on a target in the workbench preview panel (F-06)
  * The turn context (chat run id, routed target, agent) comes from this process's env and is sent
  * with every call, so remote results count toward the run's outcome.
  */
@@ -148,6 +149,23 @@ const tools: ToolDefinition[] = [
     },
   },
   {
+    name: 'remote_preview',
+    description: [
+      'Show a web dev server that runs on one of the user\'s machines in their workbench preview panel (and give them a URL that also opens on a phone).',
+      'Call it first to get `base`, start the server with that base (Vite: `npm run dev -- --base <base> --port <port>`, Next.js: basePath) via remote_exec background:true, then call it again: the result says whether the page answers (`status`, `mode`).',
+      'Hot reload keeps working. Only servers on the machine\'s localhost, ports 1024-65535.',
+    ].join(' '),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        port: { type: 'number', description: 'Port the dev server listens on (on the target machine).' },
+        target: { type: 'string', description: 'Target name or id (optional when routed or only one is online).' },
+        label: { type: 'string', description: 'Short name shown in the preview list (e.g. "todo app").' },
+      },
+      required: ['port'],
+    },
+  },
+  {
     name: 'remote_stop',
     description: 'Stop a running remote command: signal INT (Ctrl+C, default), TERM or KILL.',
     inputSchema: {
@@ -168,6 +186,7 @@ async function callTool(name: string, args: Record<string, unknown>) {
     case 'remote_sync':
     case 'remote_logs':
     case 'remote_stop':
+    case 'remote_preview':
       return jsonResponse(await callApi(name, args));
     default:
       throw new Error(`Unknown tool: ${name}`);

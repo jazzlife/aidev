@@ -2,7 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import type { IncomingMessage } from 'node:http';
 import path from 'node:path';
-import type { Duplex } from 'node:stream';
+import { Duplex } from 'node:stream';
 import { WebSocket, type WebSocketServer } from 'ws';
 
 import type { openStore } from './store.js';
@@ -25,6 +25,10 @@ import type { TargetRow } from './store-aidev.js';
  * `<logDir>/<remoteRunId>.log` (≤20 MB) and the target's listeners (browser `/api/aidev/targets/:id/stream`).
  * `exec.exit` finishes the row. After a reconnect `exec.list` reconciles: finished/lost streams close,
  * missed output is fetched with `exec.tail`, and streams started before a gateway restart are adopted by tag.
+ *
+ * Tunnels (F-06): openTunnel() asks the runner to dial 127.0.0.1/::1:<port> on its PC (`tunnel.open`) and
+ * returns a Duplex that carries raw TCP bytes as binary frames in both directions (same id space as
+ * streams). The preview proxy speaks HTTP / WebSocket over it. `tunnel.closed` or a lost runner ends it.
  */
 type Store = ReturnType<typeof openStore>;
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
@@ -53,10 +57,27 @@ export const streamFrame = (streamId: number, chunk: Buffer) => { const head = B
 
 export class RpcError extends Error { constructor(public code: number, message: string) { super(message); } }
 
+/** One TCP connection to a server on a runner's loopback, as a stream (http.request createConnection-compatible). */
+export class RunnerTunnel extends Duplex {
+  constructor(private sendBytes: (chunk: Buffer, done: (error?: Error | null) => void) => void, private onDestroy: () => void) {
+    super({ allowHalfOpen: false });
+  }
+  _read() { /* bytes are pushed as frames arrive */ }
+  _write(chunk: Buffer, _enc: BufferEncoding, done: (error?: Error | null) => void) { this.sendBytes(chunk, done); }
+  _destroy(error: Error | null, done: (error?: Error | null) => void) { this.onDestroy(); done(error); }
+  // net.Socket surface the http client may touch
+  setTimeout() { return this; }
+  setNoDelay() { return this; }
+  setKeepAlive() { return this; }
+  ref() { return this; }
+  unref() { return this; }
+}
+
 export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logDir?: string } = {}) {
   const conns = new Map<number, Conn>();
   const attempts = new Map<string, { count: number; until: number }>();
   const streams = new Map<string, Stream>();               // `${targetId}:${streamId}`
+  const tunnels = new Map<string, RunnerTunnel>();         // `${targetId}:${streamId}` (F-06)
   const listeners = new Map<number, Set<(event: TargetEvent) => void>>();
   const finishListeners = new Set<(stream: StreamInfo, userId: number) => void>();
   let nextStream = crypto.randomInt(1, 0x3fff_ffff);        // runner-chosen ids live in 0x4000_0000+
@@ -151,6 +172,7 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
   function drop(conn: Conn, reason: string) {
     for (const p of conn.pending.values()) { clearTimeout(p.timer); p.reject(new RpcError(-32000, reason)); }
     conn.pending.clear();
+    for (const [k, t] of tunnels) if (k.startsWith(`${conn.targetId}:`)) { tunnels.delete(k); t.destroy(new Error(reason)); }
     if (conns.get(conn.targetId) === conn) {
       conns.delete(conn.targetId);
       const t = store.targetById(conn.targetId);
@@ -219,7 +241,10 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
           if (binary) {
             const buf = Array.isArray(data) ? Buffer.concat(data) : Buffer.from(data as Buffer);
             if (buf.length < 4) return;
-            const st = streams.get(key(conn.targetId, buf.readUInt32BE(0)));
+            const id = buf.readUInt32BE(0);
+            const tunnel = tunnels.get(key(conn.targetId, id));
+            if (tunnel) { tunnel.push(buf.subarray(4)); return; }
+            const st = streams.get(key(conn.targetId, id));
             if (st) appendData(st, buf.subarray(4));
             return;
           }
@@ -239,6 +264,12 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
             });
             emit(conn.targetId, { type: 'online' });
             if (Array.isArray(caps.features) && caps.features.includes('exec')) void reconcile(conn.targetId);
+            return;
+          }
+          if (msg.method === 'tunnel.closed' && msg.params && typeof msg.params === 'object') {
+            const p = msg.params as { streamId?: number };
+            const t = typeof p.streamId === 'number' ? tunnels.get(key(conn.targetId, p.streamId)) : undefined;
+            if (t) { tunnels.delete(key(conn.targetId, p.streamId!)); t.push(null); }
             return;
           }
           if (msg.method === 'exec.exit' && msg.params && typeof msg.params === 'object') {
@@ -297,6 +328,34 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
       console.log(`[runner] target #${targetId} run #${remoteRunId} started by ${meta.approvedBy}${meta.runId ? ` (chat run #${meta.runId})` : ''} cwd=${st.cwd ?? '-'}: ${cmd.slice(0, 120)}`);
       return info(st);
     },
+    /** TCP to <port> on the target's loopback (F-06 preview). Rejects when offline, the runner is too old or nothing listens. */
+    async openTunnel(targetId: number, port: number): Promise<RunnerTunnel> {
+      const conn = conns.get(targetId);
+      if (!conn || conn.ws.readyState !== WebSocket.OPEN) throw new RpcError(-32010, 'target is offline');
+      const caps = (() => { try { return JSON.parse(store.targetById(targetId)?.capabilities ?? '{}') as { features?: string[] }; } catch { return {}; } })();
+      if (!caps.features?.includes('tunnel')) throw new RpcError(-32021, '러너가 미리보기를 지원하지 않습니다 — aidev-runner 0.4.0 이상으로 업데이트하세요');
+      nextStream = nextStream >= 0x3fff_fff0 ? 1 : nextStream + 1;
+      const id = nextStream;
+      const k = key(targetId, id);
+      const tunnel = new RunnerTunnel(
+        (chunk, done) => {
+          const c = conns.get(targetId);
+          if (!c || c.ws.readyState !== WebSocket.OPEN) return done(new Error('target is offline'));
+          c.ws.send(streamFrame(id, chunk), { binary: true }, (error) => done(error ?? null));
+        },
+        () => { if (tunnels.delete(k)) void hub.call(targetId, 'tunnel.close', { streamId: id }, 5000).catch(() => {}); },
+      );
+      tunnels.set(k, tunnel);
+      try {
+        await hub.call(targetId, 'tunnel.open', { streamId: id, port }, 10_000);
+      } catch (error) {
+        tunnels.delete(k);
+        tunnel.destroy();
+        throw error;
+      }
+      return tunnel;
+    },
+    tunnelCount() { return tunnels.size; },
     /** Called once per finished stream (remote gate: test results → the chat run's outcome). */
     onFinish(fn: (stream: StreamInfo, userId: number) => void) { finishListeners.add(fn); return () => finishListeners.delete(fn); },
     /** Resolves when the remote run has finished (or after `timeoutMs`), with its current state. */

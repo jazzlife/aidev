@@ -568,6 +568,10 @@ export const api = {
     /** Last output of a run as text (`plain` strips ANSI codes). */
     remoteRunLog: (remoteRunId: number, opts: { bytes?: number; plain?: boolean } = {}) => get(`/api/aidev/remote-runs/${remoteRunId}/log?bytes=${opts.bytes ?? 65536}${opts.plain ? '&plain=1' : ''}`),
     signal: (remoteRunId: number, signal: 'INT' | 'TERM' | 'KILL' = 'INT') => post(`/api/aidev/remote-runs/${remoteRunId}/signal`, { signal }),
+    /** F-06: show a dev server on the target (port on its localhost) → {preview:{url, base, mode, error}, hint}. */
+    openPreview: (targetId: number, port: number, label?: string) => post(`/api/aidev/targets/${targetId}/preview`, { port, label }),
+    closePreview: (targetId: number, port: number) => del(`/api/aidev/targets/${targetId}/preview/${port}`),
+    previews: () => get('/api/aidev/previews'),
     /** WebSocket URL of a target's run streams (same origin; the session cookie or stored token authenticates). */
     streamUrl: (targetId: number) => {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';

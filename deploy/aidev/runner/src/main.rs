@@ -10,6 +10,7 @@ mod pair;
 mod roots;
 mod service;
 mod sync;
+mod tunnel;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;

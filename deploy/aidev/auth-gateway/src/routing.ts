@@ -194,8 +194,8 @@ function startJudge(store: Store, userId: number, ctx: JudgeContext, text: strin
   return promise;
 }
 
-const waitAtMost = <T>(promise: Promise<T>, ms: number, onTimeout: T) => new Promise<T>((resolve) => {
-  const timer = setTimeout(() => resolve(onTimeout), ms);
+const waitAtMost = <T>(promise: Promise<T>, ms: number, onTimeout: T, timedOut?: () => void) => new Promise<T>((resolve) => {
+  const timer = setTimeout(() => { timedOut?.(); resolve(onTimeout); }, ms);
   promise.then((value) => { clearTimeout(timer); resolve(value); }, () => { clearTimeout(timer); resolve(onTimeout); });
 });
 
@@ -264,10 +264,11 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   const jctx = judgeContext(store, userId, text, nbTop);
   let verdict: JudgeVerdict | null = input.forceAgent ? null : jctx.known;
   const judgeT0 = Date.now();
+  let judgeTimedOut = false;
   const joined = !verdict && !input.forceAgent && judging.has(jctx.key);
   const judgePromise: Promise<JudgeVerdict | null> = verdict || input.forceAgent || !opts.judge || !jctx.specialists.length
     ? Promise.resolve(verdict)
-    : waitAtMost(startJudge(store, userId, jctx, text, input.projectHint ?? null, opts.judge), JUDGE_WAIT_MS, null);
+    : waitAtMost(startJudge(store, userId, jctx, text, input.projectHint ?? null, opts.judge), JUDGE_WAIT_MS, null, () => { judgeTimedOut = true; });
   try {
     const r = await laya.predict(state, questions);
     latency = r.latency_ms ?? null; device = r.device ?? null;
@@ -306,7 +307,7 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   const layaDoneAt = Date.now();
   verdict = await judgePromise;
   const judgeWaitMs = Date.now() - layaDoneAt;
-  if (!verdict && !input.forceAgent && opts.judge && jctx.specialists.length) reason.push(Date.now() - judgeT0 >= JUDGE_WAIT_MS ? `specialist judge still running after ${Math.round((Date.now() - judgeT0) / 1000)}s — its verdict is cached for the next send` : 'specialist judge failed');
+  if (!verdict && !input.forceAgent && opts.judge && jctx.specialists.length) reason.push(judgeTimedOut ? `specialist judge still running after ${Math.round((Date.now() - judgeT0) / 1000)}s — its verdict is cached for the next send` : 'specialist judge failed');
   let proposal: JudgeVerdict['new'] = null;
   if (input.forceAgent) { /* handled below */ }
   else if (verdict) {

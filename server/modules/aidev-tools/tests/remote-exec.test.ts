@@ -107,3 +107,18 @@ test('background: returns while running; remote_logs and remote_stop follow up',
   const stopped = await aidevToolsService.remoteStop(50);
   assert.equal(stopped.remoteRunId, 50);
 });
+
+test('remote_preview (F-06): opens the preview on the routed target and passes the hint through', async () => {
+  let sent: Record<string, unknown> = {};
+  handler = (method, path, body) => {
+    if (path === '/targets') return targets;
+    if (method === 'POST' && path === '/targets/7/preview') { sent = body; return { preview: { url: 'https://dev.nado.work/p/7-5173-abcdefghijklmnop/', base: '/p/7-5173-abcdefghijklmnop/', mode: 'keep', error: null }, hint: 'ok' }; }
+    throw new Error(`unexpected ${method} ${path}`);
+  };
+  const r = await aidevToolsService.remotePreview({ port: 5173, label: 'todo' }, { targetId: 7 }) as Record<string, unknown>;
+  assert.equal(r.target, 'm4pro');
+  assert.equal(r.mode, 'keep');
+  assert.equal(r.base, '/p/7-5173-abcdefghijklmnop/');
+  assert.equal(r.hint, 'ok');
+  assert.deepEqual(sent, { port: 5173, label: 'todo' });
+});
