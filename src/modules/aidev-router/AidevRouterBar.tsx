@@ -5,7 +5,8 @@ import { aidevApi, type Engine, type EnginesResult } from '@/modules/aidev-route
 import { routingStore, useRoutingState, type RoutingMode } from '@/modules/aidev-router/store';
 import { useAidevRouting } from '@/modules/aidev-router/hooks/useAidevRouting';
 import { claudeAuth, useClaudeAuth } from '@/modules/aidev-router/hooks/useClaudeAuth';
-import { EFFORT_LABEL, useEffortCap } from '@/modules/aidev-router/hooks/useEffortCap';
+import { EFFORT_LABEL } from '@/modules/aidev-router/hooks/useEffortCap';
+import { useChatEffortCap } from '@/modules/aidev-router/hooks/useChatEffortCap';
 import { ClaudeLoginDialog } from '@/modules/aidev-router/ClaudeLoginPanel';
 
 const DEPTH_LABEL = ['즉답', '한 파일', '기능', '심층', '설계'];
@@ -17,7 +18,7 @@ const MODES: Array<{ value: RoutingMode; label: string }> = [{ value: 'auto', la
  * the agent, the engine and the routing mode (IMPLEMENTATION-PLAN §3.6 / C-09). Overrides are
  * recorded on the decision and applied to the next send.
  */
-export function AidevRouterBar() {
+export function AidevRouterBar({ sessionId = null }: { sessionId?: string | null }) {
   const state = useRoutingState();
   const { reportOutcome } = useAidevRouting();
   const [engines, setEngines] = useState<EnginesResult | null>(null);
@@ -32,7 +33,7 @@ export function AidevRouterBar() {
     return { position: 'fixed', bottom, left, width, maxHeight: Math.max(160, anchor.top - 16), overflowY: 'auto' };
   };
   const claudeAuthState = useClaudeAuth();
-  const effort = useEffortCap();
+  const chatCap = useChatEffortCap(sessionId);
   useEffect(() => { aidevApi.engines().then(setEngines).catch(() => setEngines(null)); }, [state.last?.decision_id]);
   useEffect(() => {
     if (!open) return undefined;
@@ -125,18 +126,19 @@ export function AidevRouterBar() {
           <div className="z-50 rounded-md border border-border bg-popover p-1 shadow-md" style={menuStyle('right', 224)} onClick={(event) => event.stopPropagation()}>
             {MODES.map((mode) => <button key={mode.value} type="button" onClick={() => { routingStore.setMode(mode.value); setOpen(null); }} className={`w-full rounded px-2 py-1.5 text-left hover:bg-accent ${state.mode === mode.value ? 'font-medium' : ''}`}>{mode.label}</button>)}
             {Object.keys(state.overrides).length ? <button type="button" onClick={() => { routingStore.clearOverrides(); setOpen(null); }} className="w-full rounded px-2 py-1.5 text-left text-muted-foreground hover:bg-accent">override 지우기</button> : null}
-            {effort.cap && effort.ladder ? (
+            {chatCap.defaults && chatCap.ladder ? (
               <div className="mt-1 border-t border-border px-2 pt-1.5" data-testid="effort-cap">
-                <div className="mb-1 text-[11px] text-muted-foreground" title="가장 어려운 작업(D4)은 이 강도로 실행하고, 다른 등급도 이 값을 넘지 않습니다. 실패 시 이어서 시도할 때도 여기까지 올립니다. 높을수록 구독 사용량이 많이 듭니다.">추론 강도(effort) 상한</div>
+                <div className="mb-1 text-[11px] text-muted-foreground" title="이 채팅에만 적용됩니다. '기본값'은 설정 → Agents의 기본 상한을 따릅니다. 가장 어려운 작업(D4)은 이 강도로 실행하고, 다른 등급도 이 값을 넘지 않습니다.">이 채팅의 추론 강도 상한</div>
                 {(['claude', 'codex'] as const).map((engine) => (
                   <label key={engine} className="mb-1 flex items-center gap-2">
                     <span className="w-12 capitalize">{engine}</span>
-                    <select aria-label={`${engine} effort 상한`} value={effort.cap![engine]} onChange={(event) => { void effort.save(engine, event.target.value); }} className="h-6 flex-1 rounded border border-border bg-background px-1">
-                      {effort.ladder![engine].map((level) => <option key={level} value={level}>{level} · {EFFORT_LABEL[level] ?? level}</option>)}
+                    <select aria-label={`${engine} 이 채팅 effort 상한`} value={chatCap.cap?.[engine] ?? 'default'} onChange={(event) => { void chatCap.set(engine, event.target.value); }} className="h-6 flex-1 rounded border border-border bg-background px-1">
+                      <option value="default">기본값 ({chatCap.defaults![engine]})</option>
+                      {chatCap.ladder![engine].map((level) => <option key={level} value={level}>{level} · {EFFORT_LABEL[level] ?? level}</option>)}
                     </select>
                   </label>
                 ))}
-                {effort.error ? <div className="text-[11px] text-red-600">{effort.error}</div> : null}
+                {chatCap.error ? <div className="text-[11px] text-red-600">{chatCap.error}</div> : null}
               </div>
             ) : null}
           </div>

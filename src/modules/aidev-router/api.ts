@@ -99,6 +99,8 @@ export type CatalogAgent = {
 };
 
 export type RouteRequest = {
+  /** this chat's own effort ceiling (a new chat sends it with its first message) */
+  effortCap?: Partial<Record<Engine, string>> | null;
   text: string;
   sessionId?: string | null;
   sessionEngine?: Engine | null;
@@ -197,6 +199,9 @@ export type RemoteRun = {
   live: { streamId: number; running: boolean; code: number | null; signal: string | null; durationMs: number | null; pty: boolean } | null;
 };
 
+/** GET/PUT /session-settings/:id — the chat's ceiling, the account default and what routing will use. */
+export type SessionEffortCap = { effort_cap: Partial<Record<Engine, string>> | null; default: Record<Engine, string>; effective: Record<Engine, string> };
+
 /** Platform-managed Claude subscription login state (runtime `/api/aidev-tools/claude-login`). */
 export type ClaudeLoginStatus = { token: { issuedAt: number; expiresAt: number } | null; failure: { at: number; message: string } | null };
 
@@ -248,6 +253,11 @@ export const aidevApi = {
   engineWeights: () => authenticatedFetch('/api/aidev/engines/weights').then((response) => readJson<{ rows: EngineWeightRow[]; log: Array<{ id: number; at: number; task_kind: string; engine: string; from_weight: number | null; to_weight: number; reason: string; actor: string }> }>(response)),
   setEngineWeight: (row: { task_kind: string; engine: Engine; weight: number; pinned?: boolean }) => post('/api/aidev/engines/weights', row, 'PUT').then((response) => readJson<{ rows: EngineWeightRow[] }>(response)),
   setTierPolicy: (cell: { domain: string; depth: number; engine: string; level: number | null; pinned?: boolean }) => post('/api/aidev/tier-policy', cell, 'PUT').then((response) => readJson<{ cell: TierPolicyCell }>(response)),
+  /** A chat's own effort ceiling (engines it leaves out follow the account default). */
+  sessionSettings: (sessionId: string) => authenticatedFetch(`/api/aidev/session-settings/${encodeURIComponent(sessionId)}`).then((response) => readJson<SessionEffortCap>(response)),
+  setSessionEffortCap: (sessionId: string, cap: Partial<Record<Engine, string>> | null) => (cap && Object.keys(cap).length
+    ? post(`/api/aidev/session-settings/${encodeURIComponent(sessionId)}`, cap, 'PUT')
+    : authenticatedFetch(`/api/aidev/session-settings/${encodeURIComponent(sessionId)}`, { method: 'DELETE' })).then((response) => readJson<SessionEffortCap>(response)),
   setEffortCap: (cap: Partial<Record<Engine, string>>) => post('/api/aidev/settings/effort-cap', cap, 'PUT').then((response) => readJson<{ effort_cap: Record<Engine, string> }>(response)),
   routeEval: () => post('/api/aidev/route/eval', {}).then((response) => readJson<Record<string, unknown>>(response)),
 };

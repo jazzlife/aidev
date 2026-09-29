@@ -19,6 +19,13 @@ export type KnowledgeRow = { id: number; agent_id: number; title: string; body: 
  * 'ultracode' is a session mode, not a level). The user's ceiling is one of these. */
 export const EFFORT_LADDER: Record<Engine, string[]> = { claude: ['low', 'medium', 'high', 'xhigh', 'max'], codex: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] };
 export const DEFAULT_EFFORT_CAP: Record<Engine, string> = { claude: 'xhigh', codex: 'xhigh' };
+/** Keeps only engines with a level on their ladder (quietly: stored data). */
+const cleanCap = (cap: Partial<Record<Engine, string>>) => Object.fromEntries(ENGINES.filter((e) => typeof cap[e] === 'string' && EFFORT_LADDER[e].includes(cap[e]!)).map((e) => [e, cap[e]!])) as Partial<Record<Engine, string>>;
+/** Same, but a wrong level is an error (user input). */
+const validCap = (cap: Partial<Record<Engine, string>>) => {
+  for (const e of ENGINES) if (cap[e] !== undefined && cap[e] !== null && !EFFORT_LADDER[e].includes(cap[e]!)) throw new Error(`${e} effort must be one of ${EFFORT_LADDER[e].join('|')}`);
+  return cleanCap(cap);
+};
 export type TierPolicyRow = { domain: string; depth: number; engine: string; model: string | null; effort: string | null; success_n: number; fail_n: number; avg_ms: number | null; level: number | null; pinned: number; updated_at: number | null };
 export type LessonRow = { id: number; agent_id: number; engine: string | null; trigger: string; rule: string; evidence_run_id: number | null; status: string; hits: number; owner_id: number | null; promoted_to_prompt: number; fails: number; verified_by: string | null; promoted_version: number | null; created_at: number };
 export type RunRow = { id: number; user_id: number; session_id: string | null; decision_id: number | null; agent_id: number | null; agent_version: number | null; engine: string | null; model: string | null; effort: string | null; depth: number | null; task_kind: string | null; risk: number | null; target_id: number | null; started_at: number; finished_at: number | null; exit_code: number | null; tool_errors: number; user_feedback: string | null; reverted: number; reasked: number; test_result: string | null; cost_tokens: number | null; escalated_from_run: number | null; outcome: string | null };
@@ -101,6 +108,9 @@ export function migrateAidev(db: Database.Database) {
       pairing_code TEXT, pairing_expires INTEGER, policy TEXT NOT NULL DEFAULT 'ask', allowed_roots TEXT,
       capabilities TEXT, status TEXT NOT NULL DEFAULT 'offline', last_seen INTEGER, created_at INTEGER NOT NULL,
       UNIQUE(user_id, name));
+    CREATE TABLE IF NOT EXISTS session_settings (
+      user_id INTEGER NOT NULL, session_id TEXT NOT NULL, effort_cap TEXT, updated_at INTEGER NOT NULL,
+      PRIMARY KEY(user_id, session_id));
     CREATE TABLE IF NOT EXISTS remote_runs (
       id INTEGER PRIMARY KEY AUTOINCREMENT, run_id INTEGER, target_id INTEGER NOT NULL REFERENCES targets(id) ON DELETE CASCADE,
       user_id INTEGER NOT NULL, kind TEXT NOT NULL, cmd TEXT, cwd TEXT, risk REAL, approved_by TEXT,
@@ -224,6 +234,26 @@ export function aidevMethods(db: Database.Database) {
       }
       db.prepare('UPDATE accounts SET effort_cap=? WHERE id=?').run(JSON.stringify(next), userId);
       return next;
+    },
+    /** A chat's own ceiling (set from the chat); engines it leaves out follow the account default. */
+    sessionEffortCap(userId: number, sessionId: string): Partial<Record<Engine, string>> | null {
+      const row = db.prepare('SELECT effort_cap FROM session_settings WHERE user_id=? AND session_id=?').get(userId, sessionId) as { effort_cap: string | null } | undefined;
+      if (!row?.effort_cap) return null;
+      try { return cleanCap(JSON.parse(row.effort_cap) as Partial<Record<Engine, string>>); } catch { return null; }
+    },
+    /** Replaces the chat's ceiling; an empty/null cap goes back to the account default. */
+    setSessionEffortCap(userId: number, sessionId: string, cap: Partial<Record<Engine, string>> | null) {
+      const clean = cap ? validCap(cap) : null;
+      if (!clean || !Object.keys(clean).length) { db.prepare('DELETE FROM session_settings WHERE user_id=? AND session_id=?').run(userId, sessionId); return null; }
+      db.prepare('INSERT INTO session_settings(user_id,session_id,effort_cap,updated_at) VALUES(?,?,?,?) ON CONFLICT(user_id,session_id) DO UPDATE SET effort_cap=excluded.effort_cap, updated_at=excluded.updated_at')
+        .run(userId, sessionId, JSON.stringify(clean), Date.now());
+      return clean;
+    },
+    /** What routing uses: chat ceiling (stored, or sent with a new chat's first message) over the account default. */
+    effectiveEffortCap(userId: number, sessionId?: string | null, inline?: Partial<Record<Engine, string>> | null) {
+      const account = m.effortCap(userId);
+      const chat = { ...(sessionId ? m.sessionEffortCap(userId, sessionId) ?? {} : {}), ...(inline ? cleanCap(inline) : {}) };
+      return { cap: { ...account, ...chat } as Record<Engine, string>, chat: Object.keys(chat).length ? chat : null, account };
     },
     setDefaultEngine(username: string, engine: Engine | null) {
       if (engine && !ENGINES.includes(engine)) throw new Error(`engine must be one of ${ENGINES.join(',')}`);

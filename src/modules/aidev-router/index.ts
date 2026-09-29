@@ -32,3 +32,5 @@ export { useKnowledgeRefresh, knowledgeLabel, refreshSummary } from '@/modules/a
 export type { KnowledgeItem, KnowledgeProposal, KnowledgeRefreshJob } from '@/modules/aidev-router/api';
 // Effort ceiling per engine (workbench router bar + mobile settings).
 export { useEffortCap, EFFORT_LABEL } from '@/modules/aidev-router/hooks/useEffortCap';
+export { useChatEffortCap } from '@/modules/aidev-router/hooks/useChatEffortCap';
+export { EffortCapDefaults } from '@/modules/aidev-router/EffortCapDefaults';

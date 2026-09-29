@@ -39,7 +39,7 @@ export async function decideNext(store: Store, laya: LayaClient, run: RunRow, en
   const depth = Math.max(0, Math.min(4, Math.round(run.depth ?? 1)));
   const chain = chainLength(store, run);
   const base = { from_run: run.id, chain };
-  const cap = store.effortCap(run.user_id);
+  const cap = store.effectiveEffortCap(run.user_id, run.session_id).cap;
   const plan = (action: NextAction['action'], planEngine: Engine | null, planDepth: number | null, reason: string): NextAction => {
     if (!planEngine || planDepth === null) return { ...base, action, engine: null, model: null, effort: null, depth: null, reason };
     const tier = TIER_TABLE[planDepth][planEngine];

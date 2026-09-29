@@ -4,12 +4,12 @@ import { Sparkles } from 'lucide-react';
 import { useRoutingState, routingStore, aidevApi, claudeAuth, useClaudeAuth, type Engine } from '@/modules/aidev-router';
 import { ClaudeLoginSheet } from '@m/components/ClaudeLoginSheet';
 import { BottomSheet } from '@m/components/BottomSheet';
-import { EffortCapControl } from '@m/components/EffortCapControl';
+import { ChatEffortCapControl } from '@m/components/EffortCapControl';
 
 const DEPTH_LABEL = ['즉답', '한 파일', '기능', '심층', '설계'];
 
 /** Used by ChatScreen: one collapsed chip summarising the last routing decision; tapping opens the detail sheet. */
-export function RouterChip() {
+export function RouterChip({ sessionId = null }: { sessionId?: string | null }) {
   const state = useRoutingState();
   const [open, setOpen] = useState(false);
   const auth = useClaudeAuth();
@@ -30,8 +30,8 @@ export function RouterChip() {
       </button>
       <BottomSheet open={open} onClose={() => setOpen(false)} title="라우팅">
         <div className="mb-4">
-          <div className="text-[12px] text-muted mb-1">추론 강도(effort) 상한</div>
-          <EffortCapControl compact />
+          <div className="text-[12px] text-muted mb-1">이 채팅의 추론 강도 상한</div>
+          <ChatEffortCapControl sessionId={sessionId} />
         </div>
         {!last ? <div className="text-muted">아직 판정된 명령이 없습니다. 명령을 보내면 Laya가 전문 agent·엔진·모델을 고릅니다.</div> : (
           <div className="space-y-4">

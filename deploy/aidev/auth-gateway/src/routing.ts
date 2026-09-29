@@ -34,7 +34,8 @@ export const alphaFor = (name: string) => (nb.count(name) >= MIN_EXAMPLES ? LAYA
  */
 type Store = ReturnType<typeof openStore>;
 export type EngineAvailability = Record<Engine, { allowed: boolean; authenticated: boolean; error?: string | null }>;
-export type RouteInput = { text: string; sessionId?: string | null; sessionEngine?: Engine | null; preferEngine?: Engine | null; targetId?: number | null; projectHint?: string | null; recentFiles?: string[] | null; model?: string | null; effort?: string | null; /** user override: use this agent regardless of Laya's pick */ forceAgent?: string | null };
+export type RouteInput = { text: string; sessionId?: string | null; sessionEngine?: Engine | null; preferEngine?: Engine | null; targetId?: number | null; projectHint?: string | null; recentFiles?: string[] | null; model?: string | null; effort?: string | null; /** user override: use this agent regardless of Laya's pick */ forceAgent?: string | null;
+  /** this chat's own ceiling (a new chat sends it with its first message; later it is stored per session) */ effortCap?: Partial<Record<Engine, string>> | null };
 
 // Each engine's ladder ends on its strongest model: Codex gpt-6-astra, Claude 'best' (= Fable when the
 // subscription has it, else the latest Opus — resolved by the Claude CLI). 'opusplan' is not used at
@@ -271,8 +272,10 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     if (agent.model && modelRank(engine, agent.model) >= modelRank(engine, tier.model)) { if (agent.model !== tier.model) reason.push(`agent pins model ${agent.model}`); tier.model = agent.model; }
     else if (agent.model) reason.push(`agent model ${agent.model} ignored (weaker than ${tier.model})`);
     // the user's effort ceiling: the top tier runs at the ceiling, no tier goes above it
-    const capped = applyEffortCap(tier.effort, tp?.level ?? depth, engine, store.effortCap(userId)[engine]);
-    if (capped !== tier.effort) { reason.push(`effort ${tier.effort} → ${capped} (ceiling ${store.effortCap(userId)[engine]})`); tier.effort = capped; }
+    const capInfo = store.effectiveEffortCap(userId, input.sessionId, input.effortCap);
+    const ceiling = capInfo.cap[engine];
+    const capped = applyEffortCap(tier.effort, tp?.level ?? depth, engine, ceiling);
+    if (capped !== tier.effort) { reason.push(`effort ${tier.effort} → ${capped} (ceiling ${ceiling}${capInfo.chat?.[engine] ? ', this chat' : ''})`); tier.effort = capped; }
   }
   if (input.model) { tier.model = input.model; reason.push(`user model ${input.model}`); }
   if (input.effort) { tier.effort = input.effort; reason.push(`user effort ${input.effort}`); }

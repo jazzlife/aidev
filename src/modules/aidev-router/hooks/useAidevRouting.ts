@@ -89,6 +89,8 @@ export function useAidevRouting() {
         model: oneShot?.model ?? overrides.model ?? null,
         effort: oneShot?.effort ?? overrides.effort ?? null,
         forceAgent,
+        // the chat's own ceiling: stored server-side for known sessions, sent inline for a new chat
+        effortCap: current.chatCap.sessionId === (context.isNewSession ? null : context.sessionId ?? null) ? current.chatCap.cap : null,
       });
       let runId: number | null = null;
       try {

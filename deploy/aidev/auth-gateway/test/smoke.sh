@@ -55,6 +55,15 @@ r=$(post "$A" /api/aidev/settings/effort-cap '{"claude":"high"}' PUT); r=$(post 
 r=$(post "$A" /api/aidev/settings/effort-cap '{"claude":"ultra"}' PUT); check "$r" 'j.error' "claude has no ultra"
 r=$(get "$A" /api/aidev/engines); check "$r" 'j.effort_cap.claude==="high" && j.effort_ladder.codex.includes("ultra")' "engines report ceiling + ladder"
 post "$A" /api/aidev/settings/effort-cap '{"claude":"xhigh","codex":"xhigh"}' PUT >/dev/null
+# chat-level ceiling: sent with a new chat's first message, stored per session afterwards; the account default stays
+r=$(post "$A" /api/aidev/route '{"text":"React 컴포넌트에 다크모드 토글 훅을 추가해줘","preferEngine":"claude","effortCap":{"claude":"low"}}'); check "$r" 'j.plan.effort==="low"' "new chat: its own ceiling applies (low)"
+r=$(post "$A" /api/aidev/session-settings/s-cap '{"claude":"medium"}' PUT); check "$r" 'j.effort_cap.claude==="medium" && j.default.claude==="xhigh" && j.effective.claude==="medium" && j.effective.codex==="xhigh"' "chat ceiling stored for the session, default untouched"
+r=$(post "$A" /api/aidev/route '{"text":"React 컴포넌트에 다크모드 토글 훅을 추가해줘","preferEngine":"claude","sessionId":"s-cap"}'); check "$r" '["low","medium"].includes(j.plan.effort)' "that chat routes under its ceiling ($(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).plan.effort'))"
+r=$(post "$A" /api/aidev/route '{"text":"React 컴포넌트에 다크모드 토글 훅을 추가해줘","preferEngine":"claude","sessionId":"other"}'); check "$r" '!["low","medium"].includes(j.plan.effort)' "other chats keep the default ($(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).plan.effort'))"
+r=$(post "$A" /api/aidev/session-settings/s-cap '{"claude":"ultra"}' PUT); check "$r" 'j.error' "chat ceiling validated"
+r=$(get "$B" /api/aidev/session-settings/s-cap); check "$r" 'j.effort_cap===null' "another user does not see the chat ceiling"
+r=$(post "$A" /api/aidev/session-settings/s-cap '{}' DELETE); check "$r" 'j.effort_cap===null && j.effective.claude==="xhigh"' "chat ceiling reset → default"
+
 r=$(get "$ADM" /api/aidev/tier-policy); check "$r" 'j.downgrade===false' "tier downgrades off by default (quality first)"
 r=$(post "$ADM" /api/aidev/tier-policy/settings '{"downgrade":true}' PUT); check "$r" 'j.downgrade===true' "admin turns downgrades on"
 r=$(post "$A" /api/aidev/tier-policy/settings '{"downgrade":false}' PUT); check "$r" 'j.error' "downgrade setting is admin only"

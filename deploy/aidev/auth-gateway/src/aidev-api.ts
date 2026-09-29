@@ -152,9 +152,25 @@ export function createAidevApi(deps: AidevDeps) {
         const b = await readJson(req);
         const input: RouteInput = { text: str(b.text, 'text', 32000), sessionId: optStr(b.sessionId, 200), sessionEngine: ENGINES.includes(b.sessionEngine as Engine) ? b.sessionEngine as Engine : null,
           preferEngine: ENGINES.includes(b.preferEngine as Engine) ? b.preferEngine as Engine : null, targetId: b.targetId === undefined || b.targetId === null ? null : num(b.targetId, 'targetId'),
-          forceAgent: optStr(b.forceAgent, 41) ?? null, projectHint: optStr(b.projectHint, 400), recentFiles: Array.isArray(b.recentFiles) ? (b.recentFiles as unknown[]).map(String).slice(0, 10) : null, model: optStr(b.model, 100), effort: optStr(b.effort, 20) };
+          forceAgent: optStr(b.forceAgent, 41) ?? null, projectHint: optStr(b.projectHint, 400), recentFiles: Array.isArray(b.recentFiles) ? (b.recentFiles as unknown[]).map(String).slice(0, 10) : null, model: optStr(b.model, 100), effort: optStr(b.effort, 20),
+          effortCap: b.effortCap && typeof b.effortCap === 'object' ? { claude: optStr((b.effortCap as Record<string, unknown>).claude, 20), codex: optStr((b.effortCap as Record<string, unknown>).codex, 20) } as Partial<Record<Engine, string>> : null };
         const engines = await engineAvailability(session);
         return json(res, 200, await route(store, laya, uid, engines, input)), true;
+      }
+      // a chat's own effort ceiling (the account default lives in /settings/effort-cap)
+      const sessMatch = rest.match(/^\/session-settings\/([A-Za-z0-9._:-]{1,200})$/);
+      if (sessMatch) {
+        const sid = sessMatch[1];
+        if (m === 'GET') { const info = store.effectiveEffortCap(uid, sid); return json(res, 200, { effort_cap: info.chat, default: info.account, effective: info.cap }), true; }
+        if (m === 'PUT' || m === 'DELETE') {
+          const b = m === 'PUT' ? await readJson(req) : {};
+          try {
+            const cap = m === 'DELETE' ? null : { claude: b.claude === null ? undefined : optStr(b.claude, 20), codex: b.codex === null ? undefined : optStr(b.codex, 20) };
+            const saved = store.setSessionEffortCap(uid, sid, cap);
+            const info = store.effectiveEffortCap(uid, sid);
+            return json(res, 200, { effort_cap: saved, default: info.account, effective: info.cap }), true;
+          } catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid effort'); }
+        }
       }
       if (rest === '/route/eval' && m === 'POST') {
         const b = await readJson(req, 4 * 1024 * 1024);

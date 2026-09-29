@@ -56,6 +56,8 @@ export type RoutingState = {
   escalation: { next: NextAction; text: string; sessionId: string | null } | null;
   /** E-03: a handoff brief waiting to be sent once the new session (other engine) is open. */
   pendingHandoff: { sessionId: string; text: string } | null;
+  /** The open chat's own effort ceiling (sessionId null = a new chat whose id is not known yet). */
+  chatCap: { sessionId: string | null; cap: Partial<Record<Engine, string>> | null };
 };
 
 const MODE_KEY = 'aidev.routing.mode';
@@ -69,7 +71,7 @@ function readMode(): RoutingMode {
   }
 }
 
-let state: RoutingState = { mode: readMode(), pendingCreate: null, oneShotAgent: null, busy: false, last: null, lastText: null, error: null, overrides: {}, runId: null, runSessionId: null, runFinishedAt: null, runFeedback: null, oneShotPlan: null, escalation: null, pendingHandoff: null };
+let state: RoutingState = { mode: readMode(), pendingCreate: null, oneShotAgent: null, busy: false, last: null, lastText: null, error: null, overrides: {}, runId: null, runSessionId: null, runFinishedAt: null, runFeedback: null, oneShotPlan: null, escalation: null, pendingHandoff: null, chatCap: { sessionId: null, cap: null } };
 const listeners = new Set<() => void>();
 
 function emit() {
