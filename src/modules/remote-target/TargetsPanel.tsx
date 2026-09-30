@@ -3,6 +3,8 @@ import { Check, ChevronDown, ChevronRight, Copy, Laptop, Plus, RefreshCw, Trash2
 
 import { api, readApiJson } from '@/shared/api';
 import { copyTextToClipboard } from '@/shared/utils';
+import type { RunnerFile } from '@/shared/types';
+import { guessPlatform, pairingSteps } from '@/modules/remote-target/utils/runnerPairing';
 
 /** A developer PC registered for remote run/debug, as the gateway reports it (GET /api/aidev/targets). */
 type Target = {
@@ -34,23 +36,17 @@ function ago(at: number | null) {
   return s < 60 ? `${s}초 전` : s < 3600 ? `${Math.round(s / 60)}분 전` : s < 86400 ? `${Math.round(s / 3600)}시간 전` : `${Math.round(s / 86400)}일 전`;
 }
 
-/** A runner binary the gateway serves (GET /_runner/download). */
-type RunnerFile = { name: string; version: string | null; platform: string | null; size: number; sha256: string | null };
 
 /** Pairing instructions: the code, where to get the runner for the PC's OS, and the exact commands. */
 function PairingCard({ target, files, onRefresh }: { target: Target; files: RunnerFile[]; onRefresh: () => void }) {
   const gateway = window.location.origin;
-  // platform: which OS the instructions are written for (defaults to the first binary the release ships)
-  const [platform, setPlatform] = useState<string>(files[0]?.platform ?? 'mac-universal');
+  // platform: which OS the instructions are written for (defaults to this browser's OS)
+  const [platform, setPlatform] = useState<string>(() => guessPlatform(files, navigator.userAgent, (navigator as Navigator & { userAgentData?: { platform?: string } }).userAgentData?.platform));
   const file = files.find((f) => f.platform === platform);
-  const windows = platform.startsWith('win');
-  const exe = windows ? '.\\aidev-runner.exe' : './aidev-runner';
-  const fetchLine = file
-    ? (windows ? `curl.exe -fsSL ${gateway}/_runner/download/${file.name} -o aidev-runner.exe` : `curl -fsSL ${gateway}/_runner/download/${file.name} -o aidev-runner && chmod +x aidev-runner`)
-    : '# 이 릴리스에는 이 OS용 바이너리가 없습니다 — Mac에서 ops/runner/build.sh 로 빌드해 복사하세요';
-  const commands = `${fetchLine}\n${exe} pair ${target.pairing_code} --gateway ${gateway}\n${exe} install-service   # 또는 ${exe} start`;
+  const steps = pairingSteps({ platform, file, code: target.pairing_code ?? '', gateway });
+  const commands = steps.commands;
   const left = target.pairing_expires ? Math.max(0, Math.round((target.pairing_expires - Date.now()) / 60000)) : 0;
-  const platforms = Array.from(new Set([...files.map((f) => f.platform ?? ''), 'mac-universal', 'win-x64'].filter(Boolean)));
+  const platforms = Array.from(new Set([...files.map((f) => f.platform ?? ''), 'mac-universal', 'linux-x64', 'win-x64', platform].filter(Boolean)));
   // copied: result of the last "명령 복사" (the Clipboard API can be refused; the fallback may fail too)
   const [copied, setCopied] = useState<'ok' | 'failed' | null>(null);
   const copy = async () => {
@@ -71,6 +67,8 @@ function PairingCard({ target, files, onRefresh }: { target: Target; files: Runn
           {platforms.map((p) => <option key={p} value={p}>{p}{files.some((f) => f.platform === p) ? '' : ' (빌드 필요)'}</option>)}
         </select>
       </label>
+      {steps.prerequisite ? <div className="mt-1 text-[10px] text-amber-700 dark:text-amber-300">{steps.prerequisite}</div> : null}
+      <div className="mt-1 text-[10px] text-muted-foreground">{steps.shell}에 붙여 넣기 · 설치 위치 {platform.startsWith('win') ? '%USERPROFILE%\\.aidev\\bin' : '~/.aidev/bin'} · 서비스로 등록돼 로그인 때마다 실행</div>
       <pre className="aidev-selectable mt-1 whitespace-pre-wrap break-all rounded bg-muted/60 p-1.5 font-mono text-[11px]">{commands}</pre>
       {file?.sha256 ? <div className="aidev-selectable break-all text-[10px] text-muted-foreground">sha256 {file.sha256}</div> : null}
       <div className="mt-1 flex gap-1.5">

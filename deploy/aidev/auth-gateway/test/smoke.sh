@@ -158,6 +158,15 @@ if [ -x "$RUNNER_BIN" ]; then
   check "$r" "j.targets.find(t=>t.id===$TID).online && j.targets.find(t=>t.id===$TID).capabilities.os && j.targets.find(t=>t.id===$TID).paired && !('token_hash' in j.targets.find(t=>t.id===$TID) && j.targets.find(t=>t.id===$TID).token_hash)" "runner online with capabilities ($(echo "$r" | node -pe "const t=JSON.parse(require('fs').readFileSync(0)).targets.find(t=>t.id===$TID); t.capabilities.os+'/'+t.capabilities.arch+' tools '+Object.keys(t.capabilities.tools).length+' roots '+t.allowed_roots.length"))"
   r=$(post "$A" "/api/aidev/targets/$TID/ping" '{}'); check "$r" 'j.ok===true && j.result.pong===true && j.rtt_ms>=0' "ping through the hub ($(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).rtt_ms')ms)"
   r=$(post "$A" "/api/aidev/targets/$TID/refresh-caps" '{}'); check "$r" 'j.target.capabilities.runner' "capabilities refreshed on demand"
+  # the workbench pairing card's commands, pasted into bash (Linux), interactive zsh (macOS) and PowerShell (Windows)
+  if [ -d "$RUNNER_DIST_DIR" ] && command -v zsh >/dev/null; then
+    PC=$(PWSH="${PWSH:-$(command -v pwsh || true)}" bash test/pairing-commands.sh "$G" "$A" "$T/paste" 2>"$T/paste.err")
+    r=$(echo "$PC" | grep '"shell":"bash"'); check "${r:-null}" 'j.exitCode===0 && j.exe && j.paired && j.serviceStarted && j.unitPointsAtFixedPath' "pairing card, Linux (bash): download to ~/.aidev/bin, pair, service points at that file ($r)"
+    r=$(echo "$PC" | grep '"shell":"zsh"'); check "${r:-null}" 'j.paired && j.serviceStarted && j.unitPointsAtFixedPath' "pairing card, macOS (interactive zsh, no comment words): pair + install-service as pasted"
+    r=$(echo "$PC" | grep 'zsh-comment-check'); check "${r:-null}" 'j.commentIsWord===true' "(why: a trailing # comment is an argument in interactive zsh)"
+    r=$(echo "$PC" | grep '"shell":"powershell"'); if echo "$r" | grep -q skipped; then echo "SKIP pairing card, Windows (no pwsh)"; else
+      check "${r:-null}" 'j.parseErrors===0 && j.binDir && /curl -fsSL http:\/\/127\.0\.0\.1:18080\/_runner\/download\/aidev-runner-0\.7\.0-win-x64\.exe -o /.test(j.curl) && j.curl.endsWith(j.home+"\\.aidev\\bin\\aidev-runner.exe") && j.runner.length===2 && j.runner[0]===j.home+"\\.aidev\\bin\\aidev-runner.exe pair CODE1234 --gateway http://127.0.0.1:18080" && j.runner[1].endsWith("aidev-runner.exe install-service")' "pairing card, Windows (PowerShell): parses, folder made, curl.exe to %USERPROFILE%\\.aidev\\bin, runner called with pair/install-service ($(echo "$r" | cut -c1-200))"; fi
+  else echo "SKIP pairing card commands (needs runner dist + zsh)"; fi
   r=$(post "$B" "/api/aidev/targets/$TID/ping" '{}'); check "$r" 'j.error' "another user cannot reach the target"
   # F-03: remote exec — piped output + exit code in remote_runs, log, roots, ownership, policy, browser stream, restart adoption
   waitrun() { for i in $(seq 1 ${2:-60}); do r=$(get "$A" "/api/aidev/remote-runs/$1"); echo "$r" | grep -q '"finished_at":[0-9]' && break; sleep 0.25; done; echo "$r"; }

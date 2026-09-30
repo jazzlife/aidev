@@ -1625,6 +1625,9 @@ type TaskPriority = 'high' | 'medium' | 'low' | string;
 
 //----------------- REMOTE SCREEN ------------
 
+/** A runner binary the gateway serves for download (GET /_runner/download): the workbench pairing card builds its install commands from it; `platform` is like `mac-universal`, `linux-x64`, `win-x64`. */
+export type RunnerFile = { name: string; version: string | null; platform: string | null; size: number; sha256: string | null };
+
 /** A program window on a remote PC as the runner lists it (`screen.list`, runner ≥ 0.7): what the workbench and mobile screen views offer to watch and control; x/y/width/height are in the PC's input coordinates. */
 export type RemoteWindow = {
   id: number;

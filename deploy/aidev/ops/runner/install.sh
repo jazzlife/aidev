@@ -33,6 +33,16 @@ codesign --force --sign - --identifier work.nado.aidev-runner "$DEST.new" >/dev/
 mv -f "$DEST.new" "$DEST"
 echo "==> $("$DEST" --version)"
 
+if ! "$DEST" status >/dev/null 2>&1; then
+  # not paired yet (a new PC): the service can only start once this PC has its token
+  cat <<EOF
+
+설치했습니다. 이 PC는 아직 페어링되지 않았습니다 — 작업대 "원격 대상"에서 대상을 만들고 카드의 명령을 실행하세요:
+    $DEST pair <페어링 코드> --gateway https://dev.nado.work
+    $DEST install-service
+EOF
+  exit 0
+fi
 "$DEST" install-service      # LaunchAgent → $DEST start (at login and now)
 sleep 3
 "$DEST" status || true
