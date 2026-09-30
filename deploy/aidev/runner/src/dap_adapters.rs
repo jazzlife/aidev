@@ -358,7 +358,9 @@ fn ensure_netcoredbg(gateway: Option<&str>) -> Result<PathBuf, String> {
     let platform = platform().ok_or_else(|| unsupported("netcoredbg"))?;
     if platform == "darwin-arm64" {
         // upstream publishes no Apple Silicon build: the platform builds one (ops/runner/build-netcoredbg.sh)
-        return ensure_from_gateway("netcoredbg", gateway).map(|d| d.join("netcoredbg").join("netcoredbg"));
+        return ensure_from_gateway("netcoredbg", gateway).map(|d| d.join("netcoredbg").join("netcoredbg")).map_err(|e| {
+            format!("{e} — Apple Silicon용 netcoredbg는 플랫폼이 빌드합니다(Mac에서 ops/runner/build-netcoredbg.sh). 그 전에는 remote_console로 lldb + SOS(dotnet-sos)를 쓰세요")
+        });
     }
     let (_, file, sha) = NETCOREDBG_ASSETS.iter().find(|(p, _, _)| *p == platform).ok_or_else(|| unsupported("netcoredbg"))?;
     let dir = download_unpacked(&format!("netcoredbg-{NETCOREDBG_VERSION}"), &format!("https://github.com/Samsung/netcoredbg/releases/download/{NETCOREDBG_VERSION}/{file}"), file, sha, None)?;
