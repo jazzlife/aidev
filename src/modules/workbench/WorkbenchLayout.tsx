@@ -14,12 +14,14 @@ import { useUiPreferences } from '@/shared/context/UiPreferencesContext';
 import { useFileOpenResolver, WorkspaceErrorBoundary, WorkspaceStateView } from '@/modules/project-workspace';
 import type { DirectoryRevealRequest, WorkspaceMainProps } from '@/shared/types';
 import { AgentCatalog } from '@/modules/aidev-router';
-import { PreviewPane, RemoteApprovalCards, requestRunFocus, RunOutputPane, ScreenPane, TargetsPanel, usePreviewList } from '@/modules/remote-target';
+import { PreviewPane, RemoteApprovalCards, requestRunFocus, RunOutputPane, ScreenPane, TargetsPanel } from '@/modules/remote-target';
+import { usePreviewList } from '@/modules/remote-preview';
+import { LiveWindowHost, liveWindows, useLiveWindows, type LiveWindowSpec } from '@/modules/live-window';
 import { REMOTE_RUN_FOCUS_EVENT } from '@/modules/aidev-router';
 import { EditorGroup, useEditorGroup } from '@/modules/workbench/EditorGroup';
 import { SplitHandle } from '@/modules/workbench/SplitHandle';
 import { layoutStore, useWorkbenchLayout, type BottomTab, type SideView, type TabletPane } from '@/modules/workbench/layoutStore';
-import type { DeviceTier } from '@/modules/workbench/hooks/useDeviceTier';
+import { useDeviceTier, type DeviceTier } from '@/modules/workbench/hooks/useDeviceTier';
 
 type WorkbenchLayoutProps = WorkspaceMainProps & {
   tier: Exclude<DeviceTier, 'mobile'>;
@@ -39,11 +41,15 @@ const BOTTOM_TABS: Array<{ id: BottomTab; title: string; icon: typeof TerminalSq
   { id: 'browser', title: '브라우저', icon: Globe },
   { id: 'tasks', title: '작업', icon: ListChecks },
   { id: 'run_output', title: '원격 실행', icon: MonitorPlay },
-  { id: 'preview', title: '미리보기', icon: AppWindow },
-  { id: 'screen', title: '화면', icon: Monitor },
+];
+// Live content gets floating windows of its own (move, resize, maximize, pop out), not a slot in the
+// bottom panel: a page or a PC's window needs room, and the terminal area is usually kept small.
+const LIVE_WINDOWS: LiveWindowSpec[] = [
+  { id: 'preview', title: '미리보기', icon: AppWindow, render: (visible) => <PreviewPane isVisible={visible} />, popoutPath: '/live/preview' },
+  { id: 'screen', title: '원격 화면', icon: Monitor, render: (visible) => <ScreenPane isVisible={visible} />, popoutPath: '/live/screen' },
 ];
 const TABLET_PANES: Array<{ id: TabletPane; title: string }> = [
-  { id: 'files', title: '파일' }, { id: 'terminal', title: '터미널' }, { id: 'git', title: 'Git' }, { id: 'remote', title: '원격 실행' }, { id: 'preview', title: '미리보기' }, { id: 'screen', title: '화면' }, { id: 'browser', title: '브라우저' },
+  { id: 'files', title: '파일' }, { id: 'terminal', title: '터미널' }, { id: 'git', title: 'Git' }, { id: 'remote', title: '원격 실행' }, { id: 'browser', title: '브라우저' },
 ];
 
 /**
@@ -63,6 +69,10 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
   const [revealDirectory, setRevealDirectory] = useState<DirectoryRevealRequest | null>(null);
   const editor = useEditorGroup(selectedProject?.projectId);
   const isTablet = tier === 'tablet';
+  // narrower than a tablet (split screen, small window): live windows only as full-screen overlays
+  const compactLive = useDeviceTier() === 'mobile';
+  const live = useLiveWindows();
+  const liveOn = (id: string) => Boolean(live[id]?.open && live[id].mode !== 'min');
   // Tablet drawer for sessions; closes itself once a session is picked.
   const [drawerOpen, setDrawerOpen] = useState(false);
   useEffect(() => { setDrawerOpen(false); }, [selectedSession?.id, selectedProject?.projectId]);
@@ -126,9 +136,8 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
     const fresh = previews.find((p) => p.by === 'agent' && p.createdAt > previewSeenRef.current);
     if (!fresh) return;
     previewSeenRef.current = Math.max(...previews.map((p) => p.createdAt));
-    if (tier === 'tablet') layoutStore.patch('tablet', { tabletShowChat: false, tabletPane: 'preview' });
-    else layoutStore.patch('desktop', { workOpen: true, bottomOpen: true, bottomTab: 'preview' });
-  }, [previews, tier]);
+    liveWindows.open('preview');
+  }, [previews]);
   // The legacy tab state still drives a few upstream effects (task banner, palette); keep it on chat.
   useEffect(() => { setActiveTab('chat'); }, [setActiveTab]);
 
@@ -181,18 +190,20 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
 
   if (isTablet) {
     // Two panes: chat, or one tool pane, switched by the segmented control (swipe lands in C-05).
-    const pane = layout.tabletPane;
+    // a pane saved by an older layout (preview/screen moved to live windows) falls back to files
+    const pane = TABLET_PANES.some((entry) => entry.id === layout.tabletPane) ? layout.tabletPane : 'files';
     return (
       <div className="relative flex h-full flex-col">
         <div className="aidev-chrome flex items-center gap-1 px-2 h-10 border-b border-border bg-muted/30 shrink-0">
           <button type="button" onClick={() => setDrawerOpen(true)} aria-label="세션" title="세션" className="p-2 rounded hover:bg-muted"><PanelLeft size={16} /></button>
           <div className="flex-1 min-w-0 truncate text-sm font-medium">{selectedProject.displayName}{selectedSession?.summary ? ` · ${selectedSession.summary}` : ''}</div>
-          <div className="flex rounded-md border border-border overflow-hidden text-xs">
-            <button type="button" className={`px-3 h-7 ${layout.tabletShowChat ? 'bg-primary text-primary-foreground' : ''}`} onClick={() => layoutStore.patch('tablet', { tabletShowChat: true })}>채팅</button>
+          <div className="flex min-w-0 shrink overflow-x-auto rounded-md border border-border text-xs">
+            <button type="button" className={`shrink-0 whitespace-nowrap px-3 h-7 ${layout.tabletShowChat ? 'bg-primary text-primary-foreground' : ''}`} onClick={() => layoutStore.patch('tablet', { tabletShowChat: true })}>채팅</button>
             {TABLET_PANES.filter((entry) => entry.id !== 'browser' || browserUseEnabled).map((entry) => (
-              <button key={entry.id} type="button" className={`px-3 h-7 border-l border-border ${!layout.tabletShowChat && pane === entry.id ? 'bg-primary text-primary-foreground' : ''}`} onClick={() => layoutStore.patch('tablet', { tabletShowChat: false, tabletPane: entry.id })}>{entry.title}</button>
+              <button key={entry.id} type="button" className={`shrink-0 whitespace-nowrap px-3 h-7 border-l border-border ${!layout.tabletShowChat && pane === entry.id ? 'bg-primary text-primary-foreground' : ''}`} onClick={() => layoutStore.patch('tablet', { tabletShowChat: false, tabletPane: entry.id })}>{entry.title}</button>
             ))}
           </div>
+          {LIVE_WINDOWS.map((w) => <button key={w.id} type="button" title={w.title} aria-label={w.title} aria-pressed={liveOn(w.id)} onClick={() => liveWindows.toggle(w.id)} className={`p-2 rounded ${liveOn(w.id) ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}><w.icon size={16} /></button>)}
           {quickSettingsButton}
           {settingsButton}
         </div>
@@ -215,10 +226,9 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
           <div className={`absolute inset-0 ${!layout.tabletShowChat && pane === 'terminal' ? '' : 'hidden'}`}>{terminal(!layout.tabletShowChat && pane === 'terminal')}</div>
           {!layout.tabletShowChat && pane === 'git' ? <div className="absolute inset-0">{git}</div> : null}
           {!layout.tabletShowChat && pane === 'remote' ? <div className="absolute inset-0"><RunOutputPane isVisible project={remoteProject} /></div> : null}
-          {!layout.tabletShowChat && pane === 'preview' ? <div className="absolute inset-0"><PreviewPane isVisible /></div> : null}
-          {!layout.tabletShowChat && pane === 'screen' ? <div className="absolute inset-0"><ScreenPane isVisible /></div> : null}
           {!layout.tabletShowChat && pane === 'browser' && browserUseEnabled ? <div className="absolute inset-0"><BrowserUsePanel isVisible onShowSettings={onShowSettings} /></div> : null}
         </div>
+        <LiveWindowHost windows={LIVE_WINDOWS} compact={compactLive} />
       </div>
     );
   }
@@ -237,6 +247,11 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
         {SIDE_VIEWS.map((view) => (
           <button key={view.id} type="button" title={view.title} aria-label={view.title} aria-pressed={sideView === view.id} onClick={() => layoutStore.patch('desktop', { sideView: sideView === view.id ? null : view.id })}
             className={`p-2 rounded ${sideView === view.id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}><view.icon size={18} /></button>
+        ))}
+        <div className="my-1 h-px w-6 bg-border" />
+        {LIVE_WINDOWS.map((w) => (
+          <button key={w.id} type="button" title={w.title} aria-label={w.title} aria-pressed={liveOn(w.id)} onClick={() => liveWindows.toggle(w.id)}
+            className={`p-2 rounded ${liveOn(w.id) ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}><w.icon size={18} /></button>
         ))}
         <div className="flex-1" />
         <button type="button" title="터미널 패널" aria-label="터미널 패널" aria-pressed={workVisible && layout.bottomOpen} onClick={toggleBottom} className={`p-2 rounded ${workVisible && layout.bottomOpen ? 'text-foreground' : 'text-muted-foreground'} hover:bg-muted`}><PanelBottom size={18} /></button>
@@ -285,13 +300,12 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
                 {shouldShowTasks ? <div className={`absolute inset-0 ${bottomTab === 'tasks' ? '' : 'hidden'}`}><TaskMasterPanel isVisible={workVisible && bottomTab === 'tasks'} /></div> : null}
                 {browserUseEnabled && bottomTab === 'browser' ? <div className="absolute inset-0"><BrowserUsePanel isVisible={workVisible} onShowSettings={onShowSettings} /></div> : null}
                 {bottomTab === 'run_output' ? <div className="absolute inset-0"><RunOutputPane isVisible={workVisible} project={remoteProject} /></div> : null}
-                {bottomTab === 'preview' ? <div className="absolute inset-0"><PreviewPane isVisible={workVisible} /></div> : null}
-                {bottomTab === 'screen' ? <div className="absolute inset-0"><ScreenPane isVisible={workVisible} /></div> : null}
               </div>
             </div>
           </>
         ) : null}
       </div>
+      <LiveWindowHost windows={LIVE_WINDOWS} compact={compactLive} />
     </div>
   );
 }

@@ -63,8 +63,11 @@ export function pinDeviceTier(tier: DeviceTier | 'auto') {
  * "세션" view on desktop, drawer on tablet), so the docked CloudCLI sidebar and the floating
  * quick-settings handle must not render. `localStorage['aidev.legacy_layout']='1'` restores upstream.
  */
-export function useWorkbenchActive(isMobile: boolean): { active: boolean; tier: DeviceTier } {
+export function useWorkbenchActive(_isMobile: boolean): { active: boolean; tier: Exclude<DeviceTier, 'mobile'> } {
   const tier = useDeviceTier();
   const legacyLayout = (() => { try { return localStorage.getItem('aidev.legacy_layout') === '1'; } catch { return false; } })();
-  return { active: !isMobile && tier !== 'mobile' && !legacyLayout, tier };
+  // Phones get the mobile app (/m/) from the gateway; the workbench narrower than a tablet (split screen,
+  // small window, a phone that chose the workbench) uses the tablet layout rather than the upstream tabs,
+  // which lack the remote features (targets, preview, screen).
+  return { active: !legacyLayout, tier: tier === 'mobile' ? 'tablet' : tier };
 }

@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { ExternalLink, Laptop, MonitorPlay, Play, RefreshCw, Smartphone, Tablet, X } from 'lucide-react';
 
 import { focusRemoteRun } from '@/modules/aidev-router';
-import { fillCommand, useDevServer } from '@/modules/remote-target/hooks/useDevServer';
+import { fillCommand, useDevServer, usePreviewList } from '@/modules/remote-preview';
 import { api, readApiJson } from '@/shared/api';
+import type { RemotePreviewEntry } from '@/shared/types';
 
 /**
  * PreviewPane (IMPLEMENTATION-PLAN §3.12, F-06): a dev server running on one of the user's PCs, shown in
@@ -15,7 +16,6 @@ import { api, readApiJson } from '@/shared/api';
  * page like a phone or tablet; "새 창" opens the same URL in a browser tab (the URL also works on a phone).
  */
 type Target = { id: number; name: string; online: boolean };
-export type PreviewEntry = { targetId: number; targetName: string; port: number; url: string; base: string; mode: 'keep' | 'strip' | null; by: 'user' | 'agent'; label: string | null; createdAt: number; status: number | null; error: string | null; online?: boolean };
 type Width = 'full' | 'tablet' | 'phone';
 const WIDTHS: Array<{ id: Width; px: number | null; title: string; icon: typeof Laptop }> = [
   { id: 'full', px: null, title: '전체 폭', icon: Laptop },
@@ -23,21 +23,6 @@ const WIDTHS: Array<{ id: Width; px: number | null; title: string; icon: typeof 
   { id: 'phone', px: 390, title: '휴대폰 (390)', icon: Smartphone },
 ];
 const keyOf = (p: { targetId: number; port: number }) => `${p.targetId}:${p.port}`;
-
-/** Newest preview list, polled while `active` (the workbench also uses it to notice agent-opened previews). */
-export function usePreviewList(active: boolean, intervalMs = 5000) {
-  const [previews, setPreviews] = useState<PreviewEntry[]>([]);
-  const load = useCallback(async () => {
-    try { setPreviews((await readApiJson<{ previews: PreviewEntry[] }>(await api.targets.previews())).previews ?? []); } catch { /* keep the last list */ }
-  }, []);
-  useEffect(() => {
-    if (!active) return undefined;
-    void load();
-    const timer = window.setInterval(() => { void load(); }, intervalMs);
-    return () => window.clearInterval(timer);
-  }, [active, intervalMs, load]);
-  return { previews, reload: load };
-}
 
 /** Used by WorkbenchLayout (desktop bottom panel "미리보기", tablet pane) to show dev servers of remote PCs. */
 export function PreviewPane({ isVisible = true }: { isVisible?: boolean }) {
@@ -83,7 +68,7 @@ export function PreviewPane({ isVisible = true }: { isVisible?: boolean }) {
     if (!targetId || !Number.isInteger(n) || n < 1024 || n > 65535) { setNote('대상과 포트(1024~65535)를 확인하세요'); return; }
     setBusy(true); setNote(null);
     try {
-      const r = await readApiJson<{ preview: PreviewEntry; hint: string }>(await api.targets.openPreview(targetId, n));
+      const r = await readApiJson<{ preview: RemotePreviewEntry; hint: string }>(await api.targets.openPreview(targetId, n));
       setNote(r.hint);
       await reload();
       setSelectedKey(keyOf(r.preview)); setFrameKey((k) => k + 1);
@@ -91,7 +76,7 @@ export function PreviewPane({ isVisible = true }: { isVisible?: boolean }) {
     } catch (error) { setNote(error instanceof Error ? error.message : '미리보기를 열 수 없습니다'); }
     finally { setBusy(false); }
   };
-  const close = async (p: PreviewEntry) => {
+  const close = async (p: RemotePreviewEntry) => {
     try { await api.targets.closePreview(p.targetId, p.port); } catch { /* list refresh shows the truth */ }
     if (keyOf(p) === selectedKey) setSelectedKey(null);
     await reload();

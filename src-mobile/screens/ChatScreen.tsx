@@ -8,7 +8,9 @@ import { MessageList } from '@m/components/MessageList';
 import { PermissionSheet } from '@m/components/PermissionSheet';
 import { RouterChip } from '@m/components/RouterChip';
 import { RunFeedback } from '@m/components/RunFeedback';
+import { RemoteMenu } from '@m/components/RemoteMenu';
 import { TopBar } from '@m/components/TopBar';
+import { usePreviewList } from '@/modules/remote-preview';
 import { BottomSheet } from '@m/components/BottomSheet';
 import { EscalationPrompt } from '@m/components/EscalationPrompt';
 import { ProjectPicker, readLastProject, type PickedProject } from '@m/components/ProjectPicker';
@@ -39,6 +41,10 @@ export function ChatScreen() {
   const [, setTokenBudget] = useState<Record<string, unknown> | null>(null);
   const [lastRunFinished, setLastRunFinished] = useState<number | null>(null);
   const [copyText, setCopyText] = useState<string | null>(null);
+  // previews an agent opens while the chat is open get a banner; this is the newest one already seen/dismissed
+  const [previewSeen, setPreviewSeen] = useState(() => Date.now());
+  const { previews } = usePreviewList(true, 8000);
+  const agentPreview = previews.find((p) => p.by === 'agent' && p.createdAt > previewSeen && !p.error) ?? null;
   const [copied, setCopied] = useState(false);
   const copyMessage = async () => {
     if (!copyText) return;
@@ -180,7 +186,14 @@ export function ChatScreen() {
 
   return (
     <div className="m-app">
-      <TopBar title={title} subtitle={subtitle} back="/" right={!meta ? <button type="button" className="text-[13px] text-accent px-3 m-touch" onClick={() => setPickingProject(true)}>프로젝트</button> : null} />
+      <TopBar title={title} subtitle={subtitle} back="/" right={<div className="flex items-center"><RemoteMenu />{!meta ? <button type="button" className="text-[13px] text-accent px-3 m-touch" onClick={() => setPickingProject(true)}>프로젝트</button> : null}</div>} />
+      {agentPreview ? (
+        <div className="flex items-center gap-2 border-b border-line bg-accent/10 px-4 py-2 text-[13px]">
+          <span className="min-w-0 flex-1 truncate">미리보기가 열렸습니다 · {agentPreview.label ?? agentPreview.targetName}:{agentPreview.port}</span>
+          <button type="button" className="m-touch rounded-lg bg-accent px-3 py-1 text-accent-ink" onClick={() => navigate(`/preview?p=${agentPreview.targetId}:${agentPreview.port}`)}>보기</button>
+          <button type="button" aria-label="닫기" className="m-touch px-1 text-muted" onClick={() => setPreviewSeen(agentPreview.createdAt)}>✕</button>
+        </div>
+      ) : null}
       {loadError ? <div className="px-4 py-2 text-danger text-sm">{loadError}</div> : null}
       {!isConnected ? <div className="px-4 py-1 text-[12px] text-warn bg-warn/10">연결 중…</div> : null}
       <MessageList messages={messages} loading={slot?.status === 'loading'} onMessageLongPress={(text) => { setCopied(false); setCopyText(text); }} />

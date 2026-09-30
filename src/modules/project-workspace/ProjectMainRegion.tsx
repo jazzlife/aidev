@@ -55,7 +55,7 @@ function ProjectMainRegion({
   // layout below stays for the mobile tier and for the `legacy_layout` escape hatch.
   const { active: workbenchActive, tier } = useWorkbenchActive(isMobile);
   const { sidebarSharedProps } = useProjectSidebarState();
-  if (workbenchActive && tier !== 'mobile') {
+  if (workbenchActive) {
     return (
       <WorkbenchLayout
         tier={tier}

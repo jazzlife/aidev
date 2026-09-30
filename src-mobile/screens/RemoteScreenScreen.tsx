@@ -70,7 +70,7 @@ export function RemoteScreenScreen() {
 
   return (
     <div className="flex h-[100dvh] flex-col bg-black">
-      <TopBar title={win ? win.app || '프로그램' : target ? `${target.name}` : '원격 화면'} subtitle={subtitle} back="/settings"
+      <TopBar title={win ? win.app || '프로그램' : target ? `${target.name}` : '원격 화면'} subtitle={subtitle} back
         right={watching ? <button type="button" onClick={() => setStreaming((v) => !v)} className={`m-touch rounded-full px-3 py-1.5 text-[13px] ${streaming ? 'bg-surface text-ink' : 'bg-accent text-accent-ink'}`}>{streaming ? '정지' : '스트리밍'}</button> : undefined} />
       <div className="flex items-center gap-2 border-b border-line bg-bg px-3 py-2 text-[13px]">
         <select aria-label="프로그램" value={sourceKey(source)} onChange={(e) => setChosen(parse(e.target.value))} className="min-w-0 flex-1 rounded-lg border border-line bg-surface px-2 py-1">

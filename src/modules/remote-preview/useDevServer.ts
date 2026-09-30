@@ -19,7 +19,7 @@ export function fillCommand(template: string, port: number, base: string) {
 }
 
 /**
- * The preview pane's dev-server helper (F-06b): what listens on the PC and which projects can be started
+ * The preview window's dev-server helper (F-06b, workbench PreviewPane and mobile preview screen): what listens on the PC and which projects can be started
  * (runner `dev.scan`), and `start()` — runs a project's dev command through the runner (a pty run the user
  * can watch in "원격 실행"), then waits until a server answers on the port: the preview port itself, or a
  * port that opened after the start (frameworks that pick their own). `onReady(port)` opens the preview.

@@ -1666,5 +1666,8 @@ export type RemoteListeningPort = { port: number; pid: number | null; process: s
 /** A dev project the runner found in the PC's allowed folders, with the command that starts it for a preview (`{port}` / `{base}` placeholders, also in `env` values). `base` = it can serve under the preview path (full HMR). */
 export type RemoteDevProject = { dir: string; name: string; framework: string; pm: string; script: string; command: string; env: Record<string, string>; base: boolean };
 
+/** A dev-server preview the user or an agent opened (GET /api/aidev/previews): shown in the workbench preview window and the mobile preview screen; `url` is a capability link (works without the session). */
+export type RemotePreviewEntry = { targetId: number; targetName: string; port: number; url: string; base: string; mode: 'keep' | 'strip' | null; by: 'user' | 'agent'; label: string | null; createdAt: number; status: number | null; error: string | null; online?: boolean };
+
 /** GET /api/aidev/targets/:id/dev: listening ports, startable projects, and the preview path/url for `port`. */
 export type RemoteDevScan = { ports: RemoteListeningPort[]; projects: RemoteDevProject[]; port: number; base: string; url: string; allowed_roots: string[] };

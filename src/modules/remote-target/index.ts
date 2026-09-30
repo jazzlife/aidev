@@ -5,6 +5,5 @@
 export { TargetsPanel } from '@/modules/remote-target/TargetsPanel';
 export { RunOutputPane, requestRunFocus } from '@/modules/remote-target/RunOutputPane';
 export { RemoteApprovalCards, ApprovalCard } from '@/modules/remote-target/RemoteApprovalCards';
-export { PreviewPane, usePreviewList } from '@/modules/remote-target/PreviewPane';
-export type { PreviewEntry } from '@/modules/remote-target/PreviewPane';
+export { PreviewPane } from '@/modules/remote-target/PreviewPane';
 export { ScreenPane } from '@/modules/remote-target/ScreenPane';

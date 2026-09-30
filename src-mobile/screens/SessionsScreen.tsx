@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom';
 
 import { api } from '@/modules/chat-core';
 import { BottomSheet } from '@m/components/BottomSheet';
+import { RemoteMenu } from '@m/components/RemoteMenu';
 import { TopBar } from '@m/components/TopBar';
 import { relativeTime } from '@m/lib/format';
 import { useLongPress } from '@m/lib/useLongPress';
@@ -100,6 +101,7 @@ export function SessionsScreen() {
         left={hidden ? <button type="button" aria-label="대화 목록" onClick={() => setView('active')} className="m-touch flex items-center justify-center rounded-full"><ArrowLeft size={20} /></button> : undefined}
         right={hidden ? null : (
           <div className="flex items-center">
+            <RemoteMenu />
             <button type="button" aria-label="숨긴 대화" onClick={() => setView('hidden')} className="m-touch flex items-center justify-center rounded-full text-muted"><Archive size={19} /></button>
             <Link to="/settings" className="m-touch flex items-center justify-center rounded-full text-muted" aria-label="설정"><Settings size={20} /></Link>
           </div>
