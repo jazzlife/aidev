@@ -524,7 +524,7 @@ export function createAidevApi(deps: AidevDeps) {
         const target = store.target(uid, id);
         if (!target) throw new HttpError(404, 'Target not found');
         const agentCall = session.sid.startsWith('runtime:');
-        const status = (error: unknown) => (error instanceof RpcError ? (error.code === -32010 ? 409 : error.code === -32030 ? 403 : error.code === -32021 ? 501 : error.code === -32032 ? 404 : 502) : 502);
+        const status = (error: unknown) => (error instanceof RpcError ? (error.code === -32010 ? 409 : error.code === -32030 ? 403 : error.code === -32021 ? 501 : error.code === -32032 ? 404 : 503) : 503);
         try {
           if ((screenMatch[2] === 'screens' || screenMatch[2] === 'windows') && m === 'GET') return json(res, 200, await deps.runners.screenList(id)), true;
           if (agentCall && target.policy === 'deny') throw new HttpError(403, '이 대상의 실행 정책이 "실행 금지"입니다');
@@ -569,7 +569,7 @@ export function createAidevApi(deps: AidevDeps) {
           const base = deps.preview.baseFor(target, port);
           return json(res, 200, { ...scan, port, base, url: `${deps.publicOrigin ?? ''}${base}`, allowed_roots: target.allowed_roots ? JSON.parse(target.allowed_roots) : [] }), true;
         } catch (error) {
-          throw new HttpError(error instanceof RpcError ? (error.code === -32010 ? 409 : error.code === -32021 ? 501 : 502) : 502, error instanceof Error ? error.message : 'scan failed');
+          throw new HttpError(error instanceof RpcError ? (error.code === -32010 ? 409 : error.code === -32021 ? 501 : 503) : 503, error instanceof Error ? error.message : 'scan failed');
         }
       }
       const previewMatch = rest.match(/^\/targets\/(\d+)\/preview(?:\/(\d{4,5}))?$/);

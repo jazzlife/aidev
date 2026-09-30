@@ -151,9 +151,10 @@ export function createPreview(opts: { store: Store; runners: RunnerHub; secret: 
     if (error instanceof RpcError) {
       if (error.code === -32010) return { status: 503, title: '원격 PC가 오프라인입니다', detail: '러너(aidev-runner)가 실행 중인지 확인하세요.' };
       if (error.code === -32021) return { status: 501, title: '러너 업데이트 필요', detail: error.message };
-      if (error.code === -32020) return { status: 502, title: '개발 서버에 연결할 수 없습니다', detail: error.message };
+      // 503, not 502: dev.nado.work is behind Cloudflare, which replaces 502/504 bodies with its own "Bad gateway" page
+      if (error.code === -32020) return { status: 503, title: '개발 서버에 연결할 수 없습니다', detail: error.message };
     }
-    return { status: 502, title: '미리보기 오류', detail: error instanceof Error ? error.message : String(error) };
+    return { status: 503, title: '미리보기 오류', detail: error instanceof Error ? error.message : String(error) };
   }
 
   const preview = {
@@ -203,7 +204,8 @@ export function createPreview(opts: { store: Store; runners: RunnerHub; secret: 
         headers['referrer-policy'] = 'no-referrer';
         const isHtml = /text\/html/i.test(String(up.headers['content-type'] ?? '')) && !up.headers['content-encoding'] && req.method !== 'HEAD';
         if (!isHtml) {
-          res.writeHead(up.statusCode ?? 502, headers);
+          // a dev server's own 502/504 (e.g. its proxy failing) would also be swallowed by Cloudflare
+          res.writeHead(up.statusCode === 502 || up.statusCode === 504 ? 503 : up.statusCode ?? 503, headers);
           up.pipe(res);
           return true;
         }
@@ -241,7 +243,7 @@ export function createPreview(opts: { store: Store; runners: RunnerHub; secret: 
           tunnel.on('error', () => socket.destroy());
           socket.pipe(tunnel).pipe(socket);
         } catch {
-          socket.end('HTTP/1.1 502 Bad Gateway\r\nConnection: close\r\n\r\n');
+          socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');
         }
       })();
       return true;

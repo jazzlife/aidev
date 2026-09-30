@@ -147,11 +147,12 @@ async function proxyHttp(req: IncomingMessage, res: ServerResponse, session: Ses
     delete out['set-cookie'];
     delete out['access-control-allow-origin'];
     out['cache-control'] = 'no-store';
-    res.writeHead(response.statusCode ?? 502, out);
+    // Cloudflare replaces 502/504 bodies with its own page: pass them on as 503 so the runtime's message survives
+    res.writeHead(response.statusCode === 502 || response.statusCode === 504 ? 503 : response.statusCode ?? 503, out);
     response.pipe(res);
   });
   upstream.setTimeout(3600_000, () => upstream.destroy(new Error('Upstream timeout')));
-  upstream.on('error', () => json(res, 502, { error: 'Runtime unavailable' }));
+  upstream.on('error', () => json(res, 503, { error: 'Runtime unavailable' }));
   res.on('close', () => upstream.destroy());
   req.pipe(upstream);
 }

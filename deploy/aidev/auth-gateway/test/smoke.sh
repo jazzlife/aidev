@@ -233,7 +233,7 @@ if [ -x "$RUNNER_BIN" ]; then
   r=$(post "$A" "/api/aidev/targets/$TID/preview" "{\"port\":$PD}"); check "$r" "j.preview.mode==='keep' && !j.preview.error && j.preview.base==='$DB'" "…and its preview opens in keep mode (HMR path)"
   post "$A" "/api/aidev/remote-runs/$DRR/signal" '{"signal":"INT"}' >/dev/null
   kill $DEV1 $DEV2 2>/dev/null; wait $DEV1 $DEV2 2>/dev/null || true
-  r=$(curl -s -w '|%{http_code}' "$G$PB"); check "{\"ok\":$(echo "$r" | grep -q '연결할 수 없습니다' && echo "$r" | grep -q '|502' && echo true || echo false)}" 'j.ok' "dev server stopped → 502 page"
+  r=$(curl -s -w '|%{http_code}' "$G$PB"); check "{\"ok\":$(echo "$r" | grep -q '연결할 수 없습니다' && echo "$r" | grep -q '|503' && echo true || echo false)}" 'j.ok' "dev server stopped → 503 page (not 502: Cloudflare would replace it)"
   # F-07: screen — consent, screenshot (REST + jpg), shared stream with change-only frames, agent audit
   r=$(post "$A" "/api/aidev/targets/$TID/screenshot" '{}'); check "$r" '/허용하지 않았습니다/.test(j.error)' "no screen consent on the PC → refused with the command to enable it"
   kill $RPID 2>/dev/null; wait $RPID 2>/dev/null || true
