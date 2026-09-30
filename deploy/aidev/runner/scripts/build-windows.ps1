@@ -25,6 +25,20 @@ param(
 )
 $ErrorActionPreference = 'Stop'
 $Src = Split-Path -Parent $PSScriptRoot
+
+# Windows PowerShell 5.1 turns a native program's stderr into error records when output is redirected (CI, a
+# pipe) — with ErrorActionPreference Stop the first "Compiling …" line would end the script. Native programs
+# run through this: stderr is shown as text and only the exit code decides.
+function Invoke-Native([string] $Exe, [string[]] $ArgList = @(), [switch] $Quiet) {
+  $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+  try {
+    & $Exe @ArgList 2>&1 | ForEach-Object {
+      if ($Quiet) { return }
+      if ($_ -is [System.Management.Automation.ErrorRecord]) { Write-Host $_.ToString() } else { Write-Host $_ }
+    }
+  } finally { $ErrorActionPreference = $prev }
+  return $LASTEXITCODE
+}
 if ($env:OS -ne 'Windows_NT') { throw 'Windows 전용입니다 (Linux: scripts/build-linux.sh, macOS: scripts/build-macos.sh)' }
 if ($Arch -eq 'auto') {
   $Arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -eq 'ARM64') { 'arm64' } else { 'x64' }
@@ -60,7 +74,7 @@ if ($missing.Count -gt 0 -and $InstallTools) {
     Write-Host "==> 설치: $($m.what)"
     $wargs = @('install', '--accept-source-agreements', '--accept-package-agreements', '-e', '--id') + ($m.winget -split ' ', 2)[0]
     if ($m.winget -match ' --override (.*)$') { $wargs += @('--override', $Matches[1].Trim('"')) }
-    & winget @wargs
+    [void](Invoke-Native winget $wargs)
   }
   if (Test-Path $cargoBin) { $env:Path = "$cargoBin;$env:Path" }
   $missing = @()
@@ -77,20 +91,20 @@ $need = (Select-String -Path "$Src\Cargo.toml" -Pattern '^rust-version = "(.*)"'
 $have = ((rustc --version) -split ' ')[1]
 if ([version]$have -lt [version]$need) {
   Write-Host "==> Rust $have < $need : rustup update stable"
-  if (-not $Check) { rustup update stable }
+  if (-not $Check) { [void](Invoke-Native rustup @('update', 'stable')) }
 }
 if ($Check) { Write-Host "도구 준비됨: $(rustc --version), MSVC $(Find-Msvc), NASM $(Find-Nasm)"; exit 0 }
 $nasm = Find-Nasm
 if ($nasm) { $env:Path = "$(Split-Path -Parent $nasm);$env:Path" }
-rustup target add $Target | Out-Null
+if ((Invoke-Native rustup @('target', 'add', $Target) -Quiet) -ne 0) { throw "rustup target add $Target 실패" }
 
 # ---- build ----------------------------------------------------------------------------------------------
 $ver = (Select-String -Path "$Src\Cargo.toml" -Pattern '^version = "(.*)"').Matches[0].Groups[1].Value
 Write-Host "==> aidev-runner $ver win-$Arch 빌드 (처음에는 의존성 컴파일로 몇 분)"
 Push-Location $Src
 try {
-  cargo build --release --locked --target $Target
-  if ($LASTEXITCODE -ne 0) { throw "cargo build 실패 ($LASTEXITCODE)" }
+  $code = Invoke-Native cargo @('build', '--release', '--locked', '--target', $Target)
+  if ($code -ne 0) { throw "cargo build 실패 ($code)" }
 } finally { Pop-Location }
 $name = "aidev-runner-$ver-win-$Arch.exe"
 $dist = Join-Path $Src 'dist'

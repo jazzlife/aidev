@@ -24,6 +24,20 @@ param(
   [switch] $Uninstall
 )
 $ErrorActionPreference = 'Stop'
+
+# Windows PowerShell 5.1 turns a native program's stderr into error records when output is redirected (CI, a
+# pipe) — with ErrorActionPreference Stop the first "Compiling …" line would end the script. Native programs
+# run through this: stderr is shown as text and only the exit code decides.
+function Invoke-Native([string] $Exe, [string[]] $ArgList = @(), [switch] $Quiet) {
+  $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+  try {
+    & $Exe @ArgList 2>&1 | ForEach-Object {
+      if ($Quiet) { return }
+      if ($_ -is [System.Management.Automation.ErrorRecord]) { Write-Host $_.ToString() } else { Write-Host $_ }
+    }
+  } finally { $ErrorActionPreference = $prev }
+  return $LASTEXITCODE
+}
 # AIDEV_INSTALL_TEST=1: the platform's own test of this script on another OS (only its own binary is stopped)
 $TestMode = [bool]$env:AIDEV_INSTALL_TEST
 if ($env:OS -ne 'Windows_NT' -and -not $TestMode) { throw 'Windows 전용입니다 (Linux: install-linux.sh, macOS: install-macos.sh)' }
@@ -44,7 +58,7 @@ function Stop-Runner {
 
 if ($Uninstall) {
   Stop-Runner
-  if (Test-Path $Dest) { & $Dest uninstall-service 2>$null | Out-Null }
+  if (Test-Path $Dest) { [void](Invoke-Native $Dest @('uninstall-service') -Quiet) }
   Write-Host "로그온 작업을 멈추고 지웠습니다 (페어링은 $Toml 에 남아 있습니다 — 지우려면 `"$Dest`" unpair)"
   exit 0
 }
@@ -98,11 +112,10 @@ if ($Code) {
   $p = @('pair', $Code)
   if ($Gateway) { $p += @('--gateway', $Gateway) }
   if ($Name) { $p += @('--name', $Name) }
-  & $Dest @p
-  if ($LASTEXITCODE -ne 0) { throw "페어링 실패 ($LASTEXITCODE) — 코드가 만료됐으면 작업대에서 새 코드를 받으세요" }
+  $code = Invoke-Native $Dest $p
+  if ($code -ne 0) { throw "페어링 실패 ($code) — 코드가 만료됐으면 작업대에서 새 코드를 받으세요" }
 }
-& $Dest status *> $null
-if ($LASTEXITCODE -ne 0) {
+if ((Invoke-Native $Dest @('status') -Quiet) -ne 0) {
   Write-Host ''
   Write-Host '설치했습니다. 이 PC는 아직 페어링되지 않았습니다 — 작업대 "원격 대상"에서 코드를 받아:'
   $gw = if ($Gateway) { $Gateway } else { 'https://dev.nado.work' }
@@ -114,8 +127,7 @@ if ($NoService) { Write-Host "설치만 했습니다 (-NoService). 실행: & `"$
 
 # ---- keep it running: logon task, started now ----------------------------------------------------------------
 $since = if (Test-Path $Log) { (Get-Item $Log).Length } else { 0 }
-& $Dest install-service
-if ($LASTEXITCODE -ne 0) { throw 'install-service 실패' }
+if ((Invoke-Native $Dest @('install-service')) -ne 0) { throw 'install-service 실패' }
 
 # ---- verify ---------------------------------------------------------------------------------------------
 $ok = $false; $line = $null

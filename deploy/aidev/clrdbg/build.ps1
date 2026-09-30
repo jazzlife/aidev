@@ -19,6 +19,20 @@ param(
   [string] $MonoDebugVsix
 )
 $ErrorActionPreference = 'Stop'
+
+# Windows PowerShell 5.1 turns a native program's stderr into error records when output is redirected (CI, a
+# pipe) — with ErrorActionPreference Stop the first "Compiling …" line would end the script. Native programs
+# run through this: stderr is shown as text and only the exit code decides.
+function Invoke-Native([string] $Exe, [string[]] $ArgList = @(), [switch] $Quiet) {
+  $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+  try {
+    & $Exe @ArgList 2>&1 | ForEach-Object {
+      if ($Quiet) { return }
+      if ($_ -is [System.Management.Automation.ErrorRecord]) { Write-Host $_.ToString() } else { Write-Host $_ }
+    }
+  } finally { $ErrorActionPreference = $prev }
+  return $LASTEXITCODE
+}
 $Version = '1.0.0'
 $LibsCommit = 'e7fbb713d156d11193ed404783ad6fe9c4042a6d'
 $VsixSha256 = 'a9a6b460583f81f96077bdec636671058ca89fd4b4b07fec3c77a2bcf60deace'
@@ -48,13 +62,10 @@ try {
   Remove-Item "$lib\Mono.Debugging.Soft.dll", "$lib\Mono.Debugger.Soft.dll", "$lib\Mono.Cecil*.dll" -ErrorAction SilentlyContinue
 
   $props = @("-p:DebuggerLibs=$DebuggerLibsSrc", "-p:ClrLibs=$lib", '-nologo', '-v:q', '-c', 'Release')
-  dotnet build "$here\libs\Mono.Debugging.Win32.csproj" @props
-  if ($LASTEXITCODE -ne 0) { throw 'debugger-libs 빌드 실패' }
+  if ((Invoke-Native dotnet (@('build', "$here\libs\Mono.Debugging.Win32.csproj") + $props)) -ne 0) { throw 'debugger-libs 빌드 실패' }
   $pkg = "$work\pkg"
-  dotnet build "$here\aidev-clrdbg.csproj" @props -o $pkg
-  if ($LASTEXITCODE -ne 0) { throw 'aidev-clrdbg 빌드 실패' }
-  dotnet build "$here\aidev-clrdbg.csproj" @props -p:PlatformTarget=x86 -p:AssemblyName=aidev-clrdbg-x86 -o "$work\x86"
-  if ($LASTEXITCODE -ne 0) { throw 'aidev-clrdbg (x86) 빌드 실패' }
+  if ((Invoke-Native dotnet (@('build', "$here\aidev-clrdbg.csproj") + $props + @('-o', $pkg))) -ne 0) { throw 'aidev-clrdbg 빌드 실패' }
+  if ((Invoke-Native dotnet (@('build', "$here\aidev-clrdbg.csproj") + $props + @('-p:PlatformTarget=x86', '-p:AssemblyName=aidev-clrdbg-x86', '-o', "$work\x86"))) -ne 0) { throw 'aidev-clrdbg (x86) 빌드 실패' }
   Copy-Item "$work\x86\aidev-clrdbg-x86.exe", "$work\x86\aidev-clrdbg-x86.exe.config" $pkg
   Copy-Item "$lib\*.dll" $pkg -Force
   Copy-Item "$here\LICENSE-vscode-mono-debug.txt", "$here\LICENSE-debugger-libs.txt" $pkg
@@ -79,8 +90,10 @@ try {
   $bytes = [Text.Encoding]::UTF8.GetBytes($req)
   $proc.StandardInput.Write("Content-Length: $($bytes.Length)`r`n`r`n$req"); $proc.StandardInput.Flush()
   $task = $proc.StandardOutput.ReadLineAsync()
-  if ($task.Wait(15000) -and $task.Result -match 'Content-Length') { Write-Host ' ✓ aidev-clrdbg가 DAP initialize에 응답합니다' } else { Write-Host ' ✗ aidev-clrdbg가 응답하지 않습니다' }
-  $proc.Kill()
+  $answered = $task.Wait(15000) -and $task.Result -match 'Content-Length'
+  if (-not $proc.HasExited) { $proc.Kill() }
+  if (-not $answered) { throw 'aidev-clrdbg가 DAP initialize에 응답하지 않습니다' }
+  Write-Host ' ✓ aidev-clrdbg가 DAP initialize에 응답합니다'
 } finally {
   Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
 }

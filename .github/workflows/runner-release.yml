@@ -1,0 +1,263 @@
+name: Runner release (all platforms)
+
+# Pushing a tag `runner-v<version>` (the version in deploy/aidev/runner/Cargo.toml, e.g. runner-v0.9.0) builds
+# aidev-runner for every OS/CPU with the per-OS scripts in deploy/aidev/runner/scripts, the platform-built debug
+# adapters (aidev-clrdbg for .NET Framework, netcoredbg for Apple Silicon), and publishes them as a GitHub release:
+#   aidev-runner-<ver>-{linux-x64,linux-arm64,linux-armv7,win-x64,win-arm64,mac-arm64,mac-x64,mac-universal}
+#   adapters/ (manifest.json + archives), aidev-runner-src.tar.gz, SHA256SUMS
+# deploy/aidev/runner/scripts/fetch-release.sh <tag> puts them in runner/dist for the next platform release.
+# Run by hand (Actions → Run workflow) to build without publishing.
+
+on:
+  push:
+    tags: ['runner-v*']
+  workflow_dispatch:
+    inputs:
+      publish:
+        description: 'Publish a GitHub release (needs a runner-v* tag checked out)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runner-release-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  RUNNER_DIR: deploy/aidev/runner
+  CARGO_TERM_COLOR: never
+
+jobs:
+  version:
+    name: Version check
+    runs-on: ubuntu-24.04
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - id: v
+        run: |
+          ver=$(sed -n 's/^version = "\(.*\)"/\1/p' "$RUNNER_DIR/Cargo.toml" | head -1)
+          echo "version=$ver" >> "$GITHUB_OUTPUT"
+          if [ "${GITHUB_REF_TYPE}" = tag ] && [ "${GITHUB_REF_NAME}" != "runner-v$ver" ]; then
+            echo "::error::tag ${GITHUB_REF_NAME} does not match Cargo.toml version $ver (expected runner-v$ver)"; exit 1
+          fi
+          echo "aidev-runner $ver"
+
+  test:
+    name: Tests (Linux)
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: sudo apt-get update -q && sudo apt-get install -y -q nasm gdb default-jdk-headless
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ env.RUNNER_DIR }}
+      - name: cargo test
+        working-directory: ${{ env.RUNNER_DIR }}
+        run: cargo test --locked
+
+  linux:
+    name: Linux ${{ matrix.label }}
+    needs: version
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        label: [linux-x64, linux-arm64, linux-armv7]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: sudo apt-get update -q && sudo apt-get install -y -q nasm qemu-user libc6-arm64-cross libc6-armhf-cross
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu,armv7-unknown-linux-gnueabihf
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ env.RUNNER_DIR }}
+          key: ${{ matrix.label }}
+      # zig links against glibc 2.28 so the binary runs on older distributions and SBC images
+      - run: python3 -m pip install --user --break-system-packages ziglang==0.16.0 && cargo install cargo-zigbuild --locked
+      - name: build.sh ${{ matrix.label }}
+        working-directory: ${{ env.RUNNER_DIR }}
+        run: ./build.sh ${{ matrix.label }}
+      - name: The binary runs
+        working-directory: ${{ env.RUNNER_DIR }}/dist
+        run: |
+          for f in aidev-runner-*-"$LABEL"; do
+            case $LABEL in
+              linux-x64) "./$f" --version ;;
+              linux-arm64) qemu-aarch64 -L /usr/aarch64-linux-gnu "./$f" --version ;;
+              linux-armv7) qemu-arm -L /usr/arm-linux-gnueabihf "./$f" --version ;;
+            esac
+          done
+        env:
+          LABEL: ${{ matrix.label }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runner-${{ matrix.label }}
+          path: ${{ env.RUNNER_DIR }}/dist/aidev-runner-*
+          if-no-files-found: error
+
+  windows:
+    name: Windows ${{ matrix.arch }}
+    needs: version
+    runs-on: windows-2022
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x64, arm64]
+    # ARM64 (cross-compiled with MSVC's ARM64 tools) is best effort: it does not hold the release back
+    continue-on-error: ${{ matrix.arch == 'arm64' }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: NASM (x64 H.264 SIMD)
+        if: matrix.arch == 'x64'
+        run: choco install nasm -y --no-progress
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc,aarch64-pc-windows-msvc
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ env.RUNNER_DIR }}
+          key: win-${{ matrix.arch }}
+      # the same script a person runs on their Windows PC
+      - name: scripts\build-windows.ps1
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File "$env:RUNNER_DIR\scripts\build-windows.ps1" -Arch ${{ matrix.arch }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runner-win-${{ matrix.arch }}
+          path: ${{ env.RUNNER_DIR }}/dist/aidev-runner-*.exe
+          if-no-files-found: error
+
+  macos:
+    name: macOS (arm64 + x64 + universal)
+    needs: version
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - run: brew install nasm
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ env.RUNNER_DIR }}
+      # the same script a person runs on their Mac
+      - name: scripts/build-macos.sh
+        run: '"$RUNNER_DIR/scripts/build-macos.sh"'
+      - name: The binaries run
+        working-directory: ${{ env.RUNNER_DIR }}/dist
+        run: |
+          for f in aidev-runner-*-mac-universal; do "./$f" --version; lipo -archs "$f"; done
+      - uses: actions/upload-artifact@v4
+        with:
+          name: runner-mac
+          path: ${{ env.RUNNER_DIR }}/dist/aidev-runner-*-mac-*
+          if-no-files-found: error
+
+  clrdbg:
+    name: aidev-clrdbg (.NET Framework adapter)
+    needs: version
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      # builds, packs and checks that the adapter answers DAP initialize on Windows
+      - name: clrdbg\build.ps1
+        shell: powershell
+        run: powershell -NoProfile -ExecutionPolicy Bypass -File deploy\aidev\clrdbg\build.ps1 -Out out\adapters
+      - uses: actions/upload-artifact@v4
+        with:
+          name: adapter-clrdbg
+          path: out/adapters/*
+          if-no-files-found: error
+
+  netcoredbg-mac:
+    name: netcoredbg (Apple Silicon)
+    needs: version
+    runs-on: macos-14
+    # upstream has no osx-arm64 build: best effort, it does not hold the release back
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - run: brew install cmake
+      - name: ops/runner/build-netcoredbg.sh
+        run: deploy/aidev/ops/runner/build-netcoredbg.sh
+      - uses: actions/upload-artifact@v4
+        with:
+          name: adapter-netcoredbg-mac
+          path: deploy/aidev/ops/runner/dist/adapters/*
+          if-no-files-found: error
+
+  release:
+    name: Publish
+    needs: [version, test, linux, windows, macos, clrdbg, netcoredbg-mac]
+    # the best-effort jobs may have failed; everything required must have succeeded
+    if: >-
+      always() && needs.version.result == 'success' && needs.test.result == 'success' && needs.linux.result == 'success'
+      && needs.macos.result == 'success' && needs.clrdbg.result == 'success'
+      && (startsWith(github.ref, 'refs/tags/runner-v') && (github.event_name == 'push' || inputs.publish))
+    runs-on: ubuntu-24.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+      - name: Assemble dist
+        run: |
+          set -euo pipefail
+          mkdir -p dist/adapters
+          find artifacts -path '*/runner-*' -type f -name 'aidev-runner-*' -exec cp {} dist/ \;
+          echo '{}' > dist/adapters/manifest.json
+          for d in artifacts/adapter-*; do
+            [ -d "$d" ] || continue
+            find "$d" -type f ! -name manifest.json -exec cp {} dist/adapters/ \;
+            [ -f "$d/manifest.json" ] && jq -s '.[0] * .[1]' dist/adapters/manifest.json "$d/manifest.json" > m.json && mv m.json dist/adapters/manifest.json
+          done
+          # the Windows ARM64 build may be missing (best effort); the x64 one is required
+          ls dist/aidev-runner-*-win-x64.exe >/dev/null
+          chmod 755 dist/aidev-runner-*
+          (cd dist && sha256sum aidev-runner-* > SHA256SUMS)
+          (cd dist/adapters && sha256sum -- * > SHA256SUMS)
+          "$RUNNER_DIR/scripts/stage-dist.sh" stage >/dev/null
+          cp stage/source/aidev-runner-src.tar.gz dist/
+          (cd dist/adapters && for f in *; do [ "$f" = SHA256SUMS ] || mv "$f" "adapter-$f"; done; mv SHA256SUMS adapter-SHA256SUMS)
+          mv dist/adapters/* dist/ && rmdir dist/adapters
+          ls -la dist
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ needs.version.outputs.version }}
+        run: |
+          notes="aidev-runner $VERSION — Linux (x64, ARM64, ARMv7), Windows (x64$(ls dist/*win-arm64* >/dev/null 2>&1 && echo ', ARM64')), macOS (arm64, x64, universal).
+          Install: deploy/aidev/runner/scripts/install-{linux,macos}.sh / install-windows.ps1 — or from the platform: <gateway>/_runner/scripts/.
+          adapter-*: debug adapters the platform serves at /_runner/adapters/ (manifest.json)."
+          gh release create "$GITHUB_REF_NAME" dist/* --title "aidev-runner $VERSION" --notes "$notes" --verify-tag
