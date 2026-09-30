@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><AssemblyName>CorApi2</AssemblyName><DefineConstants>TRACE;MDBG_FEATURE_INTEROP;MDBGENG_FEATURE_TRACECALLS;MDBGENG_FEATURE_CAPTUREOUTPUT;CORAPI_EXPOSE_RAW_INTERFACES</DefineConstants></PropertyGroup>
+  <ItemGroup><Compile Include="$(DebuggerLibs)/CorApi2/**/*.cs" /><ProjectReference Include="CorApi.csproj" /></ItemGroup>
+</Project>

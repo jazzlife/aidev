@@ -50,6 +50,8 @@ export type DebugLaunch = {
   address?: string | null;
   /** gdb: which gdb (gdb-multiarch, arm-none-eabi-gdb, …) */
   debugger?: string | null;
+  /** clrdbg: "x86" = the 32-bit debugger (attach to a 32-bit process; a launched program's own header decides otherwise) */
+  arch?: 'x86' | 'x64' | null;
   /** jvm launch: main class (`module/pkg.Main` for a module) and class path; or `program` = an executable .jar */
   mainClass?: string | null;
   classPath?: string[];
@@ -278,6 +280,7 @@ export function validateLaunch(raw: Record<string, unknown>): DebugLaunch {
     adapter, request, program, module, runtimeExecutable, args: strs(raw.args, 100, 2000), runtimeArgs: strs(raw.runtimeArgs, 30, 500), cwd: str(raw.cwd, 1000), env,
     stopOnEntry: raw.stopOnEntry === true, breakpoints, pid, address, debugger: debuggerName, mainClass, classPath: strs(raw.classPath, 200, 2000),
     chip: str(raw.chip, 100), probe: str(raw.probe, 200), device: str(raw.device, 200), command, commandArgs: strs(raw.commandArgs, 50, 2000), transport, config,
+    arch: raw.arch === 'x86' || raw.arch === 'x64' ? raw.arch : null,
   };
 }
 
@@ -532,7 +535,7 @@ export function createDebugHub(deps: { store: Store; runners: DebugRunners }) {
         const fileProgram = launch.request === 'launch' && !launch.module && !launch.runtimeExecutable && !launch.mainClass && launch.adapter !== 'custom' ? launch.program ?? undefined : undefined;
         const r = await runners.call<{ id: number; port: number; version: string; cwd: string; program: string | null }>(target.id, 'dap.start', {
           adapter: launch.adapter, cwd: launch.cwd ?? undefined, program: fileProgram,
-          debugger: launch.debugger ?? undefined, command: launch.command ?? undefined, commandArgs: launch.commandArgs, transport: launch.transport,
+          debugger: launch.debugger ?? undefined, command: launch.command ?? undefined, commandArgs: launch.commandArgs, transport: launch.transport, arch: launch.arch ?? undefined,
         }, 300_000);
         s.runnerId = r.id; s.port = r.port; s.version = r.version; s.cwd = r.cwd; if (r.program) s.program = r.program;
         for (const b of launch.breakpoints ?? []) {

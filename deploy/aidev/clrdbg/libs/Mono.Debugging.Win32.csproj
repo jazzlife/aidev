@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><AssemblyName>Mono.Debugging.Win32</AssemblyName></PropertyGroup>
+  <ItemGroup>
+    <Compile Include="$(DebuggerLibs)/Mono.Debugging.Win32/**/*.cs" />
+    <ProjectReference Include="CorApi.csproj" /><ProjectReference Include="CorApi2.csproj" />
+    <Reference Include="$(ClrLibs)/Mono.Debugging.dll" />
+    <Reference Include="$(ClrLibs)/ICSharpCode.NRefactory.dll" />
+    <Reference Include="$(ClrLibs)/ICSharpCode.NRefactory.CSharp.dll" />
+    <Reference Include="$(ClrLibs)/Microsoft.CodeAnalysis.dll" />
+    <Reference Include="$(ClrLibs)/Microsoft.CodeAnalysis.CSharp.dll" />
+    <Reference Include="$(ClrLibs)/System.Collections.Immutable.dll" />
+    <Reference Include="$(ClrLibs)/System.Reflection.Metadata.dll" />
+  </ItemGroup>
+</Project>

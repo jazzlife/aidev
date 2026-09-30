@@ -139,7 +139,8 @@ async fn start(cfg: &Config, params: &Value) -> RpcResult {
         return Err((-32005, format!("디버그 세션은 동시에 {MAX_SESSIONS}개까지입니다")));
     }
     // downloads / pip may take a while: off the async threads
-    let opts = crate::dap_adapters::Options::from_params(params, Some(cfg.gateway.clone()).filter(|g| !g.is_empty()));
+    let mut opts = crate::dap_adapters::Options::from_params(params, Some(cfg.gateway.clone()).filter(|g| !g.is_empty()));
+    opts.program = program.clone();
     let (port, launch) = {
         let adapter = adapter.clone();
         tokio::task::spawn_blocking(move || {

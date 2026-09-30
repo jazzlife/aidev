@@ -140,6 +140,13 @@ r=$(post "$A" /api/aidev/push/unsubscribe '{"endpoint":"https://push.example/abc
 r=$(curl -s "$G/_runner/download"); if [ -d "$RUNNER_DIST_DIR" ]; then check "$r" 'j.files.length>=1 && j.files[0].sha256 && j.files[0].platform' "runner binaries listed ($(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).files.map(f=>f.platform).join(",")'))"
   F=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).files[0].name'); n=$(curl -s "$G/_runner/download/$F" | wc -c); check "{\"n\":$n,\"want\":$(stat -c %s "$RUNNER_DIST_DIR/$F")}" 'j.n===j.want' "runner binary download ($n bytes)"; fi
 r=$(curl -s "$G/_runner/download/..%2F..%2Fetc%2Fpasswd" | grep -c "root:" || true); check "{\"c\":$r}" 'j.c===0' "download path traversal cannot read files"
+# F-09b: platform-built debug adapters (aidev-clrdbg) listed and served with the SHA-256 the runner checks
+if [ -f "$RUNNER_DIST_DIR/adapters/manifest.json" ]; then
+  r=$(curl -s "$G/_runner/adapters/manifest.json"); check "$r" 'j["clrdbg-win32-x64"] && j["clrdbg-win32-x64"].sha256.length===64' "adapter manifest lists clrdbg"
+  F=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0))["clrdbg-win32-x64"].file'); W=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0))["clrdbg-win32-x64"].sha256')
+  h=$(curl -s "$G/_runner/adapters/$F" | sha256sum | cut -d' ' -f1); check "{\"ok\":$([ "$h" = "$W" ] && echo true || echo false)}" 'j.ok' "adapter archive download matches its SHA-256"
+fi
+c=$(curl -s "$G/_runner/adapters/..%2F..%2Fauth.db" | grep -ac "SQLite format" || true); check "{\"c\":$c}" 'j.c===0' "adapter path traversal cannot read files"
 # mocks back up (Laya + runtime manager) for the runner / gate checks
 MOCK_CODEX_ONLY=rt-codexonly node test/mock-services.mjs >>"$T/mock.log" 2>&1 &
 for i in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:18095/health && break; sleep 0.1; done; sleep 1.6   # past the gateway's Laya retry window

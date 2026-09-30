@@ -89,6 +89,10 @@ pub struct Options {
     pub transport: Option<String>,
     /// base URL of the platform gateway (clrdbg and other platform-built adapters are fetched from it)
     pub gateway: Option<String>,
+    /// the program to debug, resolved (clrdbg picks its 32/64-bit build from it)
+    pub program: Option<PathBuf>,
+    /// clrdbg: "x86" forces the 32-bit debugger (attach to a 32-bit process)
+    pub arch: Option<String>,
 }
 
 impl Options {
@@ -100,6 +104,8 @@ impl Options {
             command_args: p.get("commandArgs").and_then(Value::as_array).map(|a| a.iter().filter_map(|v| v.as_str().map(str::to_string)).collect()).unwrap_or_default(),
             transport: s("transport"),
             gateway,
+            program: None,
+            arch: s("arch"),
         }
     }
 }
@@ -378,6 +384,32 @@ fn ensure_from_gateway(name: &str, gateway: Option<&str>) -> Result<PathBuf, Str
     download_unpacked(&format!("{name}-{version}-{platform}"), &format!("{base}/_runner/adapters/{file}"), file, sha, None)
 }
 
+/// A .NET assembly that runs as a 32-bit process (x86, or AnyCPU with "prefer 32-bit"): machine i386 with
+/// COMIMAGE_FLAGS_32BITREQUIRED. None when the file is not a managed PE.
+pub fn managed_32bit(path: &Path) -> Option<bool> {
+    let b = std::fs::read(path).ok()?;
+    let u16at = |o: usize| b.get(o..o + 2).map(|x| u16::from_le_bytes([x[0], x[1]]));
+    let u32at = |o: usize| b.get(o..o + 4).map(|x| u32::from_le_bytes([x[0], x[1], x[2], x[3]]));
+    if b.get(0..2)? != b"MZ" { return None; }
+    let pe = u32at(0x3c)? as usize;
+    if b.get(pe..pe + 4)? != b"PE\0\0" { return None; }
+    let machine = u16at(pe + 4)?;
+    let sections = u16at(pe + 6)? as usize;
+    let opt_size = u16at(pe + 20)? as usize;
+    let opt = pe + 24;
+    let dirs = match u16at(opt)? { 0x10b => opt + 96, 0x20b => opt + 112, _ => return None };
+    let (cli_rva, cli_size) = (u32at(dirs + 14 * 8)?, u32at(dirs + 14 * 8 + 4)?);
+    if cli_rva == 0 || cli_size == 0 { return None; }
+    let table = opt + opt_size;
+    let off = (0..sections).find_map(|i| {
+        let sh = table + i * 40;
+        let (vsize, va, raw) = (u32at(sh + 8)?, u32at(sh + 12)?, u32at(sh + 20)?);
+        (cli_rva >= va && cli_rva < va + vsize.max(1)).then(|| (cli_rva - va + raw) as usize)
+    })?;
+    let flags = u32at(off + 16)?;
+    Some(machine == 0x14c && flags & 0x2 != 0)
+}
+
 fn ensure_delve() -> Result<PathBuf, String> {
     if let Some(p) = which("dlv") {
         return Ok(p);
@@ -480,7 +512,10 @@ pub fn launch(adapter: &str, port: u16, opts: &Options) -> Result<Launch, String
                 return Err(".NET Framework 디버깅은 Windows PC에서만 됩니다 (.NET 6 이상은 netcoredbg)".into());
             }
             let dir = ensure_from_gateway("clrdbg", opts.gateway.as_deref())?;
-            Ok(stdio(existing(dir.join("aidev-clrdbg.exe"))?, vec![], "clrdbg".into()))
+            // ICorDebug must match the debuggee's bitness: a 32-bit program needs the x86 build
+            let x86 = opts.arch.as_deref() == Some("x86") || opts.program.as_deref().and_then(managed_32bit) == Some(true);
+            let exe_name = if x86 { "aidev-clrdbg-x86.exe" } else { "aidev-clrdbg.exe" };
+            Ok(stdio(existing(dir.join(exe_name))?, vec![], format!("aidev-clrdbg{}", if x86 { " (x86)" } else { "" })))
         }
         "custom" => {
             let cmd = opts.command.as_deref().ok_or("custom: command가 필요합니다")?;
@@ -519,6 +554,24 @@ pub fn available() -> Vec<&'static str> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn clr_bitness_from_the_pe_header() {
+        // mcs builds each flavour; skipped where Mono is not installed
+        let Some(mcs) = which("mcs") else { eprintln!("skip: no mcs"); return };
+        let dir = std::env::temp_dir().join(format!("aidev-pe-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("a.cs"), "class A { static void Main() {} }").unwrap();
+        for (platform, want) in [("x86", Some(true)), ("anycpu", Some(false)), ("anycpu32bitpreferred", Some(true)), ("x64", Some(false))] {
+            let out = dir.join(format!("{platform}.exe"));
+            let ok = std::process::Command::new(&mcs).arg(format!("-platform:{platform}")).arg(format!("-out:{}", out.display())).arg(dir.join("a.cs")).output().unwrap();
+            assert!(ok.status.success(), "{}", String::from_utf8_lossy(&ok.stderr));
+            assert_eq!(managed_32bit(&out), want, "{platform}");
+        }
+        std::fs::write(dir.join("native.bin"), b"MZ not a pe").unwrap();
+        assert_eq!(managed_32bit(&dir.join("native.bin")), None);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     #[test]
     fn gdb_versions() {

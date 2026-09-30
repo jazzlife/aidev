@@ -1,0 +1,33 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <!-- aidev-clrdbg: DAP adapter for .NET Framework (Windows), see build.sh. $(ClrLibs) = folder with the
+       built CorApi/CorApi2/Mono.Debugging.Win32 and mono-debug's Mono.Debugging + dependencies. -->
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net472</TargetFramework>
+    <AssemblyName>aidev-clrdbg</AssemblyName>
+    <RootNamespace>VSCodeDebug</RootNamespace>
+    <PlatformTarget Condition=" '$(PlatformTarget)' == '' ">AnyCPU</PlatformTarget>
+    <Prefer32Bit>false</Prefer32Bit>
+    <LangVersion>latest</LangVersion>
+    <Nullable>disable</Nullable>
+    <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
+    <Deterministic>true</Deterministic>
+    <GenerateAssemblyInfo>true</GenerateAssemblyInfo>
+    <Version>1.0.0</Version>
+    <Product>aidev-clrdbg</Product>
+    <NoWarn>$(NoWarn);CS0618;CS0612;CS0168;CS0219;CS0414;CS1998;CS4014</NoWarn>
+    <AutomaticallyUseReferenceAssemblyPackages Condition=" '$(FrameworkPathOverride)' != '' ">false</AutomaticallyUseReferenceAssemblyPackages>
+    <DisableImplicitFrameworkReferences Condition=" '$(FrameworkPathOverride)' != '' ">true</DisableImplicitFrameworkReferences>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="src/*.cs" />
+    <Reference Include="mscorlib" /><Reference Include="System" /><Reference Include="System.Core" /><Reference Include="Microsoft.CSharp" />
+    <Reference Include="netstandard" Condition=" '$(FrameworkPathOverride)' != '' "><HintPath>$(FrameworkPathOverride)/Facades/netstandard.dll</HintPath></Reference>
+    <Reference Include="System.Runtime" Condition=" '$(FrameworkPathOverride)' != '' "><HintPath>$(FrameworkPathOverride)/Facades/System.Runtime.dll</HintPath></Reference>
+    <Reference Include="$(ClrLibs)/Mono.Debugging.dll" />
+    <Reference Include="$(ClrLibs)/Mono.Debugging.Win32.dll" />
+    <Reference Include="$(ClrLibs)/CorApi.dll" />
+    <Reference Include="$(ClrLibs)/CorApi2.dll" />
+    <Reference Include="$(ClrLibs)/Newtonsoft.Json.dll" />
+  </ItemGroup>
+</Project>

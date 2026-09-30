@@ -259,6 +259,10 @@ async function serveStatic(req: IncomingMessage, res: ServerResponse) {
 }
 /** Directory of the active release's runner binaries (release/control/runner, next to dist). */
 function runnerDir() { return process.env.RUNNER_DIST_DIR ?? path.join(path.dirname(staticRoot), 'control', 'runner'); }
+/** Debug adapters the platform builds itself (aidev-clrdbg, netcoredbg for Apple Silicon): manifest.json + archives.
+ *  Built by deploy/aidev/clrdbg/build.sh into runner/dist/adapters; the runner checks each archive's SHA-256 from
+ *  the manifest (runner dap_adapters.rs ensure_from_gateway). */
+function adaptersDir() { return process.env.RUNNER_ADAPTERS_DIR ?? path.join(runnerDir(), 'adapters'); }   // runner/dist/adapters in the release
 async function runnerFiles() {
   const dir = await fs.promises.realpath(runnerDir()).catch(() => null);
   if (!dir) return [];
@@ -302,6 +306,16 @@ const server = http.createServer(async (req, res) => {
       res.writeHead(200, { 'content-type': dl[1] === 'SHA256SUMS' ? 'text/plain; charset=utf-8' : 'application/octet-stream', 'content-length': String(stat.size), 'content-disposition': `attachment; filename="${dl[1].endsWith('.exe') ? 'aidev-runner.exe' : dl[1] === 'SHA256SUMS' ? 'SHA256SUMS' : 'aidev-runner'}"`, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
       if (req.method === 'HEAD') return res.end();
       return fs.createReadStream(file).pipe(res);
+    }
+    const ad = url.pathname.match(/^\/_runner\/adapters\/(manifest\.json|[A-Za-z0-9][A-Za-z0-9._-]*\.(?:zip|tar\.gz|tar\.xz))$/);
+    if (ad && (req.method === 'GET' || req.method === 'HEAD')) {
+      const base = await fs.promises.realpath(adaptersDir()).catch(() => null);
+      const file = base ? path.join(base, ad[1]) : null;
+      const stat = file ? await fs.promises.stat(file).catch(() => null) : null;
+      if (!stat?.isFile()) return ad[1] === 'manifest.json' ? json(res, 200, {}) : json(res, 404, { error: 'Not found' });
+      res.writeHead(200, { 'content-type': ad[1].endsWith('.json') ? 'application/json' : 'application/octet-stream', 'content-length': String(stat.size), 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+      if (req.method === 'HEAD') return res.end();
+      return fs.createReadStream(file!).pipe(res);
     }
     // Previews carry their own capability in the path (no session, sandboxed, see preview.ts).
     if (await preview.http(req, res, url)) return;

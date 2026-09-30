@@ -1,0 +1,4 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup><AssemblyName>CorApi</AssemblyName></PropertyGroup>
+  <ItemGroup><Compile Include="$(DebuggerLibs)/CorApi/**/*.cs" /></ItemGroup>
+</Project>
