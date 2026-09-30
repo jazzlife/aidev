@@ -75,6 +75,10 @@ export function DebugStartForm({ project, onStarted, onCancel }: { project: Debu
   const [command, setCommand] = useState('');
   const [commandArgs, setCommandArgs] = useState('');
   const [transport, setTransport] = useState<'stdio' | 'tcp'>('stdio');
+  const [where, setWhere] = useState<'pc' | 'android' | 'ios-sim'>('pc');
+  const [appId, setAppId] = useState('');
+  const [activity, setActivity] = useState('');
+  const [gdbServer, setGdbServer] = useState('');
   const [phase, setPhase] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -96,7 +100,10 @@ export function DebugStartForm({ project, onStarted, onCancel }: { project: Debu
   const npmMode = adapter === 'js-debug' && runtime !== 'node' && request === 'launch';
   const attach = request === 'attach';
   const attachKinds = ATTACH[adapter] ?? { pid: true, address: null };
-  const jvmClass = adapter === 'jvm' && !attach && Boolean(mainClass.trim());
+  // a phone/simulator app (device bridges): Android for jvm, iOS Simulator for the LLDB adapters
+  const mobile = where === 'android' && adapter === 'jvm' ? 'android' as const : where === 'ios-sim' && (adapter === 'lldb-dap' || adapter === 'codelldb') ? 'ios-sim' as const : null;
+  const jvmClass = adapter === 'jvm' && !attach && !mobile && Boolean(mainClass.trim());
+  const serverArgv = adapter === 'gdb' ? splitArgs(gdbServer) : [];
   // editor breakpoints of this project, as paths relative to the PC folder
   const breakpoints = useMemo(() => {
     if (!project) return [];
@@ -121,6 +128,8 @@ export function DebugStartForm({ project, onStarted, onCancel }: { project: Debu
         ...(adapter === 'debugpy' && module && !attach ? { module } : {}),
         ...(npmMode ? { runtimeExecutable: runtime, runtimeArgs: splitArgs(runtimeArgs) } : {}),
         ...(program.trim() && !(adapter === 'debugpy' && module) && !jvmClass ? { program: program.trim() } : {}),
+        ...(mobile ? { mobile, appId: appId.trim(), ...(activity.trim() && mobile === 'android' ? { activity: activity.trim() } : {}), ...(device.trim() ? { device: device.trim() } : {}) } : {}),
+        ...(serverArgv.length ? { server: serverArgv } : {}),
         ...(attach && pid.trim() ? { pid: Number(pid) } : {}),
         ...(attach && address.trim() ? { address: address.trim() } : {}),
         ...(adapter === 'gdb' && gdbBin.trim() ? { debugger: gdbBin.trim() } : {}),
@@ -142,7 +151,7 @@ export function DebugStartForm({ project, onStarted, onCancel }: { project: Debu
 
   const field = 'h-7 rounded border border-border bg-background px-2 text-xs text-foreground';
   const pidOk = /^\d+$/.test(pid.trim());
-  const ready = target?.online && !noDap && (adapter !== 'custom' || command.trim()) && (adapter !== 'probe-rs' || chip.trim()) && (attach
+  const ready = target?.online && !noDap && (adapter !== 'custom' || command.trim()) && (adapter !== 'probe-rs' || chip.trim()) && (mobile ? Boolean(appId.trim()) : serverArgv.length ? serverArgv.some((a) => a.includes('{port}')) : attach
     ? (pidOk || Boolean(address.trim()) || ((adapter === 'codelldb' || adapter === 'lldb-dap') && Boolean(program.trim())))
     : Boolean(program.trim() || (adapter === 'debugpy' && module) || npmMode || jvmClass || adapter === 'custom'));
   const hint = ADAPTERS.find((a) => a.id === adapter)?.hint ?? '';
@@ -170,8 +179,27 @@ export function DebugStartForm({ project, onStarted, onCancel }: { project: Debu
             {attachKinds.address ? (<><span className="text-muted-foreground">주소</span><input aria-label="디버그 서버 주소" value={address} onChange={(e) => setAddress(e.target.value)} placeholder={attachKinds.address} className={field} /></>) : null}
           </>
         ) : null}
+        {adapter === 'jvm' || adapter === 'lldb-dap' || adapter === 'codelldb' ? (
+          <>
+            <span className="text-muted-foreground">어디서</span>
+            <select aria-label="실행 위치" value={where} onChange={(e) => setWhere(e.target.value as 'pc' | 'android' | 'ios-sim')} className={field}>
+              <option value="pc">이 PC</option>
+              {adapter === 'jvm' ? <option value="android">Android 기기·에뮬레이터 (adb)</option> : <option value="ios-sim">iOS 시뮬레이터 (Mac)</option>}
+            </select>
+          </>
+        ) : null}
+        {mobile ? (
+          <>
+            <span className="text-muted-foreground">{mobile === 'android' ? '패키지' : '번들 ID'}</span>
+            <input aria-label="앱 ID" value={appId} onChange={(e) => setAppId(e.target.value)} placeholder={mobile === 'android' ? 'com.example.app (debug 빌드 설치 후)' : 'com.example.App (시뮬레이터에 설치 후)'} className={field} />
+            {mobile === 'android' ? (<><span className="text-muted-foreground">액티비티</span><input aria-label="액티비티" value={activity} onChange={(e) => setActivity(e.target.value)} placeholder="(선택) .MainActivity — 비우면 런처 액티비티" className={field} /></>) : null}
+            <span className="text-muted-foreground">기기</span>
+            <input aria-label="기기" value={device} onChange={(e) => setDevice(e.target.value)} placeholder={mobile === 'android' ? '(선택) adb 시리얼 — 한 대면 비움' : '(선택) 시뮬레이터 UDID — 비우면 부팅된 것'} className={field} />
+          </>
+        ) : null}
+        {adapter === 'gdb' ? (<><span className="text-muted-foreground">GDB 서버</span><input aria-label="GDB 서버" value={gdbServer} onChange={(e) => setGdbServer(e.target.value)} placeholder="(선택) gdbserver 127.0.0.1:{port} ./app · openocd -f board/x.cfg -c 'gdb_port {port}'" className={field} /></>) : null}
         {adapter === 'gdb' ? (<><span className="text-muted-foreground">GDB</span><input aria-label="GDB 실행 파일" value={gdbBin} onChange={(e) => setGdbBin(e.target.value)} placeholder="gdb (기본) · gdb-multiarch · arm-none-eabi-gdb" className={field} /></>) : null}
-        {adapter === 'jvm' && !attach ? (
+        {adapter === 'jvm' && !attach && !mobile ? (
           <>
             <span className="text-muted-foreground">메인 클래스</span>
             <input aria-label="메인 클래스" value={mainClass} onChange={(e) => setMainClass(e.target.value)} placeholder="com.acme.App (프로그램 .jar 대신)" className={field} />

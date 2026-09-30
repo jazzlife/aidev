@@ -1711,4 +1711,6 @@ export type RemoteDebugLaunch = {
   debugger?: string; mainClass?: string; classPath?: string[]; chip?: string; probe?: string; device?: string;
   /** custom DAP server */
   command?: string; commandArgs?: string[]; transport?: 'stdio' | 'tcp'; config?: Record<string, unknown>;
+  /** device bridges: an Android app over adb (jvm), an iOS Simulator app (lldb-dap/codelldb); a GDB server to start (`{port}`) */
+  mobile?: 'android' | 'ios-sim'; appId?: string; activity?: string; server?: string[]; arch?: 'x86' | 'x64';
 };

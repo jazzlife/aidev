@@ -50,6 +50,18 @@ export type DebugLaunch = {
   address?: string | null;
   /** gdb: which gdb (gdb-multiarch, arm-none-eabi-gdb, …) */
   debugger?: string | null;
+  /**
+   * F-09e device bridges. `mobile`: "android" — a debuggable Java/Kotlin app on a phone/emulator (adapter jvm;
+   * appId = package, activity optional, device = adb serial; launch starts it waiting for the debugger, attach
+   * joins it running) · "ios-sim" — an app in the iOS Simulator (adapter lldb-dap or codelldb; appId = bundle id,
+   * device = simulator UDID, default the booted one).
+   */
+  mobile?: 'android' | 'ios-sim' | null;
+  appId?: string | null;
+  activity?: string | null;
+  /** gdb: a GDB server to run first on the PC, `{port}` = where it listens — gdbserver, OpenOCD, pyOCD, J-Link,
+   *  st-util, QEMU -gdb (SBC programs, microcontroller boards, emulators); gdb then attaches to it */
+  server?: string[];
   /** clrdbg: "x86" = the 32-bit debugger (attach to a 32-bit process; a launched program's own header decides otherwise) */
   arch?: 'x86' | 'x64' | null;
   /** jvm launch: main class (`module/pkg.Main` for a module) and class path; or `program` = an executable .jar */
@@ -121,7 +133,11 @@ export function launchCommand(l: DebugLaunch) {
   const prog = l.program ? quote(l.program) : '';
   const join = (...parts: Array<string | null | undefined>) => parts.filter(Boolean).join(' ');
   let cmd: string;
-  if (l.request === 'attach') {
+  if (l.server?.length) {
+    cmd = join(...l.server.map(quote), '&&', `${l.debugger ?? 'gdb'} attach`, prog);
+  } else if (l.mobile === 'ios-sim') {
+    cmd = join('xcrun simctl launch --wait-for-debugger', l.device ?? 'booted', l.appId ?? '', `&& ${l.adapter} attach`);
+  } else if (l.request === 'attach' && l.mobile !== 'android') {
     cmd = join(`attach(${l.adapter})`, l.pid ? `pid ${l.pid}` : null, l.address ? quote(l.address) : null, prog);
   } else {
     switch (l.adapter) {
@@ -129,7 +145,7 @@ export function launchCommand(l: DebugLaunch) {
       case 'debugpy': cmd = join('python3', l.module ? `-m ${l.module}` : prog, args); break;
       case 'netcoredbg': cmd = join(/\.dll$/i.test(l.program ?? '') ? 'dotnet' : null, prog, args); break;
       case 'delve': cmd = join('dlv debug', prog, args ? `-- ${args}` : null); break;
-      case 'jvm': cmd = l.mainClass ? join('java -cp', quote((l.classPath ?? []).join(':') || '.'), l.mainClass, args) : join('java -jar', prog, args); break;
+      case 'jvm': cmd = l.mobile === 'android' ? join('android: am start -D', l.appId ?? '', l.device ? `(device ${l.device})` : null) : l.mainClass ? join('java -cp', quote((l.classPath ?? []).join(':') || '.'), l.mainClass, args) : join('java -jar', prog, args); break;
       case 'dart': cmd = join('dart run', prog, args); break;
       case 'flutter': cmd = join('flutter run', prog, l.device ? `-d ${quote(l.device)}` : null, args); break;
       case 'probe-rs': cmd = join('probe-rs run', l.chip ? `--chip ${quote(l.chip)}` : null, prog); break;
@@ -152,8 +168,16 @@ export function hostPort(address: string | null | undefined): { host: string; po
   return port > 0 && port < 65536 ? { host: m[1] || '127.0.0.1', port } : null;
 }
 
-/** The adapter's launch/attach request for a checked launch (program/cwd as the runner resolved them). */
-export function launchConfig(l: DebugLaunch, program: string | null, cwd: string): Record<string, unknown> {
+/**
+ * The adapter's launch/attach request for a checked launch (program/cwd as the runner resolved them; `device` =
+ * what the runner set up: the JDWP port of an Android app, the pid of a simulator app, a GDB server's port).
+ */
+export function launchConfig(l: DebugLaunch, program: string | null, cwd: string, device: { debugPort?: number | null; pid?: number | null } = {}): Record<string, unknown> {
+  if (l.mobile === 'android' && device.debugPort) return { name: 'aidev', request: 'attach', cwd, hostName: '127.0.0.1', port: device.debugPort, timeout: 30_000, ...(l.config ?? {}) };
+  if (l.mobile === 'ios-sim' && device.pid) {
+    return { name: 'aidev', request: 'attach', cwd, pid: device.pid, ...(program ? { program } : {}), ...(l.adapter === 'codelldb' ? { type: 'lldb', sourceLanguages: ['swift', 'objective-c', 'cpp'] } : {}), ...(l.config ?? {}) };
+  }
+  if (l.server?.length && device.debugPort) return { name: 'aidev', request: 'attach', cwd, target: `127.0.0.1:${device.debugPort}`, ...(program ? { program } : {}), ...(l.config ?? {}) };
   const hp = hostPort(l.address);
   const env = l.env ?? {};
   const base = { name: 'aidev', request: l.request, cwd };
@@ -255,7 +279,18 @@ export function validateLaunch(raw: Record<string, unknown>): DebugLaunch {
     if (JSON.stringify(raw.config).length > 32_000) throw new Error('config too large');
     config = raw.config as Record<string, unknown>;
   }
-  if (request === 'launch') {
+  const mobile = raw.mobile === 'android' || raw.mobile === 'ios-sim' ? raw.mobile : null;
+  const appId = str(raw.appId, 200);
+  const activity = str(raw.activity, 300);
+  const server = strs(raw.server, 30, 1000);
+  if (mobile === 'android' && adapter !== 'jvm') throw new Error('mobile android: adapter jvm (Java/Kotlin; Flutter apps: adapter flutter with device)');
+  if (mobile === 'ios-sim' && adapter !== 'lldb-dap' && adapter !== 'codelldb') throw new Error('mobile ios-sim: adapter lldb-dap or codelldb');
+  if (mobile && !(appId && /^[A-Za-z][\w.-]*$/.test(appId))) throw new Error(mobile === 'android' ? 'appId: the app package (com.example.app)' : 'appId: the app bundle id (com.example.App)');
+  if (activity && (mobile !== 'android' || !/^[\w.$/]+$/.test(activity))) throw new Error('activity: an Android activity name, mobile android only');
+  if (server.length && (adapter !== 'gdb' || !server.some((a) => a.includes('{port}')))) throw new Error('server: a GDB server command line with {port} (e.g. ["gdbserver", "127.0.0.1:{port}", "./app"]), adapter gdb only');
+  if (mobile || server.length) {
+    // the runner prepares the device / server; the adapter then attaches
+  } else if (request === 'launch') {
     const needsProgram = !(module || runtimeExecutable || mainClass || adapter === 'custom' || (adapter === 'probe-rs' && config));
     if (needsProgram && !program) throw new Error(adapter === 'jvm' ? 'jvm launch: mainClass (or program = an executable .jar) is required' : 'program is required');
     if (adapter === 'jvm' && !mainClass && !/\.jar$/i.test(program ?? '')) throw new Error('jvm launch: program must be a .jar (or give mainClass + classPath)');
@@ -281,6 +316,7 @@ export function validateLaunch(raw: Record<string, unknown>): DebugLaunch {
     stopOnEntry: raw.stopOnEntry === true, breakpoints, pid, address, debugger: debuggerName, mainClass, classPath: strs(raw.classPath, 200, 2000),
     chip: str(raw.chip, 100), probe: str(raw.probe, 200), device: str(raw.device, 200), command, commandArgs: strs(raw.commandArgs, 50, 2000), transport, config,
     arch: raw.arch === 'x86' || raw.arch === 'x64' ? raw.arch : null,
+    mobile, appId, activity, server,
   };
 }
 
@@ -381,11 +417,14 @@ export function createDebugHub(deps: { store: Store; runners: DebugRunners }) {
           s.stopped = { conn: c, threadId: Number(b.threadId ?? 0), reason: String(b.reason ?? 'pause'), description: typeof b.description === 'string' ? b.description : null, text: typeof b.text === 'string' ? b.text : null, at: Date.now(), n: s.stopCount };
           s.snapshotCache = null;
           // where it stopped, for the event (and the agent's wait) — best effort
+          const n = s.stopCount;
+          // only while this stop is still current: a continue may already have been sent
           void c.dap.request<{ stackFrames?: Array<Record<string, unknown>> }>('stackTrace', { threadId: s.stopped.threadId, startFrame: 0, levels: 20 }).then((st) => {
+            if (s.stopped?.n !== n) return;
             const frames = (st.stackFrames ?? []).map(frameOf);
             const top = frames.find((f) => !f.internal) ?? frames[0];
             setState(s, 'paused', { reason: String(b.reason ?? 'pause'), description: s.stopped?.description ?? null, location: top ? { path: top.path, line: top.line, name: top.name } : null });
-          }, () => setState(s, 'paused', { reason: String(b.reason ?? 'pause') }));
+          }, () => { if (s.stopped?.n === n) setState(s, 'paused', { reason: String(b.reason ?? 'pause') }); });
           break;
         }
         case 'continued':
@@ -469,6 +508,11 @@ export function createDebugHub(deps: { store: Store; runners: DebugRunners }) {
     await launchOn(s, c, request, configuration);
   }
 
+  async function waitStop(s: Session, ms: number) {
+    const end = Date.now() + ms;
+    while (!s.stopped && !s.endedAt && Date.now() < end) await new Promise((r) => setTimeout(r, 50));
+  }
+
   function own(userId: number, id: string) {
     const s = sessions.get(id);
     if (!s || s.userId !== userId) throw Object.assign(new Error('디버그 세션이 없습니다(끝났거나 다른 사용자의 세션)'), { status: 404 });
@@ -532,11 +576,16 @@ export function createDebugHub(deps: { store: Store; runners: DebugRunners }) {
       console.log(`[debug] ${s.id} target #${target.id} by ${meta.by}: ${cmd.slice(0, 160)}`);
       try {
         // the runner checks the program only when it is a file to run (not a module, npm script, class name or attach)
-        const fileProgram = launch.request === 'launch' && !launch.module && !launch.runtimeExecutable && !launch.mainClass && launch.adapter !== 'custom' ? launch.program ?? undefined : undefined;
-        const r = await runners.call<{ id: number; port: number; version: string; cwd: string; program: string | null }>(target.id, 'dap.start', {
+        const fileProgram = launch.request === 'launch' && !launch.module && !launch.runtimeExecutable && !launch.mainClass && !launch.mobile && !launch.server?.length && launch.adapter !== 'custom' ? launch.program ?? undefined : undefined;
+        const device = launch.mobile === 'android' ? { android: { package: launch.appId, activity: launch.activity ?? undefined, serial: launch.device ?? undefined, attach: launch.request === 'attach' } }
+          : launch.mobile === 'ios-sim' ? { iosSim: { bundleId: launch.appId, device: launch.device ?? undefined } } : {};
+        const spawn = launch.server?.length ? { spawn: { argv: launch.server.map((a) => a.replaceAll('{port}', '{debugPort}')), waitPort: true } } : {};
+        const r = await runners.call<{ id: number; port: number; version: string; cwd: string; program: string | null; debugPort?: number | null; devicePid?: number | null; device?: string | null }>(target.id, 'dap.start', {
           adapter: launch.adapter, cwd: launch.cwd ?? undefined, program: fileProgram,
           debugger: launch.debugger ?? undefined, command: launch.command ?? undefined, commandArgs: launch.commandArgs, transport: launch.transport, arch: launch.arch ?? undefined,
+          ...device, ...spawn,
         }, 300_000);
+        if (r.device) addOutput(s, 'console', `[aidev] ${r.device}\n`);
         s.runnerId = r.id; s.port = r.port; s.version = r.version; s.cwd = r.cwd; if (r.program) s.program = r.program;
         for (const b of launch.breakpoints ?? []) {
           const p = targetPath(s.cwd, b.path);
@@ -547,8 +596,23 @@ export function createDebugHub(deps: { store: Store; runners: DebugRunners }) {
         const root = await connect(s, `${s.id}/root`, false);
         s.active = root;
         const programArg = fileProgram ? s.program : launch.program ? targetPath(s.cwd, launch.program) : null;
-        const config = launchConfig(launch, programArg, s.cwd!);
+        const config = launchConfig(launch, programArg, s.cwd!, { debugPort: r.debugPort ?? null, pid: r.devicePid ?? null });
         await launchOn(s, root, config.request === 'attach' ? 'attach' : 'launch', config);
+        // GDB stops the program when it connects to a GDB server (at its entry point) and ptrace-attaching stops a
+        // process too: that first stop is not the user's — go on to the breakpoints unless stopOnEntry
+        if ((launch.server?.length || launch.mobile === 'ios-sim') && !launch.stopOnEntry) {
+          const until = Date.now() + 5000;
+          for (let seen = 0; seen < 3 && Date.now() < until;) {
+            await waitStop(s, until - Date.now());
+            // a waiting app's own SIGSTOP shows up as an "exception" stop in LLDB: not the user's either
+            const st = s.stopped as Session['stopped'];
+            const attachStop = st && (!['breakpoint', 'exception', 'function breakpoint', 'data breakpoint'].includes(st.reason) || /\bSIGSTOP\b/.test(st.description ?? ''));
+            if (!attachStop) break;
+            seen += 1;
+            addOutput(s, 'console', `[aidev] 연결 직후 멈춤(${st?.reason}) → 계속 실행\n`);
+            await hub.control(s.userId, s.id, 'continue').catch(() => undefined);
+          }
+        }
         if (s.state === 'starting') setState(s, 'running');
       } catch (error) {
         s.error = error instanceof Error ? error.message : String(error);

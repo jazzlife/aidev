@@ -329,9 +329,38 @@ async fn start(cfg: &Config, params: &Value) -> RpcResult {
         }
         debug_port = Some(dport);
     }
+    // a phone or simulator app made ready to attach to (devices.rs); undone when the session ends
+    let mut device_pid: Option<u32> = None;
+    let mut device_note: Option<String> = None;
+    let device = if let Some(a) = params.get("android").filter(|v| v.is_object()).cloned() {
+        Some(tokio::task::spawn_blocking(move || crate::devices::android(&a, free_port)).await)
+    } else if let Some(i) = params.get("iosSim").filter(|v| v.is_object()).cloned() {
+        Some(tokio::task::spawn_blocking(move || crate::devices::ios_sim(&i)).await)
+    } else {
+        None
+    };
+    if let Some(done) = device {
+        let prepared = match done {
+            Ok(Ok(p)) => p,
+            Ok(Err(e)) => { let _ = stop(&json!({ "id": id })); return Err((-32003, e)); }
+            Err(e) => { let _ = stop(&json!({ "id": id })); return Err((-32003, e.to_string())); }
+        };
+        debug_port = prepared.debug_port.or(debug_port);
+        device_pid = prepared.pid;
+        device_note = Some(prepared.note);
+        let stopped = hub().lock().unwrap().sessions.get(&id).map(|s| s.kill.subscribe());
+        if let Some(rx) = stopped {
+            let cleanup = prepared.cleanup;
+            tokio::spawn(async move {
+                until_stopped(rx).await;
+                let _ = tokio::task::spawn_blocking(move || for c in &cleanup { let _ = crate::devices::run(c, Duration::from_secs(15)); }).await;
+            });
+        }
+    }
     Ok(json!({
         "id": id, "adapter": adapter, "version": version, "port": port, "pid": pid, "transport": if launch.stdio { "stdio" } else { "tcp" },
         "cwd": cwd.display().to_string(), "program": program.map(|p| p.display().to_string()), "debugPort": debug_port,
+        "devicePid": device_pid, "device": device_note,
     }))
 }
 

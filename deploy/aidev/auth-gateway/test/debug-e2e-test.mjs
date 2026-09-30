@@ -36,7 +36,12 @@ const gw = `http://127.0.0.1:${server.address().port}`;
 const home = path.join(dir, 'runner-home');
 fs.mkdirSync(home, { recursive: true });
 fs.writeFileSync(path.join(home, 'runner.toml'), `gateway = "${gw}"\ntoken = "${token}"\ntarget_id = ${tid}\nname = "e2e-box"\nallowed_roots = ["${WORK}"]\n`);
-const runner = spawn(RUNNER_BIN, ['start'], { env: { ...process.env, AIDEV_RUNNER_HOME: home }, stdio: ['ignore', 'pipe', 'pipe'] });
+// device bridges (F-09e) against stand-ins: FAKE_BIN has xcrun (simctl), FAKE_SDK has platform-tools/adb (runner devices.rs)
+const FAKE_BIN = process.env.FAKE_BIN ?? '/tmp/claude-0/fakebin';
+const FAKE_SDK = process.env.FAKE_SDK ?? `${WORK}/android-sdk`;
+const fakeLog = path.join(dir, 'devices.log');
+const runnerEnv = { ...process.env, AIDEV_RUNNER_HOME: home, PATH: `${FAKE_BIN}:${process.env.PATH}`, ANDROID_HOME: FAKE_SDK, AIDEV_FAKE_XCRUN: '1', FAKE_LOG: fakeLog, FAKE_IOS_DIR: `${WORK}/ios`, FAKE_JAVA_DIR: `${WORK}/java` };
+const runner = spawn(RUNNER_BIN, ['start'], { env: runnerEnv, stdio: ['ignore', 'pipe', 'pipe'] });
 let runnerLog = ''; runner.stdout.on('data', (d) => { runnerLog += d; }); runner.stderr.on('data', (d) => { runnerLog += d; });
 for (let i = 0; i < 100 && !(runners.online(tid) && JSON.parse(store.target(uid, tid).capabilities ?? '{}').features); i++) await new Promise((r) => setTimeout(r, 100));
 assert.ok(runners.online(tid), `runner did not connect: ${runnerLog}`);
@@ -53,6 +58,10 @@ const cases = [
   { name: 'delve (Go)', ok: have('go') && avail.available.includes('delve'), launch: { adapter: 'delve', program: '.', cwd: `${WORK}/go`, breakpoints: [{ path: 'main.go', line: 6 }] }, file: `${WORK}/go/main.go`, line: 6, a: 'a' },
   { name: 'jvm (Java via JDWP)', ok: have('java') && fs.existsSync(`${WORK}/java/Main.class`), launch: { adapter: 'jvm', mainClass: 'Main', classPath: ['.'], cwd: `${WORK}/java`, breakpoints: [{ path: 'Main.java', line: 3 }] }, file: `${WORK}/java/Main.java`, line: 3, a: 'a' },
   { name: 'jvm package layout (com.acme.App)', ok: have('java') && fs.existsSync(`${WORK}/jpkg/out/com/acme/App.class`), launch: { adapter: 'jvm', mainClass: 'com.acme.App', classPath: ['out'], cwd: `${WORK}/jpkg`, breakpoints: [{ path: 'src/main/java/com/acme/App.java', line: 11 }] }, file: `${WORK}/jpkg/src/main/java/com/acme/App.java`, line: 11, a: 'x' },
+  { name: 'gdb + gdbserver (remote/SBC)', ok: have('gdb') && have('gdbserver') && fs.existsSync(`${WORK}/c/app`), launch: { adapter: 'gdb', server: ['gdbserver', '127.0.0.1:{port}', './app'], program: 'app', cwd: `${WORK}/c`, breakpoints: [{ path: 'app.c', line: 3 }] }, file: `${WORK}/c/app.c`, line: 3, a: 'a' },
+  { name: 'lldb-dap (LLVM)', ok: avail.available.includes('lldb-dap') && fs.existsSync(`${WORK}/c/app`), launch: { adapter: 'lldb-dap', program: 'app', cwd: `${WORK}/c`, breakpoints: [{ path: 'app.c', line: 3 }] }, file: `${WORK}/c/app.c`, line: 3, a: 'a' },
+  { name: 'ios-sim bridge (lldb-dap attach to a waiting app)', ok: avail.available.includes('lldb-dap') && fs.existsSync(`${WORK}/ios/app`) && fs.existsSync(`${FAKE_BIN}/xcrun`), launch: { adapter: 'lldb-dap', mobile: 'ios-sim', appId: 'com.example.App', program: 'app', cwd: `${WORK}/ios`, breakpoints: [{ path: 'app.c', line: 4 }] }, file: `${WORK}/ios/app.c`, line: 4, a: 'a', log: /xcrun simctl launch --wait-for-debugger --terminate-running-process booted com\.example\.App[\s\S]*xcrun simctl terminate/ },
+  { name: 'android bridge (jvm over adb JDWP forward)', ok: have('java') && fs.existsSync(`${WORK}/java/Main.class`) && fs.existsSync(`${FAKE_SDK}/platform-tools/adb`), launch: { adapter: 'jvm', mobile: 'android', appId: 'com.example.app', device: 'emulator-5554', cwd: `${WORK}/java`, breakpoints: [{ path: 'Main.java', line: 3 }] }, file: `${WORK}/java/Main.java`, line: 3, a: 'a', log: /adb -s emulator-5554 get-state[\s\S]*am set-debug-app -w com\.example\.app[\s\S]*monkey -p com\.example\.app[\s\S]*forward tcp:\d+ jdwp:4242[\s\S]*forward --remove tcp:\d+[\s\S]*am clear-debug-app/ },
   { name: 'mono (C# on Mono)', ok: have('mono') && fs.existsSync(`${WORK}/mono/app.exe`), launch: { adapter: 'mono', program: 'app.exe', cwd: `${WORK}/mono`, breakpoints: [{ path: 'app.cs', line: 4 }] }, file: `${WORK}/mono/app.cs`, line: 4, a: 'a' },
 ].filter((c) => !only.length || only.some((o) => c.name.startsWith(o)));
 
@@ -68,7 +77,8 @@ for (const c of cases) {
     s = await hub.snapshot(uid, s.id);
     assert.equal(s.state, 'paused', `${s.state}: ${s.error} :: ${s.output.slice(-400)}`);
     const top = s.frames.find((f) => !f.internal) ?? s.frames[0];
-    assert.equal(path.basename(top.path ?? ''), path.basename(c.file), `stopped in ${top.path}:${top.line}`);
+    if (!top) throw new Error(`paused without frames: ${JSON.stringify({ stopped: s.stopped, error: s.detailError, events: (await hub.events(uid, s.id, 0, 0)).events.slice(-12) })}`);
+    assert.equal(path.basename(top.path ?? ''), path.basename(c.file), `stopped in ${top.path}:${top.line} (${JSON.stringify(s.stopped)})`);
     assert.equal(top.line, c.line, `stopped at line ${top.line}`);
     assert.ok(s.locals.some((v) => v.name === c.a), `locals: ${JSON.stringify(s.locals)}`);
     let ev = null;
@@ -82,6 +92,10 @@ for (const c of cases) {
     for (let i = 0; i < 50 && hub.get(uid, s.id).state !== 'ended'; i++) await new Promise((r) => setTimeout(r, 100));
     s = await hub.snapshot(uid, s.id);
     if (s.state !== 'ended') await hub.stop(uid, s.id);
+    if (c.log) {
+      for (let i = 0; i < 30 && !c.log.test(fs.existsSync(fakeLog) ? fs.readFileSync(fakeLog, 'utf8') : ''); i++) await new Promise((r) => setTimeout(r, 100));
+      assert.match(fs.existsSync(fakeLog) ? fs.readFileSync(fakeLog, 'utf8') : '', c.log, 'device commands');
+    }
     console.log(`PASS ${c.name}: paused at ${path.basename(c.file)}:${c.line}, eval a+b=${ev?.result}, 2nd hit b=${second}, end ${s.state}${/total 3|sum 20/.test(s.output) ? ' (program output ok)' : ''} — ${Date.now() - t0}ms`);
   } catch (e) {
     failed++;

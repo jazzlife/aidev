@@ -33,11 +33,12 @@ build() {   # label rust-target [zig-suffix]
   else echo "skip $label: needs zig + cargo-zigbuild for cross-linking"; return; fi
   cp "target/$target/release/aidev-runner$ext" "dist/aidev-runner-$ver-$label$ext"; built+=("aidev-runner-$ver-$label$ext")
 }
-want=${*:-linux-x64 linux-arm64 win-x64 mac}
+want=${*:-linux-x64 linux-arm64 linux-armv7 win-x64 mac}
 for w in $want; do
   case $w in
     linux-x64)   build linux-x64 x86_64-unknown-linux-gnu .2.28 ;;
     linux-arm64) build linux-arm64 aarch64-unknown-linux-gnu .2.28 ;;
+    linux-armv7) build linux-armv7 armv7-unknown-linux-gnueabihf .2.28 ;;   # 32-bit Raspberry Pi OS and other ARMv7 SBCs
     win-x64)     build win-x64 x86_64-pc-windows-gnu ;;
     mac)
       if [ "$(uname -s)" != Darwin ]; then echo "skip mac: build on a Mac"; continue; fi

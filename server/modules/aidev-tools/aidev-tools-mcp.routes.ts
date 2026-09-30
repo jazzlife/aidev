@@ -136,6 +136,9 @@ router.post('/tools/:toolName', async (req, res) => {
           chip: text(input.chip), probe: text(input.probe), device: text(input.device), command: text(input.command), commandArgs: strs(input.commandArgs),
           transport: input.transport === 'tcp' ? 'tcp' : input.transport === 'stdio' ? 'stdio' : undefined,
           config: input.config && typeof input.config === 'object' && !Array.isArray(input.config) ? input.config as Record<string, unknown> : undefined,
+          mobile: input.mobile === 'android' || input.mobile === 'ios-sim' ? input.mobile : undefined,
+          appId: text(input.appId), activity: text(input.activity), server: strs(input.server),
+          arch: input.arch === 'x86' || input.arch === 'x64' ? input.arch : undefined,
           waitSec: typeof input.waitSec === 'number' ? input.waitSec : undefined,
         }, readTurn(input));
         break;

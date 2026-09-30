@@ -351,7 +351,9 @@ fn resolve_lldb_dap() -> Result<PathBuf, String> {
             }
         }
     }
-    which("lldb-dap").or_else(|| which("lldb-vscode")).ok_or_else(|| "lldb-dap을 찾지 못했습니다 — macOS는 Xcode 16 이상, 그 밖에는 LLVM 18 이상(lldb-dap)을 설치하세요".to_string())
+    // Linux distributions install LLVM's tools with a version suffix (lldb-dap-18)
+    let versioned = || (14..=30).rev().find_map(|v| which(&format!("lldb-dap-{v}")).or_else(|| which(&format!("lldb-vscode-{v}"))));
+    which("lldb-dap").or_else(|| which("lldb-vscode")).or_else(versioned).ok_or_else(|| "lldb-dap을 찾지 못했습니다 — macOS는 Xcode 16 이상, 그 밖에는 LLVM 18 이상(lldb-dap)을 설치하세요".to_string())
 }
 
 fn ensure_netcoredbg(gateway: Option<&str>) -> Result<PathBuf, String> {
@@ -541,7 +543,7 @@ pub fn available() -> Vec<&'static str> {
     if have("python3") || have("python") { out.push("debugpy"); }
     if platform().is_some() { out.push("codelldb"); out.push("probe-rs"); }
     if which("gdb").and_then(|g| version_line(&g, "--version")).and_then(|l| gdb_major(&l)).is_some_and(|v| v >= 14) { out.push("gdb"); }
-    if have("lldb-dap") || have("lldb-vscode") || cfg!(target_os = "macos") { out.push("lldb-dap"); }
+    if cfg!(target_os = "macos") || resolve_lldb_dap().is_ok() { out.push("lldb-dap"); }
     if have("dotnet") { out.push("netcoredbg"); }
     if have("dlv") || have("go") { out.push("delve"); }
     if have("java") { out.push("jvm"); }

@@ -125,6 +125,7 @@ export type DebugStartInput = {
   breakpoints?: Array<{ file: string; line: number; condition?: string }>;
   pid?: number; address?: string; debugger?: string; mainClass?: string; classPath?: string[]; chip?: string; probe?: string; device?: string;
   command?: string; commandArgs?: string[]; transport?: 'stdio' | 'tcp'; config?: Record<string, unknown>;
+  mobile?: 'android' | 'ios-sim'; appId?: string; activity?: string; server?: string[]; arch?: 'x86' | 'x64';
 };
 type DebugSnapshot = {
   id: string; state: string; error: string | null; exitCode: number | null; program: string | null; cwd: string | null; version: string | null;
@@ -498,6 +499,7 @@ export const aidevToolsService = {
       args: input.args, cwd: input.cwd, env: input.env, stopOnEntry: input.stopOnEntry,
       pid: input.pid, address: input.address, debugger: input.debugger, mainClass: input.mainClass, classPath: input.classPath, chip: input.chip, probe: input.probe, device: input.device,
       command: input.command, commandArgs: input.commandArgs, transport: input.transport, config: input.config,
+      mobile: input.mobile, appId: input.appId, activity: input.activity, server: input.server, arch: input.arch,
       breakpoints: (input.breakpoints ?? []).map((b) => ({ path: b.file, line: b.line, condition: b.condition })),
       waitSec, runId: turn.runId ?? undefined, agent: turn.agent ?? undefined,
     };
