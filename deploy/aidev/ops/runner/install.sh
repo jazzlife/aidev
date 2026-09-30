@@ -43,9 +43,36 @@ if ! "$DEST" status >/dev/null 2>&1; then
 EOF
   exit 0
 fi
-"$DEST" install-service      # LaunchAgent → $DEST start (at login and now)
-sleep 3
-"$DEST" status || true
+logf="$HOME/.aidev/runner.log"; since=$( [ -f "$logf" ] && wc -c < "$logf" | tr -d ' ' || echo 0)   # only lines written after this
+"$DEST" install-service || true      # LaunchAgent → $DEST start (at login and now)
+uid=$(id -u); label="gui/$uid/work.nado.aidev-runner"
+# launchd sometimes refuses a bootstrap right after the bootout ("Bootstrap failed: 5") — retry, then check
+for i in 1 2 3 4 5; do
+  launchctl print "$label" >/dev/null 2>&1 && break
+  sleep 1; launchctl bootstrap "gui/$uid" "$plist" 2>/dev/null || true
+done
+
+# verify: the service runs $DEST, no other runner is left, and it connected
+ok=1; pid=""
+for i in $(seq 1 20); do
+  pid=$(launchctl print "$label" 2>/dev/null | awk '/^[[:space:]]*pid = /{print $3; exit}')
+  [ -n "$pid" ] && break; sleep 1
+done
+running=$([ -n "$pid" ] && ps -p "$pid" -o command= 2>/dev/null || true)
+if [ -n "$pid" ] && [ "${running%% *}" = "$DEST" ]; then echo " ✓ 서비스 실행 중: pid $pid ($DEST)"; else echo " ✗ 서비스가 $DEST 로 실행되지 않았습니다 (${running:-실행 안 됨})"; ok=0; fi
+others=$(ps -axo pid=,command= | grep -i 'aidev-runner' | grep -v grep | grep -v "^ *$pid " | grep -v "$0" || true)
+if [ -n "$others" ]; then
+  echo " ✗ 다른 러너가 아직 실행 중입니다 (같은 토큰이면 연결을 서로 빼앗습니다) — 종료합니다:"; echo "$others" | sed 's/^/     /'
+  echo "$others" | awk '{print $1}' | xargs kill 2>/dev/null || true
+fi
+connected=""
+for i in $(seq 1 20); do
+  connected=$(tail -c +$((since + 1)) "$logf" 2>/dev/null | grep '연결됨' | tail -1)
+  [ -n "$connected" ] && break; sleep 1
+done
+if [ -n "$connected" ]; then echo " ✓ $connected"; else echo " ✗ 20초 안에 게이트웨이에 연결되지 않았습니다 — 로그: tail -30 ~/.aidev/runner.log"; ok=0; fi
+[ "$ok" = 1 ] && echo " ✓ 러너 $ver 로 교체 완료" || echo " ✗ 교체를 확인하지 못했습니다 — 위 메시지와 로그를 확인하세요"
+"$DEST" status 2>/dev/null | grep -E 'screen|remote control' || true
 cat <<EOF
 
 완료. 작업대 "원격 대상"에서 러너 버전이 $ver 로 바뀌었는지 확인하세요.
