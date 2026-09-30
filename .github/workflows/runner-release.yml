@@ -36,7 +36,7 @@ jobs:
     outputs:
       version: ${{ steps.v.outputs.version }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - id: v
@@ -53,7 +53,7 @@ jobs:
     needs: version
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - run: sudo apt-get update -q && sudo apt-get install -y -q nasm gdb default-jdk-headless
@@ -74,7 +74,7 @@ jobs:
       matrix:
         label: [linux-x64, linux-arm64, linux-armv7]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - run: sudo apt-get update -q && sudo apt-get install -y -q nasm qemu-user libc6-arm64-cross libc6-armhf-cross
@@ -102,7 +102,7 @@ jobs:
           done
         env:
           LABEL: ${{ matrix.label }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: runner-${{ matrix.label }}
           path: ${{ env.RUNNER_DIR }}/dist/aidev-runner-*
@@ -116,10 +116,8 @@ jobs:
       fail-fast: false
       matrix:
         arch: [x64, arm64]
-    # ARM64 (cross-compiled with MSVC's ARM64 tools) is best effort: it does not hold the release back
-    continue-on-error: ${{ matrix.arch == 'arm64' }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - name: NASM (x64 H.264 SIMD)
@@ -132,11 +130,12 @@ jobs:
         with:
           workspaces: ${{ env.RUNNER_DIR }}
           key: win-${{ matrix.arch }}
-      # the same script a person runs on their Windows PC
+      # the same script a person runs on their Windows PC; ARM64 is cross-built on x64 with MSVC's ARM64 tools
+      # and clang (ring), and checked by its PE header since it cannot run here
       - name: scripts\build-windows.ps1
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File "$env:RUNNER_DIR\scripts\build-windows.ps1" -Arch ${{ matrix.arch }}
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: runner-win-${{ matrix.arch }}
           path: ${{ env.RUNNER_DIR }}/dist/aidev-runner-*.exe
@@ -147,7 +146,7 @@ jobs:
     needs: version
     runs-on: macos-14
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
       - run: brew install nasm
@@ -164,7 +163,7 @@ jobs:
         working-directory: ${{ env.RUNNER_DIR }}/dist
         run: |
           for f in aidev-runner-*-mac-universal; do "./$f" --version; lipo -archs "$f"; done
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: runner-mac
           path: ${{ env.RUNNER_DIR }}/dist/aidev-runner-*-mac-*
@@ -175,17 +174,17 @@ jobs:
     needs: version
     runs-on: windows-2022
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '8.0.x'
       # builds, packs and checks that the adapter answers DAP initialize on Windows
       - name: clrdbg\build.ps1
         shell: powershell
         run: powershell -NoProfile -ExecutionPolicy Bypass -File deploy\aidev\clrdbg\build.ps1 -Out out\adapters
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: adapter-clrdbg
           path: out/adapters/*
@@ -195,19 +194,18 @@ jobs:
     name: netcoredbg (Apple Silicon)
     needs: version
     runs-on: macos-14
-    # upstream has no osx-arm64 build: best effort, it does not hold the release back
-    continue-on-error: true
+    # upstream publishes no osx-arm64 build, so it is built here from source (about 10 minutes)
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - uses: actions/setup-dotnet@v4
+      - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '8.0.x'
       - run: brew install cmake
       - name: ops/runner/build-netcoredbg.sh
         run: deploy/aidev/ops/runner/build-netcoredbg.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: adapter-netcoredbg-mac
           path: deploy/aidev/ops/runner/dist/adapters/*
@@ -216,19 +214,16 @@ jobs:
   release:
     name: Publish
     needs: [version, test, linux, windows, macos, clrdbg, netcoredbg-mac]
-    # the best-effort jobs may have failed; everything required must have succeeded
     if: >-
-      always() && needs.version.result == 'success' && needs.test.result == 'success' && needs.linux.result == 'success'
-      && needs.macos.result == 'success' && needs.clrdbg.result == 'success'
-      && (startsWith(github.ref, 'refs/tags/runner-v') && (github.event_name == 'push' || inputs.publish))
+      startsWith(github.ref, 'refs/tags/runner-v') && (github.event_name == 'push' || inputs.publish)
     runs-on: ubuntu-24.04
     permissions:
       contents: write
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           path: artifacts
       - name: Assemble dist
@@ -242,8 +237,12 @@ jobs:
             find "$d" -type f ! -name manifest.json -exec cp {} dist/adapters/ \;
             [ -f "$d/manifest.json" ] && jq -s '.[0] * .[1]' dist/adapters/manifest.json "$d/manifest.json" > m.json && mv m.json dist/adapters/manifest.json
           done
-          # the Windows ARM64 build may be missing (best effort); the x64 one is required
-          ls dist/aidev-runner-*-win-x64.exe >/dev/null
+          # every platform must be there
+          for p in linux-x64 linux-arm64 linux-armv7 win-x64.exe win-arm64.exe mac-arm64 mac-x64 mac-universal; do
+            ls dist/aidev-runner-*-"$p" >/dev/null || { echo "::error::aidev-runner $p missing"; exit 1; }
+          done
+          jq -e '."clrdbg-win32-x64" and ."netcoredbg-darwin-arm64"' dist/adapters/manifest.json >/dev/null \
+            || { echo "::error::adapter manifest incomplete"; cat dist/adapters/manifest.json; exit 1; }
           chmod 755 dist/aidev-runner-*
           (cd dist && sha256sum aidev-runner-* > SHA256SUMS)
           (cd dist/adapters && sha256sum -- * > SHA256SUMS)
@@ -257,7 +256,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
-          notes="aidev-runner $VERSION — Linux (x64, ARM64, ARMv7), Windows (x64$(ls dist/*win-arm64* >/dev/null 2>&1 && echo ', ARM64')), macOS (arm64, x64, universal).
+          notes="aidev-runner $VERSION — Linux (x64, ARM64, ARMv7), Windows (x64, ARM64), macOS (arm64, x64, universal).
           Install: deploy/aidev/runner/scripts/install-{linux,macos}.sh / install-windows.ps1 — or from the platform: <gateway>/_runner/scripts/.
           adapter-*: debug adapters the platform serves at /_runner/adapters/ (manifest.json)."
           gh release create "$GITHUB_REF_NAME" dist/* --title "aidev-runner $VERSION" --notes "$notes" --verify-tag

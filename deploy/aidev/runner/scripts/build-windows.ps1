@@ -57,16 +57,39 @@ function Find-Nasm {
 function Find-Msvc {
   $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
   if (-not (Test-Path $vswhere)) { return $null }
-  $path = & $vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64 -property installationPath 2>$null
+  # ARM64 output needs MSVC's ARM64 tools ("MSVC … ARM64/ARM64EC build tools") in addition to the x64 ones
+  $req = @('Microsoft.VisualStudio.Component.VC.Tools.x86.x64')
+  if ($Arch -eq 'arm64') { $req += 'Microsoft.VisualStudio.Component.VC.Tools.ARM64' }
+  $path = & $vswhere -latest -products * -requires $req -property installationPath 2>$null
   if ($path) { return $path } else { return $null }
 }
+# ring (TLS) compiles its C for Windows ARM64 only with clang: LLVM's, or the one Visual Studio ships
+function Find-Clang {
+  $c = Get-Command clang -ErrorAction SilentlyContinue
+  if ($c) { return $c.Source }
+  $dirs = @("$env:ProgramFiles\LLVM\bin")
+  $vs = Find-Msvc
+  if ($vs) { $dirs += @("$vs\VC\Tools\Llvm\x64\bin", "$vs\VC\Tools\Llvm\ARM64\bin", "$vs\VC\Tools\Llvm\bin") }
+  foreach ($d in $dirs) { if (Test-Path "$d\clang.exe") { return "$d\clang.exe" } }
+  return $null
+}
+# the CPU a PE file is built for (its COFF header), to check a build this machine cannot run
+function Get-PeMachine([string] $Path) {
+  $b = [IO.File]::ReadAllBytes($Path)
+  $pe = [BitConverter]::ToInt32($b, 0x3c)
+  switch ([BitConverter]::ToUInt16($b, $pe + 4)) { 0x8664 { 'x64' } 0xAA64 { 'arm64' } 0x14c { 'x86' } default { 'unknown' } }
+}
+$HostArch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -eq 'ARM64') { 'arm64' } else { 'x64' }
 $cargoBin = Join-Path $env:USERPROFILE '.cargo\bin'
 if ((Test-Path $cargoBin) -and ($env:Path -notlike "*$cargoBin*")) { $env:Path = "$cargoBin;$env:Path" }
 
 $missing = @()
 if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { $missing += @{ what = 'Rust (rustup)'; winget = 'Rustlang.Rustup' } }
-if (-not (Find-Msvc)) { $missing += @{ what = 'Visual Studio Build Tools (C++)'; winget = 'Microsoft.VisualStudio.2022.BuildTools --override "--quiet --wait --add Microsoft.VisualStudio.Workload.VCTools --includeRecommended"' } }
+$vsAdd = '--add Microsoft.VisualStudio.Workload.VCTools --includeRecommended'
+if ($Arch -eq 'arm64') { $vsAdd += ' --add Microsoft.VisualStudio.Component.VC.Tools.ARM64 --add Microsoft.VisualStudio.Component.VC.Llvm.Clang' }
+if (-not (Find-Msvc)) { $missing += @{ what = "Visual Studio Build Tools (C++$(if ($Arch -eq 'arm64') { ', ARM64 build tools' }))"; winget = "Microsoft.VisualStudio.2022.BuildTools --override `"--quiet --wait $vsAdd`"" } }
 if ($Arch -eq 'x64' -and -not (Find-Nasm)) { $missing += @{ what = 'NASM (x64 H.264 SIMD)'; winget = 'NASM.NASM' } }
+if ($Arch -eq 'arm64' -and -not (Find-Clang)) { $missing += @{ what = 'clang (ARM64 TLS code)'; winget = 'LLVM.LLVM' } }
 
 if ($missing.Count -gt 0 -and $InstallTools) {
   if (-not (Get-Command winget -ErrorAction SilentlyContinue)) { throw 'winget이 없습니다 — 아래 도구를 직접 설치하세요' }
@@ -79,7 +102,8 @@ if ($missing.Count -gt 0 -and $InstallTools) {
   if (Test-Path $cargoBin) { $env:Path = "$cargoBin;$env:Path" }
   $missing = @()
   if (-not (Get-Command cargo -ErrorAction SilentlyContinue)) { $missing += @{ what = 'Rust (새 터미널에서 다시 실행)'; winget = 'Rustlang.Rustup' } }
-  if (-not (Find-Msvc)) { $missing += @{ what = 'Visual Studio Build Tools (C++)'; winget = 'Microsoft.VisualStudio.2022.BuildTools' } }
+  if (-not (Find-Msvc)) { $missing += @{ what = 'Visual Studio Build Tools (C++) — Visual Studio Installer에서 C++ 워크로드와 ARM64 빌드 도구를 추가하세요'; winget = 'Microsoft.VisualStudio.2022.BuildTools' } }
+  if ($Arch -eq 'arm64' -and -not (Find-Clang)) { $missing += @{ what = 'clang (새 터미널에서 다시 실행)'; winget = 'LLVM.LLVM' } }
 }
 if ($missing.Count -gt 0) {
   Write-Host '빌드에 필요한 것이 없습니다:'
@@ -93,9 +117,10 @@ if ([version]$have -lt [version]$need) {
   Write-Host "==> Rust $have < $need : rustup update stable"
   if (-not $Check) { [void](Invoke-Native rustup @('update', 'stable')) }
 }
-if ($Check) { Write-Host "도구 준비됨: $(rustc --version), MSVC $(Find-Msvc), NASM $(Find-Nasm)"; exit 0 }
+if ($Check) { Write-Host "도구 준비됨 (win-$Arch): $(rustc --version), MSVC $(Find-Msvc), NASM $(Find-Nasm)$(if ($Arch -eq 'arm64') { ", clang $(Find-Clang)" })"; exit 0 }
 $nasm = Find-Nasm
 if ($nasm) { $env:Path = "$(Split-Path -Parent $nasm);$env:Path" }
+if ($Arch -eq 'arm64') { $clang = Find-Clang; $env:Path = "$(Split-Path -Parent $clang);$env:Path"; Write-Host "==> clang: $clang" }
 if ((Invoke-Native rustup @('target', 'add', $Target) -Quiet) -ne 0) { throw "rustup target add $Target 실패" }
 
 # ---- build ----------------------------------------------------------------------------------------------
@@ -115,9 +140,19 @@ $hash = (Get-FileHash -Algorithm SHA256 $out).Hash.ToLower()
 $sums = Join-Path $dist 'SHA256SUMS'
 $lines = @(if (Test-Path $sums) { Get-Content $sums | Where-Object { $_ -notmatch " $([regex]::Escape($name))$" } }) + "$hash  $name"
 Set-Content -Path $sums -Value $lines -Encoding ascii
-& $out --version
+$machine = Get-PeMachine $out
+if ($machine -ne $Arch) { throw "$out 은 $machine 용입니다 (win-$Arch 이어야 함)" }
+if ($Arch -eq $HostArch) {
+  $v = & $out --version
+  if ($LASTEXITCODE -ne 0) { throw "$out --version 실패 ($LASTEXITCODE)" }
+  Write-Host $v
+} else {
+  # an ARM64 build made on an x64 PC (or the reverse) cannot run here: its PE header was checked instead
+  Write-Host "win-$Arch 바이너리 (PE $machine) — 이 PC($HostArch)에서는 실행해 볼 수 없어 헤더만 확인했습니다"
+}
 Write-Host "==> $out"
 if ($Install) {
+  if ($Arch -ne $HostArch) { throw "win-$Arch 바이너리는 이 PC($HostArch)에 설치할 수 없습니다 — 그 PC로 옮겨 install-windows.ps1 -File 로 설치하세요" }
   $p = @{ File = $out }
   if ($Code) { $p.Code = $Code }; if ($Gateway) { $p.Gateway = $Gateway }; if ($Name) { $p.Name = $Name }
   & (Join-Path $PSScriptRoot 'install-windows.ps1') @p

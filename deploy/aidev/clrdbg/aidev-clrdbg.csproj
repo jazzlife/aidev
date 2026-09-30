@@ -8,7 +8,7 @@
     <RootNamespace>VSCodeDebug</RootNamespace>
     <PlatformTarget Condition=" '$(PlatformTarget)' == '' ">AnyCPU</PlatformTarget>
     <Prefer32Bit>false</Prefer32Bit>
-    <LangVersion>latest</LangVersion>
+    <LangVersion>12</LangVersion>
     <Nullable>disable</Nullable>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <Deterministic>true</Deterministic>

@@ -5,7 +5,7 @@
     <AutomaticallyUseReferenceAssemblyPackages Condition=" '$(FrameworkPathOverride)' != '' ">false</AutomaticallyUseReferenceAssemblyPackages>
     <DisableImplicitFrameworkReferences Condition=" '$(FrameworkPathOverride)' != '' ">true</DisableImplicitFrameworkReferences>
     <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
-    <LangVersion>latest</LangVersion>
+    <LangVersion>12</LangVersion>
     <EnableDefaultCompileItems>false</EnableDefaultCompileItems>
     <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <Deterministic>true</Deterministic>
