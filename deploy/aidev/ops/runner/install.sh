@@ -58,11 +58,15 @@ done
 
 # verify: the service runs $DEST, no other runner is left, and it connected
 ok=1; pid=""
+# launchd starts the job through xpcproxy, which then execs the runner under the same pid: until that exec
+# the process shows as "xpcproxy work.nado.aidev-runner" — wait for the runner itself, not the launcher
+running=""
 for i in $(seq 1 20); do
   pid=$(launchctl print "$label" 2>/dev/null | awk '/^[[:space:]]*pid = /{print $3; exit}')
-  [ -n "$pid" ] && break; sleep 1
+  running=$([ -n "$pid" ] && ps -p "$pid" -o command= 2>/dev/null || true)
+  [ -n "$pid" ] && [ "${running%% *}" = "$DEST" ] && break
+  sleep 1
 done
-running=$([ -n "$pid" ] && ps -p "$pid" -o command= 2>/dev/null || true)
 if [ -n "$pid" ] && [ "${running%% *}" = "$DEST" ]; then echo " ✓ 서비스 실행 중: pid $pid ($DEST)"; else echo " ✗ 서비스가 $DEST 로 실행되지 않았습니다 (${running:-실행 안 됨})"; ok=0; fi
 others=$(ps -axo pid=,command= | grep -i 'aidev-runner' | grep -v grep | grep -v "^ *$pid " | grep -v "$0" || true)
 if [ -n "$others" ]; then
