@@ -11,6 +11,7 @@ import { RunFeedback } from '@m/components/RunFeedback';
 import { RemoteMenu } from '@m/components/RemoteMenu';
 import { TopBar } from '@m/components/TopBar';
 import { usePreviewList } from '@/modules/remote-preview';
+import { useDebugSessions } from '@/modules/remote-debug';
 import { BottomSheet } from '@m/components/BottomSheet';
 import { EscalationPrompt } from '@m/components/EscalationPrompt';
 import { ProjectPicker, readLastProject, type PickedProject } from '@m/components/ProjectPicker';
@@ -45,6 +46,10 @@ export function ChatScreen() {
   const [previewSeen, setPreviewSeen] = useState(() => Date.now());
   const { previews } = usePreviewList(true, 8000);
   const agentPreview = previews.find((p) => p.by === 'agent' && p.createdAt > previewSeen && !p.error) ?? null;
+  // a debug session an agent starts (remote_debug_start) gets the same kind of banner
+  const [debugSeen, setDebugSeen] = useState(() => Date.now());
+  const { sessions: debugSessions } = useDebugSessions(true, 8000);
+  const agentDebug = debugSessions.find((d) => d.origin === 'agent' && d.createdAt > debugSeen && d.state !== 'ended' && d.state !== 'failed') ?? null;
   const [copied, setCopied] = useState(false);
   const copyMessage = async () => {
     if (!copyText) return;
@@ -192,6 +197,13 @@ export function ChatScreen() {
           <span className="min-w-0 flex-1 truncate">미리보기가 열렸습니다 · {agentPreview.label ?? agentPreview.targetName}:{agentPreview.port}</span>
           <button type="button" className="m-touch rounded-lg bg-accent px-3 py-1 text-accent-ink" onClick={() => navigate(`/preview?p=${agentPreview.targetId}:${agentPreview.port}`)}>보기</button>
           <button type="button" aria-label="닫기" className="m-touch px-1 text-muted" onClick={() => setPreviewSeen(agentPreview.createdAt)}>✕</button>
+        </div>
+      ) : null}
+      {agentDebug ? (
+        <div className="flex items-center gap-2 border-b border-line bg-warn/10 px-4 py-2 text-[13px]">
+          <span className="min-w-0 flex-1 truncate">agent가 디버깅 중 · {agentDebug.program?.split(/[\\/]/).pop() ?? agentDebug.module ?? agentDebug.adapter} ({agentDebug.targetName})</span>
+          <button type="button" className="m-touch rounded-lg bg-accent px-3 py-1 text-accent-ink" onClick={() => navigate(`/debug?s=${agentDebug.id}`)}>보기</button>
+          <button type="button" aria-label="닫기" className="m-touch px-1 text-muted" onClick={() => setDebugSeen(agentDebug.createdAt)}>✕</button>
         </div>
       ) : null}
       {loadError ? <div className="px-4 py-2 text-danger text-sm">{loadError}</div> : null}

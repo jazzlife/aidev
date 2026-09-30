@@ -210,6 +210,8 @@ export type RemoteApproval = {
   risk: number; reasons: string[]; destructive: boolean; policy: string;
   status: 'pending' | 'allowed' | 'denied' | 'expired'; createdAt: number; expiresAt: number; decidedAt: number | null; decidedBy: string | null;
   remoteRunId: number | null; error: string | null;
+  /** F-09: 'debug' = run the program under the debugger (then the session id once it started) */
+  kind?: 'exec' | 'debug'; debugSessionId?: string | null;
 };
 
 /** A command run on a remote PC (remote_runs row + the live stream while the gateway holds it). */

@@ -11,6 +11,7 @@ import { useCodeEditorSettings } from '@/modules/code-editor/hooks/useCodeEditor
 import { useEditorKeyboardShortcuts } from '@/modules/code-editor/hooks/useEditorKeyboardShortcuts';
 import type { CodeEditorFile, CodeEditorGotoTarget } from '@/shared/types';
 import { createMinimapExtension, createScrollToFirstChunkExtension, getLanguageExtensions } from '@/modules/code-editor/utils/editorExtensions';
+import { debugGutter } from '@/modules/code-editor/utils/debugGutter';
 import { getEditorStyles } from '@/modules/code-editor/utils/editorStyles';
 import { createEditorToolbarPanelExtension } from '@/modules/code-editor/utils/editorToolbarPanel';
 import CodeEditorFooter from '@/modules/code-editor/CodeEditorFooter';
@@ -155,6 +156,11 @@ export default function CodeEditor({
       ...getLanguageExtensions(file.name),
       ...toolbarPanelExtension,
     ];
+    // F-09: breakpoint gutter + the line a remote debug session is paused on (not on diff views)
+    const breakpointPath = file.path.startsWith('/') ? file.path : projectPath ? `${projectPath.replace(/\/+$/, '')}/${file.path}` : null;
+    if (breakpointPath && !(file.diffInfo && showDiff)) {
+      allExtensions.push(debugGutter(breakpointPath));
+    }
 
     if (file.diffInfo && showDiff && file.diffInfo.old_string !== undefined) {
       allExtensions.push(
@@ -178,6 +184,8 @@ export default function CodeEditor({
   }, [
     file.diffInfo,
     file.name,
+    file.path,
+    projectPath,
     minimapExtension,
     scrollToFirstChunkExtension,
     showDiff,

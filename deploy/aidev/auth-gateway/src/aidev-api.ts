@@ -14,6 +14,7 @@ import { decideNext, type NextAction } from './escalation.js';
 import { decide, listKinds } from './laya-questions.js';
 import fs from 'node:fs';
 import type { Preview } from './preview.js';
+import { launchCommand, validateLaunch, type DebugHub } from './debug-hub.js';
 import { evaluateRouting, prejudge, route, TIER_TABLE, type EngineAvailability, type JudgeVerdict, type RouteInput, type SpecialistJudge } from './routing.js';
 /** Hard limit of one judge call in the runtime; a send waits less (routing.ts AIDEV_JUDGE_WAIT_MS) and the rest is cached. */
 const JUDGE_TIMEOUT_MS = Number(process.env.AIDEV_JUDGE_TIMEOUT_MS ?? 60_000);
@@ -37,6 +38,8 @@ export type AidevDeps = {
   gate?: RemoteGate;
   /** Dev-server previews over runner tunnels (F-06). */
   preview?: Preview;
+  /** Remote debugging sessions (F-09). */
+  debug?: DebugHub;
   /** https://<host> the browser uses (preview URLs). */
   publicOrigin?: string;
 };
@@ -522,7 +525,7 @@ export function createAidevApi(deps: AidevDeps) {
         // file batches for sync.write reach 8 MB (base64 ~11 MB)
         const b = await readJson(req, 12 * 1024 * 1024);
         const method = str(b.method, 'method', 40);
-        const allowed = ['sync.manifest', 'sync.write', 'sync.delete', 'runner.capabilities', 'fs.resolve'];
+        const allowed = ['sync.manifest', 'sync.write', 'sync.delete', 'runner.capabilities', 'fs.resolve', 'dap.list'];
         if (!allowed.includes(method)) throw new HttpError(403, `method not allowed: ${method}`);
         if (method !== 'sync.manifest' && method !== 'fs.resolve' && method !== 'runner.capabilities' && target.policy === 'deny') throw new HttpError(403, '이 대상의 실행 정책이 "실행 금지"입니다');
         if (!deps.runners?.online(id)) throw new HttpError(409, `대상 ${target.name}이(가) 오프라인입니다`);
@@ -654,6 +657,96 @@ export function createAidevApi(deps: AidevDeps) {
             throw new HttpError(error instanceof RpcError && error.code === -32010 ? 409 : 400, error instanceof Error ? error.message : 'exec failed');
           }
         }
+      }
+      // ---- remote debugging (F-09) -----------------------------------------------------------------
+      const debugStart = rest.match(/^\/targets\/(\d+)\/debug$/);
+      if (debugStart && m === 'POST') {
+        const dbg = deps.debug;
+        if (!dbg || !deps.runners) throw new HttpError(503, 'debugging unavailable');
+        const target = store.target(uid, Number(debugStart[1]));
+        if (!target) throw new HttpError(404, 'Target not found');
+        const agentCall = session.sid.startsWith('runtime:');
+        const b = await readJson(req);
+        let launch;
+        try { launch = validateLaunch(b); } catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid launch'); }
+        launch = { ...launch, cwd: normalizeCwd(launch.cwd ?? null, target.allowed_roots ? JSON.parse(target.allowed_roots) as string[] : []) };
+        const waitMs = Math.min(Math.max(Number(b.waitSec) || 0, 0), 120) * 1000;
+        const runId = typeof b.runId === 'number' && store.run(uid, b.runId) ? b.runId : null;
+        const settle = async (snap: { id: string; state: string }) => {
+          if (waitMs && snap.state !== 'failed') { await dbg.waitForPause(uid, snap.id, waitMs); return dbg.snapshot(uid, snap.id); }
+          return snap;
+        };
+        try {
+          if (!agentCall) {
+            if (target.policy === 'deny') throw new HttpError(403, '이 대상의 실행 정책이 "실행 금지"입니다');
+            return json(res, 201, { session: await settle(await dbg.start(uid, target, launch, { by: 'user', runId })) }), true;
+          }
+          if (!deps.gate) throw new HttpError(503, 'remote gate unavailable');
+          if (!deps.runners.online(target.id)) return json(res, 200, { status: 'offline', error: `대상 ${target.name}이(가) 오프라인입니다 — 러너가 실행 중인지 확인하라고 사용자에게 알리세요` }), true;
+          const l = launch;
+          const result = await deps.gate.request(uid, target, { cmd: launchCommand(l), cwd: l.cwd ?? null }, { runId, agent: optStr(b.agent, 41) ?? null }, async (approvedBy) => {
+            const snap = await dbg.start(uid, target, l, { by: approvedBy, origin: 'agent', runId });
+            return { remoteRunId: snap.remoteRunId, debugSessionId: snap.id, result: snap };
+          });
+          if (result.status === 'started' && result.debug) return json(res, 200, { ...result, debug: await settle(result.debug as { id: string; state: string }) }), true;
+          return json(res, 200, result), true;
+        } catch (error) {
+          if (error instanceof HttpError) throw error;
+          if (agentCall) return json(res, 200, { status: 'error', error: error instanceof Error ? error.message : 'debug failed', allowed_roots: target.allowed_roots ? JSON.parse(target.allowed_roots) : [] }), true;
+          throw new HttpError(error instanceof RpcError && error.code === -32010 ? 409 : 400, error instanceof Error ? error.message : 'debug failed');
+        }
+      }
+      if (rest === '/debug' && m === 'GET') return json(res, 200, { sessions: deps.debug?.list(uid) ?? [] }), true;
+      const debugMatch = rest.match(/^\/debug\/([A-Za-z0-9]{4,40})(?:\/(events|control|breakpoints|evaluate|variables|scopes))?$/);
+      if (debugMatch && deps.debug) {
+        const dbg = deps.debug; const sid = debugMatch[1]; const op = debugMatch[2];
+        const fail = (error: unknown): never => { throw new HttpError((error as { status?: number }).status ?? 400, error instanceof Error ? error.message : 'debug request failed'); };
+        try {
+          if (!op && m === 'GET') {
+            // ?wait=<sec>: until the program pauses or ends (the agent's "run until the next stop")
+            const waitMs = Math.min(Math.max(Number(url.searchParams.get('wait')) || 0, 0), 120) * 1000;
+            if (waitMs) await dbg.waitForPause(uid, sid, waitMs);
+            return json(res, 200, { session: await dbg.snapshot(uid, sid) }), true;
+          }
+          if (!op && m === 'DELETE') return json(res, 200, { session: await dbg.stop(uid, sid) }), true;
+          if (op === 'events' && m === 'GET') {
+            const after = Math.max(Number(url.searchParams.get('after')) || 0, 0);
+            const waitMs = Math.min(Math.max(Number(url.searchParams.get('wait')) || 0, 0), 25) * 1000;
+            return json(res, 200, await dbg.events(uid, sid, after, waitMs)), true;
+          }
+          if (op === 'control' && m === 'POST') {
+            const b = await readJson(req);
+            const action = String(b.action ?? '');
+            if (!['continue', 'next', 'stepIn', 'stepOut', 'pause'].includes(action)) throw new HttpError(400, 'action: continue|next|stepIn|stepOut|pause');
+            await dbg.control(uid, sid, action as 'continue');
+            const waitMs = Math.min(Math.max(Number(b.waitSec) || 0, 0), 120) * 1000;
+            if (waitMs) await dbg.waitForPause(uid, sid, waitMs);
+            return json(res, 200, { session: await dbg.snapshot(uid, sid) }), true;
+          }
+          if (op === 'breakpoints' && m === 'POST') {
+            const b = await readJson(req);
+            const file = str(b.path ?? b.file, 'path', 2000);
+            const lines = (Array.isArray(b.lines) ? b.lines : []).slice(0, 100).map((x: unknown) => (typeof x === 'number' ? { line: x } : { line: Number((x as { line?: unknown }).line), condition: optStr((x as { condition?: unknown }).condition, 500) ?? null }));
+            return json(res, 200, { breakpoints: await dbg.setBreakpoints(uid, sid, file, lines) }), true;
+          }
+          if (op === 'evaluate' && m === 'POST') {
+            const b = await readJson(req);
+            return json(res, 200, await dbg.evaluate(uid, sid, str(b.expression, 'expression', 4000), typeof b.frameId === 'number' ? b.frameId : null)), true;
+          }
+          if (op === 'variables' && m === 'GET') return json(res, 200, { variables: await dbg.variables(uid, sid, Number(url.searchParams.get('ref')) || 0) }), true;
+          if (op === 'scopes' && m === 'GET') return json(res, 200, { scopes: await dbg.scopes(uid, sid, Number(url.searchParams.get('frame')) || 0) }), true;
+        } catch (error) { if (error instanceof HttpError) throw error; fail(error); }
+      }
+      // a text file on the PC (allowed folders only) — the debugger's source view (runner ≥ 0.8)
+      const fileMatch = rest.match(/^\/targets\/(\d+)\/file$/);
+      if (fileMatch && m === 'GET') {
+        const target = store.target(uid, Number(fileMatch[1]));
+        if (!target) throw new HttpError(404, 'Target not found');
+        if (!deps.runners?.online(target.id)) throw new HttpError(409, `대상 ${target.name}이(가) 오프라인입니다`);
+        try {
+          deps.runners.requireFeature(target.id, 'dap', '파일 보기', '0.8.0');
+          return json(res, 200, await deps.runners.call(target.id, 'fs.read', { path: str(url.searchParams.get('path'), 'path', 2000) }, 20_000)), true;
+        } catch (error) { throw new HttpError(error instanceof RpcError && error.code === -32001 ? 403 : 400, error instanceof Error ? error.message : 'read failed'); }
       }
       // ---- approvals (F-05): agent commands waiting for the user --------------------------------
       if (rest === '/approvals' && m === 'GET') return json(res, 200, { approvals: deps.gate?.list(uid, url.searchParams.get('all') === '1') ?? [] }), true;

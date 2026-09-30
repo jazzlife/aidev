@@ -124,6 +124,7 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
     screens.delete(key(sc.targetId, sc.streamId));
     if (notifyRunner) void hub.call(sc.targetId, 'screen.stop', { streamId: sc.streamId }, 5000).catch(() => {});
   }
+  const notificationListeners = new Set<(targetId: number, method: string, params: unknown) => void>();
   const screenCaps = (targetId: number) => { try { return JSON.parse(store.targetById(targetId)?.capabilities ?? '{}') as { runner?: string; features?: string[]; screen?: boolean; control?: boolean }; } catch { return {}; } };
   /** "This runner is too old" with the version that is actually connected: a new build only lands in dist/ —
    *  the running service keeps its old binary until it is replaced (Mac: ops/runner/install.sh). */
@@ -391,6 +392,11 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
             if (st) finishStream(st, typeof p.code === 'number' ? p.code : null, typeof p.signal === 'string' ? p.signal.slice(0, 40) : null, typeof p.durationMs === 'number' ? p.durationMs : null);
             return;
           }
+          // other notifications (dap.exited, …) go to the modules that asked for them
+          if (typeof msg.method === 'string' && msg.id === undefined) {
+            for (const fn of notificationListeners) { try { fn(conn.targetId, msg.method, msg.params); } catch (error) { console.log(`[runner] ${msg.method} listener failed: ${error instanceof Error ? error.message : String(error)}`); } }
+            return;
+          }
           if (typeof msg.id === 'number' && conn.pending.has(msg.id)) {
             const p = conn.pending.get(msg.id)!; conn.pending.delete(msg.id); clearTimeout(p.timer);
             const err = msg.error as { code?: number; message?: string } | undefined;
@@ -407,6 +413,13 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
       return true;
     },
 
+    /** Runner notifications not handled here (F-09 `dap.exited`). */
+    onNotification(fn: (targetId: number, method: string, params: unknown) => void) { notificationListeners.add(fn); return () => { notificationListeners.delete(fn); }; },
+    /** Throws RpcError(-32021) naming the connected runner version when it lacks `feature`. */
+    requireFeature(targetId: number, feature: string, what: string, min: string) {
+      const caps = screenCaps(targetId);
+      if (!caps.features?.includes(feature)) throw new RpcError(-32021, tooOld(caps, what, min));
+    },
     /** JSON-RPC call to a target's runner; rejects with RpcError when offline, on error or timeout. */
     call<T = unknown>(targetId: number, method: string, params?: unknown, timeoutMs = CALL_TIMEOUT_MS): Promise<T> {
       const conn = conns.get(targetId);

@@ -7,3 +7,5 @@ export { RunOutputPane, requestRunFocus } from '@/modules/remote-target/RunOutpu
 export { RemoteApprovalCards, ApprovalCard } from '@/modules/remote-target/RemoteApprovalCards';
 export { PreviewPane } from '@/modules/remote-target/PreviewPane';
 export { ScreenPane } from '@/modules/remote-target/ScreenPane';
+export { DebugPane } from '@/modules/remote-target/DebugPane';
+export type { DebugProject } from '@/modules/remote-target/DebugStartForm';

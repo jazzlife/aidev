@@ -15,6 +15,7 @@ import '../../load-env.js';
  *   remote_preview  — show a dev server running on a target in the workbench preview panel (F-06)
  *   remote_windows  — the program windows open on a target (id, app, title) (F-07c)
  *   remote_screenshot — look at one program window on a target (image content; needs the PC owner's consent) (F-07)
+ *   remote_debug_start / _step / _eval / _breakpoints / _stop — debug a program on a target (DAP: js-debug, debugpy, codelldb) (F-09)
  * The turn context (chat run id, routed target, agent) comes from this process's env and is sent
  * with every call, so remote results count toward the run's outcome.
  */
@@ -54,7 +55,7 @@ const turnContext = {
   cwd: process.cwd(),
 };
 // approvals can take minutes and a build or test run longer: remote tools get their own ceiling
-const LONG_TOOLS = new Set(['remote_exec', 'remote_logs', 'remote_sync']);
+const LONG_TOOLS = new Set(['remote_exec', 'remote_logs', 'remote_sync', 'remote_debug_start', 'remote_debug_step']);
 const LONG_TIMEOUT_MS = 45 * 60_000;
 
 async function callApi(toolName: string, input: Record<string, unknown>) {
@@ -200,6 +201,79 @@ const tools: ToolDefinition[] = [
     },
   },
   {
+    name: 'remote_debug_start',
+    description: [
+      'Debug a program on one of the user\'s machines: run it under a real debugger with breakpoints and look at the stack and variables where it stops (instead of guessing from logs).',
+      'adapter: "js-debug" (Node.js/TypeScript; program = .js file, or runtimeExecutable "npm" + runtimeArgs ["test"]), "debugpy" (Python; program = .py file, or module e.g. "pytest"), "codelldb" (C/C++/Rust/Swift; program = a binary built with debug info — build it first with remote_exec, e.g. cc -g -O0, cargo build).',
+      'Paths are on the target (inside its allowed folders; relative = relative to cwd). Sync the project first with remote_sync and use its dest as cwd.',
+      'Waits until the program pauses (breakpoint, exception, stopOnEntry) or ends (waitSec, default 60) and returns: session, state, pausedAt, stack (with frame ids), locals (ref>0 = expandable), breakpoints (verified?), output.',
+      'Like remote_exec, a program that is not a read/build/test command may wait for the user\'s approval. The user sees the same session in their debug window. Always end with remote_debug_stop.',
+    ].join(' '),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string', description: 'Target name or id (optional when routed or only one is online).' },
+        adapter: { type: 'string', enum: ['js-debug', 'debugpy', 'codelldb'] },
+        program: { type: 'string', description: 'File to run (a .js/.py file or a debug binary).' },
+        module: { type: 'string', description: 'debugpy: run a module instead of a file (python -m <module>), e.g. "pytest".' },
+        runtimeExecutable: { type: 'string', enum: ['node', 'npm', 'npx', 'yarn', 'pnpm', 'tsx', 'ts-node'], description: 'js-debug: what starts the program (default node).' },
+        runtimeArgs: { type: 'array', items: { type: 'string' }, description: 'js-debug: arguments for runtimeExecutable, e.g. ["test"] or ["run", "dev"].' },
+        args: { type: 'array', items: { type: 'string' }, description: 'Program arguments.' },
+        cwd: { type: 'string', description: 'Working folder on the target (default: the first allowed folder).' },
+        env: { type: 'object', description: 'Extra environment variables {NAME: value}.' },
+        breakpoints: { type: 'array', items: { type: 'object', properties: { file: { type: 'string' }, line: { type: 'number' }, condition: { type: 'string' } }, required: ['file', 'line'] }, description: 'Where to stop: file (relative to cwd or absolute) and 1-based line; optional condition expression.' },
+        stopOnEntry: { type: 'boolean', description: 'Pause at the first line.' },
+        waitSec: { type: 'number', description: 'How long to wait for the first pause/end (0-120, default 60).' },
+      },
+      required: ['adapter'],
+    },
+  },
+  {
+    name: 'remote_debug_step',
+    description: 'Move a paused debug session on: continue (to the next breakpoint or the end), next (step over), stepIn, stepOut, or pause a running one. Waits for the next pause/end (waitSec, default 30) and returns where it is, the stack, locals and new output.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session: { type: 'string', description: 'Session id from remote_debug_start.' },
+        action: { type: 'string', enum: ['continue', 'next', 'stepIn', 'stepOut', 'pause'] },
+        waitSec: { type: 'number', description: '0-120, default 30.' },
+      },
+      required: ['session', 'action'],
+    },
+  },
+  {
+    name: 'remote_debug_eval',
+    description: 'While paused: evaluate an expression in the program\'s language in the current frame (or frameId from the stack), or expand a variable/object (ref from locals or an earlier result).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session: { type: 'string' },
+        expression: { type: 'string', description: 'e.g. "user.items.length", "len(rows)", "buf[0]".' },
+        ref: { type: 'number', description: 'variablesReference to expand instead of evaluating.' },
+        frameId: { type: 'number', description: 'Frame id from the stack (default: the top frame of your code).' },
+      },
+      required: ['session'],
+    },
+  },
+  {
+    name: 'remote_debug_breakpoints',
+    description: 'Replace the breakpoints of one file in a running debug session (an empty list removes them). Lines are 1-based; each may carry a condition. Returns whether each was verified (bound to code).',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session: { type: 'string' },
+        file: { type: 'string', description: 'File on the target (relative to the session cwd or absolute).' },
+        lines: { type: 'array', items: { anyOf: [{ type: 'number' }, { type: 'object', properties: { line: { type: 'number' }, condition: { type: 'string' } }, required: ['line'] }] } },
+      },
+      required: ['session', 'file', 'lines'],
+    },
+  },
+  {
+    name: 'remote_debug_stop',
+    description: 'End a debug session (stops the program and the debugger on the user\'s machine). Returns the final output.',
+    inputSchema: { type: 'object', properties: { session: { type: 'string' } }, required: ['session'] },
+  },
+  {
     name: 'remote_stop',
     description: 'Stop a running remote command: signal INT (Ctrl+C, default), TERM or KILL.',
     inputSchema: {
@@ -222,6 +296,11 @@ async function callTool(name: string, args: Record<string, unknown>) {
     case 'remote_stop':
     case 'remote_preview':
     case 'remote_windows':
+    case 'remote_debug_start':
+    case 'remote_debug_step':
+    case 'remote_debug_eval':
+    case 'remote_debug_breakpoints':
+    case 'remote_debug_stop':
       return jsonResponse(await callApi(name, args));
     case 'remote_screenshot':
       return imageResponse(await callApi(name, args));

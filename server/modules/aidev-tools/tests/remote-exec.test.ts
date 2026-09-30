@@ -151,3 +151,51 @@ test('remote_windows / remote_screenshot{query} (F-07c): program windows, then o
   assert.deepEqual(sent, { query: 'simulator', runId: 12 });
   assert.equal((r.window as { id: number }).id, 42);
 });
+
+const pausedSnap = (id: string, line: number, locals: Array<Record<string, unknown>>) => ({
+  id, state: 'paused', error: null, exitCode: null, program: '/w/app.py', cwd: '/w', version: '1.8.22',
+  stopped: { reason: 'breakpoint', description: null },
+  frames: [{ id: 3, name: 'add', path: '/w/app.py', line, internal: false }, { id: 4, name: 'run_module', path: '/usr/lib/python3.12/runpy.py', line: 88, internal: true }],
+  locals, localsScope: 'Locals', breakpoints: [{ path: '/w/app.py', line: 2, condition: null, verified: true, message: null }], output: 'x'.repeat(5000),
+});
+
+test('remote_debug_start (F-09): asks the user through the gate, then returns where the program paused', async () => {
+  let sent: Record<string, unknown> = {};
+  let polls = 0;
+  handler = (method, path, body) => {
+    if (path === '/targets') return targets;
+    if (method === 'POST' && path === '/targets/7/debug') { sent = body; return { status: 'pending', approval: { id: 'apprvdbg1', risk: 1.5, reasons: ['확인'] } }; }
+    if (path.startsWith('/approvals/apprvdbg1/wait')) return { approval: ++polls < 2 ? { status: 'pending', debugSessionId: null, error: null } : { status: 'allowed', debugSessionId: 'dbgabc1', error: null } };
+    if (method === 'GET' && path === '/debug/dbgabc1?wait=45') return { session: pausedSnap('dbgabc1', 2, [{ name: 'a', value: '0', type: 'int', ref: 0 }, { name: 'rows', value: '[...]', type: 'list', ref: 17 }]) };
+    throw new Error(`unexpected ${method} ${path}`);
+  };
+  const r = await aidevToolsService.remoteDebugStart({ adapter: 'debugpy', program: 'app.py', cwd: '~/aidev-work/p', breakpoints: [{ file: 'app.py', line: 2 }], waitSec: 45 }, { targetId: 7, runId: 5, agent: 'backend-node' }) as Record<string, unknown>;
+  assert.deepEqual(sent.breakpoints, [{ path: 'app.py', line: 2 }]);
+  assert.equal(sent.runId, 5); assert.equal(sent.waitSec, 45);
+  assert.equal(r.session, 'dbgabc1'); assert.equal(r.state, 'paused'); assert.equal(r.approvedBy, 'user');
+  assert.deepEqual(r.pausedAt, { reason: 'breakpoint', description: null, function: 'add', file: '/w/app.py', line: 2 });
+  assert.deepEqual(r.stack, ['add (/w/app.py:2) #frame 3'], 'internal frames are left out');
+  assert.deepEqual(r.locals, [{ name: 'a', value: '0', type: 'int', ref: undefined }, { name: 'rows', value: '[...]', type: 'list', ref: 17 }]);
+  assert.equal((r.output as string).length, 3000);
+});
+
+test('remote_debug_step / eval / breakpoints / stop (F-09) map onto the gateway session API', async () => {
+  const seen: string[] = [];
+  handler = (method, path, body) => {
+    seen.push(`${method} ${path} ${JSON.stringify(body)}`);
+    if (method === 'POST' && path === '/debug/dbgabc1/control') return { session: pausedSnap('dbgabc1', 3, [{ name: 's', value: '1', type: 'int', ref: 0 }]) };
+    if (method === 'POST' && path === '/debug/dbgabc1/evaluate') return { result: '1', type: 'int', ref: 0 };
+    if (method === 'GET' && path === '/debug/dbgabc1/variables?ref=17') return { variables: [{ name: '0', value: '1', type: 'int', ref: 0 }] };
+    if (method === 'POST' && path === '/debug/dbgabc1/breakpoints') return { breakpoints: [] };
+    if (method === 'DELETE' && path === '/debug/dbgabc1') return { session: { ...pausedSnap('dbgabc1', 3, []), state: 'ended', stopped: null, exitCode: 0 } };
+    throw new Error(`unexpected ${method} ${path}`);
+  };
+  const step = await aidevToolsService.remoteDebugStep('dbgabc1', 'next', 10) as Record<string, unknown>;
+  assert.equal((step.pausedAt as { line: number }).line, 3);
+  assert.match(seen[0], /"action":"next","waitSec":10/);
+  assert.deepEqual(await aidevToolsService.remoteDebugEval('dbgabc1', { expression: 'a + b' }), { result: '1', type: 'int', ref: 0 });
+  assert.deepEqual(await aidevToolsService.remoteDebugEval('dbgabc1', { ref: 17 }), { variables: [{ name: '0', value: '1', type: 'int', ref: 0 }] });
+  await aidevToolsService.remoteDebugBreakpoints('dbgabc1', 'app.py', []);
+  const end = await aidevToolsService.remoteDebugStop('dbgabc1') as Record<string, unknown>;
+  assert.equal(end.state, 'ended'); assert.equal(end.exitCode, 0); assert.equal(end.locals, undefined);
+});

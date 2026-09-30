@@ -64,7 +64,7 @@ function getMcpApiUrl(): string {
   return `http://127.0.0.1:${port}/api/aidev-tools-mcp`;
 }
 
-export async function callGateway(method: 'GET' | 'POST' | 'PATCH', apiPath: string, body?: unknown, timeoutMs = GATEWAY_TIMEOUT_MS): Promise<GatewayResponse> {
+export async function callGateway(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', apiPath: string, body?: unknown, timeoutMs = GATEWAY_TIMEOUT_MS): Promise<GatewayResponse> {
   if (!runtimeName) {
     throw new Error('aidev platform is not available in this runtime (AIDEV_RUNTIME unset).');
   }
@@ -111,6 +111,39 @@ export async function resolveTarget(requested: string | number | undefined, rout
   if (online.length === 1) return online[0];
   if (!list.length) throw new Error('등록된 원격 대상이 없습니다. 사용자에게 작업대 "원격 대상"에서 PC를 등록하고 aidev-runner를 실행하도록 안내하세요.');
   throw new Error(`대상을 지정하세요(target). 등록된 대상: ${names}`);
+}
+
+export type DebugStartInput = {
+  target?: string | number; adapter: 'js-debug' | 'debugpy' | 'codelldb'; program?: string; module?: string; runtimeExecutable?: string; runtimeArgs?: string[];
+  args?: string[]; cwd?: string; env?: Record<string, string>; stopOnEntry?: boolean; waitSec?: number;
+  breakpoints?: Array<{ file: string; line: number; condition?: string }>;
+};
+type DebugSnapshot = {
+  id: string; state: string; error: string | null; exitCode: number | null; program: string | null; cwd: string | null; version: string | null;
+  stopped: { reason: string; description: string | null } | null;
+  frames: Array<{ id: number; name: string; path: string | null; line: number; internal: boolean }>;
+  locals: Array<{ name: string; value: string; type: string | null; ref: number }>; localsScope: string | null;
+  breakpoints: Array<{ path: string; line: number; condition: string | null; verified: boolean | null; message: string | null }>;
+  output: string;
+};
+/** What an agent needs after each debugger step: where it is, the stack, the variables, the recent output. */
+export function debugSummary(s: DebugSnapshot) {
+  const frames = s.frames.filter((f) => !f.internal);
+  const top = frames[0] ?? s.frames[0];
+  const hint = s.state === 'paused'
+    ? '멈춤: locals를 보고, remote_debug_eval로 식을 계산하거나 ref로 객체를 펼치고, remote_debug_step(next/stepIn/continue)으로 진행하세요. 끝나면 remote_debug_stop.'
+    : s.state === 'running' ? '실행 중(아직 멈추지 않음): remote_debug_step action=pause 또는 중단점을 더 두고 다시 기다리세요.'
+      : s.state === 'failed' ? '디버깅을 시작하지 못했습니다: error를 보고 경로(허용 폴더)·어댑터·언어 런타임을 확인하세요.'
+        : '프로그램이 끝났습니다(output과 exitCode 확인). 다시 보려면 remote_debug_start.';
+  return {
+    session: s.id, state: s.state, error: s.error ?? undefined, exitCode: s.exitCode, adapterVersion: s.version,
+    pausedAt: s.stopped && top ? { reason: s.stopped.reason, description: s.stopped.description, function: top.name, file: top.path, line: top.line } : undefined,
+    stack: s.stopped ? frames.slice(0, 10).map((f) => `${f.name} (${f.path ?? '?'}:${f.line}) #frame ${f.id}`) : undefined,
+    locals: s.stopped ? s.locals.slice(0, 40).map((v) => ({ name: v.name, value: v.value, type: v.type ?? undefined, ref: v.ref || undefined })) : undefined,
+    breakpoints: s.breakpoints.map((b) => ({ file: b.path, line: b.line, verified: b.verified, message: b.message ?? undefined, condition: b.condition ?? undefined })),
+    output: s.output.slice(-3000),
+    hint,
+  };
 }
 
 /** Long-polls the gateway (25 s per request) until the run ends or `waitSec` passes. */
@@ -284,7 +317,7 @@ export function composeAgentInstructions(aidev: AidevTurnOptions): string {
     parts.push(`## 원격 실행 대상\n이 작업의 실행·테스트·디버깅은 사용자의 원격 PC \`${aidev.target.name}\` (${aidev.target.platform ?? 'unknown'}; tags ${aidev.target.tags.join(', ') || 'none'})에서 remote_* 도구로 수행한다.${aidev.scope.remoteAction && aidev.scope.remoteAction !== 'none' ? ` 요청된 원격 작업: ${aidev.scope.remoteAction}.` : ''}${aidev.device ? `\n대상 기기: ${aidev.device.tool} serial \`${aidev.device.serial}\` — 기기 명령은 \`${aidev.device.tool} -s ${aidev.device.serial} …\`로 이 기기를 지정한다(연결된 기기가 여럿).` : ''}\n대상 capabilities: ${capabilities}`);
   }
   parts.push('## 판단 도구\n여러 후보(수정안·파일·접근법·위험도) 중 골라야 하면 추측 대신 `aidev_decide` 도구(kind agent.pick / agent.score / agent.yesno)로 판정한다.');
-  parts.push('## 사용자 PC에서 실행\n사용자가 자기 PC·Mac·원격 머신에서 실행·빌드·테스트·확인을 요청하면 이 작업공간의 셸이 아니라 `remote_targets`로 대상을 확인하고 `remote_exec`로 실행한다(허용 폴더 안에서, 결과의 종료 코드·출력을 근거로 판단). 이 작업공간의 프로젝트를 대상에서 돌려야 하면 먼저 `remote_sync`로 복사하고(돌려준 `dest`를 cwd로), 여기서 파일을 고친 뒤에는 다시 `remote_sync` 후 실행한다. 의존성은 복사되지 않으므로 대상에서 설치(npm ci 등)한다. 테스트가 실패하면 원인을 고치고 다시 실행해 통과를 확인한다. 개발 서버처럼 계속 도는 명령은 `background:true` 후 `remote_logs`로 확인하고, 끝나면 `remote_stop`. 웹 앱을 사용자에게 보여줘야 하면 `remote_preview{port}`를 먼저 호출해 `base`를 받고, 개발 서버를 그 base로 실행(Vite: `npm run dev -- --base <base> --port <port>`)한 뒤 `remote_preview`를 다시 호출하면 작업대 미리보기 패널에 열린다(HMR 포함). 돌려준 url을 사용자에게 알려준다. 데스크탑 앱·에뮬레이터 창처럼 화면을 직접 봐야 확인할 수 있는 것은 `remote_windows`로 창을 찾고 `remote_screenshot{window|query}`로 그 창을 보고 판단한다(그 PC에서 화면 캡처를 허용한 경우만, 보기 전용). 파일 삭제·sudo·설치·강제 push 같은 명령은 사용자 승인이 필요하므로 꼭 필요할 때만 쓰고, 거부되면 같은 명령을 반복하지 않는다.');
+  parts.push('## 사용자 PC에서 실행\n사용자가 자기 PC·Mac·원격 머신에서 실행·빌드·테스트·확인을 요청하면 이 작업공간의 셸이 아니라 `remote_targets`로 대상을 확인하고 `remote_exec`로 실행한다(허용 폴더 안에서, 결과의 종료 코드·출력을 근거로 판단). 이 작업공간의 프로젝트를 대상에서 돌려야 하면 먼저 `remote_sync`로 복사하고(돌려준 `dest`를 cwd로), 여기서 파일을 고친 뒤에는 다시 `remote_sync` 후 실행한다. 의존성은 복사되지 않으므로 대상에서 설치(npm ci 등)한다. 테스트가 실패하면 원인을 고치고 다시 실행해 통과를 확인한다. 개발 서버처럼 계속 도는 명령은 `background:true` 후 `remote_logs`로 확인하고, 끝나면 `remote_stop`. 웹 앱을 사용자에게 보여줘야 하면 `remote_preview{port}`를 먼저 호출해 `base`를 받고, 개발 서버를 그 base로 실행(Vite: `npm run dev -- --base <base> --port <port>`)한 뒤 `remote_preview`를 다시 호출하면 작업대 미리보기 패널에 열린다(HMR 포함). 돌려준 url을 사용자에게 알려준다. 실행 중 오류·잘못된 값의 원인을 찾을 때는 로그로 추측하기보다 `remote_debug_start`(Node: js-debug, Python: debugpy, C/C++/Rust: codelldb — 디버그 빌드 먼저)로 의심 줄에 중단점을 두고 멈춘 곳의 locals·`remote_debug_eval`로 값을 확인하며 `remote_debug_step`으로 진행하고, 끝나면 `remote_debug_stop`(사용자도 같은 세션을 디버그 창에서 본다). 데스크탑 앱·에뮬레이터 창처럼 화면을 직접 봐야 확인할 수 있는 것은 `remote_windows`로 창을 찾고 `remote_screenshot{window|query}`로 그 창을 보고 판단한다(그 PC에서 화면 캡처를 허용한 경우만, 보기 전용). 파일 삭제·sudo·설치·강제 push 같은 명령은 사용자 승인이 필요하므로 꼭 필요할 때만 쓰고, 거부되면 같은 명령을 반복하지 않는다.');
   return parts.join('\n\n');
 }
 
@@ -413,6 +446,72 @@ export const aidevToolsService = {
     const target = await resolveTarget(input.target, turn.targetId ?? null);
     const r = await callGateway('POST', `/targets/${target.id}/screenshot`, { window: input.window, query: input.query, display: input.display, maxWidth: input.maxWidth, runId: turn.runId ?? undefined }) as Record<string, unknown>;
     return { target: target.name, ...r };
+  },
+
+  /**
+   * remote_debug_start (F-09): run a program under a debugger on one of the user's machines (js-debug for
+   * Node, debugpy for Python, codelldb for C/C++/Rust/Swift) with breakpoints, and wait until it pauses or
+   * ends. Like remote_exec it passes the gateway gate (a program that is not read/build/test waits for the
+   * user's approval). Returns the session id and where it stopped: stack, local variables, output.
+   */
+  async remoteDebugStart(input: DebugStartInput, turn: RemoteTurn = {}) {
+    const target = await resolveTarget(input.target, turn.targetId ?? null);
+    const waitSec = Math.min(Math.max(input.waitSec ?? 60, 0), 120);
+    const body = {
+      adapter: input.adapter, program: input.program, module: input.module, runtimeExecutable: input.runtimeExecutable, runtimeArgs: input.runtimeArgs,
+      args: input.args, cwd: input.cwd, env: input.env, stopOnEntry: input.stopOnEntry,
+      breakpoints: (input.breakpoints ?? []).map((b) => ({ path: b.file, line: b.line, condition: b.condition })),
+      waitSec, runId: turn.runId ?? undefined, agent: turn.agent ?? undefined,
+    };
+    const started = await callGateway('POST', `/targets/${target.id}/debug`, body, (waitSec + 300) * 1000) as GatewayResponse & { status?: string; debug?: DebugSnapshot; approval?: { id: string; risk: number; reasons: string[] }; reason?: string; error?: string; allowed_roots?: string[] };
+    const base = { target: target.name, adapter: input.adapter };
+    if (started.status === 'offline') return { ...base, status: 'offline', message: String(started.error ?? 'target offline') };
+    if (started.status === 'error') return { ...base, status: 'error', message: `${String(started.error ?? 'could not start')}${started.allowed_roots?.length ? ` — 허용 폴더: ${started.allowed_roots.join(', ')}` : ''}` };
+    if (started.status === 'denied') return { ...base, status: 'denied', message: String(started.reason ?? 'denied by policy') };
+    let sessionId = started.debug?.id ?? null;
+    if (started.status === 'pending' && started.approval) {
+      const deadline = Date.now() + 11 * 60_000;
+      let decision: { status: string; debugSessionId: string | null; error: string | null } | null = null;
+      while (Date.now() < deadline) {
+        const r = await callGateway('GET', `/approvals/${started.approval.id}/wait?timeout=25`, undefined, 40_000) as { approval?: { status: string; debugSessionId: string | null; error: string | null } };
+        if (r.approval && r.approval.status !== 'pending') { decision = r.approval; break; }
+      }
+      if (!decision || decision.status === 'expired') return { ...base, status: 'expired', message: '사용자가 10분 안에 승인하지 않았습니다. 디버깅을 시작하지 않았습니다.' };
+      if (decision.status === 'denied') return { ...base, status: 'denied', message: '사용자가 이 디버그 실행을 거부했습니다. 같은 요청을 반복하지 마세요.' };
+      if (decision.error || !decision.debugSessionId) return { ...base, status: 'error', message: decision.error ?? 'approved but could not start' };
+      sessionId = decision.debugSessionId;
+      const r = await callGateway('GET', `/debug/${sessionId}?wait=${waitSec}`, undefined, (waitSec + 30) * 1000) as { session: DebugSnapshot };
+      return { ...base, ...debugSummary(r.session), approvedBy: 'user' };
+    }
+    if (!sessionId || !started.debug) return { ...base, status: 'error', message: String(started.error ?? 'could not start') };
+    return { ...base, ...debugSummary(started.debug), approvedBy: 'auto' };
+  },
+
+  /** remote_debug_step: continue / next / stepIn / stepOut / pause, then wait for the next pause or the end. */
+  async remoteDebugStep(session: string, action: string, waitSec = 30) {
+    const r = await callGateway('POST', `/debug/${session}/control`, { action, waitSec: Math.min(Math.max(waitSec, 0), 120) }, (Math.min(Math.max(waitSec, 0), 120) + 30) * 1000) as { session: DebugSnapshot };
+    return debugSummary(r.session);
+  },
+
+  /** remote_debug_eval: an expression in the paused frame (or the top one), or the children of a variable (`ref`). */
+  async remoteDebugEval(session: string, input: { expression?: string; ref?: number; frameId?: number }) {
+    if (input.ref) {
+      const r = await callGateway('GET', `/debug/${session}/variables?ref=${input.ref}`) as { variables: Array<{ name: string; value: string; type: string | null; ref: number }> };
+      return { variables: r.variables.slice(0, 80) };
+    }
+    if (!input.expression) throw new Error('expression or ref is required.');
+    return callGateway('POST', `/debug/${session}/evaluate`, { expression: input.expression, frameId: input.frameId });
+  },
+
+  /** remote_debug_breakpoints: replaces the breakpoints of one file (empty list clears them). */
+  async remoteDebugBreakpoints(session: string, file: string, lines: Array<number | { line: number; condition?: string }>) {
+    return callGateway('POST', `/debug/${session}/breakpoints`, { path: file, lines });
+  },
+
+  /** remote_debug_stop: ends the program and the debugger. */
+  async remoteDebugStop(session: string) {
+    const r = await callGateway('DELETE', `/debug/${session}`) as { session: DebugSnapshot };
+    return debugSummary(r.session);
   },
 
   /** remote_stop: interrupt (INT) or kill a running remote command. */

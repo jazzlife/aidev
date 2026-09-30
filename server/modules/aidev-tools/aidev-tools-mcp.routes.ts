@@ -113,6 +113,49 @@ router.post('/tools/:toolName', async (req, res) => {
           maxWidth: typeof input.maxWidth === 'number' ? input.maxWidth : undefined,
         }, readTurn(input));
         break;
+      case 'remote_debug_start': {
+        const adapter = input.adapter;
+        if (adapter !== 'js-debug' && adapter !== 'debugpy' && adapter !== 'codelldb') throw new Error('adapter must be js-debug, debugpy or codelldb.');
+        const strs = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined);
+        const breakpoints = Array.isArray(input.breakpoints)
+          ? (input.breakpoints as unknown[]).map((b) => (b && typeof b === 'object' ? b as Record<string, unknown> : {})).filter((b) => typeof (b.file ?? b.path) === 'string' && Number.isInteger(Number(b.line))).map((b) => ({ file: String(b.file ?? b.path), line: Number(b.line), condition: typeof b.condition === 'string' ? b.condition : undefined }))
+          : undefined;
+        result = await aidevToolsService.remoteDebugStart({
+          target: typeof input.target === 'string' || typeof input.target === 'number' ? input.target : undefined,
+          adapter,
+          program: typeof input.program === 'string' && input.program.trim() ? input.program.trim() : undefined,
+          module: typeof input.module === 'string' && input.module.trim() ? input.module.trim() : undefined,
+          runtimeExecutable: typeof input.runtimeExecutable === 'string' ? input.runtimeExecutable : undefined,
+          runtimeArgs: strs(input.runtimeArgs), args: strs(input.args),
+          cwd: typeof input.cwd === 'string' && input.cwd.trim() ? input.cwd.trim() : undefined,
+          env: asStringMap(input.env), stopOnEntry: input.stopOnEntry === true, breakpoints,
+          waitSec: typeof input.waitSec === 'number' ? input.waitSec : undefined,
+        }, readTurn(input));
+        break;
+      }
+      case 'remote_debug_step': {
+        const action = String(input.action ?? '');
+        if (!['continue', 'next', 'stepIn', 'stepOut', 'pause'].includes(action)) throw new Error('action must be continue, next, stepIn, stepOut or pause.');
+        result = await aidevToolsService.remoteDebugStep(debugSession(input), action, typeof input.waitSec === 'number' ? input.waitSec : 30);
+        break;
+      }
+      case 'remote_debug_eval':
+        result = await aidevToolsService.remoteDebugEval(debugSession(input), {
+          expression: typeof input.expression === 'string' && input.expression.trim() ? input.expression : undefined,
+          ref: typeof input.ref === 'number' && input.ref > 0 ? input.ref : undefined,
+          frameId: typeof input.frameId === 'number' ? input.frameId : undefined,
+        });
+        break;
+      case 'remote_debug_breakpoints': {
+        const file = typeof input.file === 'string' ? input.file.trim() : '';
+        if (!file) throw new Error('file is required.');
+        const lines = (Array.isArray(input.lines) ? input.lines : []).map((l) => (typeof l === 'number' ? l : { line: Number((l as { line?: unknown })?.line), condition: typeof (l as { condition?: unknown })?.condition === 'string' ? String((l as { condition: string }).condition) : undefined }));
+        result = await aidevToolsService.remoteDebugBreakpoints(debugSession(input), file, lines);
+        break;
+      }
+      case 'remote_debug_stop':
+        result = await aidevToolsService.remoteDebugStop(debugSession(input));
+        break;
       case 'remote_stop': {
         const remoteRunId = Number(input.remoteRunId);
         if (!Number.isInteger(remoteRunId)) throw new Error('remoteRunId must be an integer.');
@@ -137,5 +180,12 @@ router.post('/tools/:toolName', async (req, res) => {
     res.status(400).json({ success: false, error: error instanceof Error ? error.message : 'aidev-tools request failed' });
   }
 });
+
+/** A debug session id as the gateway issues them (letters and digits). */
+function debugSession(input: Record<string, unknown>): string {
+  const id = typeof input.session === 'string' ? input.session.trim() : '';
+  if (!/^[A-Za-z0-9]{4,40}$/.test(id)) throw new Error('session (from remote_debug_start) is required.');
+  return id;
+}
 
 export default router;

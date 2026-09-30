@@ -28,10 +28,14 @@ export type ApprovalView = {
   risk: number; reasons: string[]; destructive: boolean; policy: string;
   status: 'pending' | 'allowed' | 'denied' | 'expired'; createdAt: number; expiresAt: number; decidedAt: number | null; decidedBy: string | null;
   remoteRunId: number | null; error: string | null;
+  /** F-09: what was asked — a command, or a program under the debugger (then the session id once it started) */
+  kind: 'exec' | 'debug'; debugSessionId: string | null;
 };
-type Approval = ApprovalView & { userId: number; exec: ExecParams; waiters: Set<() => void> };
+/** Starts something other than a plain command once allowed (F-09 debug sessions); returns its remote run. */
+export type GateStarter = (approvedBy: 'auto' | 'user') => Promise<{ remoteRunId: number; debugSessionId?: string; result?: unknown }>;
+type Approval = ApprovalView & { userId: number; exec: ExecParams; waiters: Set<() => void>; starter: GateStarter | null };
 export type GateResult =
-  | { status: 'started'; stream: StreamInfo; approval: ApprovalView | null; assessment: Assessment }
+  | { status: 'started'; stream?: StreamInfo; debug?: unknown; approval: ApprovalView | null; assessment: Assessment }
   | { status: 'pending'; approval: ApprovalView; assessment: Assessment }
   | { status: 'denied'; reason: string; approval: ApprovalView | null; assessment: Assessment | null };
 
@@ -101,7 +105,7 @@ export function createRemoteGate(deps: { store: Store; laya: LayaClient; runners
   const approvals = new Map<string, Approval>();
 
   const view = (a: Approval): ApprovalView => {
-    const { userId: _u, exec: _e, waiters: _w, ...rest } = a;
+    const { userId: _u, exec: _e, waiters: _w, starter: _s, ...rest } = a;
     return { ...rest };
   };
   function settle(a: Approval) {
@@ -123,7 +127,7 @@ export function createRemoteGate(deps: { store: Store; laya: LayaClient; runners
 
   function recordRefused(a: Approval, by: 'denied' | 'expired') {
     try {
-      const id = store.addRemoteRun({ runId: a.runId, targetId: a.targetId, userId: a.userId, kind: 'exec', cmd: a.cmd, cwd: a.cwd, risk: a.risk, approvedBy: by });
+      const id = store.addRemoteRun({ runId: a.runId, targetId: a.targetId, userId: a.userId, kind: a.kind, cmd: a.cmd, cwd: a.cwd, risk: a.risk, approvedBy: by });
       store.finishRemoteRun(id, { exitCode: null, artifacts: { refused: by, reasons: a.reasons } });
       a.remoteRunId = id;
     } catch { /* target deleted meanwhile */ }
@@ -153,16 +157,21 @@ export function createRemoteGate(deps: { store: Store; laya: LayaClient; runners
     return !a.safe;   // 'ask' (default): only read/build/test commands go straight through
   }
 
-  async function start(a: Approval, approvedBy: 'auto' | 'user') {
+  async function start(a: Approval, approvedBy: 'auto' | 'user'): Promise<{ stream?: StreamInfo; debug?: unknown }> {
+    if (a.starter) {
+      const r = await a.starter(approvedBy);
+      a.remoteRunId = r.remoteRunId; a.debugSessionId = r.debugSessionId ?? null;
+      return { debug: r.result };
+    }
     const stream = await runners.exec(a.targetId, a.userId, a.exec, { approvedBy, runId: a.runId, risk: a.risk });
     a.remoteRunId = stream.remoteRunId;
-    return stream;
+    return { stream };
   }
 
   return {
     assess,
     /** An agent asks to run `exec` on `target`. */
-    async request(userId: number, target: TargetRow, execIn: ExecParams, meta: { runId?: number | null; agent?: string | null }): Promise<GateResult> {
+    async request(userId: number, target: TargetRow, execIn: ExecParams, meta: { runId?: number | null; agent?: string | null }, starter: GateStarter | null = null): Promise<GateResult> {
       let exec = execIn;
       if (target.policy === 'deny') return { status: 'denied', reason: `대상 ${target.name}의 실행 정책이 "실행 금지"입니다`, approval: null, assessment: null };
       const assessment = await assess(userId, target, exec.cmd, exec.cwd ?? null);
@@ -173,15 +182,16 @@ export function createRemoteGate(deps: { store: Store; laya: LayaClient; runners
         id: crypto.randomBytes(9).toString('base64url'), userId, targetId: target.id, targetName: target.name, cmd: exec.cmd, cwd: exec.cwd ?? null,
         agent: meta.agent ?? null, runId: meta.runId ?? null, risk: assessment.risk, reasons: assessment.reasons, destructive: assessment.destructive, policy: target.policy,
         status: 'pending', createdAt: now, expiresAt: now + APPROVAL_TTL_MS, decidedAt: null, decidedBy: null, remoteRunId: null, error: null, exec, waiters: new Set(),
+        kind: starter ? 'debug' : 'exec', debugSessionId: null, starter,
       };
       console.log(`[remote-gate] target #${target.id} ${meta.agent ?? 'agent'} risk ${assessment.risk} safe=${assessment.safe} destructive=${assessment.destructive} policy=${target.policy}: ${exec.cmd.slice(0, 120)}`);
       if (!needsApproval(target.policy, assessment)) {
         a.status = 'allowed'; a.decidedAt = now; a.decidedBy = 'auto';
-        const stream = await start(a, 'auto');
-        return { status: 'started', stream, approval: null, assessment };
+        const started = await start(a, 'auto');
+        return { status: 'started', ...started, approval: null, assessment };
       }
       approvals.set(a.id, a);
-      void deps.push?.sendToUser(userId, { title: `원격 실행 승인 요청 · ${target.name}`, body: `${a.agent ? `${a.agent}: ` : ''}${a.cmd.slice(0, 140)}`, url: `/m/?approval=${a.id}`, tag: `approval-${a.id}` }).catch(() => undefined);
+      void deps.push?.sendToUser(userId, { title: `${starter ? '원격 디버그' : '원격 실행'} 승인 요청 · ${target.name}`, body: `${a.agent ? `${a.agent}: ` : ''}${a.cmd.slice(0, 140)}`, url: `/m/?approval=${a.id}`, tag: `approval-${a.id}` }).catch(() => undefined);
       console.log(`[remote-gate] approval ${a.id} pending: target #${target.id} risk ${a.risk} (${a.reasons.join(', ')})`);
       return { status: 'pending', approval: view(a), assessment };
     },

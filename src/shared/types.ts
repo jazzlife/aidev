@@ -1671,3 +1671,37 @@ export type RemotePreviewEntry = { targetId: number; targetName: string; port: n
 
 /** GET /api/aidev/targets/:id/dev: listening ports, startable projects, and the preview path/url for `port`. */
 export type RemoteDevScan = { ports: RemoteListeningPort[]; projects: RemoteDevProject[]; port: number; base: string; url: string; allowed_roots: string[] };
+
+// ---- F-09 remote debugging (gateway /api/aidev/debug; the DAP client runs in the gateway) ----------
+
+/** The debug adapters a runner can start: js-debug (Node), debugpy (Python), codelldb (C/C++/Rust/Swift). */
+export type RemoteDebugAdapter = 'js-debug' | 'debugpy' | 'codelldb';
+/** Where a session is: starting (adapter being provisioned/launched), running, paused, ended, failed. */
+export type RemoteDebugState = 'starting' | 'running' | 'paused' | 'ended' | 'failed';
+/** A breakpoint as the session has it (path on the PC); `verified` = bound to code by the adapter (null: not sent yet). */
+export type RemoteDebugBreakpoint = { path: string; line: number; condition: string | null; verified: boolean | null; message: string | null };
+/** A stack frame of the paused thread; `internal` = runtime/library code (node internals, site-packages, libc). */
+export type RemoteDebugFrame = { id: number; name: string; path: string | null; line: number; column: number; internal: boolean };
+/** A variable; `ref` > 0 can be expanded (object, list, struct). */
+export type RemoteDebugVariable = { name: string; value: string; type: string | null; ref: number };
+/** GET /api/aidev/debug — one session without the paused details. */
+export type RemoteDebugSession = {
+  id: string; targetId: number; targetName: string; adapter: RemoteDebugAdapter; version: string | null; state: RemoteDebugState;
+  error: string | null; exitCode: number | null; program: string | null; module: string | null; cwd: string | null; args: string[];
+  /** who started it: user, or the agent (auto = allowed by policy, user = after the user's approval) */
+  by: string; origin: 'user' | 'agent'; remoteRunId: number; runId: number | null; createdAt: number; endedAt: number | null;
+  stopped: { reason: string; description: string | null; threadId: number; at: number } | null;
+  breakpoints: RemoteDebugBreakpoint[]; seq: number;
+};
+/** GET /api/aidev/debug/:id — plus, while paused, the stack and the top user frame's variables, and the output tail. */
+export type RemoteDebugSnapshot = RemoteDebugSession & { frames: RemoteDebugFrame[]; locals: RemoteDebugVariable[]; localsScope: string | null; detailError: string | null; output: string };
+/** Session events, long-polled with `after` (state changes, program output, breakpoint status). */
+export type RemoteDebugEvent = { seq: number; at: number } & (
+  | { type: 'state'; state: RemoteDebugState; reason?: string | null; description?: string | null; location?: { path: string | null; line: number; name: string } | null }
+  | { type: 'output'; category: string; text: string }
+  | { type: 'breakpoints' });
+/** POST /api/aidev/targets/:id/debug — what to run under the debugger. */
+export type RemoteDebugLaunch = {
+  adapter: RemoteDebugAdapter; program?: string; module?: string; runtimeExecutable?: string; runtimeArgs?: string[]; args?: string[];
+  cwd?: string; env?: Record<string, string>; stopOnEntry?: boolean; breakpoints?: Array<{ path: string; line: number; condition?: string | null }>; waitSec?: number;
+};

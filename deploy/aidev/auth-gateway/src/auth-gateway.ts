@@ -9,6 +9,7 @@ import { LayaClient } from './laya.js';
 import { createAidevApi } from './aidev-api.js';
 import { createPush } from './push.js';
 import { createRemoteGate } from './remote-gate.js';
+import { createDebugHub } from './debug-hub.js';
 import { createRunnerHub, screenOpts, type RunnerHub } from './runner-hub.js';
 import { createPreview } from './preview.js';
 import { startTierPolicySchedule } from './tier-policy.js';
@@ -171,8 +172,10 @@ const gate = createRemoteGate({ store, laya, runners, push });
 runners.onFinish((stream, userId) => gate.onFinished(stream, userId, stream.runId));
 // Dev-server previews on the user's PCs (F-06): /p/<cap>/… over runner tunnels.
 const preview = createPreview({ store, runners, secret });
+// Remote debugging (F-09): the gateway speaks DAP to adapters the runner starts on the PC.
+const debug = createDebugHub({ store, runners });
 const aidev = createAidevApi({
-  runners, gate, preview, publicOrigin: origin,
+  runners, gate, preview, debug, publicOrigin: origin,
   store, laya, json, push,
   async runtimeFetch(session, path, init, timeoutMs = 10_000) {
     const runtime = await ready(session.user.runtime);

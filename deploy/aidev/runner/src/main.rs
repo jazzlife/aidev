@@ -6,6 +6,7 @@ mod appwin;
 mod caps;
 mod config;
 mod conn;
+mod dap;
 mod devserver;
 mod encoder;
 mod exec;

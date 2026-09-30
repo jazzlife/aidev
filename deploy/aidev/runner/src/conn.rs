@@ -138,11 +138,13 @@ async fn session(cfg: &Config, hub: &ExecHub) -> Result<(), SessionError> {
     crate::tunnel::attach(out.clone());
     crate::screen::attach(out.clone());
     crate::input::attach(out.clone());
+    crate::dap::attach(out.clone());
     let result = read_loop(cfg, hub, &out, &mut rx).await;
     hub.detach();
     crate::tunnel::detach();
     crate::screen::detach();
     crate::input::detach();
+    crate::dap::detach();
     drop(out);
     writer.abort();
     result
@@ -216,7 +218,10 @@ pub async fn handle(cfg: &Config, hub: &ExecHub, text: &str) -> Option<Value> {
                 Some(r) => Some(r),
                 None => match crate::sync::rpc(cfg, method, &params).await {
                     Some(r) => Some(r),
-                    None => crate::devserver::rpc(cfg, method, &params).await,
+                    None => match crate::devserver::rpc(cfg, method, &params).await {
+                        Some(r) => Some(r),
+                        None => crate::dap::rpc(cfg, method, &params).await,
+                    },
                 },
             },
         },

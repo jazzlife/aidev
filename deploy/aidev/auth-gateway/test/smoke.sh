@@ -339,6 +339,34 @@ if [ -x "$RUNNER_BIN" ]; then
   r=$(rpost "/targets/$TID/sync-report" '{"dest":"/x/proj","project":"proj","uploaded":2,"deleted":1,"unchanged":0,"bytes":6,"ms":12}'); check "$r" 'j.remoteRunId>0' "sync report recorded as a remote run"
   r=$(get "$A" "/api/aidev/remote-runs/$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).remoteRunId')"); check "$r" 'j.run.kind==="sync" && j.run.artifacts.uploaded===2 && j.run.exit_code===0' "sync run visible to the user"
   post "$A" "/api/aidev/targets/$TID" '{"policy":"deny"}' PATCH >/dev/null; r=$(rpost "/targets/$TID/rpc" '{"method":"sync.write","params":{"root":"~/aidev-work/proj","files":[]}}'); check "$r" '/실행 금지/.test(j.error)' "policy deny blocks sync writes"; post "$A" "/api/aidev/targets/$TID" '{"policy":"ask"}' PATCH >/dev/null
+  # F-09: remote debugging — the runner provisions the adapter (AIDEV_ADAPTER_MIRROR here), the gateway speaks DAP through a tunnel
+  if [ -n "${AIDEV_ADAPTER_MIRROR:-}" ]; then
+    jv() { echo "$1" | node -pe "const j=JSON.parse(require('fs').readFileSync(0)); $2"; }
+    DBG="$RH/aidev-work/dbg"; mkdir -p "$DBG"
+    printf 'function add(a, b) {\n  const sum = a + b;\n  return sum;\n}\nlet total = 0;\nfor (let i = 0; i < 3; i++) total = add(total, i);\nconsole.log("total", total);\n' > "$DBG/app.js"
+    printf 'def add(a, b):\n    s = a + b\n    return s\n\ntotal = 0\nfor i in range(3):\n    total = add(total, i)\nprint("total", total)\n' > "$DBG/app.py"
+    r=$(post "$A" "/api/aidev/targets/$TID/debug" '{"adapter":"js-debug","program":"app.js","cwd":"~/aidev-work/dbg","breakpoints":[{"path":"app.js","line":2}],"waitSec":90}'); DS=$(jv "$r" 'j.session?.id')
+    check "$r" 'j.session.state==="paused" && j.session.frames.find(f=>!f.internal).line===2 && j.session.locals.some(v=>v.name==="a"&&v.value==="0") && j.session.breakpoints[0].verified' "F-09 js-debug via the runner: paused at app.js:2, a=0 ($(jv "$r" 'j.session?.version+" "+(j.session?.error||"")'))"
+    r=$(post "$A" "/api/aidev/debug/$DS/evaluate" '{"expression":"a + b"}'); check "$r" 'j.result==="0"' "F-09 evaluate a+b while paused"
+    r=$(post "$A" "/api/aidev/debug/$DS/control" '{"action":"next","waitSec":10}'); check "$r" 'j.session.state==="paused" && j.session.stopped.reason==="step" && j.session.frames.find(f=>!f.internal).line===3' "F-09 step over → line 3"
+    r=$(get "$A" "/api/aidev/debug/$DS/events?after=0"); check "$r" 'j.events.some(e=>e.type==="state"&&e.state==="paused"&&e.location.line===2) && j.next>0' "F-09 events: paused at line 2 recorded"
+    r=$(get "$A" "/api/aidev/targets/$TID/file?path=~/aidev-work/dbg/app.js"); check "$r" '/function add/.test(j.text)' "F-09 source view reads the file on the PC"
+    r=$(get "$A" "/api/aidev/targets/$TID/file?path=/etc/passwd"); check "$r" 'j.error' "F-09 source view stays in the allowed folders"
+    r=$(get "$B" "/api/aidev/debug/$DS"); check "$r" 'j.error' "F-09 another user cannot see the session"
+    r=$(post "$A" "/api/aidev/debug/$DS/breakpoints" '{"path":"app.js","lines":[]}'); check "$r" 'j.breakpoints.length===0' "F-09 breakpoints cleared"
+    r=$(post "$A" "/api/aidev/debug/$DS/control" '{"action":"continue","waitSec":30}'); check "$r" 'j.session.state==="ended" && /total 3/.test(j.session.output)' "F-09 continued to the end (output: total 3)"
+    r=$(get "$A" "/api/aidev/remote-runs/$(jv "$r" 'j.session.remoteRunId')"); check "$r" 'j.run.kind==="debug" && j.run.approved_by==="user" && j.run.finished_at>0' "F-09 the session is a remote run (kind debug)"
+    # the agent: policy ask → a program under the debugger needs the user's OK, then it drives the session
+    r=$(rpost "/targets/$TID/debug" '{"adapter":"debugpy","program":"app.py","cwd":"~/aidev-work/dbg","breakpoints":[{"path":"app.py","line":2}],"waitSec":60,"agent":"testing"}'); APD=$(jv "$r" 'j.approval?.id')
+    check "$r" 'j.status==="pending" && j.approval.kind==="debug" && /python3 app.py/.test(j.approval.cmd)' "F-09 agent: debugging python3 app.py asks first"
+    (sleep 1; post "$A" "/api/aidev/approvals/$APD" '{"allow":true}' >/dev/null) &
+    r=$(rget "/approvals/$APD/wait?timeout=20"); DS2=$(jv "$r" 'j.approval?.debugSessionId')
+    check "$r" 'j.approval.status==="allowed" && j.approval.debugSessionId && j.approval.remoteRunId>0' "F-09 agent: allowed → the session starts (debugpy provisioned via pip)"
+    r=$(rget "/debug/$DS2?wait=60"); check "$r" 'j.session.state==="paused" && j.session.frames[0].line===2 && j.session.locals.some(v=>v.name==="a"&&v.value==="0")' "F-09 agent: paused at app.py:2 with a=0 ($(jv "$r" 'j.session?.state+" "+(j.session?.error||"")'))"
+    r=$(rpost "/debug/$DS2/control" '{"action":"continue","waitSec":20}'); check "$r" 'j.session.state==="paused" && j.session.locals.some(v=>v.name==="b"&&v.value==="1")' "F-09 agent: continue → next hit b=1"
+    r=$(curl -s -X DELETE "$G/api/aidev/debug/$DS2" -H "authorization: Bearer $A"); check "$r" 'j.session.state==="ended"' "F-09 user stops the agent's session"
+    r=$(rpost "/targets/$TID/rpc" '{"method":"dap.list","params":{}}'); check "$r" 'j.result && j.result.sessions.length===0' "F-09 the runner has no adapter left"
+  else echo "SKIP F-09 remote debugging (set AIDEV_ADAPTER_MIRROR)"; fi
   # a command outlives a gateway restart: the runner keeps it, the new gateway adopts it by tag and catches up the output
   r=$(post "$A" "/api/aidev/targets/$TID/exec" '{"cmd":"echo before; sleep 3; echo after-restart; exit 5"}'); RR2=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).stream?.remoteRunId')
   sleep 0.5; kill "$GWPID"; sleep 0.5

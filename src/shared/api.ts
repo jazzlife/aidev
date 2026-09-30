@@ -5,6 +5,7 @@ import {
 } from '@/shared/authToken';
 import { IS_PLATFORM } from '@/shared/utils';
 import { readVoiceConfig, voiceConfigHeaders } from '@/shared/voiceConfig';
+import type { RemoteDebugLaunch } from '@/shared/types';
 
 // Headers are a plain record rather than the full `HeadersInit` union so the
 // defaults below can be merged with a caller's headers by spreading.
@@ -578,6 +579,8 @@ export const api = {
     windows: (targetId: number) => get(`/api/aidev/targets/${targetId}/windows`),
     /** One screenshot as JSON (base64 JPEG) of a window (id or `query` = part of its app/title; default the focused one). */
     screenshot: (targetId: number, opts: { window?: number | null; query?: string; display?: number; maxWidth?: number } = {}) => post(`/api/aidev/targets/${targetId}/screenshot`, opts),
+    /** F-09: a text file on the PC (allowed folders only) → {path, text, size, truncated}; the debugger's source view. */
+    file: (targetId: number, path: string) => get(`/api/aidev/targets/${targetId}/file?path=${encodeURIComponent(path)}`),
     /** WebSocket URL of a target's run streams (same origin; the session cookie or stored token authenticates). */
     streamUrl: (targetId: number) => {
       const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
@@ -585,6 +588,21 @@ export const api = {
       return `${protocol}//${window.location.host}/api/aidev/targets/${targetId}/stream${token ? `?token=${encodeURIComponent(token)}` : ''}`;
     },
   },
+};
+
+// F-09 remote debugging sessions (the gateway drives the debug adapter on the PC).
+export const debugApi = {
+  list: () => get('/api/aidev/debug'),
+  start: (targetId: number, launch: RemoteDebugLaunch) => post(`/api/aidev/targets/${targetId}/debug`, launch),
+  get: (sessionId: string, waitSec = 0) => get(`/api/aidev/debug/${sessionId}${waitSec ? `?wait=${waitSec}` : ''}`),
+  /** Long-poll: events after `after` (waits up to `waitSec` when there are none). */
+  events: (sessionId: string, after: number, waitSec = 20, options: ApiRequestOptions = {}) => get(`/api/aidev/debug/${sessionId}/events?after=${after}&wait=${waitSec}`, options),
+  control: (sessionId: string, action: 'continue' | 'next' | 'stepIn' | 'stepOut' | 'pause') => post(`/api/aidev/debug/${sessionId}/control`, { action }),
+  breakpoints: (sessionId: string, path: string, lines: Array<{ line: number; condition?: string | null }>) => post(`/api/aidev/debug/${sessionId}/breakpoints`, { path, lines }),
+  evaluate: (sessionId: string, expression: string, frameId?: number | null) => post(`/api/aidev/debug/${sessionId}/evaluate`, { expression, frameId: frameId ?? undefined }),
+  variables: (sessionId: string, ref: number) => get(`/api/aidev/debug/${sessionId}/variables?ref=${ref}`),
+  scopes: (sessionId: string, frameId: number) => get(`/api/aidev/debug/${sessionId}/scopes?frame=${frameId}`),
+  stop: (sessionId: string) => del(`/api/aidev/debug/${sessionId}`),
 };
 
 // ---------------------------

@@ -1,6 +1,6 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
-import { AppWindow, Bot, Monitor, Code2, FolderTree, GitBranch, Globe, ListChecks, MessageSquare, MessagesSquare, MonitorPlay, MonitorSmartphone, PanelBottom, PanelLeft, PanelRight, Settings, SlidersHorizontal, TerminalSquare, X } from 'lucide-react';
+import { AppWindow, Bot, Bug, Monitor, Code2, FolderTree, GitBranch, Globe, ListChecks, MessageSquare, MessagesSquare, MonitorPlay, MonitorSmartphone, PanelBottom, PanelLeft, PanelRight, Settings, SlidersHorizontal, TerminalSquare, X } from 'lucide-react';
 
 import { ChatInterface } from '@/modules/chat';
 import { FileTree } from '@/modules/file-tree';
@@ -14,9 +14,10 @@ import { useUiPreferences } from '@/shared/context/UiPreferencesContext';
 import { useFileOpenResolver, WorkspaceErrorBoundary, WorkspaceStateView } from '@/modules/project-workspace';
 import type { DirectoryRevealRequest, WorkspaceMainProps } from '@/shared/types';
 import { AgentCatalog } from '@/modules/aidev-router';
-import { PreviewPane, RemoteApprovalCards, requestRunFocus, RunOutputPane, ScreenPane, TargetsPanel } from '@/modules/remote-target';
+import { DebugPane, PreviewPane, RemoteApprovalCards, requestRunFocus, RunOutputPane, ScreenPane, TargetsPanel } from '@/modules/remote-target';
 import { usePreviewList } from '@/modules/remote-preview';
 import { LiveWindowHost, liveWindows, useLiveWindows, type LiveWindowSpec } from '@/modules/live-window';
+import { useAgentDebugSessions } from '@/modules/remote-debug';
 import { REMOTE_RUN_FOCUS_EVENT } from '@/modules/aidev-router';
 import { EditorGroup, useEditorGroup } from '@/modules/workbench/EditorGroup';
 import { SplitHandle } from '@/modules/workbench/SplitHandle';
@@ -146,6 +147,18 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
   const bottomTabs = useMemo(() => BOTTOM_TABS.filter((tab) => (tab.id === 'tasks' ? shouldShowTasks : tab.id === 'browser' ? browserUseEnabled : true)), [browserUseEnabled, shouldShowTasks]);
   const bottomTab: BottomTab = bottomTabs.some((tab) => tab.id === layout.bottomTab) ? layout.bottomTab : 'terminal';
 
+  const remoteProjectPath = selectedProject?.fullPath || selectedProject?.path || '';
+  const remoteProjectName = String(selectedProject?.displayName || selectedProject?.name || remoteProjectPath.split('/').pop());
+  const remoteProject = useMemo(() => (remoteProjectPath ? { path: remoteProjectPath, name: remoteProjectName } : null), [remoteProjectPath, remoteProjectName]);
+  // F-09: the debug window knows the open project (workspace ↔ PC folder) and opens paused files in the editor
+  const liveSpecs = useMemo<LiveWindowSpec[]>(() => [
+    ...LIVE_WINDOWS,
+    { id: 'debug', title: '디버그', icon: Bug, render: (visible) => <DebugPane isVisible={visible} project={remoteProject} onOpenFile={openFileInEditor} />, popoutPath: '/live/debug' },
+  ], [remoteProject, openFileInEditor]);
+  // a debug session an agent started (remote_debug_start) brings the debug window forward, once
+  const openDebugWindow = useCallback(() => liveWindows.open('debug'), []);
+  useAgentDebugSessions(!noProject, openDebugWindow);
+
   const stateView = <WorkspaceStateView mode={isLoading ? 'loading' : 'empty'} isMobile={false} onMenuClick={openSessions} />;
   const quickSettingsButton = <button type="button" title="빠른 설정" aria-label="빠른 설정" onClick={() => toggleQuickSettings()} className="p-2 rounded text-muted-foreground hover:text-foreground hover:bg-muted"><SlidersHorizontal size={isTablet ? 16 : 18} /></button>;
   const settingsButton = <button type="button" title="설정" aria-label="설정" onClick={() => onShowSettings?.()} className="p-2 rounded text-muted-foreground hover:text-foreground hover:bg-muted"><Settings size={isTablet ? 16 : 18} /></button>;
@@ -181,8 +194,6 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
       />
     </WorkspaceErrorBoundary>
   );
-  const remoteProjectPath = selectedProject?.fullPath || selectedProject?.path || '';
-  const remoteProject = remoteProjectPath ? { path: remoteProjectPath, name: String(selectedProject?.displayName || selectedProject?.name || remoteProjectPath.split('/').pop()) } : null;
   const explorer = <FileTree selectedProject={selectedProject} onFileOpen={handleFileOpen} revealDirectory={revealDirectory} showTitle={false} />;
   const git = <GitPanel selectedProject={selectedProject} isMobile={false} onFileOpen={handleFileOpen} onProjectSelect={onProjectSelect} onProjectsRefresh={onProjectsRefresh} />;
   const terminal = (active: boolean) => <StandaloneShell project={selectedProject} session={selectedSession} showHeader={false} isActive={active} />;
@@ -203,7 +214,7 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
               <button key={entry.id} type="button" className={`shrink-0 whitespace-nowrap px-3 h-7 border-l border-border ${!layout.tabletShowChat && pane === entry.id ? 'bg-primary text-primary-foreground' : ''}`} onClick={() => layoutStore.patch('tablet', { tabletShowChat: false, tabletPane: entry.id })}>{entry.title}</button>
             ))}
           </div>
-          {LIVE_WINDOWS.map((w) => <button key={w.id} type="button" title={w.title} aria-label={w.title} aria-pressed={liveOn(w.id)} onClick={() => liveWindows.toggle(w.id)} className={`p-2 rounded ${liveOn(w.id) ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}><w.icon size={16} /></button>)}
+          {liveSpecs.map((w) => <button key={w.id} type="button" title={w.title} aria-label={w.title} aria-pressed={liveOn(w.id)} onClick={() => liveWindows.toggle(w.id)} className={`p-2 rounded ${liveOn(w.id) ? 'bg-primary text-primary-foreground' : 'hover:bg-muted'}`}><w.icon size={16} /></button>)}
           {quickSettingsButton}
           {settingsButton}
         </div>
@@ -228,7 +239,7 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
           {!layout.tabletShowChat && pane === 'remote' ? <div className="absolute inset-0"><RunOutputPane isVisible project={remoteProject} /></div> : null}
           {!layout.tabletShowChat && pane === 'browser' && browserUseEnabled ? <div className="absolute inset-0"><BrowserUsePanel isVisible onShowSettings={onShowSettings} /></div> : null}
         </div>
-        <LiveWindowHost windows={LIVE_WINDOWS} compact={compactLive} />
+        <LiveWindowHost windows={liveSpecs} compact={compactLive} />
       </div>
     );
   }
@@ -249,7 +260,7 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
             className={`p-2 rounded ${sideView === view.id ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}><view.icon size={18} /></button>
         ))}
         <div className="my-1 h-px w-6 bg-border" />
-        {LIVE_WINDOWS.map((w) => (
+        {liveSpecs.map((w) => (
           <button key={w.id} type="button" title={w.title} aria-label={w.title} aria-pressed={liveOn(w.id)} onClick={() => liveWindows.toggle(w.id)}
             className={`p-2 rounded ${liveOn(w.id) ? 'bg-background text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}><w.icon size={18} /></button>
         ))}
@@ -305,7 +316,7 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
           </>
         ) : null}
       </div>
-      <LiveWindowHost windows={LIVE_WINDOWS} compact={compactLive} />
+      <LiveWindowHost windows={liveSpecs} compact={compactLive} />
     </div>
   );
 }
