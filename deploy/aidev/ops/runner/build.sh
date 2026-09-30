@@ -25,3 +25,4 @@ rustup target add aarch64-apple-darwin x86_64-apple-darwin >/dev/null
 cd "$SRC" && ./build.sh ${*:-mac win-x64 linux-arm64}
 mkdir -p "$OPS/runner/dist" && cp dist/* "$OPS/runner/dist/"
 echo "==> $OPS/runner/dist"; ls -la "$OPS/runner/dist"
+echo "==> 실행 중인 러너 교체: ./runner/install.sh  (빌드만으로는 연결된 러너가 바뀌지 않습니다)"

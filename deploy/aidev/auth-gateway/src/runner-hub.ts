@@ -115,7 +115,11 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
     screens.delete(key(sc.targetId, sc.streamId));
     if (notifyRunner) void hub.call(sc.targetId, 'screen.stop', { streamId: sc.streamId }, 5000).catch(() => {});
   }
-  const screenCaps = (targetId: number) => { try { return JSON.parse(store.targetById(targetId)?.capabilities ?? '{}') as { features?: string[]; screen?: boolean; control?: boolean }; } catch { return {}; } };
+  const screenCaps = (targetId: number) => { try { return JSON.parse(store.targetById(targetId)?.capabilities ?? '{}') as { runner?: string; features?: string[]; screen?: boolean; control?: boolean }; } catch { return {}; } };
+  /** "This runner is too old" with the version that is actually connected: a new build only lands in dist/ —
+   *  the running service keeps its old binary until it is replaced (Mac: ops/runner/install.sh). */
+  const tooOld = (caps: { runner?: string }, what: string, min: string) =>
+    `러너가 ${what}를 지원하지 않습니다 — 지금 연결된 러너는 ${caps.runner ?? '버전 미상'}이고 ${min} 이상이 필요합니다. 새로 빌드한 러너로 실행 중인 러너(서비스)를 교체하세요 (Mac: ops/runner/install.sh)`;
   /** A viewer needs a keyframe (joined late, fell behind): ask the runner, at most every 500 ms per stream. */
   function askKey(sc: ScreenStream) {
     const now = Date.now();
@@ -125,7 +129,7 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
   }
   function screenReady(targetId: number) {
     const caps = screenCaps(targetId);
-    if (!caps.features?.includes('screen')) throw new RpcError(-32021, '러너가 화면 보기를 지원하지 않습니다 — aidev-runner 0.5.0 이상으로 업데이트하세요');
+    if (!caps.features?.includes('screen')) throw new RpcError(-32021, tooOld(caps, '화면 보기', '0.7.0'));
     if (!caps.screen) throw new RpcError(-32030, '이 PC는 화면 캡처를 허용하지 않았습니다 — PC에서 `aidev-runner consent screen on` 후 러너를 다시 시작하세요');
   }
   const listeners = new Map<number, Set<(event: TargetEvent) => void>>();
@@ -421,8 +425,8 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
     async openTunnel(targetId: number, port: number): Promise<RunnerTunnel> {
       const conn = conns.get(targetId);
       if (!conn || conn.ws.readyState !== WebSocket.OPEN) throw new RpcError(-32010, 'target is offline');
-      const caps = (() => { try { return JSON.parse(store.targetById(targetId)?.capabilities ?? '{}') as { features?: string[] }; } catch { return {}; } })();
-      if (!caps.features?.includes('tunnel')) throw new RpcError(-32021, '러너가 미리보기를 지원하지 않습니다 — aidev-runner 0.4.0 이상으로 업데이트하세요');
+      const caps = screenCaps(targetId);
+      if (!caps.features?.includes('tunnel')) throw new RpcError(-32021, tooOld(caps, '미리보기', '0.4.0'));
       nextStream = nextStream >= 0x3fff_fff0 ? 1 : nextStream + 1;
       const id = nextStream;
       const k = key(targetId, id);
@@ -535,7 +539,7 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
             if (!msg.on) { controlOff(); return send({ type: 'control', on: false }); }
             const caps = screenCaps(targetId);
             const target = store.targetById(targetId);
-            if (!caps.features?.includes('input')) return send({ type: 'error', message: '러너가 원격 제어를 지원하지 않습니다 — aidev-runner 0.6.0 이상으로 업데이트하세요' });
+            if (!caps.features?.includes('input')) return send({ type: 'error', message: tooOld(caps, '원격 제어', '0.7.0') });
             if (!caps.control) return send({ type: 'error', message: '이 PC는 원격 제어를 허용하지 않았습니다 — PC에서 `aidev-runner consent control on` 후 러너를 다시 시작하세요' });
             if (!target || target.policy === 'deny') return send({ type: 'error', message: '이 대상의 실행 정책이 "실행 금지"입니다' });
             if (!control) {
