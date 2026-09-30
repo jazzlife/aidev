@@ -30,7 +30,7 @@ export type TierPolicyRow = { domain: string; depth: number; engine: string; mod
 export type LessonRow = { id: number; agent_id: number; engine: string | null; trigger: string; rule: string; evidence_run_id: number | null; status: string; hits: number; owner_id: number | null; promoted_to_prompt: number; fails: number; verified_by: string | null; promoted_version: number | null; created_at: number };
 export type RunRow = { id: number; user_id: number; session_id: string | null; decision_id: number | null; agent_id: number | null; agent_version: number | null; engine: string | null; model: string | null; effort: string | null; depth: number | null; task_kind: string | null; risk: number | null; target_id: number | null; started_at: number; finished_at: number | null; exit_code: number | null; tool_errors: number; user_feedback: string | null; reverted: number; reasked: number; test_result: string | null; cost_tokens: number | null; escalated_from_run: number | null; outcome: string | null };
 export type RemoteRunRow = { id: number; run_id: number | null; target_id: number; user_id: number; kind: string; cmd: string | null; cwd: string | null; risk: number | null; approved_by: string | null; started_at: number; finished_at: number | null; exit_code: number | null; artifacts: string | null; target_name?: string | null };
-export type TargetRow = { id: number; user_id: number; name: string; platform: string | null; arch: string | null; tags: string | null; description: string; token_hash: string | null; pairing_code: string | null; pairing_expires: number | null; policy: string; allowed_roots: string | null; capabilities: string | null; status: string; last_seen: number | null; created_at: number };
+export type TargetRow = { id: number; user_id: number; name: string; platform: string | null; arch: string | null; tags: string | null; description: string; token_hash: string | null; pairing_code: string | null; pairing_expires: number | null; policy: string; allowed_roots: string | null; capabilities: string | null; status: string; last_seen: number | null; created_at: number; /** the account's default PC for remote work (F-08) */ is_default: number };
 
 const agentName = /^[a-z0-9][a-z0-9-]{1,40}$/;
 const json = (v: unknown) => (v === undefined || v === null ? null : JSON.stringify(v));
@@ -121,6 +121,8 @@ export function migrateAidev(db: Database.Database) {
     CREATE INDEX IF NOT EXISTS remote_runs_target ON remote_runs(target_id, started_at);
   `);
   addColumn(db, 'agent_examples', 'task_kind', 'TEXT');
+  addColumn(db, 'session_settings', 'target_id', 'INTEGER');   // F-08: the PC this chat's remote work goes to (router chip)
+  addColumn(db, 'targets', 'is_default', 'INTEGER NOT NULL DEFAULT 0');   // F-08: the account's default PC
   addColumn(db, 'agents', 'min_tier', 'INTEGER');   // lowest depth this specialist runs at (§3.4 floors); null = no floor   // label for the task-kind lexical prior (databases created before the column)
   // Web push (mobile PWA) and the Claude subscription-login reminders that use it.
   db.exec(`
@@ -260,10 +262,27 @@ export function aidevMethods(db: Database.Database) {
     /** Replaces the chat's ceiling; an empty/null cap goes back to the account default. */
     setSessionEffortCap(userId: number, sessionId: string, cap: Partial<Record<Engine, string>> | null) {
       const clean = cap ? validCap(cap) : null;
-      if (!clean || !Object.keys(clean).length) { db.prepare('DELETE FROM session_settings WHERE user_id=? AND session_id=?').run(userId, sessionId); return null; }
+      if (!clean || !Object.keys(clean).length) {
+        db.prepare('UPDATE session_settings SET effort_cap=NULL, updated_at=? WHERE user_id=? AND session_id=?').run(Date.now(), userId, sessionId);
+        db.prepare('DELETE FROM session_settings WHERE user_id=? AND session_id=? AND effort_cap IS NULL AND target_id IS NULL').run(userId, sessionId);
+        return null;
+      }
       db.prepare('INSERT INTO session_settings(user_id,session_id,effort_cap,updated_at) VALUES(?,?,?,?) ON CONFLICT(user_id,session_id) DO UPDATE SET effort_cap=excluded.effort_cap, updated_at=excluded.updated_at')
         .run(userId, sessionId, JSON.stringify(clean), Date.now());
       return clean;
+    },
+    /** The PC this chat's remote work is pinned to (router chip), or null. */
+    sessionTarget(userId: number, sessionId: string): number | null {
+      const row = db.prepare('SELECT target_id FROM session_settings WHERE user_id=? AND session_id=?').get(userId, sessionId) as { target_id: number | null } | undefined;
+      return row?.target_id ?? null;
+    },
+    /** Pins (or with null unpins) this chat's PC; the target must be the user's. */
+    setSessionTarget(userId: number, sessionId: string, targetId: number | null) {
+      if (targetId !== null && !m.target(userId, targetId)) throw new Error('Target not found');
+      db.prepare('INSERT INTO session_settings(user_id,session_id,target_id,updated_at) VALUES(?,?,?,?) ON CONFLICT(user_id,session_id) DO UPDATE SET target_id=excluded.target_id, updated_at=excluded.updated_at')
+        .run(userId, sessionId, targetId, Date.now());
+      db.prepare('DELETE FROM session_settings WHERE user_id=? AND session_id=? AND effort_cap IS NULL AND target_id IS NULL').run(userId, sessionId);
+      return targetId;
     },
     /** What routing uses: chat ceiling (stored, or sent with a new chat's first message) over the account default. */
     effectiveEffortCap(userId: number, sessionId?: string | null, inline?: Partial<Record<Engine, string>> | null) {
@@ -574,6 +593,14 @@ export function aidevMethods(db: Database.Database) {
           p.allowedRoots === undefined ? cur.allowed_roots : json(p.allowedRoots), p.pairingCode === undefined ? cur.pairing_code : p.pairingCode, p.pairingExpires === undefined ? cur.pairing_expires : p.pairingExpires,
           p.tokenHash === undefined ? cur.token_hash : p.tokenHash, p.platform === undefined ? cur.platform : p.platform, p.arch === undefined ? cur.arch : p.arch,
           p.capabilities === undefined ? cur.capabilities : json(p.capabilities), p.status ?? cur.status, p.lastSeen === undefined ? cur.last_seen : p.lastSeen, id);
+    },
+    /** Makes one PC the account's default for remote work (false: no default). */
+    setDefaultTarget(userId: number, id: number, on: boolean) {
+      if (!m.target(userId, id)) throw new Error('Target not found');
+      db.transaction(() => {
+        if (on) db.prepare('UPDATE targets SET is_default=0 WHERE user_id=? AND id!=?').run(userId, id);
+        db.prepare('UPDATE targets SET is_default=? WHERE id=? AND user_id=?').run(on ? 1 : 0, id, userId);
+      })();
     },
     deleteTarget(userId: number, id: number) { db.prepare('DELETE FROM targets WHERE id=? AND user_id=?').run(id, userId); },
     addRemoteRun(r: { runId?: number | null; targetId: number; userId: number; kind: string; cmd?: string | null; cwd?: string | null; risk?: number | null; approvedBy?: string | null }) {

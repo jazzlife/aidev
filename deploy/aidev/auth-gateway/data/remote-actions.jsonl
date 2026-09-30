@@ -1,0 +1,183 @@
+{"text": "로그인 폼에 이메일 형식 검사를 추가해줘", "remote_action": "none", "lang": "ko"}
+{"text": "이 함수가 왜 느린지 설명해줘", "remote_action": "none", "lang": "ko"}
+{"text": "README에 설치 방법을 정리해줘", "remote_action": "none", "lang": "ko"}
+{"text": "useEffect 의존성 경고를 고쳐줘", "remote_action": "none", "lang": "ko"}
+{"text": "API 응답 타입을 TypeScript로 정의해줘", "remote_action": "none", "lang": "ko"}
+{"text": "이 SQL 쿼리를 인덱스 타도록 바꿔줘", "remote_action": "none", "lang": "ko"}
+{"text": "컴포넌트를 작은 단위로 리팩터링해줘", "remote_action": "none", "lang": "ko"}
+{"text": "에러 메시지를 한국어로 바꿔줘", "remote_action": "none", "lang": "ko"}
+{"text": "package.json에 lint 스크립트를 추가해줘", "remote_action": "none", "lang": "ko"}
+{"text": "이 정규식이 무슨 뜻이야?", "remote_action": "none", "lang": "ko"}
+{"text": "주문 테이블 스키마를 설계해줘", "remote_action": "none", "lang": "ko"}
+{"text": "다크 모드 색상 토큰을 정의해줘", "remote_action": "none", "lang": "ko"}
+{"text": "커밋 메시지 규칙을 문서로 만들어줘", "remote_action": "none", "lang": "ko"}
+{"text": "이 PR의 변경점을 요약해줘", "remote_action": "none", "lang": "ko"}
+{"text": "Dockerfile을 멀티스테이지로 바꿔줘", "remote_action": "none", "lang": "ko"}
+{"text": "GraphQL 리졸버에 페이지네이션 넣어줘", "remote_action": "none", "lang": "ko"}
+{"text": "로그 레벨을 환경 변수로 설정 가능하게 해줘", "remote_action": "none", "lang": "ko"}
+{"text": "이 코드의 보안 취약점을 검토해줘", "remote_action": "none", "lang": "ko"}
+{"text": "CSV 파서를 스트리밍 방식으로 바꿔줘", "remote_action": "none", "lang": "ko"}
+{"text": "유닛 테스트 코드를 작성해줘", "remote_action": "none", "lang": "ko"}
+{"text": "날짜 포맷 유틸을 dayjs로 교체해줘", "remote_action": "none", "lang": "ko"}
+{"text": "버튼 컴포넌트에 로딩 상태 prop 추가", "remote_action": "none", "lang": "ko"}
+{"text": "Redux를 Zustand로 옮기는 계획을 세워줘", "remote_action": "none", "lang": "ko"}
+{"text": "이 클래스에 주석을 달아줘", "remote_action": "none", "lang": "ko"}
+{"text": "i18n 키 누락된 곳을 찾아줘", "remote_action": "none", "lang": "ko"}
+{"text": "OpenAPI 스펙에서 클라이언트 코드 생성 방법 알려줘", "remote_action": "none", "lang": "ko"}
+{"text": "캐시 무효화 전략을 설명해줘", "remote_action": "none", "lang": "ko"}
+{"text": "프로젝트 폴더 구조를 제안해줘", "remote_action": "none", "lang": "ko"}
+{"text": "useMemo를 언제 써야 해?", "remote_action": "none", "lang": "ko"}
+{"text": "이 에러 스택트레이스 해석해줘", "remote_action": "none", "lang": "ko"}
+{"text": "환경 변수 예시 파일 만들어줘", "remote_action": "none", "lang": "ko"}
+{"text": "Git 브랜치 전략 정리해줘", "remote_action": "none", "lang": "ko"}
+{"text": "Add input validation to the signup endpoint", "remote_action": "none", "lang": "en"}
+{"text": "Explain how this reducer works", "remote_action": "none", "lang": "en"}
+{"text": "Rename the util functions to camelCase", "remote_action": "none", "lang": "en"}
+{"text": "Write a migration that adds a created_at column", "remote_action": "none", "lang": "en"}
+{"text": "Refactor the payment service into smaller modules", "remote_action": "none", "lang": "en"}
+{"text": "What does this TypeScript error mean?", "remote_action": "none", "lang": "en"}
+{"text": "Document the public API of this package", "remote_action": "none", "lang": "en"}
+{"text": "Add retry with backoff to the HTTP client", "remote_action": "none", "lang": "en"}
+{"text": "Design the database schema for comments", "remote_action": "none", "lang": "en"}
+{"text": "Convert these callbacks to async/await", "remote_action": "none", "lang": "en"}
+{"text": "Review this function for race conditions", "remote_action": "none", "lang": "en"}
+{"text": "Add a unit test for the date parser", "remote_action": "none", "lang": "en"}
+{"text": "Replace moment with date-fns in the codebase", "remote_action": "none", "lang": "en"}
+{"text": "Summarize the changes in the last commit", "remote_action": "none", "lang": "en"}
+{"text": "Create a .env.example file", "remote_action": "none", "lang": "en"}
+{"text": "Improve the error handling in the upload route", "remote_action": "none", "lang": "en"}
+{"text": "Split this 800-line component into smaller ones", "remote_action": "none", "lang": "en"}
+{"text": "How should I structure feature flags?", "remote_action": "none", "lang": "en"}
+{"text": "Add JSDoc comments to the hooks", "remote_action": "none", "lang": "en"}
+{"text": "Fix the typo in the settings page title", "remote_action": "none", "lang": "en"}
+{"text": "Set up ESLint rules for import ordering", "remote_action": "none", "lang": "en"}
+{"text": "Write a regex that matches Korean phone numbers", "remote_action": "none", "lang": "en"}
+{"text": "Add pagination to the users list API", "remote_action": "none", "lang": "en"}
+{"text": "Why is useState not updating immediately?", "remote_action": "none", "lang": "en"}
+{"text": "코드 리뷰해줘", "remote_action": "none", "lang": "ko"}
+{"text": "테스트 커버리지를 올리는 방법 알려줘", "remote_action": "none", "lang": "ko"}
+{"text": "CI 설정 파일을 GitHub Actions로 작성해줘", "remote_action": "none", "lang": "ko"}
+{"text": "이 알고리즘의 시간 복잡도는?", "remote_action": "none", "lang": "ko"}
+{"text": "로그인 화면 디자인을 개선해줘", "remote_action": "none", "lang": "ko"}
+{"text": "API 문서를 자동 생성하도록 설정해줘", "remote_action": "none", "lang": "ko"}
+{"text": "Make the navbar responsive", "remote_action": "none", "lang": "en"}
+{"text": "Add a loading skeleton to the dashboard cards", "remote_action": "none", "lang": "en"}
+{"text": "Write a Kubernetes deployment manifest for the api", "remote_action": "none", "lang": "en"}
+{"text": "Optimize the image imports in Next.js", "remote_action": "none", "lang": "en"}
+{"text": "Explain the difference between props and state", "remote_action": "none", "lang": "en"}
+{"text": "Add sorting to the table component", "remote_action": "none", "lang": "en"}
+{"text": "내 Mac에서 이 앱 실행해줘", "remote_action": "run", "lang": "ko"}
+{"text": "m4pro에서 개발 서버 띄워줘", "remote_action": "run", "lang": "ko"}
+{"text": "내 컴퓨터에서 서버 켜서 보여줘", "remote_action": "run", "lang": "ko"}
+{"text": "로컬 PC에서 npm start 해줘", "remote_action": "run", "lang": "ko"}
+{"text": "안드로이드 폰에 앱 설치해서 실행해줘", "remote_action": "run", "lang": "ko"}
+{"text": "시뮬레이터에서 앱 띄워줘", "remote_action": "run", "lang": "ko"}
+{"text": "TV에 앱 설치하고 실행해줘", "remote_action": "run", "lang": "ko"}
+{"text": "내 노트북에서 이 스크립트 돌려줘", "remote_action": "run", "lang": "ko"}
+{"text": "PC에서 백엔드 서버 실행해서 미리보기 열어줘", "remote_action": "run", "lang": "ko"}
+{"text": "에뮬레이터 켜고 앱 실행해줘", "remote_action": "run", "lang": "ko"}
+{"text": "sdb로 TV에 설치해서 켜줘", "remote_action": "run", "lang": "ko"}
+{"text": "adb로 기기에 apk 설치해줘", "remote_action": "run", "lang": "ko"}
+{"text": "내 맥에서 Electron 앱 켜줘", "remote_action": "run", "lang": "ko"}
+{"text": "원격 PC에서 도커 컴포즈 올려줘", "remote_action": "run", "lang": "ko"}
+{"text": "내 PC에서 파이썬 스크립트 실행해봐", "remote_action": "run", "lang": "ko"}
+{"text": "Run this app on my Mac", "remote_action": "run", "lang": "en"}
+{"text": "Start the dev server on my machine and show me", "remote_action": "run", "lang": "en"}
+{"text": "Launch the app in the iOS simulator", "remote_action": "run", "lang": "en"}
+{"text": "Install the apk on my Android phone and open it", "remote_action": "run", "lang": "en"}
+{"text": "Run the script on my laptop", "remote_action": "run", "lang": "en"}
+{"text": "Serve the site from my PC so I can preview it", "remote_action": "run", "lang": "en"}
+{"text": "Start the backend on the remote machine", "remote_action": "run", "lang": "en"}
+{"text": "Deploy the app to my Tizen TV and launch it", "remote_action": "run", "lang": "en"}
+{"text": "Open the Electron app on my computer", "remote_action": "run", "lang": "en"}
+{"text": "Bring up docker compose on my workstation", "remote_action": "run", "lang": "en"}
+{"text": "Run npm run dev on the Mac", "remote_action": "run", "lang": "en"}
+{"text": "Start the emulator and run the app", "remote_action": "run", "lang": "en"}
+{"text": "Execute the migration script on my local machine", "remote_action": "run", "lang": "en"}
+{"text": "Launch the game build on my PC", "remote_action": "run", "lang": "en"}
+{"text": "Run it on my device", "remote_action": "run", "lang": "en"}
+{"text": "내 Mac에서 테스트 돌려줘", "remote_action": "test", "lang": "ko"}
+{"text": "m4pro에서 npm test 실행해줘", "remote_action": "test", "lang": "ko"}
+{"text": "실기기에서 테스트해줘", "remote_action": "test", "lang": "ko"}
+{"text": "시뮬레이터에서 UI 테스트 돌려줘", "remote_action": "test", "lang": "ko"}
+{"text": "안드로이드 기기로 instrumented 테스트 실행해줘", "remote_action": "test", "lang": "ko"}
+{"text": "내 PC에서 e2e 테스트 돌려봐", "remote_action": "test", "lang": "ko"}
+{"text": "TV에서 앱 테스트해줘", "remote_action": "test", "lang": "ko"}
+{"text": "로컬 머신에서 pytest 돌려줘", "remote_action": "test", "lang": "ko"}
+{"text": "Playwright 테스트를 내 컴퓨터에서 실행해줘", "remote_action": "test", "lang": "ko"}
+{"text": "내 노트북에서 전체 테스트 스위트 돌려줘", "remote_action": "test", "lang": "ko"}
+{"text": "에뮬레이터에서 테스트 돌려봐", "remote_action": "test", "lang": "ko"}
+{"text": "원격 PC에서 통합 테스트 실행해줘", "remote_action": "test", "lang": "ko"}
+{"text": "Run the tests on my Mac", "remote_action": "test", "lang": "en"}
+{"text": "Run the e2e suite on my machine", "remote_action": "test", "lang": "en"}
+{"text": "Run the XCUITests in the simulator", "remote_action": "test", "lang": "en"}
+{"text": "Execute the Android instrumented tests on the phone", "remote_action": "test", "lang": "en"}
+{"text": "Run pytest on my workstation", "remote_action": "test", "lang": "en"}
+{"text": "Test the app on a real device", "remote_action": "test", "lang": "en"}
+{"text": "Run the Cypress tests on my laptop", "remote_action": "test", "lang": "en"}
+{"text": "Run the unit tests on the remote PC", "remote_action": "test", "lang": "en"}
+{"text": "Test it on the TV", "remote_action": "test", "lang": "en"}
+{"text": "Run go test ./... on my machine", "remote_action": "test", "lang": "en"}
+{"text": "Check that the tests pass on my PC", "remote_action": "test", "lang": "en"}
+{"text": "Run cargo test on the Mac", "remote_action": "test", "lang": "en"}
+{"text": "Run the flutter tests on my device", "remote_action": "test", "lang": "en"}
+{"text": "내 Mac에서 앱이 왜 죽는지 디버깅해줘", "remote_action": "debug", "lang": "ko"}
+{"text": "기기에서 크래시 나는 원인 찾아줘", "remote_action": "debug", "lang": "ko"}
+{"text": "TV에서 앱이 멈추는데 디버그해줘", "remote_action": "debug", "lang": "ko"}
+{"text": "시뮬레이터에서만 나는 버그 잡아줘", "remote_action": "debug", "lang": "ko"}
+{"text": "내 PC에서 브레이크포인트 걸고 확인해줘", "remote_action": "debug", "lang": "ko"}
+{"text": "안드로이드 폰에서 logcat 보면서 원인 찾아줘", "remote_action": "debug", "lang": "ko"}
+{"text": "로컬에서 실행하면 에러나는데 디버깅해줘", "remote_action": "debug", "lang": "ko"}
+{"text": "내 노트북에서 메모리 누수 추적해줘", "remote_action": "debug", "lang": "ko"}
+{"text": "원격 PC에서 서버가 500 내는 이유 디버깅해줘", "remote_action": "debug", "lang": "ko"}
+{"text": "에뮬레이터에서 앱이 흰 화면인 원인 찾아줘", "remote_action": "debug", "lang": "ko"}
+{"text": "Debug why the app crashes on my Mac", "remote_action": "debug", "lang": "en"}
+{"text": "Find out why it freezes on the TV", "remote_action": "debug", "lang": "en"}
+{"text": "Attach a debugger on my machine and check the loop", "remote_action": "debug", "lang": "en"}
+{"text": "Investigate the crash on my Android phone with logcat", "remote_action": "debug", "lang": "en"}
+{"text": "Debug the simulator-only layout bug", "remote_action": "debug", "lang": "en"}
+{"text": "Profile the memory leak on my PC", "remote_action": "debug", "lang": "en"}
+{"text": "Why does the server return 500 on my laptop? debug it", "remote_action": "debug", "lang": "en"}
+{"text": "Step through the startup on the device", "remote_action": "debug", "lang": "en"}
+{"text": "Trace the segfault on my workstation", "remote_action": "debug", "lang": "en"}
+{"text": "Debug the white screen in the emulator", "remote_action": "debug", "lang": "en"}
+{"text": "내 Mac에서 iOS 앱 빌드해줘", "remote_action": "build", "lang": "ko"}
+{"text": "m4pro에서 릴리스 빌드 만들어줘", "remote_action": "build", "lang": "ko"}
+{"text": "TV용 wgt 패키지 빌드해줘", "remote_action": "build", "lang": "ko"}
+{"text": "내 PC에서 윈도우 실행 파일로 패키징해줘", "remote_action": "build", "lang": "ko"}
+{"text": "안드로이드 apk 빌드해서 기기에 넣을 수 있게 해줘", "remote_action": "build", "lang": "ko"}
+{"text": "Xcode로 archive 만들어줘", "remote_action": "build", "lang": "ko"}
+{"text": "내 노트북에서 네이티브 모듈 컴파일해줘", "remote_action": "build", "lang": "ko"}
+{"text": "로컬 PC에서 도커 이미지 빌드해줘", "remote_action": "build", "lang": "ko"}
+{"text": "Electron 앱 dmg로 패키징해줘", "remote_action": "build", "lang": "ko"}
+{"text": "Tizen 앱 인증서로 서명해서 빌드해줘", "remote_action": "build", "lang": "ko"}
+{"text": "Build the iOS app on my Mac", "remote_action": "build", "lang": "en"}
+{"text": "Make a release build on the workstation", "remote_action": "build", "lang": "en"}
+{"text": "Package the Tizen app as a wgt", "remote_action": "build", "lang": "en"}
+{"text": "Build the Windows installer on my PC", "remote_action": "build", "lang": "en"}
+{"text": "Compile the native addon on my machine", "remote_action": "build", "lang": "en"}
+{"text": "Create an Xcode archive", "remote_action": "build", "lang": "en"}
+{"text": "Build the apk for my phone", "remote_action": "build", "lang": "en"}
+{"text": "Build the docker image on my laptop", "remote_action": "build", "lang": "en"}
+{"text": "Package the Electron app as a dmg", "remote_action": "build", "lang": "en"}
+{"text": "Sign and build the watch app on the Mac", "remote_action": "build", "lang": "en"}
+{"text": "내 Mac 화면 보여줘", "remote_action": "screenshot", "lang": "ko"}
+{"text": "앱 실행 화면 캡처해줘", "remote_action": "screenshot", "lang": "ko"}
+{"text": "시뮬레이터 화면 어떻게 나오는지 보여줘", "remote_action": "screenshot", "lang": "ko"}
+{"text": "TV에 뜬 화면 스크린샷 찍어줘", "remote_action": "screenshot", "lang": "ko"}
+{"text": "폰에서 어떻게 보이는지 캡처해줘", "remote_action": "screenshot", "lang": "ko"}
+{"text": "지금 PC에 떠 있는 창 보여줘", "remote_action": "screenshot", "lang": "ko"}
+{"text": "에뮬레이터 화면 찍어서 확인해줘", "remote_action": "screenshot", "lang": "ko"}
+{"text": "내 컴퓨터에서 레이아웃 깨진 거 화면으로 보여줘", "remote_action": "screenshot", "lang": "ko"}
+{"text": "앱 화면 스크린샷 떠서 확인해봐", "remote_action": "screenshot", "lang": "ko"}
+{"text": "원격 PC 화면 캡처해서 버튼 위치 확인해줘", "remote_action": "screenshot", "lang": "ko"}
+{"text": "Show me my Mac's screen", "remote_action": "screenshot", "lang": "en"}
+{"text": "Take a screenshot of the running app", "remote_action": "screenshot", "lang": "en"}
+{"text": "What does it look like in the simulator? show me", "remote_action": "screenshot", "lang": "en"}
+{"text": "Capture the TV screen", "remote_action": "screenshot", "lang": "en"}
+{"text": "Screenshot the app on my phone", "remote_action": "screenshot", "lang": "en"}
+{"text": "Show the window that is open on my PC", "remote_action": "screenshot", "lang": "en"}
+{"text": "Grab a screenshot of the emulator", "remote_action": "screenshot", "lang": "en"}
+{"text": "Show me the broken layout on my machine", "remote_action": "screenshot", "lang": "en"}
+{"text": "Take a picture of the app screen", "remote_action": "screenshot", "lang": "en"}
+{"text": "Capture the remote screen and check the button", "remote_action": "screenshot", "lang": "en"}

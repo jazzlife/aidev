@@ -4,13 +4,72 @@ import { budgetState, topChoice, type LayaClient, type Question } from './laya.j
 import { DEPTH_LEVELS, REMOTE_ACTIONS, RISK_LEVELS, TASK_KIND_CRITERIA, decide } from './laya-questions.js';
 import { NaiveBayesRouter, fuse, tokenize } from './classifier.js';
 import crypto from 'node:crypto';
+import fs from 'node:fs';
 
 /** Weight of Laya vs the lexical prior in the fused agent choice (tuned on the bench set; env LAYA_WEIGHT). */
 export const LAYA_WEIGHT = Math.max(0, Math.min(1, Number(process.env.LAYA_WEIGHT ?? 0.3)));   // bench 2026-09-23: plateau 0.2–0.35 (0.833)
 /** Weight of Laya vs the lexical prior for task_kind (env LAYA_KIND_WEIGHT). */
 export const LAYA_KIND_WEIGHT = Math.max(0, Math.min(1, Number(process.env.LAYA_KIND_WEIGHT ?? 0.35)));
+/** Weight of Laya vs the lexical prior for remote_action (env LAYA_REMOTE_WEIGHT; bench: /route/eval remote). */
+export const LAYA_REMOTE_WEIGHT = Math.max(0, Math.min(1, Number(process.env.LAYA_REMOTE_WEIGHT ?? 0.35)));
+/** A remote action below this fused probability is treated as 'none' (the agent can still reach the PC through its tools). */
+export const REMOTE_MIN_P = Math.max(0, Math.min(1, Number(process.env.REMOTE_MIN_P ?? 0.5)));
 const nb = new NaiveBayesRouter();
 const kindNb = new NaiveBayesRouter();
+// remote_action lexical prior: a fixed labelled set shipped with the gateway (data/remote-actions.jsonl), loaded once
+const remoteNb = new NaiveBayesRouter();
+let remoteLoaded = false;
+function loadRemoteExamples() {
+  if (remoteLoaded) return;
+  remoteLoaded = true;
+  try {
+    const file = process.env.AIDEV_REMOTE_EXAMPLES_FILE ?? new URL('../data/remote-actions.jsonl', import.meta.url).pathname;
+    const rows = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line) as { text: string; remote_action: string });
+    remoteNb.train(rows.filter((r) => r.text && r.remote_action in REMOTE_ACTIONS).map((r) => ({ text: r.text, agent: r.remote_action })));
+  } catch (error) { console.warn('[gateway] remote-action examples not loaded:', error instanceof Error ? error.message : error); }
+}
+/** Lexical prior over REMOTE_ACTIONS ({} when the examples are missing). */
+export function remotePrior(text: string) {
+  loadRemoteExamples();
+  return remoteNb.predict(text, Object.keys(REMOTE_ACTIONS));
+}
+/** The remote action route() uses: Laya fused with the lexical prior; under `minP` → 'none'. */
+export function remoteDecision(layaP: Record<string, number> | null, nbP: Record<string, number> | null, alpha = LAYA_REMOTE_WEIGHT, minP = REMOTE_MIN_P) {
+  const probabilities = fuse(layaP, nbP, alpha);
+  const top = topChoice({ probabilities });
+  return { action: top.choice && top.probability >= minP ? top.choice : 'none', probability: top.probability, probabilities };
+}
+
+/** A target named in the command ("m4pro에서 …", "on jazzlife-mac"): the longest registered name that appears as a word. */
+export function mentionedTarget<T extends { name: string }>(text: string, targets: T[]): T | null {
+  const lower = text.toLowerCase();
+  const hits = targets.filter((t) => {
+    const name = t.name.toLowerCase().replace(/[.*+?^${}()|[\]\\]/g, '\\$&').replace(/-/g, '[- ]?');
+    return new RegExp(`(^|[^a-z0-9_-])${name}($|[^a-z0-9_-])`).test(lower);
+  });
+  return hits.sort((a, b) => b.name.length - a.name.length)[0] ?? null;
+}
+
+/** Commands about an attached phone/TV/emulator (device.select applies only to these). */
+const DEVICE_WORDS = /(기기|디바이스|단말|휴대폰|핸드폰|스마트폰|폰에|폰으로|갤럭시|태블릿|\btv\b|티비|워치|에뮬레이터|시뮬레이터|안드로이드|타이젠|\bdevice\b|\bphone\b|\bemulator\b|\bandroid\b|\btizen\b|\badb\b|\bsdb\b|\bapk\b|\btpk\b|\bwatch\b|\btablet\b)/i;
+export function mentionsDevice(text: string) { return DEVICE_WORDS.test(text); }
+/** Serials of the devices a target reports (runner caps.devices.{adb,sdb}), tagged with their tool. */
+export function targetDevices(capabilities: unknown): Array<{ serial: string; tool: 'adb' | 'sdb' }> {
+  const devices = (capabilities as { devices?: { adb?: unknown; sdb?: unknown } } | null)?.devices;
+  const list = (tool: 'adb' | 'sdb') => (Array.isArray(devices?.[tool]) ? (devices![tool] as unknown[]).map(String).filter(Boolean).map((serial) => ({ serial, tool })) : []);
+  return [...list('adb'), ...list('sdb')];
+}
+/** Short description of a target for Laya's target.select: platform, tags, tools, devices, screen. */
+export function describeTarget(t: { description: string; platform: string | null; tags: string | null; capabilities: string | null }) {
+  let caps: { tools?: Record<string, unknown>; screen?: boolean; devices?: unknown } = {};
+  try { caps = t.capabilities ? JSON.parse(t.capabilities) : {}; } catch { /* stored by the runner */ }
+  let tags: string[] = [];
+  try { tags = t.tags ? JSON.parse(t.tags) as string[] : []; } catch { /* legacy */ }
+  const devices = targetDevices(caps).map((d) => `${d.tool}:${d.serial}`);
+  return [t.description || null, `platform ${t.platform ?? '?'}`, tags.length ? `tags ${tags.join(', ')}` : null,
+    caps.tools ? `tools ${Object.keys(caps.tools).join(', ')}` : null, devices.length ? `devices ${devices.join(', ')}` : null, caps.screen ? 'screen capture' : null]
+    .filter(Boolean).join('; ').slice(0, 580);
+}
 let nbVersion = -1;
 function retrain(store: Store) {
   if (nbVersion !== store.examplesVersion() || nb.size === 0) { nb.train(store.allExamples()); kindNb.train(store.kindExamples()); nbVersion = store.examplesVersion(); }
@@ -84,10 +143,50 @@ export function modelRank(engine: Engine, model: string | null): number {
 function clampDepth(d: number) { return Math.max(0, Math.min(4, Math.round(d))); }
 
 /**
+ * remote_action on its held-out set (F-08): Laya alone (the old rule: top ≥ 0.6), the lexical prior
+ * alone, the fused pick at the configured weight/threshold, and a weight × threshold sweep. `recall`:
+ * commands that need the PC and got some action; `false_remote`: 'none' commands sent to the PC.
+ */
+async function evaluateRemote(laya: LayaClient, rows: Array<{ text: string; remote_action: string; lang?: string }>) {
+  const items: Array<{ label: string; lang?: string; laya: Record<string, number> | null; nb: Record<string, number> }> = [];
+  let failures = 0;
+  for (const row of rows) {
+    let layaP: Record<string, number> | null = null;
+    try {
+      const r = await laya.predict({ command: row.text }, { remote_action: { type: 'choice', instructions: 'Does this developer command require running something on the user\'s remote machine, and what?', criteria: REMOTE_ACTIONS } });
+      layaP = r.answers.remote_action?.probabilities ?? null;
+    } catch { failures++; }
+    items.push({ label: row.remote_action, lang: row.lang, laya: layaP, nb: remotePrior(row.text) });
+  }
+  const score = (pick: (item: typeof items[number]) => string) => {
+    let ok = 0, need = 0, hit = 0, none = 0, falseRemote = 0;
+    for (const item of items) {
+      const p = pick(item);
+      if (p === item.label) ok++;
+      if (item.label !== 'none') { need++; if (p !== 'none') hit++; } else { none++; if (p !== 'none') falseRemote++; }
+    }
+    const r3 = (x: number, n: number) => (n ? Number((x / n).toFixed(3)) : null);
+    return { accuracy: r3(ok, items.length), recall: r3(hit, need), false_remote: r3(falseRemote, none) };
+  };
+  const layaOnly = (item: typeof items[number]) => { const t = topChoice({ probabilities: item.laya ?? {} }); return t.choice && t.probability >= 0.6 ? t.choice : 'none'; };
+  const sweep: Array<{ alpha: number; min_p: number; accuracy: number | null; recall: number | null; false_remote: number | null }> = [];
+  for (const alpha of [0, 0.2, 0.35, 0.5, 0.65, 0.8, 1]) for (const minP of [0.4, 0.5, 0.6, 0.7]) sweep.push({ alpha, min_p: minP, ...score((item) => remoteDecision(item.laya, item.nb, alpha, minP).action) });
+  const best = sweep.reduce((a, b) => ((b.accuracy ?? 0) > (a.accuracy ?? 0) ? b : a));
+  const fused = score((item) => remoteDecision(item.laya, item.nb).action);
+  return {
+    n: items.length, laya_failures: failures, laya_weight: LAYA_REMOTE_WEIGHT, min_p: REMOTE_MIN_P,
+    fused, laya_only: score(layaOnly), lexical_only: score((item) => remoteDecision(null, item.nb).action),
+    fused_ko: (() => { const ko = items.filter((i) => i.lang === "ko"); return ko.length ? Number((ko.filter((i) => remoteDecision(i.laya, i.nb).action === i.label).length / ko.length).toFixed(3)) : null; })(),
+    best, sweep,
+  };
+}
+
+/**
  * Routing evaluation on a labelled command set (admin): Laya-only, lexical-only and fused agent
  * accuracy plus the best fusion weight. Used by /api/aidev/route/eval and verify-b.sh.
  */
-export async function evaluateRouting(store: Store, laya: LayaClient, userId: number, rows: Array<{ text: string; agent: string; lang?: string; task_kind?: string | null }>) {
+export async function evaluateRouting(store: Store, laya: LayaClient, userId: number, rows: Array<{ text: string; agent: string; lang?: string; task_kind?: string | null }>, remoteRows: Array<{ text: string; remote_action: string; lang?: string }> = []) {
+  const remote = remoteRows.length ? await evaluateRemote(laya, remoteRows) : null;
   const all = store.agents(userId).filter((a) => a.domain !== 'meta');
   const criteria: Record<string, string> = Object.fromEntries(all.map((a) => [a.name, routingHint(a)]));
   const names = Object.keys(criteria);
@@ -126,6 +225,7 @@ export async function evaluateRouting(store: Store, laya: LayaClient, userId: nu
     best_alpha: kindBest.alpha, sweep: kindSweep,
   };
   return {
+    remote,
     kind,
     n: items.length, catalog: names.length, examples: store.exampleCount(), laya_failures: layaFailures, laya_weight: LAYA_WEIGHT,
     laya_only: acc((item) => (item.laya ? topAgent(item.laya) : undefined)), lexical_only: acc((item) => topAgent(item.nb)),
@@ -259,6 +359,8 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   const nbProbs = lexicalPrior(store, text, Object.keys(criteria));
   const nbTop = topChoice({ probabilities: nbProbs });
   const kindProbs = kindPrior(store, text);
+  // remote_action: only asked when a PC is online; Laya fused with the lexical prior (bench: /route/eval remote)
+  const remoteNbProbs = targets.length ? remotePrior(text) : {};
   let layaProbs: Record<string, number> | null = null;
   // ---- specialist judge: cached verdict → a judge-confirmed similar command → an LLM turn (runs alongside Laya)
   const jctx = judgeContext(store, userId, text, nbTop);
@@ -284,17 +386,17 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     // task_kind: the volume cues that mark bulk_read (line counts, "all files", log paths) are lexical,
     // so the same fusion applies (bench: see /route/eval kind_*).
     const tk = topChoice({ probabilities: fuse(r.answers.task_kind?.probabilities ?? null, kindProbs, LAYA_KIND_WEIGHT) }); taskKind = tk.choice ?? 'implement'; taskKindP = tk.probability;
-    if (r.answers.remote_action) { const ra = topChoice(r.answers.remote_action); remoteAction = ra.choice ?? 'none'; remoteActionP = ra.probability; }
-    probabilities = { agent: fuse(layaProbs, nbProbs, LAYA_WEIGHT, alphaFor), agent_laya: layaProbs, agent_nb: nbProbs, task_kind: fuse(r.answers.task_kind?.probabilities ?? null, kindProbs, LAYA_KIND_WEIGHT), task_kind_laya: r.answers.task_kind?.probabilities, task_kind_nb: kindProbs, depth: r.answers.depth?.probabilities, risk: r.answers.risk?.probabilities, remote_action: r.answers.remote_action?.probabilities, needs_new: needsNew, multi_domain: multiDomain, clarify };
+    if (targets.length) { const ra = remoteDecision(r.answers.remote_action?.probabilities ?? null, remoteNbProbs); remoteAction = ra.action; remoteActionP = ra.probability; }
+    probabilities = { agent: fuse(layaProbs, nbProbs, LAYA_WEIGHT, alphaFor), agent_laya: layaProbs, agent_nb: nbProbs, task_kind: fuse(r.answers.task_kind?.probabilities ?? null, kindProbs, LAYA_KIND_WEIGHT), task_kind_laya: r.answers.task_kind?.probabilities, task_kind_nb: kindProbs, depth: r.answers.depth?.probabilities, risk: r.answers.risk?.probabilities, remote_action: targets.length ? fuse(r.answers.remote_action?.probabilities ?? null, remoteNbProbs, LAYA_REMOTE_WEIGHT) : undefined, remote_action_laya: r.answers.remote_action?.probabilities, remote_action_nb: targets.length ? remoteNbProbs : undefined, needs_new: needsNew, multi_domain: multiDomain, clarify };
   } catch (error) {
     fallback = true; layaError = error instanceof Error ? error.message : String(error);
     // Laya down: the lexical prior alone still routes (agent only); scope falls back to D1/implement.
     if (Object.keys(nbProbs).length) { agentTop = topChoice({ probabilities: nbProbs }); probabilities = { agent: nbProbs, agent_nb: nbProbs }; }
     if (Object.keys(kindProbs).length) { const tk = topChoice({ probabilities: kindProbs }); taskKind = tk.choice ?? 'implement'; taskKindP = tk.probability; probabilities.task_kind = kindProbs; }
+    if (Object.keys(remoteNbProbs).length) { const ra = remoteDecision(null, remoteNbProbs); remoteAction = ra.action; remoteActionP = ra.probability; probabilities.remote_action = remoteNbProbs; }
     depthRaw = FALLBACK_DEPTH;
     reason.push(`Laya unavailable (${layaError}); lexical prior only, depth D${FALLBACK_DEPTH}`);
   }
-  if (!fallback && remoteActionP < 0.6) remoteAction = 'none';
 
   // ---- agent decision (§0 expertise↔speed) ------------------------------------------------
   // Quality first (§3.4): an in-between depth score rounds up from .35, not .5 — a too-weak model costs
@@ -395,16 +497,67 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   if (input.model) { tier.model = input.model; reason.push(`user model ${input.model}`); }
   if (input.effort) { tier.effort = input.effort; reason.push(`user effort ${input.effort}`); }
 
-  // ---- target ---------------------------------------------------------------------------------
-  let target = input.targetId ? targets.find((t) => t.id === input.targetId) ?? null : null;
-  let targetDecision: Awaited<ReturnType<typeof decide>> | null = null;
+  // ---- target (F-08) ----------------------------------------------------------------------------
+  // The explicit pick (router chip) → a PC named in the command → this chat's pinned PC → the account's
+  // default PC → the only online PC → Laya target.select over the online PCs (platform, tools, devices).
+  const named = mentionedTarget(text, targets);
+  if (named && remoteAction === 'none') {
+    // naming a PC means something happens there: the likeliest non-'none' action (default run)
+    const rp = (probabilities.remote_action ?? {}) as Record<string, number>;
+    remoteAction = Object.entries(rp).filter(([k]) => k !== 'none').sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'run';
+    reason.push(`${named.name} named in the command → remote ${remoteAction}`);
+  }
+  let target: typeof targets[number] | null = null;
+  let targetSource: 'input' | 'mention' | 'session' | 'default' | 'single' | 'laya' | null = null;
+  let targetDecision: (Awaited<ReturnType<typeof decide>> & { decision_id: number }) | null = null;
+  if (input.targetId) {
+    target = targets.find((t) => t.id === input.targetId) ?? null;
+    if (target) targetSource = 'input'; else reason.push(`chosen target ${input.targetId} is offline`);
+  }
   if (!target && remoteAction !== 'none' && targets.length) {
-    if (targets.length === 1) target = targets[0];
+    const pinnedId = input.sessionId ? store.sessionTarget(userId, input.sessionId) : null;
+    const pinned = pinnedId ? targets.find((t) => t.id === pinnedId) ?? null : null;
+    const byDefault = targets.find((t) => t.is_default) ?? null;
+    if (named) { target = named; targetSource = 'mention'; }
+    else if (pinned) { target = pinned; targetSource = 'session'; }
+    else if (byDefault) { target = byDefault; targetSource = 'default'; }
+    else if (targets.length === 1) { target = targets[0]; targetSource = 'single'; }
     else {
-      targetDecision = await decide(laya, 'target.select', { state: { command: text, action: remoteAction }, options: Object.fromEntries(targets.map((t) => [t.name, `${t.description} (${t.platform ?? '?'}; ${t.tags ?? '[]'})`])) });
-      target = targets.find((t) => t.name === targetDecision!.answer) ?? targets[0];
+      // most recently seen first: Laya's low-confidence fallback is the first option
+      const ordered = [...targets].sort((a, b) => (b.last_seen ?? 0) - (a.last_seen ?? 0));
+      const options = Object.fromEntries(ordered.map((t) => [t.name, describeTarget(t)]));
+      const d = await decide(laya, 'target.select', { state: { command: text, action: remoteAction }, options });
+      const id = store.logKindDecision({ userId, kind: d.kind, command: text, answer: d.answer, confidence: d.confidence, probabilities: d.probabilities, latencyMs: d.latency_ms, device: d.device, fallback: d.fallback, state: { command: text, action: remoteAction, options } });
+      targetDecision = { ...d, decision_id: id };
+      target = ordered.find((t) => t.name === d.answer) ?? ordered[0];
+      targetSource = 'laya';
     }
-    reason.push(`remote ${remoteAction} on ${target.name}`);
+    if (pinnedId && !pinned && targetSource !== 'mention') reason.push('this chat\'s pinned PC is offline');
+  }
+  if (target) reason.push(`remote ${remoteAction} on ${target.name} (${targetSource})`);
+
+  // ---- device (F-08): which attached phone/TV/emulator, when the target has any and the command is about one
+  let targetDevice: { serial: string; tool: 'adb' | 'sdb'; source: 'mention' | 'single' | 'laya' } | null = null;
+  let deviceDecision: (Awaited<ReturnType<typeof decide>> & { decision_id: number }) | null = null;
+  if (target && remoteAction !== 'none') {
+    let caps: unknown = null;
+    try { caps = target.capabilities ? JSON.parse(target.capabilities) : null; } catch { /* runner-reported */ }
+    const devices = targetDevices(caps);
+    const lower = text.toLowerCase();
+    const serialHit = devices.find((d) => lower.includes(d.serial.toLowerCase()));
+    if (serialHit) targetDevice = { ...serialHit, source: 'mention' };
+    else if (devices.length && mentionsDevice(text)) {
+      if (devices.length === 1) targetDevice = { ...devices[0], source: 'single' };
+      else {
+        const options = Object.fromEntries(devices.map((d) => [d.serial, `${d.tool === 'adb' ? 'Android (adb)' : 'Tizen (sdb)'} device ${d.serial}`]));
+        const d = await decide(laya, 'device.select', { state: { command: text, action: remoteAction, target: target.name }, options });
+        const id = store.logKindDecision({ userId, kind: d.kind, command: text, answer: d.answer, confidence: d.confidence, probabilities: d.probabilities, latencyMs: d.latency_ms, device: d.device, fallback: d.fallback, state: { command: text, action: remoteAction, target: target.name, options } });
+        deviceDecision = { ...d, decision_id: id };
+        const pick = devices.find((x) => x.serial === d.answer) ?? devices[0];
+        targetDevice = { ...pick, source: 'laya' };
+      }
+    }
+    if (targetDevice) reason.push(`device ${targetDevice.tool}:${targetDevice.serial} (${targetDevice.source})`);
   }
 
   // ---- lessons / knowledge injection (§3.8) -----------------------------------------------------
@@ -452,7 +605,7 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   // ---- log --------------------------------------------------------------------------------------
   const decisionId = store.logDecision({ userId, command: text, agent: agentName, probability: agentTop.probability, confidence: agentTop.confidence, needsNew, risk, decision, probabilities, latencyMs: latency ?? undefined, device: device ?? undefined });
   store.db.prepare('UPDATE decision_log SET kind=?, fallback=?, answer=?, state=? WHERE id=?').run('route', fallback ? 1 : 0,
-    JSON.stringify({ agent: agentName, engine, model: tier.model, effort: tier.effort, depth, task_kind: taskKind, remote_action: remoteAction, target: target?.name ?? null }), JSON.stringify(state).slice(0, 8000), decisionId);
+    JSON.stringify({ agent: agentName, engine, model: tier.model, effort: tier.effort, depth, task_kind: taskKind, remote_action: remoteAction, target: target?.name ?? null, target_source: targetSource, device: targetDevice?.serial ?? null }), JSON.stringify(state).slice(0, 8000), decisionId);
   if (decision === 'use') store.bumpAgentUse(userId, agentName);
   store.recordInjectedLessons(decisionId, lessons.map((l) => ({ id: l.id, trial: l === trial })));
 
@@ -469,16 +622,19 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     decision_id: decisionId,
     decision, fallback, laya_error: layaError, create,
     judge: verdict ? { agent: verdict.agent, fit: verdict.fit, reason: verdict.reason, source: verdict.source ?? null, engine: verdict.engine ?? null, ms: verdict.ms ?? null, wait_ms: judgeWaitMs, prejudged: joined, proposal: verdict.new } : null,
-    scope: { depth, depth_raw: depthRaw, task_kind: taskKind, task_kind_probability: taskKindP, risk, multi_domain: multiDomain, clarify, remote_action: remoteAction, needs_llm_analysis: needsLlmAnalysis, ask_clarify: askClarify },
+    scope: { depth, depth_raw: depthRaw, task_kind: taskKind, task_kind_probability: taskKindP, risk, multi_domain: multiDomain, clarify, remote_action: remoteAction, remote_action_probability: remoteActionP, needs_llm_analysis: needsLlmAnalysis, ask_clarify: askClarify },
     agent: { id: agent.id, name: agent.name, version: agent.version, domain: agent.domain, description: agent.description, probability: agentTop.probability, confidence: agentTop.confidence,
       definition: { prompt, tools: agent.tools ? JSON.parse(agent.tools) as string[] : null, model: agent.model, maxTurns: agent.max_turns, skills: agent.skills ? JSON.parse(agent.skills) as string[] : null, mcpServers: agent.mcp_servers ? JSON.parse(agent.mcp_servers) as Record<string, unknown> : null } },
     alternatives: agentTop.ranked.filter(([name]) => name !== agentName).slice(0, 3).map(([name, probability]) => ({ name, probability, description: descriptions[name] })),
     needs_new: needsNew, shortlisted,
-    plan: { engine, engine_locked: engineLocked, engine_error: engineError, model: tier.model, effort: tier.effort, target: target ? { id: target.id, name: target.name, platform: target.platform, tags: target.tags ? JSON.parse(target.tags) as string[] : [], capabilities: target.capabilities ? JSON.parse(target.capabilities) as unknown : null } : null, reason },
+    plan: { engine, engine_locked: engineLocked, engine_error: engineError, model: tier.model, effort: tier.effort, target: target ? { id: target.id, name: target.name, platform: target.platform, tags: target.tags ? JSON.parse(target.tags) as string[] : [], capabilities: target.capabilities ? JSON.parse(target.capabilities) as unknown : null, source: targetSource } : null, device: targetDevice, reason },
     engines: { claude: { ...engines.claude, score: scores.claude.score, notes: scores.claude.parts }, codex: { ...engines.codex, score: scores.codex.score, notes: scores.codex.parts } },
     lessons: lessons.map((l) => ({ id: l.id, trigger: l.trigger, rule: l.rule, trial: l === trial })),
     knowledge_digest: knowledgeDigest || null,
-    target_decision: targetDecision ? { answer: targetDecision.answer, confidence: targetDecision.confidence, fallback: targetDecision.fallback } : null,
+    target_decision: targetDecision ? { decision_id: targetDecision.decision_id, answer: targetDecision.answer, confidence: targetDecision.confidence, fallback: targetDecision.fallback, probabilities: targetDecision.probabilities ?? null } : null,
+    device_decision: deviceDecision ? { decision_id: deviceDecision.decision_id, answer: deviceDecision.answer, confidence: deviceDecision.confidence, fallback: deviceDecision.fallback } : null,
+    // the online PCs the router chip offers (so it does not need a second request)
+    targets: targets.map((t) => ({ id: t.id, name: t.name, platform: t.platform, is_default: Boolean(t.is_default) })),
     latency_ms: latency, total_ms: Date.now() - t0, device,
   };
 }

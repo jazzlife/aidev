@@ -1,0 +1,93 @@
+{"text": "회원가입 API에 중복 이메일 체크 넣어줘", "remote_action": "none", "lang": "ko"}
+{"text": "이 훅이 두 번 호출되는 이유가 뭐야?", "remote_action": "none", "lang": "ko"}
+{"text": "배포 문서를 업데이트해줘", "remote_action": "none", "lang": "ko"}
+{"text": "상품 목록 컴포넌트 성능 개선해줘", "remote_action": "none", "lang": "ko"}
+{"text": "타입 에러 고쳐줘", "remote_action": "none", "lang": "ko"}
+{"text": "웹소켓 재연결 로직 추가해줘", "remote_action": "none", "lang": "ko"}
+{"text": "CHANGELOG 작성해줘", "remote_action": "none", "lang": "ko"}
+{"text": "이 쿼리를 ORM 코드로 바꿔줘", "remote_action": "none", "lang": "ko"}
+{"text": "접근성 개선 포인트 찾아줘", "remote_action": "none", "lang": "ko"}
+{"text": "함수 이름을 더 명확하게 바꿔줘", "remote_action": "none", "lang": "ko"}
+{"text": "테스트 코드 리팩터링해줘", "remote_action": "none", "lang": "ko"}
+{"text": "JWT 갱신 흐름을 설명해줘", "remote_action": "none", "lang": "ko"}
+{"text": "모노레포 구조로 바꾸는 계획 세워줘", "remote_action": "none", "lang": "ko"}
+{"text": "폼 상태 관리를 react-hook-form으로 바꿔줘", "remote_action": "none", "lang": "ko"}
+{"text": "nginx 설정 예시 작성해줘", "remote_action": "none", "lang": "ko"}
+{"text": "이 코드 한 줄씩 설명해줘", "remote_action": "none", "lang": "ko"}
+{"text": "에러 바운더리 추가해줘", "remote_action": "none", "lang": "ko"}
+{"text": "Prisma 스키마 정리해줘", "remote_action": "none", "lang": "ko"}
+{"text": "Add rate limiting to the login route", "remote_action": "none", "lang": "en"}
+{"text": "Explain what this generic type does", "remote_action": "none", "lang": "en"}
+{"text": "Write docs for the CLI flags", "remote_action": "none", "lang": "en"}
+{"text": "Refactor the auth middleware", "remote_action": "none", "lang": "en"}
+{"text": "Add a unit test for the cart reducer", "remote_action": "none", "lang": "en"}
+{"text": "Fix the off-by-one in pagination", "remote_action": "none", "lang": "en"}
+{"text": "Design a notification service", "remote_action": "none", "lang": "en"}
+{"text": "Convert the class component to hooks", "remote_action": "none", "lang": "en"}
+{"text": "Clean up unused imports", "remote_action": "none", "lang": "en"}
+{"text": "What is the difference between SSR and SSG?", "remote_action": "none", "lang": "en"}
+{"text": "Add a health check endpoint", "remote_action": "none", "lang": "en"}
+{"text": "Write a GitHub Actions workflow for lint", "remote_action": "none", "lang": "en"}
+{"text": "Improve the SQL query performance", "remote_action": "none", "lang": "en"}
+{"text": "Make the modal accessible", "remote_action": "none", "lang": "en"}
+{"text": "Add Storybook stories for the button", "remote_action": "none", "lang": "en"}
+{"text": "Rename the props for consistency", "remote_action": "none", "lang": "en"}
+{"text": "내 맥북에서 프론트 개발 서버 실행해서 보여줘", "remote_action": "run", "lang": "ko"}
+{"text": "폰에 설치해서 켜봐", "remote_action": "run", "lang": "ko"}
+{"text": "TV에서 앱 실행해줘", "remote_action": "run", "lang": "ko"}
+{"text": "원격 컴퓨터에서 워커 프로세스 띄워줘", "remote_action": "run", "lang": "ko"}
+{"text": "로컬 PC에서 스토리북 켜줘", "remote_action": "run", "lang": "ko"}
+{"text": "시뮬레이터로 앱 열어줘", "remote_action": "run", "lang": "ko"}
+{"text": "m4pro에서 서버 재시작해줘", "remote_action": "run", "lang": "ko"}
+{"text": "내 PC에서 크롤러 한 번 돌려줘", "remote_action": "run", "lang": "ko"}
+{"text": "Run the storybook on my Mac", "remote_action": "run", "lang": "en"}
+{"text": "Start the worker on my machine", "remote_action": "run", "lang": "en"}
+{"text": "Open the app on my phone", "remote_action": "run", "lang": "en"}
+{"text": "Launch it in the Android emulator", "remote_action": "run", "lang": "en"}
+{"text": "Restart the server on the workstation", "remote_action": "run", "lang": "en"}
+{"text": "Run the seed script on my PC", "remote_action": "run", "lang": "en"}
+{"text": "Start the app on the TV", "remote_action": "run", "lang": "en"}
+{"text": "폰에서 테스트 돌려줘", "remote_action": "test", "lang": "ko"}
+{"text": "내 맥북에서 jest 실행해봐", "remote_action": "test", "lang": "ko"}
+{"text": "TV에서 기능 테스트 해줘", "remote_action": "test", "lang": "ko"}
+{"text": "시뮬레이터에서 스냅샷 테스트 돌려줘", "remote_action": "test", "lang": "ko"}
+{"text": "원격 PC에서 부하 테스트 실행해줘", "remote_action": "test", "lang": "ko"}
+{"text": "로컬 머신에서 백엔드 테스트 돌려봐", "remote_action": "test", "lang": "ko"}
+{"text": "Run the jest tests on my MacBook", "remote_action": "test", "lang": "en"}
+{"text": "Run the snapshot tests in the simulator", "remote_action": "test", "lang": "en"}
+{"text": "Run the load test from my PC", "remote_action": "test", "lang": "en"}
+{"text": "Test the feature on the TV", "remote_action": "test", "lang": "en"}
+{"text": "Run the backend tests on my local machine", "remote_action": "test", "lang": "en"}
+{"text": "Verify the tests pass on the device", "remote_action": "test", "lang": "en"}
+{"text": "폰에서만 앱이 꺼지는데 원인 찾아줘", "remote_action": "debug", "lang": "ko"}
+{"text": "내 맥에서 빌드한 앱이 느린 이유 디버깅해줘", "remote_action": "debug", "lang": "ko"}
+{"text": "TV에서 리모컨 입력이 안 먹는 문제 디버그해줘", "remote_action": "debug", "lang": "ko"}
+{"text": "로컬 서버에서 타임아웃 나는 원인 추적해줘", "remote_action": "debug", "lang": "ko"}
+{"text": "시뮬레이터에서 키보드가 안 뜨는 버그 잡아줘", "remote_action": "debug", "lang": "ko"}
+{"text": "Debug the crash that only happens on my phone", "remote_action": "debug", "lang": "en"}
+{"text": "Find why the app is slow on my Mac", "remote_action": "debug", "lang": "en"}
+{"text": "Debug the remote control input on the TV", "remote_action": "debug", "lang": "en"}
+{"text": "Trace the timeout on my local server", "remote_action": "debug", "lang": "en"}
+{"text": "Debug the keyboard bug in the simulator", "remote_action": "debug", "lang": "en"}
+{"text": "내 맥에서 앱스토어용 빌드 만들어줘", "remote_action": "build", "lang": "ko"}
+{"text": "TV 앱 패키지 만들어줘", "remote_action": "build", "lang": "ko"}
+{"text": "내 PC에서 설치 파일 빌드해줘", "remote_action": "build", "lang": "ko"}
+{"text": "폰에 넣을 디버그 apk 빌드해줘", "remote_action": "build", "lang": "ko"}
+{"text": "로컬에서 네이티브 라이브러리 빌드해줘", "remote_action": "build", "lang": "ko"}
+{"text": "Build the App Store version on my Mac", "remote_action": "build", "lang": "en"}
+{"text": "Package the TV app", "remote_action": "build", "lang": "en"}
+{"text": "Build the installer on my PC", "remote_action": "build", "lang": "en"}
+{"text": "Build a debug apk for my phone", "remote_action": "build", "lang": "en"}
+{"text": "Build the native library on my machine", "remote_action": "build", "lang": "en"}
+{"text": "폰 화면 보여줘", "remote_action": "screenshot", "lang": "ko"}
+{"text": "지금 시뮬레이터 화면 캡처해줘", "remote_action": "screenshot", "lang": "ko"}
+{"text": "TV 화면 찍어서 보여줘", "remote_action": "screenshot", "lang": "ko"}
+{"text": "내 PC에 뜬 앱 화면 보여줘", "remote_action": "screenshot", "lang": "ko"}
+{"text": "원격 화면 스크린샷 찍어줘", "remote_action": "screenshot", "lang": "ko"}
+{"text": "맥에서 창이 어떻게 보이는지 캡처해줘", "remote_action": "screenshot", "lang": "ko"}
+{"text": "Show me the phone screen", "remote_action": "screenshot", "lang": "en"}
+{"text": "Capture the simulator now", "remote_action": "screenshot", "lang": "en"}
+{"text": "Take a screenshot of the TV", "remote_action": "screenshot", "lang": "en"}
+{"text": "Show the app window on my PC", "remote_action": "screenshot", "lang": "en"}
+{"text": "Screenshot the remote screen", "remote_action": "screenshot", "lang": "en"}
+{"text": "Capture how the window looks on my Mac", "remote_action": "screenshot", "lang": "en"}

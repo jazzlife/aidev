@@ -22,6 +22,7 @@ const validTurn = {
   model: 'sonnet',
   effort: 'high',
   target: { id: 4, name: 'mac-studio', platform: 'macos', tags: ['xcode'], capabilities: { node: '22' } },
+  device: { serial: 'R3CN11', tool: 'adb', source: 'laya' },
   scope: { depth: 2, taskKind: 'implement', risk: 1, remoteAction: 'test' },
   extra: 'dropped',
 };
@@ -38,6 +39,9 @@ test('sanitizeAidevOptions keeps whitelisted fields and drops invalid entries', 
   assert.deepEqual(clean.lessons, ['shader renders black → check pass tags']);
   assert.equal(clean.target?.name, 'mac-studio');
   assert.equal(clean.scope.remoteAction, 'test');
+  assert.deepEqual(clean.device, { serial: 'R3CN11', tool: 'adb' });
+  assert.equal(sanitizeAidevOptions({ ...validTurn, device: { serial: 'x; rm -rf /', tool: 'adb' } })?.device, null);
+  assert.equal(sanitizeAidevOptions({ ...validTurn, device: { serial: 'A1', tool: 'fastboot' } })?.device, null);
   assert.equal((clean as Record<string, unknown>).extra, undefined);
 });
 
@@ -63,5 +67,6 @@ test('composeAgentInstructions includes prompt, lessons, knowledge, target and t
   assert.match(text, /얻은 교훈[\s\S]*- shader renders black/);
   assert.match(text, /검증된 최신 지식[\s\S]*Blitter/);
   assert.match(text, /원격 실행 대상[\s\S]*mac-studio[\s\S]*요청된 원격 작업: test/);
+  assert.match(text, /대상 기기: adb serial `R3CN11`[\s\S]*adb -s R3CN11/);
   assert.match(text, /aidev_decide/);
 });

@@ -550,7 +550,7 @@ export const api = {
   targets: {
     list: () => get('/api/aidev/targets'),
     create: (input: { name: string; description?: string; policy?: string }) => post('/api/aidev/targets', input),
-    update: (targetId: number, input: { name?: string; description?: string; policy?: string }) => patch(`/api/aidev/targets/${targetId}`, input),
+    update: (targetId: number, input: { name?: string; description?: string; policy?: string; /** F-08: the account's default PC */ default?: boolean }) => patch(`/api/aidev/targets/${targetId}`, input),
     remove: (targetId: number) => del(`/api/aidev/targets/${targetId}`),
     refreshPairing: (targetId: number) => post(`/api/aidev/targets/${targetId}/pair/refresh`),
     ping: (targetId: number) => post(`/api/aidev/targets/${targetId}/ping`),

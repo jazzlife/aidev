@@ -1,5 +1,5 @@
 import { useEffect, useState, type CSSProperties } from 'react';
-import { ChevronDown, Sparkles, ThumbsDown, ThumbsUp } from 'lucide-react';
+import { ChevronDown, Monitor, Sparkles, Star, ThumbsDown, ThumbsUp } from 'lucide-react';
 
 import { aidevApi, type Engine, type EnginesResult } from '@/modules/aidev-router/api';
 import { routingStore, useRoutingState, type RoutingMode } from '@/modules/aidev-router/store';
@@ -8,6 +8,7 @@ import { claudeAuth, useClaudeAuth } from '@/modules/aidev-router/hooks/useClaud
 import { EFFORT_LABEL } from '@/modules/aidev-router/hooks/useEffortCap';
 import { useChatEffortCap } from '@/modules/aidev-router/hooks/useChatEffortCap';
 import { ClaudeLoginDialog } from '@/modules/aidev-router/ClaudeLoginPanel';
+import { useTargetChoice } from '@/modules/aidev-router/hooks/useTargetChoice';
 
 const DEPTH_LABEL = ['즉답', '한 파일', '기능', '심층', '설계'];
 const MODES: Array<{ value: RoutingMode; label: string }> = [{ value: 'auto', label: '자동' }, { value: 'manual', label: '확인 후' }, { value: 'off', label: '끄기' }];
@@ -22,10 +23,10 @@ export function AidevRouterBar({ sessionId = null }: { sessionId?: string | null
   const state = useRoutingState();
   const { reportOutcome } = useAidevRouting();
   const [engines, setEngines] = useState<EnginesResult | null>(null);
-  const [open, setOpenState] = useState<'agent' | 'engine' | 'mode' | null>(null);
+  const [open, setOpenState] = useState<'agent' | 'engine' | 'target' | 'mode' | null>(null);
   // Menus open upward from the bar as fixed layers: the bar scrolls horizontally, which would clip them.
   const [anchor, setAnchor] = useState<DOMRect | null>(null);
-  const setOpen = (next: 'agent' | 'engine' | 'mode' | null, event?: { currentTarget: Element }) => { setOpenState(next); setAnchor(next && event ? event.currentTarget.getBoundingClientRect() : null); };
+  const setOpen = (next: 'agent' | 'engine' | 'target' | 'mode' | null, event?: { currentTarget: Element }) => { setOpenState(next); setAnchor(next && event ? event.currentTarget.getBoundingClientRect() : null); };
   const menuStyle = (align: 'left' | 'right', width: number): CSSProperties => {
     if (!anchor) return { display: 'none' };
     const bottom = window.innerHeight - anchor.top + 4;
@@ -34,6 +35,9 @@ export function AidevRouterBar({ sessionId = null }: { sessionId?: string | null
   };
   const claudeAuthState = useClaudeAuth();
   const chatCap = useChatEffortCap(sessionId);
+  // F-08: which PC this chat's remote work goes to
+  const targetChoice = useTargetChoice(sessionId);
+  const tv = targetChoice.view;
   useEffect(() => { aidevApi.engines().then(setEngines).catch(() => setEngines(null)); }, [state.last?.decision_id]);
   useEffect(() => {
     if (!open) return undefined;
@@ -90,7 +94,6 @@ export function AidevRouterBar({ sessionId = null }: { sessionId?: string | null
             <button type="button" className={`${chip} text-foreground`} disabled={last.plan.engine_locked} onClick={(event) => { event.stopPropagation(); setOpen(open === 'engine' ? null : 'engine', event); }} title={last.plan.reason.join('\n')}>
               <span className="capitalize">{state.overrides.engine ?? last.plan.engine ?? '엔진 없음'}</span>
               {last.plan.model ? <span className="text-muted-foreground">· {last.plan.model}/{last.plan.effort}</span> : null}
-              {last.plan.target ? <span className="text-muted-foreground">· ⇢ {last.plan.target.name}</span> : null}
               {!last.plan.engine_locked ? <ChevronDown size={11} /> : null}
             </button>
             {open === 'engine' ? (
@@ -109,6 +112,36 @@ export function AidevRouterBar({ sessionId = null }: { sessionId?: string | null
               </div>
             ) : null}
           </span>
+          {tv ? (
+            <span className="relative">
+              <button type="button" data-testid="router-target-chip" className={`${chip} ${tv.name ? 'text-foreground' : ''}`} onClick={(event) => { event.stopPropagation(); setOpen(open === 'target' ? null : 'target', event); }}
+                title={`원격 PC — ${tv.label}${last.scope.remote_action !== 'none' ? ` · 원격 작업 ${last.scope.remote_action}` : ''}${tv.device ? ` · 기기 ${tv.device.tool}:${tv.device.serial}` : ''}`}>
+                <Monitor size={11} />
+                <span className={tv.name ? 'font-medium' : ''}>{tv.name ?? '자동'}</span>
+                {tv.name ? <span className="text-muted-foreground">· {tv.label}</span> : null}
+                {tv.device ? <span className="text-muted-foreground">· {tv.device.serial}</span> : null}
+                <ChevronDown size={11} />
+              </button>
+              {open === 'target' ? (
+                <div className="z-50 rounded-md border border-border bg-popover p-1 shadow-md" style={menuStyle('left', 264)} onClick={(event) => event.stopPropagation()}>
+                  <div className="px-2 py-1 text-muted-foreground">이 채팅의 원격 작업을 보낼 PC (명령에 PC 이름을 쓰면 그 PC)</div>
+                  <button type="button" onClick={() => { void targetChoice.choose(null); setOpen(null); }} className={`w-full rounded px-2 py-1.5 text-left hover:bg-accent ${tv.selectedId === null ? 'font-medium' : ''}`}>
+                    <div>자동</div><div className="text-muted-foreground">기본 PC → 하나뿐인 PC → Laya가 명령에 맞는 PC 선택</div>
+                  </button>
+                  {tv.options.map((t) => (
+                    <div key={t.id} className={`flex items-center rounded hover:bg-accent ${tv.selectedId === t.id ? 'font-medium' : ''}`}>
+                      <button type="button" onClick={() => { void targetChoice.choose(t.id); setOpen(null); }} className="min-w-0 flex-1 px-2 py-1.5 text-left">
+                        <div className="truncate">{t.name}</div><div className="text-muted-foreground">{t.platform ?? '?'}{t.is_default ? ' · 기본 PC' : ''}</div>
+                      </button>
+                      <button type="button" aria-label={t.is_default ? `${t.name} 기본 PC 해제` : `${t.name} 기본 PC로 지정`} title={t.is_default ? '기본 PC 해제' : '기본 PC로 지정 (모든 채팅)'} onClick={() => { void targetChoice.setDefault(t.id, !t.is_default); }} className="rounded p-1.5 text-muted-foreground hover:text-foreground">
+                        <Star size={12} className={t.is_default ? 'fill-amber-400 text-amber-500' : ''} />
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              ) : null}
+            </span>
+          ) : null}
           {last.lessons.length ? <span className={chip} title={last.lessons.map((lesson) => `${lesson.trigger} → ${lesson.rule}`).join('\n')}>교훈 {last.lessons.length}</span> : null}
           {state.runFinishedAt && state.runId ? (
             <span className="inline-flex items-center gap-0.5 text-muted-foreground" title="이 실행 결과를 평가하면 다음 라우팅과 교훈 학습에 반영됩니다">

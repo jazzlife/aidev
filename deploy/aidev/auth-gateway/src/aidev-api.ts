@@ -182,11 +182,19 @@ export function createAidevApi(deps: AidevDeps) {
         const judge = judgeFor(session, engines);
         return json(res, 200, await route(store, laya, uid, engines, input, { judge })), true;
       }
+      // F-08: the PC a chat's remote work is pinned to (router chip); null unpins
+      const sessTargetMatch = rest.match(/^\/session-settings\/([A-Za-z0-9._:-]{1,200})\/target$/);
+      if (sessTargetMatch && m === 'PUT') {
+        const b = await readJson(req);
+        const id = b.target_id === null || b.target_id === undefined ? null : Number(b.target_id);
+        if (id !== null && !Number.isInteger(id)) throw new HttpError(400, 'target_id must be an integer or null');
+        try { return json(res, 200, { target_id: store.setSessionTarget(uid, sessTargetMatch[1], id) }), true; } catch (error) { throw new HttpError(404, error instanceof Error ? error.message : 'target not found'); }
+      }
       // a chat's own effort ceiling (the account default lives in /settings/effort-cap)
       const sessMatch = rest.match(/^\/session-settings\/([A-Za-z0-9._:-]{1,200})$/);
       if (sessMatch) {
         const sid = sessMatch[1];
-        if (m === 'GET') { const info = store.effectiveEffortCap(uid, sid); return json(res, 200, { effort_cap: info.chat, default: info.account, effective: info.cap }), true; }
+        if (m === 'GET') { const info = store.effectiveEffortCap(uid, sid); return json(res, 200, { effort_cap: info.chat, default: info.account, effective: info.cap, target_id: store.sessionTarget(uid, sid) }), true; }
         if (m === 'PUT' || m === 'DELETE') {
           const b = m === 'PUT' ? await readJson(req) : {};
           try {
@@ -204,7 +212,15 @@ export function createAidevApi(deps: AidevDeps) {
           const file = process.env.AIDEV_BENCH_FILE ?? '/srv/app/current/control/laya/bench/commands.jsonl';
           rows = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line) as { text: string; agent: string; lang?: string; task_kind?: string | null });
         }
-        return json(res, 200, await evaluateRouting(store, laya, uid, rows.slice(0, 2000))), true;
+        // F-08: remote_action on its own held-out set (skip with {"remote":false})
+        let remoteRows: Array<{ text: string; remote_action: string; lang?: string }> = Array.isArray(b.remote_rows) ? b.remote_rows as Array<{ text: string; remote_action: string; lang?: string }> : [];
+        if (!remoteRows.length && b.remote !== false) {
+          try {
+            const file = process.env.AIDEV_REMOTE_BENCH_FILE ?? '/srv/app/current/control/laya/bench/remote-actions.jsonl';
+            remoteRows = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line) as { text: string; remote_action: string; lang?: string });
+          } catch { remoteRows = []; }
+        }
+        return json(res, 200, await evaluateRouting(store, laya, uid, rows.slice(0, 2000), remoteRows.slice(0, 1000))), true;
       }
       const decideMatch = rest.match(/^\/decide\/([a-z][a-z0-9_.]*)$/);
       if (decideMatch && m === 'POST') {
@@ -711,7 +727,7 @@ export function createAidevApi(deps: AidevDeps) {
           } catch (error) { throw new HttpError(409, error instanceof Error ? error.message : 'runner unavailable'); }
         }
         if (targetMatch[2] && m === 'POST') { const code = crypto.randomBytes(4).toString('hex').toUpperCase(); store.updateTarget(uid, id, { pairingCode: code, pairingExpires: Date.now() + 10 * 60_000 }); return json(res, 200, { pairing_code: code, expires_in: 600 }), true; }
-        if (!targetMatch[2] && m === 'PATCH') { const b = await readJson(req); store.updateTarget(uid, id, { name: optStr(b.name, 41), description: optStr(b.description, 600), tags: Array.isArray(b.tags) ? (b.tags as unknown[]).map(String) : undefined, policy: optStr(b.policy, 10) }); return json(res, 200, { ok: true }), true; }
+        if (!targetMatch[2] && m === 'PATCH') { const b = await readJson(req); if (typeof b.default === 'boolean') store.setDefaultTarget(uid, id, b.default); store.updateTarget(uid, id, { name: optStr(b.name, 41), description: optStr(b.description, 600), tags: Array.isArray(b.tags) ? (b.tags as unknown[]).map(String) : undefined, policy: optStr(b.policy, 10) }); return json(res, 200, { ok: true }), true; }
         if (!targetMatch[2] && m === 'DELETE') { store.deleteTarget(uid, id); deps.runners?.disconnect(id); return json(res, 200, { ok: true }), true; }
       }
 

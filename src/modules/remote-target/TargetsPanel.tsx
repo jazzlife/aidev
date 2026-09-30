@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Check, ChevronDown, ChevronRight, Copy, Laptop, Plus, RefreshCw, Trash2, Wifi, WifiOff } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Copy, Laptop, Plus, RefreshCw, Star, Trash2, Wifi, WifiOff } from 'lucide-react';
 
 import { api, readApiJson } from '@/shared/api';
 import { copyTextToClipboard } from '@/shared/utils';
@@ -17,6 +17,8 @@ type Target = {
   paired: boolean;
   online: boolean;
   status: string;
+  /** F-08: the account's default PC for remote work (1/0 from the gateway) */
+  is_default?: number | boolean;
   last_seen: number | null;
   pairing_code: string | null;
   pairing_expires: number | null;
@@ -103,6 +105,7 @@ function TargetRow({ target, files, reload, setNote }: { target: Target; files: 
         {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         <span className={`h-2 w-2 shrink-0 rounded-full ${state.dot}`} aria-hidden />
         <span className="font-medium">{target.name}</span>
+        {target.is_default ? <span title="기본 PC — 명령이 PC를 지정하지 않으면 여기서 실행" className="inline-flex items-center gap-0.5 rounded bg-amber-500/15 px-1 text-[10px] text-amber-700 dark:text-amber-400"><Star size={9} className="fill-current" /> 기본</span> : null}
         <span className="truncate text-muted-foreground">{[caps?.os ?? target.platform, caps?.arch ?? target.arch, caps?.hostname].filter(Boolean).join(' · ')}</span>
         <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{state.text}</span>
       </button>
@@ -125,6 +128,10 @@ function TargetRow({ target, files, reload, setNote }: { target: Target; files: 
             <select aria-label="실행 정책" value={target.policy} onChange={(event) => { void act(() => api.targets.update(target.id, { policy: event.target.value })); }} className="h-6 rounded border border-border bg-background px-1">
               {(Object.keys(POLICY_LABEL) as Target['policy'][]).map((policy) => <option key={policy} value={policy}>{POLICY_LABEL[policy]}</option>)}
             </select>
+          </label>
+          <label className="flex items-center gap-1.5" title="명령이 PC를 지정하지 않고 채팅에 고정된 PC도 없으면 이 PC에서 실행합니다">
+            <input type="checkbox" checked={Boolean(target.is_default)} onChange={(event) => { void act(() => api.targets.update(target.id, { default: event.target.checked })); }} />
+            <span>기본 PC (원격 작업을 보낼 곳)</span>
           </label>
           <div className="flex flex-wrap gap-1.5">
             <button type="button" disabled={!target.online} onClick={() => { void act(() => api.targets.ping(target.id), (b) => (b.ok ? `응답 ${String(b.rtt_ms)}ms` : `응답 없음: ${String(b.error)}`)); }} className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 hover:bg-accent disabled:opacity-50"><Wifi size={11} /> 연결 확인</button>

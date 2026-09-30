@@ -16,6 +16,8 @@ export type RouteScope = {
   multi_domain: number;
   clarify: number;
   remote_action: string;
+  /** fused probability of the remote action (F-08; under the threshold it is reported as none) */
+  remote_action_probability?: number;
   needs_llm_analysis: boolean;
   ask_clarify: boolean;
 };
@@ -29,7 +31,16 @@ export type AgentDefinition = {
   mcpServers: Record<string, unknown> | null;
 };
 
-export type RouteTarget = { id: number; name: string; platform: string | null; tags: string[]; capabilities: unknown } | null;
+/**
+ * How the router chose the PC (F-08): the chip pick (`input`), a PC named in the command, this chat's pin,
+ * the account default, the only online PC, or Laya's target.select among several.
+ */
+export type RouteTargetSource = 'input' | 'mention' | 'session' | 'default' | 'single' | 'laya';
+export type RouteTarget = { id: number; name: string; platform: string | null; tags: string[]; capabilities: unknown; source?: RouteTargetSource | null } | null;
+/** The attached phone/TV/emulator the run should use (F-08 device.select; adb/sdb serial). */
+export type RouteDevice = { serial: string; tool: 'adb' | 'sdb'; source: 'mention' | 'single' | 'laya' } | null;
+/** An online PC the router chip can offer. */
+export type RouteTargetOption = { id: number; name: string; platform: string | null; is_default: boolean };
 
 export type ArchitectDefinition = { name: string; version: number; description: string; prompt: string; tools: string[] | null; maxTurns: number | null; model: string | null };
 
@@ -46,7 +57,12 @@ export type RouteResult = {
   agent: { id: number; name: string; version: number; domain: string; description: string; probability: number; confidence: number; definition: AgentDefinition };
   alternatives: Array<{ name: string; probability: number; description: string }>;
   needs_new: number;
-  plan: { engine: Engine | null; engine_locked: boolean; engine_error?: string | null; model: string | null; effort: string | null; target: RouteTarget; reason: string[] };
+  plan: { engine: Engine | null; engine_locked: boolean; engine_error?: string | null; model: string | null; effort: string | null; target: RouteTarget; device?: RouteDevice; reason: string[] };
+  /** Laya's target.select / device.select, logged as their own decisions (an override is recorded on them). */
+  target_decision?: { decision_id: number; answer: unknown; confidence: number; fallback: boolean } | null;
+  device_decision?: { decision_id: number; answer: unknown; confidence: number; fallback: boolean } | null;
+  /** The PCs that were online when this was routed (the router chip's choices). */
+  targets?: RouteTargetOption[];
   engines: Record<Engine, { allowed: boolean; authenticated: boolean; error?: string | null; score: number | null; notes: string[] }>;
   lessons: Array<{ id: number; trigger: string; rule: string; trial?: boolean }>;
   knowledge_digest: string | null;
@@ -231,6 +247,11 @@ export const aidevApi = {
   createRun: (input: Record<string, unknown>) => post('/api/aidev/runs', input).then((response) => readJson<{ run_id: number }>(response)),
   runOutcome: (runId: number, outcome: Record<string, unknown>) => post(`/api/aidev/runs/${runId}/outcome`, outcome, 'PATCH').then((response) => readJson<{ run: Record<string, unknown>; next?: NextAction | null }>(response)),
   handoffBrief: (sessionId: string, input: { from_engine?: string | null; to_engine?: string | null; reason?: string | null }) => post('/api/aidev-tools/handoff', { session_id: sessionId, ...input }).then((response) => readRuntimeData<{ text: string; files: string[]; userTurns: number }>(response)),
+  /** F-08: pin this chat's remote work to a PC (null: back to automatic). */
+  setSessionTarget: (sessionId: string, targetId: number | null) => post(`/api/aidev/session-settings/${encodeURIComponent(sessionId)}/target`, { target_id: targetId }, 'PUT').then((response) => readJson<{ target_id: number | null }>(response)),
+  sessionTarget: (sessionId: string) => authenticatedFetch(`/api/aidev/session-settings/${encodeURIComponent(sessionId)}`).then((response) => readJson<{ target_id?: number | null }>(response)).then((r) => r.target_id ?? null),
+  /** F-08: the account's default PC for remote work. */
+  setDefaultTarget: (targetId: number, on: boolean) => post(`/api/aidev/targets/${targetId}`, { default: on }, 'PATCH').then((response) => readJson<{ ok: boolean }>(response)),
   targets: () => authenticatedFetch('/api/aidev/targets').then((response) => readJson<{ targets: Array<Record<string, unknown>> }>(response)),
   /** Remote runs (F-03) across targets, newest first — mobile result cards. */
   /** F-07/F-07c: one screenshot of a program window on a remote PC (id, or `query` = part of its app/title,

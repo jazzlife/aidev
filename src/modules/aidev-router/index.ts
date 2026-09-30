@@ -35,3 +35,6 @@ export type { KnowledgeItem, KnowledgeProposal, KnowledgeRefreshJob } from '@/mo
 export { useEffortCap, EFFORT_LABEL } from '@/modules/aidev-router/hooks/useEffortCap';
 export { useChatEffortCap } from '@/modules/aidev-router/hooks/useChatEffortCap';
 export { EffortCapDefaults } from '@/modules/aidev-router/EffortCapDefaults';
+// F-08: the PC a chat's remote work goes to (router bar chip + mobile router sheet).
+export { useTargetChoice, targetChipView, TARGET_SOURCE_LABEL } from '@/modules/aidev-router/hooks/useTargetChoice';
+export type { RouteDevice, RouteTargetOption, RouteTargetSource } from '@/modules/aidev-router/api';

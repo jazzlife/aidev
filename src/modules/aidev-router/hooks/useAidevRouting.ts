@@ -52,6 +52,8 @@ function buildAidevPayload(route: RouteResult, runId: number | null) {
     model: route.plan.model,
     effort: route.plan.effort,
     target: route.plan.target,
+    // F-08: the attached device the run should address (adb/sdb -s <serial>)
+    device: route.plan.device ? { serial: route.plan.device.serial, tool: route.plan.device.tool } : null,
     scope: { depth: route.scope.depth, taskKind: route.scope.task_kind, risk: route.scope.risk, remoteAction: route.scope.remote_action },
   };
 }
