@@ -22,17 +22,25 @@ const TOOLS: &[(&str, &str, &[&str])] = &[
     ("adb", "adb", &["version"]),
     ("sdb", "sdb", &["version"]),
     ("dotnet", "dotnet", &["--version"]),
+    // debuggers (remote_console) and local agent CLIs (remote_agent)
+    ("gdb", "gdb", &["--version"]),
+    ("lldb", "lldb", &["--version"]),
+    ("claude", "claude", &["--version"]),
+    ("codex", "codex", &["--version"]),
+    ("gemini", "gemini", &["--version"]),
 ];
+/// npm-installed commands are .cmd shims on Windows: run them through cmd.exe.
+#[cfg(windows)]
+const NPM_SHIMS: &[&str] = &["npm", "claude", "codex", "gemini"];
 
 async fn first_line(cmd: &str, args: &[&str]) -> Option<String> {
     let mut c = Command::new(cmd);
     c.args(args).stdin(std::process::Stdio::null()).kill_on_drop(true);
     #[cfg(windows)]
     {
-        // `npm` and friends are .cmd shims on Windows
-        if cmd == "npm" {
+        if NPM_SHIMS.contains(&cmd) {
             c = Command::new("cmd");
-            c.args(["/C", "npm", "--version"]).kill_on_drop(true);
+            c.args(["/C", cmd]).args(args).stdin(std::process::Stdio::null()).kill_on_drop(true);
         }
     }
     let out = tokio::time::timeout(PROBE_TIMEOUT, c.output()).await.ok()?.ok()?;
@@ -107,7 +115,7 @@ pub async fn collect(cfg: &crate::config::Config) -> Value {
         "allowed_roots": cfg.allowed_roots.iter().map(|r| r.display().to_string()).collect::<Vec<_>>(),
         "screen": cfg.screen_consent,
         "control": cfg.control_consent,
-        "features": ["ping", "exec", "sync", "tunnel", "screen", "video", "input", "windows", "dev", "dap"],
+        "features": ["ping", "exec", "sync", "tunnel", "screen", "video", "input", "windows", "dev", "dap", "stdin"],
         "limits": { "exec_running": crate::exec::MAX_RUNNING },
     })
 }

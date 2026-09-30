@@ -29,6 +29,12 @@ function Pending({ approval, onAnswer }: { approval: RemoteApproval; onAnswer: (
       </div>
       {approval.kind === 'debug' ? <div className="mt-2 text-[12px] text-warn">디버거로 실행 (중단점에서 멈춤)</div> : approval.kind === 'console' ? <div className="mt-2 text-[12px] text-warn">디버거 콘솔 (agent가 명령을 한 줄씩 입력)</div> : null}
       <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-elevated p-2 font-mono text-[13px]">{approval.cmd}</pre>
+      {approval.input ? (
+        <>
+          <div className="mt-2 text-[12px] text-warn">{/^(claude|codex|gemini)\b/.test(approval.cmd) ? '이 PC의 agent CLI에 맡길 작업' : '명령에 넣을 입력'}</div>
+          <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-words rounded-lg bg-elevated p-2 text-[13px]">{approval.input}</pre>
+        </>
+      ) : null}
       <div className="mt-1.5 flex flex-wrap gap-1 text-[12px] text-muted">
         {approval.reasons.map((r) => <span key={r} className="rounded-md bg-elevated px-1.5 py-0.5">{r}</span>)}
       </div>

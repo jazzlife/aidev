@@ -642,7 +642,9 @@ export function createAidevApi(deps: AidevDeps) {
             env = Object.fromEntries(entries) as Record<string, string>;
           }
           const int = (v: unknown, lo: number, hi: number) => (v === undefined || v === null ? undefined : Math.min(Math.max(Math.round(num(v, 'number')), lo), hi));
-          const exec = { cmd, cwd: normalizeCwd(optStr(b.cwd, 1000) || null, target.allowed_roots ? JSON.parse(target.allowed_roots) as string[] : []), pty: agentCall ? false : b.pty === true, cols: int(b.cols, 10, 500), rows: int(b.rows, 4, 300), env, timeoutSec: int(b.timeoutSec, 1, 86400) };
+          if (b.stdin !== undefined && b.stdin !== null && (typeof b.stdin !== 'string' || Buffer.byteLength(b.stdin) > 256 * 1024)) throw new HttpError(400, 'stdin: text up to 256 KB');
+          const stdin = typeof b.stdin === 'string' && b.stdin ? b.stdin : null;
+          const exec = { cmd, cwd: normalizeCwd(optStr(b.cwd, 1000) || null, target.allowed_roots ? JSON.parse(target.allowed_roots) as string[] : []), pty: agentCall || stdin ? false : b.pty === true, cols: int(b.cols, 10, 500), rows: int(b.rows, 4, 300), env, timeoutSec: int(b.timeoutSec, 1, 86400), stdin };
           try {
             if (agentCall) {
               if (!deps.gate) throw new HttpError(503, 'remote gate unavailable');

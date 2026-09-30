@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import { createHmac, randomBytes } from 'node:crypto';
 import { fileURLToPath } from 'node:url';
 
+import { LOCAL_AGENTS, localAgentCommand, localAgentPrompt, parseLocalAgentOutput, pickLocalAgent, type LocalAgent, type LocalAgentMode } from '@/modules/aidev-tools/local-agent.js';
 import { appConfigDb } from '@/modules/database/index.js';
 
 /**
@@ -85,13 +86,15 @@ export async function callGateway(method: 'GET' | 'POST' | 'PATCH' | 'DELETE', a
   return data;
 }
 
-export type RemoteExecInput = { target?: string | number; cmd: string; cwd?: string; timeoutSec?: number; waitSec?: number; background?: boolean; env?: Record<string, string>; outputBytes?: number };
+export type RemoteExecInput = { target?: string | number; cmd: string; cwd?: string; timeoutSec?: number; waitSec?: number; background?: boolean; env?: Record<string, string>; outputBytes?: number;
+  /** text for the command's input (runner ≥ 0.9) */ stdin?: string };
 export type RemoteTurn = { runId?: number | null; targetId?: number | null; agent?: string | null };
 export type RemoteExecResult = {
   target: string; cmd: string; status: string; message?: string; remoteRunId?: number; running?: boolean; exitCode?: number | null; signal?: string | null;
   durationMs?: number | null; output?: string; approvedBy?: string; risk?: number; reasons?: string[];
 };
-export type TargetInfo = { id: number; name: string; online: boolean; platform: string | null; policy: string; allowed_roots?: string[] };
+export type TargetInfo = { id: number; name: string; online: boolean; platform: string | null; policy: string; allowed_roots?: string[];
+  capabilities?: { runner?: string; features?: string[]; tools?: Record<string, string> } | null };
 
 /** A target by id or name (case-insensitive); else the routed target; else the only online one. */
 export async function resolveTarget(requested: string | number | undefined, routed: number | null): Promise<TargetInfo> {
@@ -141,6 +144,22 @@ export function consoleSummary(c: ConsoleView) {
       : c.waited === 'timeout' || c.waited === 'quiet' ? '아직 실행 중이거나 프롬프트를 못 알아봤습니다: remote_console_read로 더 기다리거나, 멈추려면 remote_console_send interrupt=true.'
         : '실행 중: remote_console_read로 출력을 더 보세요.';
   return { session: c.id, state: c.state, exitCode: c.exitCode, waitingForInput: c.atPrompt, output: out, hint };
+}
+
+/** A delegated agent run (remote_exec result) → its parsed report and what to do next. */
+function agentResult(r: RemoteExecResult, agent?: LocalAgent) {
+  const { output, ...rest } = r;
+  if (r.status !== 'finished' && r.status !== 'running') return { ...rest, output: output?.slice(-4000) };
+  const rep = parseLocalAgentOutput(output ?? '', agent);
+  const hint = r.running
+    ? `아직 작업 중입니다: remote_agent_result{remoteRunId: ${r.remoteRunId}}로 기다렸다 결과를 받으세요(사용자는 원격 실행 창에서 진행을 봅니다). 멈추려면 remote_stop.`
+    : rep.isError || r.exitCode !== 0 ? `로컬 agent가 실패했습니다: error·output을 보고, 로그인·권한 문제면 사용자에게 알리세요.${rep.sessionId ? ` 이어서 시키려면 remote_agent{resume: "${rep.sessionId}"}.` : ''}`
+      : `끝났습니다. result를 검토하고(주장만 믿지 말고 필요하면 remote_exec로 재확인), 추가 작업은 remote_agent{resume: "${rep.sessionId ?? ''}", task: …}로 이어서 시키세요.`;
+  return {
+    ...rest, localAgent: rep.agent, sessionId: rep.sessionId, result: rep.result ? rep.result.slice(-8000) : null, error: rep.error, steps: rep.steps,
+    turns: rep.turns, costUsd: rep.costUsd,
+    output: rep.result === null && !rep.steps.length ? (output ?? '').slice(-4000) : undefined, hint,
+  };
 }
 
 /** What an agent needs after each debugger step: where it is, the stack, the variables, the recent output. */
@@ -334,7 +353,7 @@ export function composeAgentInstructions(aidev: AidevTurnOptions): string {
     parts.push(`## 원격 실행 대상\n이 작업의 실행·테스트·디버깅은 사용자의 원격 PC \`${aidev.target.name}\` (${aidev.target.platform ?? 'unknown'}; tags ${aidev.target.tags.join(', ') || 'none'})에서 remote_* 도구로 수행한다.${aidev.scope.remoteAction && aidev.scope.remoteAction !== 'none' ? ` 요청된 원격 작업: ${aidev.scope.remoteAction}.` : ''}${aidev.device ? `\n대상 기기: ${aidev.device.tool} serial \`${aidev.device.serial}\` — 기기 명령은 \`${aidev.device.tool} -s ${aidev.device.serial} …\`로 이 기기를 지정한다(연결된 기기가 여럿).` : ''}\n대상 capabilities: ${capabilities}`);
   }
   parts.push('## 판단 도구\n여러 후보(수정안·파일·접근법·위험도) 중 골라야 하면 추측 대신 `aidev_decide` 도구(kind agent.pick / agent.score / agent.yesno)로 판정한다.');
-  parts.push('## 사용자 PC에서 실행\n사용자가 자기 PC·Mac·원격 머신에서 실행·빌드·테스트·확인을 요청하면 이 작업공간의 셸이 아니라 `remote_targets`로 대상을 확인하고 `remote_exec`로 실행한다(허용 폴더 안에서, 결과의 종료 코드·출력을 근거로 판단). 이 작업공간의 프로젝트를 대상에서 돌려야 하면 먼저 `remote_sync`로 복사하고(돌려준 `dest`를 cwd로), 여기서 파일을 고친 뒤에는 다시 `remote_sync` 후 실행한다. 의존성은 복사되지 않으므로 대상에서 설치(npm ci 등)한다. 테스트가 실패하면 원인을 고치고 다시 실행해 통과를 확인한다. 개발 서버처럼 계속 도는 명령은 `background:true` 후 `remote_logs`로 확인하고, 끝나면 `remote_stop`. 웹 앱을 사용자에게 보여줘야 하면 `remote_preview{port}`를 먼저 호출해 `base`를 받고, 개발 서버를 그 base로 실행(Vite: `npm run dev -- --base <base> --port <port>`)한 뒤 `remote_preview`를 다시 호출하면 작업대 미리보기 패널에 열린다(HMR 포함). 돌려준 url을 사용자에게 알려준다. 실행 중 오류·잘못된 값의 원인을 찾을 때는 로그로 추측하기보다 `remote_debug_start`(언어·런타임에 맞는 어댑터: Node js-debug, Python debugpy, C/C++/Rust codelldb·gdb, Apple lldb-dap, .NET netcoredbg·.NET Framework clrdbg, Mono/Unity mono, Go delve, Java/Kotlin jvm, Dart/Flutter, MCU probe-rs·gdb+OpenOCD, attach(pid·주소)로 실행 중인 것·Android JDWP 포함 — 디버그 빌드 먼저)로 의심 줄에 중단점을 두고 멈춘 곳의 locals·`remote_debug_eval`로 값을 확인하며 `remote_debug_step`으로 진행하고, 끝나면 `remote_debug_stop`(사용자도 같은 세션을 디버그 창에서 본다). 맞는 어댑터가 없거나 디버거 고유 명령이 필요하면 `remote_console_start`로 그 PC의 CLI 디버거(gdb·lldb·cdb+SOS·jdb·pdb·dlv·adb shell·openocd 등)를 열어 `remote_console_send`로 한 줄씩 조작하고 `remote_console_stop`으로 끝낸다. 데스크탑 앱·에뮬레이터 창처럼 화면을 직접 봐야 확인할 수 있는 것은 `remote_windows`로 창을 찾고 `remote_screenshot{window|query}`로 그 창을 보고 판단한다(그 PC에서 화면 캡처를 허용한 경우만, 보기 전용). 파일 삭제·sudo·설치·강제 push 같은 명령은 사용자 승인이 필요하므로 꼭 필요할 때만 쓰고, 거부되면 같은 명령을 반복하지 않는다.');
+  parts.push('## 사용자 PC에서 실행\n사용자가 자기 PC·Mac·원격 머신에서 실행·빌드·테스트·확인을 요청하면 이 작업공간의 셸이 아니라 `remote_targets`로 대상을 확인하고 `remote_exec`로 실행한다(허용 폴더 안에서, 결과의 종료 코드·출력을 근거로 판단). 이 작업공간의 프로젝트를 대상에서 돌려야 하면 먼저 `remote_sync`로 복사하고(돌려준 `dest`를 cwd로), 여기서 파일을 고친 뒤에는 다시 `remote_sync` 후 실행한다. 의존성은 복사되지 않으므로 대상에서 설치(npm ci 등)한다. 테스트가 실패하면 원인을 고치고 다시 실행해 통과를 확인한다. 개발 서버처럼 계속 도는 명령은 `background:true` 후 `remote_logs`로 확인하고, 끝나면 `remote_stop`. 웹 앱을 사용자에게 보여줘야 하면 `remote_preview{port}`를 먼저 호출해 `base`를 받고, 개발 서버를 그 base로 실행(Vite: `npm run dev -- --base <base> --port <port>`)한 뒤 `remote_preview`를 다시 호출하면 작업대 미리보기 패널에 열린다(HMR 포함). 돌려준 url을 사용자에게 알려준다. 실행 중 오류·잘못된 값의 원인을 찾을 때는 로그로 추측하기보다 `remote_debug_start`(언어·런타임에 맞는 어댑터: Node js-debug, Python debugpy, C/C++/Rust codelldb·gdb, Apple lldb-dap, .NET netcoredbg·.NET Framework clrdbg, Mono/Unity mono, Go delve, Java/Kotlin jvm, Dart/Flutter, MCU probe-rs·gdb+OpenOCD, attach(pid·주소)로 실행 중인 것·Android JDWP 포함 — 디버그 빌드 먼저)로 의심 줄에 중단점을 두고 멈춘 곳의 locals·`remote_debug_eval`로 값을 확인하며 `remote_debug_step`으로 진행하고, 끝나면 `remote_debug_stop`(사용자도 같은 세션을 디버그 창에서 본다). 맞는 어댑터가 없거나 디버거 고유 명령이 필요하면 `remote_console_start`로 그 PC의 CLI 디버거(gdb·lldb·cdb+SOS·jdb·pdb·dlv·adb shell·openocd 등)를 열어 `remote_console_send`로 한 줄씩 조작하고 `remote_console_stop`으로 끝낸다. 그 PC의 IDE·SDK·시뮬레이터/기기·GUI 디버거가 꼭 필요하거나 그 PC에서 긴 조사(빌드→실행→디버그→수정→재실행)가 필요하면 `remote_agent`로 그 PC에 설치된 agent CLI(Claude Code·Codex·Gemini)에 작업을 맡기고, 돌려준 보고는 직접 재확인한다(`resume`으로 이어서 지시). 데스크탑 앱·에뮬레이터 창처럼 화면을 직접 봐야 확인할 수 있는 것은 `remote_windows`로 창을 찾고 `remote_screenshot{window|query}`로 그 창을 보고 판단한다(그 PC에서 화면 캡처를 허용한 경우만, 보기 전용). 파일 삭제·sudo·설치·강제 push 같은 명령은 사용자 승인이 필요하므로 꼭 필요할 때만 쓰고, 거부되면 같은 명령을 반복하지 않는다.');
   return parts.join('\n\n');
 }
 
@@ -404,7 +423,7 @@ export const aidevToolsService = {
   async remoteExec(input: RemoteExecInput, turn: RemoteTurn = {}): Promise<RemoteExecResult> {
     const target = await resolveTarget(input.target, turn.targetId ?? null);
     const started = await callGateway('POST', `/targets/${target.id}/exec`, {
-      cmd: input.cmd, cwd: input.cwd, timeoutSec: input.timeoutSec, env: input.env, runId: turn.runId ?? undefined, agent: turn.agent ?? undefined,
+      cmd: input.cmd, cwd: input.cwd, timeoutSec: input.timeoutSec, env: input.env, stdin: input.stdin, runId: turn.runId ?? undefined, agent: turn.agent ?? undefined,
     }) as GatewayResponse & { status?: string; stream?: { remoteRunId: number }; approval?: { id: string; risk: number; reasons: string[] }; reason?: string; error?: string };
     const base = { target: target.name, cmd: input.cmd };
     if (started.status === 'offline') return { ...base, status: 'offline', message: String(started.error ?? 'target offline') };
@@ -584,6 +603,34 @@ export const aidevToolsService = {
   async remoteConsoleStop(session: string) {
     const r = await callGateway('DELETE', `/console/${session}`) as { console: ConsoleView };
     return consoleSummary(r.console);
+  },
+
+  /**
+   * remote_agent (F-09d): the task goes to an agent CLI on the target (Claude Code / Codex / Gemini CLI) —
+   * for work that needs that PC's own IDE, SDKs, debuggers, simulators or attached devices.
+   */
+  async remoteAgent(input: { target?: string | number; task: string; agent?: string; mode?: LocalAgentMode; cwd?: string; resume?: string; model?: string; waitSec?: number; background?: boolean }, turn: RemoteTurn = {}) {
+    const target = await resolveTarget(input.target, turn.targetId ?? null);
+    const tools = target.capabilities?.tools ?? null;
+    const agent = pickLocalAgent(input.agent, tools);
+    const installed = LOCAL_AGENTS.filter((a) => tools?.[a]);
+    if (!agent) {
+      return { target: target.name, status: 'unavailable', message: `${target.name}에 agent CLI가 없습니다${input.agent && input.agent !== 'auto' ? ` (${input.agent})` : ''}. 설치된 것: ${installed.join(', ') || '없음'}. 사용자에게 그 PC에서 Claude Code(npm i -g @anthropic-ai/claude-code 후 claude 로그인) 또는 Codex CLI(npm i -g @openai/codex 후 codex login)를 설치·로그인하도록 안내하거나, remote_exec/remote_debug_start/remote_console_start로 직접 진행하세요.` };
+    }
+    if (tools && !tools[agent]) return { target: target.name, status: 'unavailable', message: `${target.name}에 ${agent} CLI가 없습니다. 설치된 것: ${installed.join(', ') || '없음'}` };
+    if (!target.capabilities?.features?.includes('stdin')) return { target: target.name, status: 'unavailable', message: `${target.name}의 러너(${target.capabilities?.runner ?? '?'})가 오래됐습니다 — aidev-runner 0.9.0 이상이 필요합니다(사용자에게 러너 업데이트 안내).` };
+    const mode: LocalAgentMode = input.mode === 'readonly' ? 'readonly' : 'full';
+    const cmd = localAgentCommand(agent, mode, { resume: input.resume, model: input.model });
+    const stdin = localAgentPrompt(input.task, { machine: target.name, platform: target.platform, cwd: input.cwd ?? null, mode, resume: Boolean(input.resume) });
+    const waitSec = Math.min(Math.max(input.waitSec ?? 900, 5), 1800);
+    const r = await aidevToolsService.remoteExec({ target: target.id, cmd, cwd: input.cwd, stdin, timeoutSec: 4 * 3600, waitSec, background: input.background, outputBytes: 60_000 }, turn);
+    return { agent, mode, ...agentResult(r, agent) };
+  },
+
+  /** remote_agent_result: waits for (or re-reads) a delegated agent run and parses its report. */
+  async remoteAgentResult(remoteRunId: number, waitSec = 600, agent?: LocalAgent) {
+    const r = await waitRemoteRun(remoteRunId, Math.min(Math.max(waitSec, 0), 1800), 60_000);
+    return agentResult({ target: '', cmd: '', ...r }, agent);
   },
 
   /** remote_stop: interrupt (INT) or kill a running remote command. */

@@ -140,6 +140,30 @@ router.post('/tools/:toolName', async (req, res) => {
         }, readTurn(input));
         break;
       }
+      case 'remote_agent': {
+        const task = typeof input.task === 'string' ? input.task.trim() : '';
+        if (!task) throw new Error('task is required.');
+        if (task.length > 60_000) throw new Error('task is too long (≤ 60000 chars).');
+        result = await aidevToolsService.remoteAgent({
+          target: typeof input.target === 'string' || typeof input.target === 'number' ? input.target : undefined,
+          task,
+          agent: typeof input.agent === 'string' ? input.agent : undefined,
+          mode: input.mode === 'readonly' ? 'readonly' : 'full',
+          cwd: typeof input.cwd === 'string' && input.cwd.trim() ? input.cwd.trim() : undefined,
+          resume: typeof input.resume === 'string' && input.resume.trim() ? input.resume.trim() : undefined,
+          model: typeof input.model === 'string' && input.model.trim() ? input.model.trim() : undefined,
+          waitSec: typeof input.waitSec === 'number' ? input.waitSec : undefined,
+          background: input.background === true,
+        }, readTurn(input));
+        break;
+      }
+      case 'remote_agent_result': {
+        const id = Number(input.remoteRunId);
+        if (!Number.isInteger(id) || id <= 0) throw new Error('remoteRunId (from remote_agent) is required.');
+        const agent = input.agent === 'claude' || input.agent === 'codex' || input.agent === 'gemini' ? input.agent : undefined;
+        result = await aidevToolsService.remoteAgentResult(id, typeof input.waitSec === 'number' ? input.waitSec : 600, agent);
+        break;
+      }
       case 'remote_console_start': {
         const command = typeof input.command === 'string' ? input.command.trim() : '';
         if (!command) throw new Error('command is required.');

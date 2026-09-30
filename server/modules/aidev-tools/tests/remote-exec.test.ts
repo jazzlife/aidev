@@ -229,3 +229,35 @@ test('remote_console_* (F-09c): start through the gate, send lines / Ctrl-C, rea
   assert.equal(end.state, 'ended');
   await assert.rejects(aidevToolsService.remoteConsoleSend('conabc1', {}), /input/);
 });
+
+test('remote_agent (F-09d): hands the task to the PC\'s Claude Code on stdin, through the gate, and parses its report', async () => {
+  let sent: Record<string, unknown> = {};
+  const withTools = { targets: [{ ...targets.targets[0], capabilities: { runner: '0.9.0', features: ['exec', 'stdin'], tools: { claude: '2.1.285 (Claude Code)', codex: 'codex-cli 0.159.2' } } }] };
+  const stream = [
+    '{"type":"system","subtype":"init","session_id":"sess-abcdef"}',
+    '{"type":"assistant","message":{"content":[{"type":"tool_use","name":"Bash","input":{"command":"xcodebuild -scheme App test"}}]},"session_id":"sess-abcdef"}',
+    '{"type":"result","subtype":"success","is_error":false,"result":"원인: 메인 스레드 교착. LoginView.swift 수정, 테스트 통과.","num_turns":7,"total_cost_usd":0.4,"session_id":"sess-abcdef"}',
+  ].join('\n');
+  handler = (method, path, body) => {
+    if (path === '/targets') return withTools;
+    if (method === 'POST' && path === '/targets/7/exec') { sent = body; return { status: 'pending', approval: { id: 'apprag1', risk: 2, reasons: ['다른 AI agent에 이 PC 전체 권한 위임'] } }; }
+    if (path.startsWith('/approvals/apprag1/wait')) return { approval: { status: 'allowed', remoteRunId: 91, error: null } };
+    if (path.startsWith('/remote-runs/91/wait')) return finished(91, 0, stream);
+    throw new Error(`unexpected ${method} ${path}`);
+  };
+  const r = await aidevToolsService.remoteAgent({ task: '로그인 화면 멈춤 원인을 찾아 고쳐라', cwd: '~/aidev-work/app' }, { targetId: 7, runId: 3, agent: 'ios-swift' }) as Record<string, unknown>;
+  assert.equal(sent.cmd, 'claude -p --output-format stream-json --verbose --permission-mode acceptEdits --allowedTools Bash');
+  assert.match(String(sent.stdin), /로그인 화면 멈춤/); assert.match(String(sent.stdin), /m4pro/);
+  assert.equal(sent.cwd, '~/aidev-work/app'); assert.equal(sent.timeoutSec, 14400);
+  assert.equal(r.agent, 'claude'); assert.equal(r.approvedBy, 'user'); assert.equal(r.status, 'finished');
+  assert.equal(r.sessionId, 'sess-abcdef'); assert.match(String(r.result), /LoginView/);
+  assert.deepEqual(r.steps, ['Bash: xcodebuild -scheme App test']);
+  assert.match(String(r.hint), /resume: "sess-abcdef"/);
+  assert.equal(r.output, undefined, 'raw stream is not repeated when parsed');
+
+  // no CLI installed / old runner: a clear answer instead of a failed command
+  handler = (_m, path) => (path === '/targets' ? { targets: [{ ...targets.targets[0], capabilities: { runner: '0.9.0', features: ['stdin'], tools: {} } }] } : {});
+  assert.equal((await aidevToolsService.remoteAgent({ task: 'x' }, { targetId: 7 }) as Record<string, unknown>).status, 'unavailable');
+  handler = (_m, path) => (path === '/targets' ? { targets: [{ ...targets.targets[0], capabilities: { runner: '0.8.0', features: ['exec'], tools: { claude: 'x' } } }] } : {});
+  assert.match(String((await aidevToolsService.remoteAgent({ task: 'x' }, { targetId: 7 }) as Record<string, unknown>).message), /0\.9\.0/);
+});

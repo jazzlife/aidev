@@ -212,6 +212,8 @@ export type RemoteApproval = {
   remoteRunId: number | null; error: string | null;
   /** F-09: 'debug' = run the program under the debugger (then the session id once it started) */
   kind?: 'exec' | 'debug' | 'console'; debugSessionId?: string | null;
+  /** F-09d: text given to the command's input — the task for an agent CLI on that PC */
+  input?: string | null;
 };
 
 /** A command run on a remote PC (remote_runs row + the live stream while the gateway holds it). */

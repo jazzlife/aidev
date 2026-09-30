@@ -17,6 +17,7 @@ import '../../load-env.js';
  *   remote_screenshot — look at one program window on a target (image content; needs the PC owner's consent) (F-07)
  *   remote_debug_start / _step / _eval / _breakpoints / _stop — debug a program on a target over DAP (F-09, F-09b: 14 adapters)
  *   remote_console_start / _send / _read / _stop — drive any command-line debugger or REPL on a target (F-09c)
+ *   remote_agent / remote_agent_result — delegate a task to an agent CLI on the target (Claude Code, Codex, Gemini CLI) (F-09d)
  * The turn context (chat run id, routed target, agent) comes from this process's env and is sent
  * with every call, so remote results count toward the run's outcome.
  */
@@ -56,7 +57,7 @@ const turnContext = {
   cwd: process.cwd(),
 };
 // approvals can take minutes and a build or test run longer: remote tools get their own ceiling
-const LONG_TOOLS = new Set(['remote_exec', 'remote_logs', 'remote_sync', 'remote_debug_start', 'remote_debug_step', 'remote_console_start', 'remote_console_send', 'remote_console_read']);
+const LONG_TOOLS = new Set(['remote_agent', 'remote_agent_result', 'remote_exec', 'remote_logs', 'remote_sync', 'remote_debug_start', 'remote_debug_step', 'remote_console_start', 'remote_console_send', 'remote_console_read']);
 const LONG_TIMEOUT_MS = 45 * 60_000;
 
 async function callApi(toolName: string, input: Record<string, unknown>) {
@@ -251,6 +252,44 @@ const tools: ToolDefinition[] = [
     },
   },
   {
+    name: 'remote_agent',
+    description: [
+      'Delegate a task to an AI coding agent CLI installed on one of the user\'s machines (Claude Code, Codex CLI or Gemini CLI, under the user\'s own login there).',
+      'Use it when the work needs what only that machine has and your own remote tools are not enough: its IDE toolchain (Xcode, Visual Studio + .NET Framework, Android Studio), device/simulator/emulator/board debugging, GUI-only debuggers, a VPN or local services — or when a long local investigation (build → run → debug → fix → re-run) is faster done there.',
+      'mode "full" (default) lets it run commands and edit files in cwd (always asks the user first); "readonly" only reads and analyses. The task should say what to find/fix, where, and how to verify.',
+      'Waits up to waitSec (default 900) and returns its report (result), the steps it took, and sessionId — pass resume: sessionId to continue the same conversation. Still running → remote_agent_result{remoteRunId}.',
+      'Check its claims (e.g. re-run the test with remote_exec). Sync your edits with remote_sync first if it should see them, and pull its edits back by reading files (remote_exec cat / git diff).',
+    ].join(' '),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string', description: 'Target name or id (optional when routed or only one is online).' },
+        task: { type: 'string', description: 'What the local agent should do, with context (files, symptoms, how to verify).' },
+        agent: { type: 'string', enum: ['auto', 'claude', 'codex', 'gemini'], description: 'Which CLI (default auto: the first installed of claude, codex, gemini).' },
+        mode: { type: 'string', enum: ['full', 'readonly'], description: 'full (run/edit, asks the user) or readonly (analysis only).' },
+        cwd: { type: 'string', description: 'Project folder on the target (inside its allowed folders).' },
+        resume: { type: 'string', description: 'sessionId from an earlier remote_agent result to continue that session.' },
+        model: { type: 'string', description: 'Optional model name for that CLI.' },
+        waitSec: { type: 'number', description: 'How long to wait for the report (5-1800, default 900).' },
+        background: { type: 'boolean', description: 'Start and return at once (then remote_agent_result).' },
+      },
+      required: ['task'],
+    },
+  },
+  {
+    name: 'remote_agent_result',
+    description: 'Wait for (or re-read) a remote_agent run: its report, steps and sessionId once it finished.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        remoteRunId: { type: 'number' },
+        agent: { type: 'string', enum: ['claude', 'codex', 'gemini'] },
+        waitSec: { type: 'number', description: '0-1800, default 600.' },
+      },
+      required: ['remoteRunId'],
+    },
+  },
+  {
     name: 'remote_console_start',
     description: [
       'Run a command-line debugger or REPL on one of the user\'s machines in a terminal and drive it line by line — the universal fallback when remote_debug_start has no adapter for the program, or when the debugger\'s own commands are needed.',
@@ -378,6 +417,8 @@ async function callTool(name: string, args: Record<string, unknown>) {
     case 'remote_console_send':
     case 'remote_console_read':
     case 'remote_console_stop':
+    case 'remote_agent':
+    case 'remote_agent_result':
       return jsonResponse(await callApi(name, args));
     case 'remote_screenshot':
       return imageResponse(await callApi(name, args));

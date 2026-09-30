@@ -30,6 +30,8 @@ export type ApprovalView = {
   remoteRunId: number | null; error: string | null;
   /** F-09: what was asked — a command, a program under the debugger, or a debugger console (then the session id once it started) */
   kind: 'exec' | 'debug' | 'console'; debugSessionId: string | null;
+  /** text given to the command's input (an agent CLI's task), first 2000 chars */
+  input: string | null;
 };
 /** Starts something other than a plain command once allowed (F-09 debug sessions); returns its remote run. */
 export type GateStarter = (approvedBy: 'auto' | 'user') => Promise<{ remoteRunId: number; debugSessionId?: string; result?: unknown }>;
@@ -57,12 +59,15 @@ const DESTRUCTIVE: Array<[RegExp, string]> = [
   [/\bdrop\s+(database|table|schema)\b|\btruncate\s+table\b/i, '데이터베이스 삭제'],
   [/\b(kill|pkill|killall)\b/, '프로세스 종료'],
   [/>\s*\/dev\/(sd|disk|nvme)|:\(\)\s*\{/, '장치 덮어쓰기·폭주 스크립트'],
+  [/\bfind\b[^;&|]*\s-(delete|exec|execdir|ok)\b/, 'find로 삭제·명령 실행'],
+  [/\b(claude|codex|gemini)\b[^;&|\n]*(--dangerously-skip-permissions|bypassPermissions|danger-full-access|--full-auto|--yolo|--approval-mode[= ]yolo|--allowedTools[= ]\S*Bash)/, '다른 AI agent에 이 PC 전체 권한 위임'],
   [/(^|[\s;&|])(~|\$HOME|\/Users\/[^/\s]+|\/home\/[^/\s]+)\/?(\s|$)/, '홈 폴더 전체 대상'],
 ];
 
 /** Commands that only read, build or test: fine to run without a tap under policy `ask`. */
-const SAFE_HEAD = new Set(['ls', 'pwd', 'cat', 'head', 'tail', 'wc', 'echo', 'printf', 'which', 'whereis', 'type', 'env', 'printenv', 'uname', 'sw_vers', 'whoami', 'id', 'date', 'df', 'du', 'ps', 'top', 'file', 'stat', 'tree', 'find', 'grep', 'rg', 'ag', 'diff', 'sort', 'uniq', 'less', 'more', 'jq', 'true', 'test', 'sleep', 'nproc', 'sysctl', 'system_profiler', 'xcode-select', 'xcrun', 'lsof', 'netstat', 'ping', 'curl', 'wget', 'open', 'tsc', 'eslint', 'prettier', 'vitest', 'jest', 'mocha', 'pytest', 'tox', 'flutter', 'dart', 'adb', 'sdb', 'tizen', 'gradle', './gradlew', 'gradlew', 'mvn', 'swift', 'xcodebuild', 'cmake', 'make', 'ninja', 'dotnet', 'rustc', 'javac']);
+const SAFE_HEAD = new Set(['ls', 'pwd', 'cat', 'head', 'tail', 'wc', 'echo', 'printf', 'which', 'whereis', 'type', 'printenv', 'uname', 'sw_vers', 'whoami', 'id', 'date', 'df', 'du', 'ps', 'top', 'file', 'stat', 'tree', 'find', 'grep', 'rg', 'ag', 'diff', 'sort', 'uniq', 'less', 'more', 'jq', 'true', 'test', 'sleep', 'nproc', 'sysctl', 'system_profiler', 'xcode-select', 'xcrun', 'lsof', 'netstat', 'ping', 'curl', 'wget', 'open', 'tsc', 'eslint', 'prettier', 'vitest', 'jest', 'mocha', 'pytest', 'tox', 'flutter', 'dart', 'adb', 'sdb', 'tizen', 'gradle', './gradlew', 'gradlew', 'mvn', 'swift', 'xcodebuild', 'cmake', 'make', 'ninja', 'dotnet', 'rustc', 'javac']);
 const SAFE_SUB: Record<string, RegExp> = {
+  env: /^env\s*$/,   // `env <cmd>` runs <cmd>
   git: /^git\s+(status|log|diff|show|branch|remote\s+-v|rev-parse|ls-files|describe|fetch|blame|stash\s+list)\b/,
   npm: /^npm\s+(test|t|run|ci|install|i|ls|list|outdated|view|audit|exec|start|-v|--version)\b/,
   npx: /^npx\s+(--yes\s+|-y\s+)?(vitest|jest|tsc|eslint|prettier|playwright|vite|next|expo|serve|http-server|mocha|ts-node|tsx)\b/,
@@ -133,7 +138,9 @@ export function createRemoteGate(deps: { store: Store; laya: LayaClient; runners
     } catch { /* target deleted meanwhile */ }
   }
 
-  async function assess(userId: number, target: TargetRow, cmd: string, cwd: string | null): Promise<Assessment> {
+  async function assess(userId: number, target: TargetRow, cmdIn: string, cwd: string | null, stdin: string | null = null): Promise<Assessment> {
+    // text fed to the command's input is judged with it: every line of it counts as something the command may run
+    const cmd = stdin ? `${cmdIn} <<'INPUT'\n${stdin.slice(0, 4000)}\nINPUT` : cmdIn;
     const rules = assessRules(cmd);
     let lay: number | null = null; let decisionId: number | null = null;
     try {
@@ -174,7 +181,7 @@ export function createRemoteGate(deps: { store: Store; laya: LayaClient; runners
     async request(userId: number, target: TargetRow, execIn: ExecParams, meta: { runId?: number | null; agent?: string | null }, starter: GateStarter | null = null, starterKind: 'debug' | 'console' = 'debug'): Promise<GateResult> {
       let exec = execIn;
       if (target.policy === 'deny') return { status: 'denied', reason: `대상 ${target.name}의 실행 정책이 "실행 금지"입니다`, approval: null, assessment: null };
-      const assessment = await assess(userId, target, exec.cmd, exec.cwd ?? null);
+      const assessment = await assess(userId, target, exec.cmd, exec.cwd ?? null, exec.stdin ?? null);
       // an agent's command never runs unbounded: 30 min unless it asked otherwise (dev servers pass their own)
       exec = { ...exec, timeoutSec: exec.timeoutSec ?? 1800 };
       const now = Date.now();
@@ -182,7 +189,7 @@ export function createRemoteGate(deps: { store: Store; laya: LayaClient; runners
         id: crypto.randomBytes(9).toString('base64url'), userId, targetId: target.id, targetName: target.name, cmd: exec.cmd, cwd: exec.cwd ?? null,
         agent: meta.agent ?? null, runId: meta.runId ?? null, risk: assessment.risk, reasons: assessment.reasons, destructive: assessment.destructive, policy: target.policy,
         status: 'pending', createdAt: now, expiresAt: now + APPROVAL_TTL_MS, decidedAt: null, decidedBy: null, remoteRunId: null, error: null, exec, waiters: new Set(),
-        kind: starter ? starterKind : 'exec', debugSessionId: null, starter,
+        kind: starter ? starterKind : 'exec', debugSessionId: null, starter, input: exec.stdin ? exec.stdin.slice(0, 2000) : null,
       };
       console.log(`[remote-gate] target #${target.id} ${meta.agent ?? 'agent'} risk ${assessment.risk} safe=${assessment.safe} destructive=${assessment.destructive} policy=${target.policy}: ${exec.cmd.slice(0, 120)}`);
       if (!needsApproval(target.policy, assessment)) {

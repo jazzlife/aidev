@@ -37,6 +37,12 @@ export function ApprovalCard({ approval, onAnswer }: { approval: RemoteApproval;
         <span className={`ml-auto rounded border px-1.5 py-px text-[10px] ${tone.cls}`}>위험도 {tone.label} {approval.risk.toFixed(1)}</span>
       </div>
       <pre className="mt-1.5 max-h-32 overflow-auto whitespace-pre-wrap break-all rounded bg-muted/60 px-2 py-1.5 font-mono text-[12px]">{approval.cmd}</pre>
+      {approval.input ? (
+        <div className="mt-1.5">
+          <div className="text-[11px] text-muted-foreground">{/^(claude|codex|gemini)\b/.test(approval.cmd) ? '이 PC의 agent CLI에 맡길 작업' : '명령에 넣을 입력'}</div>
+          <pre className="aidev-selectable max-h-40 overflow-auto whitespace-pre-wrap break-words rounded bg-muted/40 px-2 py-1.5 text-[12px]">{approval.input}</pre>
+        </div>
+      ) : null}
       <div className="mt-1 flex flex-wrap items-center gap-1 text-[11px] text-muted-foreground">
         {approval.cwd ? <span className="font-mono">{approval.cwd}</span> : <span>기본 작업 폴더</span>}
         {approval.reasons.map((r) => <span key={r} className="rounded bg-muted px-1.5 py-px">{r}</span>)}

@@ -1,5 +1,6 @@
 //! `exec.*` (IMPLEMENTATION-PLAN §3.12, F-03): run commands on this PC and stream their output.
-//!   exec.start {cmd | program+args, cwd, env, pty, cols, rows, timeoutSec, streamId?, tag?} → {streamId, pid}
+//!   exec.start {cmd | program+args, cwd, env, pty, cols, rows, timeoutSec, stdin?, streamId?, tag?} → {streamId, pid}
+//!     `stdin` (text, no pty): written to the command's input, which is then closed (a prompt for an agent CLI)
 //!   exec.write {streamId, data | b64}   exec.resize {streamId, cols, rows}   exec.signal {streamId, signal}
 //!   exec.list → running + recently finished     exec.tail {streamId, bytes} → last output (base64)
 //!   notification exec.exit {streamId, code, signal, durationMs}
@@ -25,6 +26,7 @@ const CHUNK: usize = 16 * 1024;
 const KEEP_FINISHED: usize = 32;
 const MAX_CMD: usize = 16 * 1024;
 const MAX_WRITE: usize = 64 * 1024;
+const MAX_STDIN: usize = 256 * 1024;
 
 pub type Out = mpsc::Sender<Message>;
 type RpcResult = Result<Value, (i64, String)>;
@@ -370,6 +372,13 @@ impl ExecHub {
         let cols = params.get("cols").and_then(Value::as_u64).unwrap_or(120).clamp(10, 500) as u16;
         let rows = params.get("rows").and_then(Value::as_u64).unwrap_or(32).clamp(4, 300) as u16;
         let timeout = params.get("timeoutSec").and_then(Value::as_u64).filter(|t| *t > 0).map(Duration::from_secs);
+        let input = params.get("stdin").and_then(Value::as_str).map(|s| s.as_bytes().to_vec());
+        if input.as_ref().is_some_and(|i| i.len() > MAX_STDIN) {
+            return Err((-32602, format!("stdin은 {} KB까지입니다", MAX_STDIN / 1024)));
+        }
+        if input.is_some() && pty {
+            return Err((-32602, "stdin은 pty 없이 실행할 때만 씁니다".into()));
+        }
 
         let id = {
             let mut g = self.0.lock().unwrap();
@@ -396,7 +405,7 @@ impl ExecHub {
         let pid = if pty {
             spawn_pty(&argv, &cwd, &env, cols, rows, chunk_tx, exit_tx, ctl_rx).map_err(|e| (-32007, e))?
         } else {
-            spawn_piped(&argv, &cwd, &env, chunk_tx, exit_tx, ctl_rx).map_err(|e| (-32007, e))?
+            spawn_piped(&argv, &cwd, &env, input, chunk_tx, exit_tx, ctl_rx).map_err(|e| (-32007, e))?
         };
         let tag = params.get("tag").and_then(Value::as_str).map(|t| t.chars().take(64).collect());
         self.0.lock().unwrap().procs.insert(id, Proc {
@@ -518,7 +527,7 @@ fn spawn_pty(
 }
 
 fn spawn_piped(
-    argv: &[String], cwd: &std::path::Path, env: &[(String, String)],
+    argv: &[String], cwd: &std::path::Path, env: &[(String, String)], input: Option<Vec<u8>>,
     chunk_tx: mpsc::Sender<Vec<u8>>, exit_tx: oneshot::Sender<(Option<i32>, Option<String>)>, mut ctl_rx: mpsc::UnboundedReceiver<Ctl>,
 ) -> Result<Option<u32>, String> {
     use std::process::Stdio;
@@ -537,13 +546,19 @@ fn spawn_piped(
     #[cfg(not(windows))]
     cmd.args(&argv[1..]);
     cmd.current_dir(cwd).env_clear().envs(env.iter().map(|(k, v)| (k.as_str(), v.as_str())));
-    // stdin is closed: a command that asks for input gets EOF instead of waiting forever
-    cmd.stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    // stdin is closed (after `input`, when given): a command that asks for input gets EOF instead of waiting forever
+    cmd.stdin(if input.is_some() { Stdio::piped() } else { Stdio::null() }).stdout(Stdio::piped()).stderr(Stdio::piped());
     #[cfg(unix)]
     cmd.process_group(0);
     let mut child = cmd.spawn().map_err(|e| format!("{}: {e}", argv[0]))?;
     let pid = child.id();
     let mut stdin: Option<tokio::process::ChildStdin> = None;
+    if let (Some(data), Some(mut w)) = (input, child.stdin.take()) {
+        tokio::spawn(async move {
+            let _ = w.write_all(&data).await;
+            let _ = w.shutdown().await;
+        });
+    }
     for pipe in [child.stdout.take().map(|s| Box::new(s) as Box<dyn tokio::io::AsyncRead + Unpin + Send>), child.stderr.take().map(|s| Box::new(s) as Box<dyn tokio::io::AsyncRead + Unpin + Send>)].into_iter().flatten() {
         let tx = chunk_tx.clone();
         let mut pipe = pipe;
@@ -677,6 +692,24 @@ mod tests {
         let tail = hub.rpc(&cfg(&dir), "exec.tail", &json!({ "streamId": 5 })).await.unwrap().unwrap();
         let bytes = base64::engine::general_purpose::STANDARD.decode(tail["b64"].as_str().unwrap()).unwrap();
         assert!(String::from_utf8_lossy(&bytes).contains("hi-bar"));
+    }
+
+    #[tokio::test]
+    async fn stdin_text_then_eof() {
+        let dir = tempdir();
+        let hub = ExecHub::default();
+        let (tx, mut rx) = mpsc::channel(256);
+        hub.attach(tx);
+        let c = cfg(&dir);
+        // a prompt with quotes, $vars and newlines arrives untouched, and the command sees EOF after it
+        let prompt = "fix 'it' \"now\" $HOME `x`\nline 2\n";
+        hub.rpc(&c, "exec.start", &json!({ "cmd": "cat; echo '[eof]'", "stdin": prompt, "streamId": 11 })).await.unwrap().unwrap();
+        let (out, exit) = collect(&mut rx, 11).await;
+        assert!(out.contains(prompt), "{out}");
+        assert!(out.contains("[eof]"), "{out}");
+        assert_eq!(exit["code"], 0);
+        let e = hub.rpc(&c, "exec.start", &json!({ "cmd": "cat", "stdin": "x", "pty": true, "streamId": 12 })).await.unwrap().unwrap_err();
+        assert_eq!(e.0, -32602);
     }
 
     #[tokio::test]
