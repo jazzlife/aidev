@@ -1043,3 +1043,11 @@
   }
   img, a { -webkit-user-drag: none; }
 }
+/* Text inside the chrome that people copy by hand (pairing commands, codes, paths): selectable again,
+   also on touch devices. Declared after both rules above so it wins over them. */
+.aidev-chrome .aidev-selectable, .aidev-selectable {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+  cursor: text;
+}

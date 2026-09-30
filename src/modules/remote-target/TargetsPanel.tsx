@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
-import { ChevronDown, ChevronRight, Copy, Laptop, Plus, RefreshCw, Trash2, Wifi, WifiOff } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Copy, Laptop, Plus, RefreshCw, Trash2, Wifi, WifiOff } from 'lucide-react';
 
 import { api, readApiJson } from '@/shared/api';
+import { copyTextToClipboard } from '@/shared/utils';
 
 /** A developer PC registered for remote run/debug, as the gateway reports it (GET /api/aidev/targets). */
 type Target = {
@@ -50,11 +51,18 @@ function PairingCard({ target, files, onRefresh }: { target: Target; files: Runn
   const commands = `${fetchLine}\n${exe} pair ${target.pairing_code} --gateway ${gateway}\n${exe} install-service   # 또는 ${exe} start`;
   const left = target.pairing_expires ? Math.max(0, Math.round((target.pairing_expires - Date.now()) / 60000)) : 0;
   const platforms = Array.from(new Set([...files.map((f) => f.platform ?? ''), 'mac-universal', 'win-x64'].filter(Boolean)));
+  // copied: result of the last "명령 복사" (the Clipboard API can be refused; the fallback may fail too)
+  const [copied, setCopied] = useState<'ok' | 'failed' | null>(null);
+  const copy = async () => {
+    const ok = await copyTextToClipboard(commands);
+    setCopied(ok ? 'ok' : 'failed');
+    window.setTimeout(() => setCopied(null), 2500);
+  };
   return (
     <div className="mt-1.5 rounded-md border border-primary/40 bg-primary/5 p-2" data-testid="pairing-card">
       <div className="flex items-baseline gap-2">
         <span className="whitespace-nowrap text-muted-foreground">페어링 코드</span>
-        <span className="font-mono text-[15px] font-semibold tracking-widest">{target.pairing_code}</span>
+        <span className="aidev-selectable font-mono text-[15px] font-semibold tracking-widest">{target.pairing_code}</span>
         <span className="ml-auto whitespace-nowrap text-[10px] text-muted-foreground">{left}분 · 1회용</span>
       </div>
       <label className="mt-1 flex items-center gap-1.5 text-muted-foreground">
@@ -63,12 +71,13 @@ function PairingCard({ target, files, onRefresh }: { target: Target; files: Runn
           {platforms.map((p) => <option key={p} value={p}>{p}{files.some((f) => f.platform === p) ? '' : ' (빌드 필요)'}</option>)}
         </select>
       </label>
-      <pre className="mt-1 whitespace-pre-wrap break-all rounded bg-muted/60 p-1.5 font-mono text-[11px]">{commands}</pre>
-      {file?.sha256 ? <div className="break-all text-[10px] text-muted-foreground">sha256 {file.sha256}</div> : null}
+      <pre className="aidev-selectable mt-1 whitespace-pre-wrap break-all rounded bg-muted/60 p-1.5 font-mono text-[11px]">{commands}</pre>
+      {file?.sha256 ? <div className="aidev-selectable break-all text-[10px] text-muted-foreground">sha256 {file.sha256}</div> : null}
       <div className="mt-1 flex gap-1.5">
-        <button type="button" onClick={() => { void navigator.clipboard?.writeText(commands); }} className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 hover:bg-accent"><Copy size={11} /> 명령 복사</button>
+        <button type="button" onClick={() => { void copy(); }} className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 hover:bg-accent">{copied === 'ok' ? <><Check size={11} /> 복사됨</> : <><Copy size={11} /> 명령 복사</>}</button>
         <button type="button" onClick={onRefresh} className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 hover:bg-accent"><RefreshCw size={11} /> 새 코드</button>
       </div>
+      {copied === 'failed' ? <div className="mt-1 text-[10px] text-rose-600">이 브라우저가 클립보드 쓰기를 막았습니다 — 위 명령을 드래그해 선택한 뒤 복사하세요</div> : null}
     </div>
   );
 }
@@ -109,8 +118,8 @@ function TargetRow({ target, files, reload, setNote }: { target: Target; files: 
             <>
               <div className="flex flex-wrap gap-1">{Object.entries(caps.tools ?? {}).map(([tool, version]) => <span key={tool} title={version} className="rounded bg-muted px-1 text-[10px]">{tool}</span>)}</div>
               {(caps.devices?.adb?.length || caps.devices?.sdb?.length) ? <div className="text-muted-foreground">기기: {[...(caps.devices?.adb ?? []).map((d) => `adb ${d}`), ...(caps.devices?.sdb ?? []).map((d) => `sdb ${d}`)].join(', ')}</div> : null}
-              <div className="text-muted-foreground">허용 폴더: {target.allowed_roots.length ? target.allowed_roots.join(', ') : '없음'}</div>
-              <div className="text-[10px] text-muted-foreground">러너 {caps.runner ?? '?'} · 셸 {caps.shell ?? '?'} · 화면 캡처 {caps.screen ? '허용' : '꺼짐'}</div>
+              <div className="aidev-selectable text-muted-foreground">허용 폴더: {target.allowed_roots.length ? target.allowed_roots.join(', ') : '없음'}</div>
+              <div className="aidev-selectable text-[10px] text-muted-foreground">러너 {caps.runner ?? '?'} · 셸 {caps.shell ?? '?'} · 화면 캡처 {caps.screen ? '허용' : '꺼짐'}</div>
             </>
           ) : <div className="text-muted-foreground">러너가 아직 연결된 적이 없습니다.</div>}
           <label className="flex items-center gap-1.5">
