@@ -1,6 +1,6 @@
 import express from 'express';
 
-import { aidevToolsService } from '@/modules/aidev-tools/aidev-tools.service.js';
+import { aidevToolsService, DEBUG_ADAPTERS } from '@/modules/aidev-tools/aidev-tools.service.js';
 import { remoteSync } from '@/modules/aidev-tools/remote-sync.service.js';
 
 /**
@@ -114,8 +114,9 @@ router.post('/tools/:toolName', async (req, res) => {
         }, readTurn(input));
         break;
       case 'remote_debug_start': {
-        const adapter = input.adapter;
-        if (adapter !== 'js-debug' && adapter !== 'debugpy' && adapter !== 'codelldb') throw new Error('adapter must be js-debug, debugpy or codelldb.');
+        const adapter = DEBUG_ADAPTERS.find((a) => a === input.adapter);
+        if (!adapter) throw new Error(`adapter must be one of ${DEBUG_ADAPTERS.join(', ')}.`);
+        const text = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim() : undefined);
         const strs = (v: unknown) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string') : undefined);
         const breakpoints = Array.isArray(input.breakpoints)
           ? (input.breakpoints as unknown[]).map((b) => (b && typeof b === 'object' ? b as Record<string, unknown> : {})).filter((b) => typeof (b.file ?? b.path) === 'string' && Number.isInteger(Number(b.line))).map((b) => ({ file: String(b.file ?? b.path), line: Number(b.line), condition: typeof b.condition === 'string' ? b.condition : undefined }))
@@ -129,6 +130,12 @@ router.post('/tools/:toolName', async (req, res) => {
           runtimeArgs: strs(input.runtimeArgs), args: strs(input.args),
           cwd: typeof input.cwd === 'string' && input.cwd.trim() ? input.cwd.trim() : undefined,
           env: asStringMap(input.env), stopOnEntry: input.stopOnEntry === true, breakpoints,
+          request: input.request === 'attach' ? 'attach' : undefined,
+          pid: typeof input.pid === 'number' && Number.isInteger(input.pid) ? input.pid : undefined,
+          address: text(input.address), debugger: text(input.debugger), mainClass: text(input.mainClass), classPath: strs(input.classPath),
+          chip: text(input.chip), probe: text(input.probe), device: text(input.device), command: text(input.command), commandArgs: strs(input.commandArgs),
+          transport: input.transport === 'tcp' ? 'tcp' : input.transport === 'stdio' ? 'stdio' : undefined,
+          config: input.config && typeof input.config === 'object' && !Array.isArray(input.config) ? input.config as Record<string, unknown> : undefined,
           waitSec: typeof input.waitSec === 'number' ? input.waitSec : undefined,
         }, readTurn(input));
         break;

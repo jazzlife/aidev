@@ -1675,7 +1675,8 @@ export type RemoteDevScan = { ports: RemoteListeningPort[]; projects: RemoteDevP
 // ---- F-09 remote debugging (gateway /api/aidev/debug; the DAP client runs in the gateway) ----------
 
 /** The debug adapters a runner can start: js-debug (Node), debugpy (Python), codelldb (C/C++/Rust/Swift). */
-export type RemoteDebugAdapter = 'js-debug' | 'debugpy' | 'codelldb';
+/** Debug adapters a PC's runner can start (F-09/F-09b; gateway debug-hub DEBUG_ADAPTERS). */
+export type RemoteDebugAdapter = 'js-debug' | 'debugpy' | 'codelldb' | 'gdb' | 'lldb-dap' | 'netcoredbg' | 'delve' | 'jvm' | 'dart' | 'flutter' | 'probe-rs' | 'mono' | 'clrdbg' | 'custom';
 /** Where a session is: starting (adapter being provisioned/launched), running, paused, ended, failed. */
 export type RemoteDebugState = 'starting' | 'running' | 'paused' | 'ended' | 'failed';
 /** A breakpoint as the session has it (path on the PC); `verified` = bound to code by the adapter (null: not sent yet). */
@@ -1702,6 +1703,12 @@ export type RemoteDebugEvent = { seq: number; at: number } & (
   | { type: 'breakpoints' });
 /** POST /api/aidev/targets/:id/debug — what to run under the debugger. */
 export type RemoteDebugLaunch = {
-  adapter: RemoteDebugAdapter; program?: string; module?: string; runtimeExecutable?: string; runtimeArgs?: string[]; args?: string[];
+  adapter: RemoteDebugAdapter; request?: 'launch' | 'attach'; program?: string; module?: string; runtimeExecutable?: string; runtimeArgs?: string[]; args?: string[];
   cwd?: string; env?: Record<string, string>; stopOnEntry?: boolean; breakpoints?: Array<{ path: string; line: number; condition?: string | null }>; waitSec?: number;
+  /** attach: a process id, or host:port / URI of a debug server (gdbserver, OpenOCD, JDWP, inspector, dlv, mono agent, Dart VM service) */
+  pid?: number; address?: string;
+  /** gdb binary (gdb-multiarch …); jvm main class + class path; probe-rs chip/probe; flutter device */
+  debugger?: string; mainClass?: string; classPath?: string[]; chip?: string; probe?: string; device?: string;
+  /** custom DAP server */
+  command?: string; commandArgs?: string[]; transport?: 'stdio' | 'tcp'; config?: Record<string, unknown>;
 };

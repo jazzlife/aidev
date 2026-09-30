@@ -9,11 +9,39 @@ import type { RemoteDebugAdapter, RemoteDebugLaunch, RemoteDebugSnapshot } from 
 type Target = { id: number; name: string; online: boolean; allowed_roots: string[]; is_default?: number | boolean; capabilities: { features?: string[]; runner?: string; tools?: Record<string, string> } | null };
 export type DebugProject = { path: string; name: string };
 
-const ADAPTERS: Array<{ id: RemoteDebugAdapter; label: string }> = [
-  { id: 'js-debug', label: 'Node.js (js-debug)' },
-  { id: 'debugpy', label: 'Python (debugpy)' },
-  { id: 'codelldb', label: 'C/C++/Rust (codelldb)' },
+const ADAPTERS: Array<{ id: RemoteDebugAdapter; label: string; hint: string }> = [
+  { id: 'js-debug', label: 'Node.js · TypeScript (js-debug)', hint: 'src/index.js' },
+  { id: 'debugpy', label: 'Python (debugpy)', hint: 'main.py' },
+  { id: 'codelldb', label: 'C · C++ · Rust · Swift (LLDB)', hint: 'target/debug/app · build/app' },
+  { id: 'gdb', label: 'C · C++ · Rust · Go · 임베디드 (GDB 14+)', hint: 'build/app · firmware.elf' },
+  { id: 'lldb-dap', label: 'Apple 앱 · iOS 시뮬레이터 (Xcode lldb-dap)', hint: 'Build/Products/Debug/App.app/Contents/MacOS/App' },
+  { id: 'netcoredbg', label: '.NET 6+ · C# · F# (WPF/WinForms/Avalonia/MAUI/ASP.NET)', hint: 'bin/Debug/net8.0/App.dll' },
+  { id: 'clrdbg', label: '.NET Framework 4.x (Windows)', hint: 'bin\\Debug\\App.exe' },
+  { id: 'mono', label: 'Mono · Unity', hint: 'bin/Debug/App.exe' },
+  { id: 'delve', label: 'Go (delve)', hint: '. (패키지 폴더)' },
+  { id: 'jvm', label: 'Java · Kotlin · Scala (JDI)', hint: 'build/libs/app.jar' },
+  { id: 'dart', label: 'Dart', hint: 'bin/main.dart' },
+  { id: 'flutter', label: 'Flutter (모든 기기)', hint: 'lib/main.dart' },
+  { id: 'probe-rs', label: '마이크로컨트롤러 (probe-rs)', hint: 'target/thumbv7em-none-eabihf/debug/fw' },
+  { id: 'custom', label: '기타 DAP 서버 (직접 지정)', hint: '(선택) 프로그램' },
 ];
+/** attach targets each adapter understands: a process id, a debug server address, or both */
+const ATTACH: Partial<Record<RemoteDebugAdapter, { pid: boolean; address: string | null }>> = {
+  'js-debug': { pid: true, address: '127.0.0.1:9229 (node --inspect)' },
+  debugpy: { pid: true, address: '127.0.0.1:5678 (debugpy --listen)' },
+  codelldb: { pid: true, address: null },
+  gdb: { pid: true, address: 'localhost:3333 (gdbserver · OpenOCD · QEMU)' },
+  'lldb-dap': { pid: true, address: null },
+  netcoredbg: { pid: true, address: null },
+  clrdbg: { pid: true, address: null },
+  mono: { pid: false, address: '127.0.0.1:55555 (--debugger-agent)' },
+  delve: { pid: true, address: '127.0.0.1:2345 (dlv --headless)' },
+  jvm: { pid: false, address: '127.0.0.1:5005 (JDWP · adb forward)' },
+  dart: { pid: false, address: 'ws://127.0.0.1:8181/…/ws (VM service)' },
+  flutter: { pid: false, address: 'ws://127.0.0.1:…/ws (VM service)' },
+  'probe-rs': { pid: false, address: null },
+  custom: { pid: true, address: 'host:port' },
+};
 const RUNTIMES = ['node', 'npm', 'npx', 'yarn', 'pnpm', 'tsx'];
 
 /**
@@ -36,6 +64,17 @@ export function DebugStartForm({ project, onStarted, onCancel }: { project: Debu
   const [cwdEdited, setCwdEdited] = useState(false);
   const [sync, setSync] = useState(Boolean(project));
   const [stopOnEntry, setStopOnEntry] = useState(false);
+  const [request, setRequest] = useState<'launch' | 'attach'>('launch');
+  const [pid, setPid] = useState('');
+  const [address, setAddress] = useState('');
+  const [gdbBin, setGdbBin] = useState('');
+  const [mainClass, setMainClass] = useState('');
+  const [classPath, setClassPath] = useState('');
+  const [chip, setChip] = useState('');
+  const [device, setDevice] = useState('');
+  const [command, setCommand] = useState('');
+  const [commandArgs, setCommandArgs] = useState('');
+  const [transport, setTransport] = useState<'stdio' | 'tcp'>('stdio');
   const [phase, setPhase] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
 
@@ -54,7 +93,10 @@ export function DebugStartForm({ project, onStarted, onCancel }: { project: Debu
 
   const adapter = adapterPick ?? (module ? 'debugpy' : program ? adapterFor(program) : 'js-debug');
   const noDap = target && !target.capabilities?.features?.includes('dap');
-  const npmMode = adapter === 'js-debug' && runtime !== 'node';
+  const npmMode = adapter === 'js-debug' && runtime !== 'node' && request === 'launch';
+  const attach = request === 'attach';
+  const attachKinds = ATTACH[adapter] ?? { pid: true, address: null };
+  const jvmClass = adapter === 'jvm' && !attach && Boolean(mainClass.trim());
   // editor breakpoints of this project, as paths relative to the PC folder
   const breakpoints = useMemo(() => {
     if (!project) return [];
@@ -75,10 +117,17 @@ export function DebugStartForm({ project, onStarted, onCancel }: { project: Debu
       }
       setPhase(`${ADAPTERS.find((a) => a.id === adapter)?.label} 시작 중… (처음이면 어댑터를 내려받습니다)`);
       const launch: RemoteDebugLaunch = {
-        adapter, cwd, args: splitArgs(args), stopOnEntry, breakpoints, waitSec: 0,
-        ...(adapter === 'debugpy' && module ? { module } : {}),
+        adapter, request, cwd, args: splitArgs(args), stopOnEntry, breakpoints, waitSec: 0,
+        ...(adapter === 'debugpy' && module && !attach ? { module } : {}),
         ...(npmMode ? { runtimeExecutable: runtime, runtimeArgs: splitArgs(runtimeArgs) } : {}),
-        ...(program && !(adapter === 'debugpy' && module) ? { program } : {}),
+        ...(program.trim() && !(adapter === 'debugpy' && module) && !jvmClass ? { program: program.trim() } : {}),
+        ...(attach && pid.trim() ? { pid: Number(pid) } : {}),
+        ...(attach && address.trim() ? { address: address.trim() } : {}),
+        ...(adapter === 'gdb' && gdbBin.trim() ? { debugger: gdbBin.trim() } : {}),
+        ...(jvmClass ? { mainClass: mainClass.trim(), classPath: classPath.split(/[,;:]\s*|\s+/).filter(Boolean) } : {}),
+        ...(adapter === 'probe-rs' && chip.trim() ? { chip: chip.trim() } : {}),
+        ...(adapter === 'flutter' && device.trim() ? { device: device.trim() } : {}),
+        ...(adapter === 'custom' ? { command: command.trim(), commandArgs: splitArgs(commandArgs), transport } : {}),
       };
       const r = await readApiJson<{ session: RemoteDebugSnapshot }>(await debugApi.start(target.id, launch));
       if (project && r.session.cwd) debugStore.setMap(r.session.id, { runtimeRoot: project.path, targetRoot: r.session.cwd });
@@ -92,7 +141,11 @@ export function DebugStartForm({ project, onStarted, onCancel }: { project: Debu
   };
 
   const field = 'h-7 rounded border border-border bg-background px-2 text-xs text-foreground';
-  const ready = target?.online && !noDap && (program || (adapter === 'debugpy' && module) || npmMode);
+  const pidOk = /^\d+$/.test(pid.trim());
+  const ready = target?.online && !noDap && (adapter !== 'custom' || command.trim()) && (adapter !== 'probe-rs' || chip.trim()) && (attach
+    ? (pidOk || Boolean(address.trim()) || ((adapter === 'codelldb' || adapter === 'lldb-dap') && Boolean(program.trim())))
+    : Boolean(program.trim() || (adapter === 'debugpy' && module) || npmMode || jvmClass || adapter === 'custom'));
+  const hint = ADAPTERS.find((a) => a.id === adapter)?.hint ?? '';
   return (
     <div className="space-y-2 p-3 text-xs" data-testid="debug-start-form">
       <div className="grid grid-cols-[5.5rem_1fr] items-center gap-x-2 gap-y-1.5">
@@ -100,13 +153,46 @@ export function DebugStartForm({ project, onStarted, onCancel }: { project: Debu
         <select aria-label="원격 PC" value={targetId ?? ''} onChange={(e) => setTargetId(Number(e.target.value) || null)} className={field}>
           {targets.map((t) => <option key={t.id} value={t.id}>{t.name}{t.online ? '' : ' (오프라인)'}{t.is_default ? ' · 기본' : ''}</option>)}
         </select>
-        <span className="text-muted-foreground">프로그램</span>
-        <input aria-label="프로그램" value={program} onChange={(e) => setProgram(e.target.value)} placeholder="src/index.js · main.py · target/debug/app (PC 폴더 기준)" className={field} />
         <span className="text-muted-foreground">디버거</span>
         <select aria-label="디버거" value={adapter} onChange={(e) => setAdapterPick(e.target.value as RemoteDebugAdapter)} className={field}>
           {ADAPTERS.map((a) => <option key={a.id} value={a.id}>{a.label}</option>)}
         </select>
-        {adapter === 'js-debug' ? (
+        <span className="text-muted-foreground">방식</span>
+        <div className="flex gap-3">
+          <label className="flex items-center gap-1"><input type="radio" name="dbg-request" checked={!attach} onChange={() => setRequest('launch')} /> 실행해서 디버그</label>
+          <label className="flex items-center gap-1"><input type="radio" name="dbg-request" checked={attach} onChange={() => setRequest('attach')} /> 실행 중인 것에 연결</label>
+        </div>
+        <span className="text-muted-foreground">프로그램</span>
+        <input aria-label="프로그램" value={program} onChange={(e) => setProgram(e.target.value)} placeholder={attach ? '(선택) 심볼용 실행 파일' : `${hint} (PC 폴더 기준)`} className={field} />
+        {attach ? (
+          <>
+            {attachKinds.pid ? (<><span className="text-muted-foreground">프로세스 ID</span><input aria-label="프로세스 ID" value={pid} onChange={(e) => setPid(e.target.value)} placeholder="1234" inputMode="numeric" className={field} /></>) : null}
+            {attachKinds.address ? (<><span className="text-muted-foreground">주소</span><input aria-label="디버그 서버 주소" value={address} onChange={(e) => setAddress(e.target.value)} placeholder={attachKinds.address} className={field} /></>) : null}
+          </>
+        ) : null}
+        {adapter === 'gdb' ? (<><span className="text-muted-foreground">GDB</span><input aria-label="GDB 실행 파일" value={gdbBin} onChange={(e) => setGdbBin(e.target.value)} placeholder="gdb (기본) · gdb-multiarch · arm-none-eabi-gdb" className={field} /></>) : null}
+        {adapter === 'jvm' && !attach ? (
+          <>
+            <span className="text-muted-foreground">메인 클래스</span>
+            <input aria-label="메인 클래스" value={mainClass} onChange={(e) => setMainClass(e.target.value)} placeholder="com.acme.App (프로그램 .jar 대신)" className={field} />
+            <span className="text-muted-foreground">클래스패스</span>
+            <input aria-label="클래스패스" value={classPath} onChange={(e) => setClassPath(e.target.value)} placeholder="build/classes/java/main, lib/*.jar" className={field} />
+          </>
+        ) : null}
+        {adapter === 'probe-rs' ? (<><span className="text-muted-foreground">칩</span><input aria-label="칩" value={chip} onChange={(e) => setChip(e.target.value)} placeholder="STM32F411RETx · nRF52840_xxAA · esp32c3" className={field} /></>) : null}
+        {adapter === 'flutter' ? (<><span className="text-muted-foreground">기기</span><input aria-label="Flutter 기기" value={device} onChange={(e) => setDevice(e.target.value)} placeholder="(선택) flutter devices의 id" className={field} /></>) : null}
+        {adapter === 'custom' ? (
+          <>
+            <span className="text-muted-foreground">DAP 서버</span>
+            <input aria-label="DAP 서버 명령" value={command} onChange={(e) => setCommand(e.target.value)} placeholder="lldb-dap · OpenDebugAD7 · …" className={field} />
+            <span className="text-muted-foreground">서버 인자</span>
+            <div className="flex gap-1.5">
+              <input aria-label="DAP 서버 인자" value={commandArgs} onChange={(e) => setCommandArgs(e.target.value)} placeholder="--port {port}" className={`${field} min-w-0 flex-1`} />
+              <select aria-label="전송 방식" value={transport} onChange={(e) => setTransport(e.target.value === 'tcp' ? 'tcp' : 'stdio')} className={`${field} w-20`}><option value="stdio">stdio</option><option value="tcp">tcp</option></select>
+            </div>
+          </>
+        ) : null}
+        {adapter === 'js-debug' && !attach ? (
           <>
             <span className="text-muted-foreground">실행</span>
             <div className="flex gap-1.5">
@@ -115,7 +201,7 @@ export function DebugStartForm({ project, onStarted, onCancel }: { project: Debu
             </div>
           </>
         ) : null}
-        {adapter === 'debugpy' ? (
+        {adapter === 'debugpy' && !attach ? (
           <>
             <span className="text-muted-foreground">모듈</span>
             <input aria-label="모듈" value={module} onChange={(e) => setModule(e.target.value)} placeholder="(선택) pytest · uvicorn — 프로그램 대신 python -m" className={field} />

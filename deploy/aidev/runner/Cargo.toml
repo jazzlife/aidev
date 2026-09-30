@@ -31,6 +31,7 @@ image = { version = "0.25", default-features = false, features = ["jpeg", "png"]
 flate2 = "1"
 tar = "0.4"
 zip = { version = "2", default-features = false, features = ["deflate"] }
+lzma-rs = "0.3"
 
 [profile.release]
 opt-level = "s"

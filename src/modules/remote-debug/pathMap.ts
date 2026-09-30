@@ -1,3 +1,5 @@
+import type { RemoteDebugAdapter } from '@/shared/types';
+
 /**
  * Paths between this workspace (the runtime, where the editor's files live) and the user's PC (where the
  * program runs under the debugger). A project copied with remote_sync lands at <PC folder>/<project name>,
@@ -47,10 +49,18 @@ export function defaultTargetFolder(projectPath: string | null, allowedRoots: st
   return name ? `${trimEnd(root)}/${name}` : root;
 }
 
-/** The adapter for a program: .py → debugpy, .js/.ts … → js-debug, anything else (a binary) → codelldb. */
-export function adapterFor(program: string): 'js-debug' | 'debugpy' | 'codelldb' {
+/**
+ * The adapter a program suggests by its name: .py → debugpy, .js/.ts … → js-debug, .dll → netcoredbg (.NET),
+ * .jar → jvm, .go / a Go package → delve, .dart → dart, .exe (Mono/.NET Framework/native — ambiguous) and
+ * anything else (a native binary) → codelldb. The user can always pick another one.
+ */
+export function adapterFor(program: string): RemoteDebugAdapter {
   if (/\.py$/i.test(program)) return 'debugpy';
   if (/\.(m|c)?(j|t)sx?$/i.test(program)) return 'js-debug';
+  if (/\.dll$/i.test(program)) return 'netcoredbg';
+  if (/\.jar$/i.test(program)) return 'jvm';
+  if (/\.go$/i.test(program)) return 'delve';
+  if (/\.dart$/i.test(program)) return 'dart';
   return 'codelldb';
 }
 

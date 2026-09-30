@@ -15,7 +15,7 @@ import '../../load-env.js';
  *   remote_preview  — show a dev server running on a target in the workbench preview panel (F-06)
  *   remote_windows  — the program windows open on a target (id, app, title) (F-07c)
  *   remote_screenshot — look at one program window on a target (image content; needs the PC owner's consent) (F-07)
- *   remote_debug_start / _step / _eval / _breakpoints / _stop — debug a program on a target (DAP: js-debug, debugpy, codelldb) (F-09)
+ *   remote_debug_start / _step / _eval / _breakpoints / _stop — debug a program on a target over DAP (F-09, F-09b: 14 adapters)
  * The turn context (chat run id, routed target, agent) comes from this process's env and is sent
  * with every call, so remote results count toward the run's outcome.
  */
@@ -204,8 +204,16 @@ const tools: ToolDefinition[] = [
     name: 'remote_debug_start',
     description: [
       'Debug a program on one of the user\'s machines: run it under a real debugger with breakpoints and look at the stack and variables where it stops (instead of guessing from logs).',
-      'adapter: "js-debug" (Node.js/TypeScript; program = .js file, or runtimeExecutable "npm" + runtimeArgs ["test"]), "debugpy" (Python; program = .py file, or module e.g. "pytest"), "codelldb" (C/C++/Rust/Swift; program = a binary built with debug info — build it first with remote_exec, e.g. cc -g -O0, cargo build).',
-      'Paths are on the target (inside its allowed folders; relative = relative to cwd). Sync the project first with remote_sync and use its dest as cwd.',
+      'Pick the adapter by language/runtime:',
+      'js-debug = Node.js/TypeScript (program .js, or runtimeExecutable npm/npx/tsx + runtimeArgs); debugpy = Python (program .py, or module e.g. pytest);',
+      'codelldb = C/C++/Rust/Swift/Zig with LLDB (a binary built with debug info: cc -g -O0, cargo build); gdb = C/C++/Rust/Go/Fortran with GDB ≥ 14 (debugger: gdb-multiarch / arm-none-eabi-gdb for other CPUs; attach address = a gdbserver/OpenOCD/QEMU host:port for SBCs, MCUs, emulators);',
+      'lldb-dap = Apple toolchain (macOS apps, iOS simulator; attach pid or program+waitFor); netcoredbg = .NET 6+ (C#/F#: console, ASP.NET, WPF/WinForms on .NET, Avalonia, MAUI; program = the built .dll or apphost);',
+      'clrdbg = .NET Framework 4.x on Windows; mono = Mono/Unity (launch program .exe, or attach address of a --debugger-agent); delve = Go (program = package folder, attach pid or dlv --headless address);',
+      'jvm = Java/Kotlin/Scala (mainClass + classPath, or program = an executable .jar; attach address = a JDWP host:port, e.g. an Android app after adb forward tcp:N jdwp:PID);',
+      'dart/flutter = Dart and Flutter (device = flutter device id); probe-rs = microcontrollers through a debug probe (chip required, program = ELF);',
+      'custom = any other DAP server (command + commandArgs, transport stdio|tcp with {port}). request "attach" joins a running process (pid) or debug server (address).',
+      'If no adapter fits, use remote_exec with the platform debugger\'s own CLI (gdb -batch, lldb -b, jdb, cdb, pdb) instead.',
+      'Paths are on the target (inside its allowed folders; relative = relative to cwd). Sync the project first with remote_sync and use its dest as cwd; build with debug info first (remote_exec).',
       'Waits until the program pauses (breakpoint, exception, stopOnEntry) or ends (waitSec, default 60) and returns: session, state, pausedAt, stack (with frame ids), locals (ref>0 = expandable), breakpoints (verified?), output.',
       'Like remote_exec, a program that is not a read/build/test command may wait for the user\'s approval. The user sees the same session in their debug window. Always end with remote_debug_stop.',
     ].join(' '),
@@ -213,8 +221,21 @@ const tools: ToolDefinition[] = [
       type: 'object',
       properties: {
         target: { type: 'string', description: 'Target name or id (optional when routed or only one is online).' },
-        adapter: { type: 'string', enum: ['js-debug', 'debugpy', 'codelldb'] },
-        program: { type: 'string', description: 'File to run (a .js/.py file or a debug binary).' },
+        adapter: { type: 'string', enum: ['js-debug', 'debugpy', 'codelldb', 'gdb', 'lldb-dap', 'netcoredbg', 'delve', 'jvm', 'dart', 'flutter', 'probe-rs', 'mono', 'clrdbg', 'custom'] },
+        request: { type: 'string', enum: ['launch', 'attach'], description: 'launch (default) starts program; attach joins a running process (pid) or debug server (address).' },
+        program: { type: 'string', description: 'What to run: a .js/.py file, a debug binary/ELF, a .dll, a Go package folder, a .jar, a .dart file.' },
+        pid: { type: 'number', description: 'attach: process id on the target.' },
+        address: { type: 'string', description: 'attach: host:port of a debug server (gdbserver/OpenOCD/QEMU, JDWP, node --inspect, debugpy --listen, dlv --headless, mono agent) or a Dart VM service URI.' },
+        debugger: { type: 'string', description: 'gdb: which gdb binary (gdb-multiarch, arm-none-eabi-gdb, …).' },
+        mainClass: { type: 'string', description: 'jvm: main class (com.acme.App); with classPath.' },
+        classPath: { type: 'array', items: { type: 'string' }, description: 'jvm: class path entries (folders/jars, relative to cwd).' },
+        chip: { type: 'string', description: 'probe-rs: target chip, e.g. STM32F411RETx, nRF52840_xxAA, esp32c3.' },
+        probe: { type: 'string', description: 'probe-rs: probe selector VID:PID[:serial] when several are connected.' },
+        device: { type: 'string', description: 'flutter: device id from `flutter devices`.' },
+        command: { type: 'string', description: 'custom: the DAP server executable.' },
+        commandArgs: { type: 'array', items: { type: 'string' }, description: 'custom: its arguments ({port} = the port it should listen on for transport tcp).' },
+        transport: { type: 'string', enum: ['stdio', 'tcp'], description: 'custom: how the DAP server talks (default stdio).' },
+        config: { type: 'object', description: 'Extra adapter-specific launch.json fields, merged last (e.g. jvm vmArgs, gdb setupCommands).' },
         module: { type: 'string', description: 'debugpy: run a module instead of a file (python -m <module>), e.g. "pytest".' },
         runtimeExecutable: { type: 'string', enum: ['node', 'npm', 'npx', 'yarn', 'pnpm', 'tsx', 'ts-node'], description: 'js-debug: what starts the program (default node).' },
         runtimeArgs: { type: 'array', items: { type: 'string' }, description: 'js-debug: arguments for runtimeExecutable, e.g. ["test"] or ["run", "dev"].' },

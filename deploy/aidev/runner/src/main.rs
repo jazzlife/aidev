@@ -7,6 +7,7 @@ mod caps;
 mod config;
 mod conn;
 mod dap;
+mod dap_adapters;
 mod devserver;
 mod encoder;
 mod exec;

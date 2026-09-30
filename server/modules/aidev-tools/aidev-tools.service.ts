@@ -113,10 +113,15 @@ export async function resolveTarget(requested: string | number | undefined, rout
   throw new Error(`대상을 지정하세요(target). 등록된 대상: ${names}`);
 }
 
+/** Debug adapters the platform can start on a target (the gateway's debug-hub DEBUG_ADAPTERS). */
+export const DEBUG_ADAPTERS = ['js-debug', 'debugpy', 'codelldb', 'gdb', 'lldb-dap', 'netcoredbg', 'delve', 'jvm', 'dart', 'flutter', 'probe-rs', 'mono', 'clrdbg', 'custom'] as const;
+export type DebugAdapterName = (typeof DEBUG_ADAPTERS)[number];
 export type DebugStartInput = {
-  target?: string | number; adapter: 'js-debug' | 'debugpy' | 'codelldb'; program?: string; module?: string; runtimeExecutable?: string; runtimeArgs?: string[];
+  target?: string | number; adapter: DebugAdapterName; request?: 'launch' | 'attach'; program?: string; module?: string; runtimeExecutable?: string; runtimeArgs?: string[];
   args?: string[]; cwd?: string; env?: Record<string, string>; stopOnEntry?: boolean; waitSec?: number;
   breakpoints?: Array<{ file: string; line: number; condition?: string }>;
+  pid?: number; address?: string; debugger?: string; mainClass?: string; classPath?: string[]; chip?: string; probe?: string; device?: string;
+  command?: string; commandArgs?: string[]; transport?: 'stdio' | 'tcp'; config?: Record<string, unknown>;
 };
 type DebugSnapshot = {
   id: string; state: string; error: string | null; exitCode: number | null; program: string | null; cwd: string | null; version: string | null;
@@ -458,8 +463,10 @@ export const aidevToolsService = {
     const target = await resolveTarget(input.target, turn.targetId ?? null);
     const waitSec = Math.min(Math.max(input.waitSec ?? 60, 0), 120);
     const body = {
-      adapter: input.adapter, program: input.program, module: input.module, runtimeExecutable: input.runtimeExecutable, runtimeArgs: input.runtimeArgs,
+      adapter: input.adapter, request: input.request, program: input.program, module: input.module, runtimeExecutable: input.runtimeExecutable, runtimeArgs: input.runtimeArgs,
       args: input.args, cwd: input.cwd, env: input.env, stopOnEntry: input.stopOnEntry,
+      pid: input.pid, address: input.address, debugger: input.debugger, mainClass: input.mainClass, classPath: input.classPath, chip: input.chip, probe: input.probe, device: input.device,
+      command: input.command, commandArgs: input.commandArgs, transport: input.transport, config: input.config,
       breakpoints: (input.breakpoints ?? []).map((b) => ({ path: b.file, line: b.line, condition: b.condition })),
       waitSec, runId: turn.runId ?? undefined, agent: turn.agent ?? undefined,
     };

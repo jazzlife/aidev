@@ -20,12 +20,19 @@ import { RpcError } from './runner-hub.js';
 type Store = ReturnType<typeof openStore>;
 type TargetRow = NonNullable<ReturnType<Store['target']>>;
 
-export const DEBUG_ADAPTERS = ['js-debug', 'debugpy', 'codelldb'] as const;
+export const DEBUG_ADAPTERS = ['js-debug', 'debugpy', 'codelldb', 'gdb', 'lldb-dap', 'netcoredbg', 'delve', 'jvm', 'dart', 'flutter', 'probe-rs', 'mono', 'clrdbg', 'custom'] as const;
 export type DebugAdapter = typeof DEBUG_ADAPTERS[number];
 export type DebugBreakpoint = { path: string; line: number; condition?: string | null };
+/**
+ * What to debug (F-09/F-09b). `launch` starts the program under the debugger; `attach` joins one that runs
+ * already (a process id on the PC, or the address of a debug server: gdbserver/OpenOCD `host:port`, a JVM
+ * JDWP port, a Node inspector, debugpy --listen, a Mono/Unity debugger agent, a Dart VM service URI).
+ * `config` carries adapter-specific launch.json fields and is merged last.
+ */
 export type DebugLaunch = {
   adapter: DebugAdapter;
-  /** file to run (relative to cwd or absolute, inside the PC's allowed folders); optional with `module` / `runtimeExecutable` */
+  request: 'launch' | 'attach';
+  /** file to run (relative to cwd or absolute, inside the PC's allowed folders); a Go package folder for delve */
   program?: string | null;
   args?: string[];
   cwd?: string | null;
@@ -37,6 +44,25 @@ export type DebugLaunch = {
   /** js-debug: run through npm/npx/… instead of node <program> (e.g. npm test) */
   runtimeExecutable?: string | null;
   runtimeArgs?: string[];
+  /** attach: a process on the PC */
+  pid?: number | null;
+  /** attach: host:port (or a URI) of a debug server */
+  address?: string | null;
+  /** gdb: which gdb (gdb-multiarch, arm-none-eabi-gdb, …) */
+  debugger?: string | null;
+  /** jvm launch: main class (`module/pkg.Main` for a module) and class path; or `program` = an executable .jar */
+  mainClass?: string | null;
+  classPath?: string[];
+  /** probe-rs: target chip (e.g. STM32F411RETx, nRF52840_xxAA, esp32c3) and probe selector */
+  chip?: string | null;
+  probe?: string | null;
+  /** flutter: device id (flutter devices) */
+  device?: string | null;
+  /** custom: the DAP server to run */
+  command?: string | null;
+  commandArgs?: string[];
+  transport?: 'stdio' | 'tcp';
+  config?: Record<string, unknown>;
 };
 export type DebugState = 'starting' | 'running' | 'paused' | 'ended' | 'failed';
 type DebugEventBody =
@@ -54,7 +80,8 @@ export type DebugRunners = {
   onNotification?(fn: (targetId: number, method: string, params: unknown) => void): () => void;
 };
 
-type Conn = { dap: DapConnection; name: string; child: boolean; configured: boolean; caps: Record<string, unknown>; bpIds: Map<number, { path: string; index: number }> };
+type Conn = { dap: DapConnection; name: string; child: boolean; configured: boolean; caps: Record<string, unknown>; bpIds: Map<number, { path: string; index: number }>;
+  /** resolves on the adapter's `initialized` event — some send it before their initialize response (netcoredbg) */ ready: Promise<void> };
 type Frame = { id: number; name: string; path: string | null; line: number; column: number; internal: boolean };
 type Variable = { name: string; value: string; type: string | null; ref: number };
 type Session = {
@@ -66,6 +93,7 @@ type Session = {
   stopCount: number; snapshotCache: { n: number; frames: Frame[]; locals: Variable[]; scope: string | null } | null;
   breakpoints: Map<string, DebugBreakpoint[]>; bpStatus: Map<string, Array<{ line: number; verified: boolean; message: string | null }>>;
   output: string; events: DebugEvent[]; seq: number; waiters: Set<() => void>;
+  /** configure before launch (GDB runs the program on launch) */ configureFirst: boolean;
 };
 
 const MAX_SESSIONS_PER_USER = 4;
@@ -82,39 +110,157 @@ export function targetPath(cwd: string | null, p: string) {
   return `${cwd.replace(/[\\/]+$/, '')}${sep}${p.replace(/^\.[\\/]/, '')}`;
 }
 const quote = (s: string) => (/^[\w@%+=:,./-]+$/.test(s) ? s : `'${s.replace(/'/g, `'\\''`)}'`);
+/** launch.json fields that make the debugger run commands: shown verbatim wherever the launch is assessed. */
+const COMMAND_KEYS = /command|script|task|shell|setup|init|preLaunch|postDebug|gdbPath|miDebuggerPath|debugServer|runtimeExecutable|program|args/i;
 
-/** The shell command a debug launch amounts to (what the approval gate assesses and the run history shows). */
+/** The command a debug session amounts to (what the approval gate assesses and the run history shows). */
 export function launchCommand(l: DebugLaunch) {
   const args = (l.args ?? []).map(quote).join(' ');
-  if (l.adapter === 'js-debug') return [l.runtimeExecutable ?? 'node', ...(l.runtimeArgs ?? []).map(quote), l.program ? quote(l.program) : '', args].filter(Boolean).join(' ');
-  if (l.adapter === 'debugpy') return ['python3', l.module ? `-m ${l.module}` : quote(l.program ?? ''), args].filter(Boolean).join(' ');
-  return [quote(l.program ?? ''), args].filter(Boolean).join(' ');
+  const prog = l.program ? quote(l.program) : '';
+  const join = (...parts: Array<string | null | undefined>) => parts.filter(Boolean).join(' ');
+  let cmd: string;
+  if (l.request === 'attach') {
+    cmd = join(`attach(${l.adapter})`, l.pid ? `pid ${l.pid}` : null, l.address ? quote(l.address) : null, prog);
+  } else {
+    switch (l.adapter) {
+      case 'js-debug': cmd = join(l.runtimeExecutable ?? 'node', ...(l.runtimeArgs ?? []).map(quote), prog, args); break;
+      case 'debugpy': cmd = join('python3', l.module ? `-m ${l.module}` : prog, args); break;
+      case 'netcoredbg': cmd = join(/\.dll$/i.test(l.program ?? '') ? 'dotnet' : null, prog, args); break;
+      case 'delve': cmd = join('dlv debug', prog, args ? `-- ${args}` : null); break;
+      case 'jvm': cmd = l.mainClass ? join('java -cp', quote((l.classPath ?? []).join(':') || '.'), l.mainClass, args) : join('java -jar', prog, args); break;
+      case 'dart': cmd = join('dart run', prog, args); break;
+      case 'flutter': cmd = join('flutter run', prog, l.device ? `-d ${quote(l.device)}` : null, args); break;
+      case 'probe-rs': cmd = join('probe-rs run', l.chip ? `--chip ${quote(l.chip)}` : null, prog); break;
+      case 'mono': cmd = join('mono', prog, args); break;
+      case 'custom': cmd = join(l.command ? quote(l.command) : 'custom', ...(l.commandArgs ?? []).map(quote), prog, args); break;
+      default: cmd = join(prog, args);
+    }
+  }
+  const risky = Object.entries(l.config ?? {}).filter(([k]) => COMMAND_KEYS.test(k)).map(([k, v]) => `${k}=${JSON.stringify(v)}`);
+  const other = Object.keys(l.config ?? {}).filter((k) => !COMMAND_KEYS.test(k));
+  return join(cmd, risky.length ? `[${risky.join(' ')}]` : null, other.length ? `{${other.join(',')}}` : null).slice(0, 4000);
 }
 
-/** The adapter's launch request for a checked launch (program/cwd as the runner resolved them). */
-export function launchConfig(l: DebugLaunch, program: string | null, cwd: string) {
-  const common = { name: 'aidev', request: 'launch', cwd, args: l.args ?? [], env: l.env ?? {}, stopOnEntry: Boolean(l.stopOnEntry) };
-  if (l.adapter === 'js-debug') {
-    return { ...common, type: 'pwa-node', program: program ?? undefined, runtimeExecutable: l.runtimeExecutable ?? undefined, runtimeArgs: l.runtimeArgs ?? undefined,
-      console: 'internalConsole', outputCapture: 'std', skipFiles: ['<node_internals>/**'], sourceMaps: true, autoAttachChildProcesses: true };
-  }
-  if (l.adapter === 'debugpy') {
-    return { ...common, type: 'python', ...(l.module ? { module: l.module } : { program: program ?? undefined }), console: 'internalConsole', redirectOutput: true, justMyCode: true, subProcess: false, showReturnValue: true };
-  }
-  return { ...common, type: 'lldb', program, terminal: 'console', sourceLanguages: ['cpp', 'c', 'rust', 'swift'] };
+/** host:port → {host, port}; a bare port means 127.0.0.1. */
+export function hostPort(address: string | null | undefined): { host: string; port: number } | null {
+  if (!address) return null;
+  const m = /^(?:\[?([^\]]*?)\]?:)?(\d{1,5})$/.exec(address.trim());
+  if (!m) return null;
+  const port = Number(m[2]);
+  return port > 0 && port < 65536 ? { host: m[1] || '127.0.0.1', port } : null;
 }
+
+/** The adapter's launch/attach request for a checked launch (program/cwd as the runner resolved them). */
+export function launchConfig(l: DebugLaunch, program: string | null, cwd: string): Record<string, unknown> {
+  const hp = hostPort(l.address);
+  const env = l.env ?? {};
+  const base = { name: 'aidev', request: l.request, cwd };
+  let c: Record<string, unknown>;
+  const attach = l.request === 'attach';
+  switch (l.adapter) {
+    case 'js-debug':
+      c = attach
+        ? { ...base, type: 'pwa-node', ...(hp ? { address: hp.host, port: hp.port } : { processId: l.pid ? String(l.pid) : undefined }), skipFiles: ['<node_internals>/**'], sourceMaps: true }
+        : { ...base, type: 'pwa-node', program: program ?? undefined, args: l.args ?? [], env, stopOnEntry: Boolean(l.stopOnEntry), runtimeExecutable: l.runtimeExecutable ?? undefined, runtimeArgs: l.runtimeArgs ?? undefined,
+          console: 'internalConsole', outputCapture: 'std', skipFiles: ['<node_internals>/**'], sourceMaps: true, autoAttachChildProcesses: true };
+      break;
+    case 'debugpy':
+      c = attach
+        ? { ...base, type: 'python', ...(hp ? { connect: hp } : { processId: l.pid }), justMyCode: true }
+        : { ...base, type: 'python', ...(l.module ? { module: l.module } : { program: program ?? undefined }), args: l.args ?? [], env, stopOnEntry: Boolean(l.stopOnEntry),
+          console: 'internalConsole', redirectOutput: true, justMyCode: true, subProcess: false, showReturnValue: true };
+      break;
+    case 'codelldb':
+      c = attach
+        ? { ...base, type: 'lldb', ...(l.pid ? { pid: l.pid } : { program, waitFor: true }), sourceLanguages: ['cpp', 'c', 'rust', 'swift'] }
+        : { ...base, type: 'lldb', program, args: l.args ?? [], env, stopOnEntry: Boolean(l.stopOnEntry), terminal: 'console', sourceLanguages: ['cpp', 'c', 'rust', 'swift'] };
+      break;
+    case 'gdb':
+      c = attach
+        ? { ...base, ...(l.pid ? { pid: l.pid } : {}), ...(l.address ? { target: l.address } : {}), ...(program ? { program } : {}) }
+        : { ...base, program, args: l.args ?? [], env, stopAtBeginningOfMainSubprogram: Boolean(l.stopOnEntry) };
+      break;
+    case 'lldb-dap':
+      c = attach
+        ? { ...base, ...(l.pid ? { pid: l.pid } : { program, waitFor: true }) }
+        : { ...base, program, args: l.args ?? [], env: Object.entries(env).map(([k, v]) => `${k}=${v}`), stopOnEntry: Boolean(l.stopOnEntry) };
+      break;
+    case 'netcoredbg':
+    case 'clrdbg':
+      c = attach
+        ? { ...base, type: 'coreclr', processId: l.pid }
+        : { ...base, type: 'coreclr', program, args: l.args ?? [], env, stopAtEntry: Boolean(l.stopOnEntry), justMyCode: true };
+      break;
+    case 'delve':
+      c = attach
+        ? { ...base, type: 'go', mode: hp ? 'remote' : 'local', ...(hp ? { host: hp.host, port: hp.port } : { processId: l.pid }) }
+        : { ...base, type: 'go', mode: 'debug', program, args: l.args ?? [], env, stopOnEntry: Boolean(l.stopOnEntry) };
+      break;
+    case 'jvm':
+      // aidev-jdi (runner/assets/aidev-jdi): launch starts `java -agentlib:jdwp…suspend=y` itself; attach joins a JDWP port
+      c = attach
+        ? { ...base, hostName: hp?.host ?? '127.0.0.1', port: hp?.port, timeout: 30_000 }
+        : { ...base, ...(l.mainClass ? { mainClass: l.mainClass, classPath: l.classPath?.length ? l.classPath : ['.'] } : { jar: program, classPath: l.classPath ?? [] }), args: l.args ?? [], env, stopOnEntry: Boolean(l.stopOnEntry) };
+      break;
+    case 'dart':
+    case 'flutter':
+      c = attach
+        ? { ...base, type: l.adapter, vmServiceUri: l.address ?? undefined }
+        : { ...base, type: l.adapter, program, args: l.args ?? [], env, ...(l.adapter === 'flutter' && l.device ? { deviceId: l.device, toolArgs: ['-d', l.device] } : {}) };
+      break;
+    case 'probe-rs':
+      c = { ...base, type: 'probe-rs-debug', chip: l.chip ?? undefined, ...(l.probe ? { probe: l.probe } : {}), connectUnderReset: false,
+        flashingConfig: { flashingEnabled: !attach, haltAfterReset: Boolean(l.stopOnEntry) }, coreConfigs: [{ coreIndex: 0, programBinary: program, rttEnabled: true }] };
+      break;
+    case 'mono':
+      c = attach
+        ? { ...base, type: 'mono', address: hp?.host ?? '127.0.0.1', port: hp?.port ?? 55555 }
+        : { ...base, type: 'mono', program, args: l.args ?? [], env, console: 'internalConsole' };
+      break;
+    default:
+      c = { ...base, ...(program ? { program } : {}), ...(l.args?.length ? { args: l.args } : {}), ...(l.pid ? { pid: l.pid, processId: l.pid } : {}) };
+  }
+  return { ...c, ...(l.config ?? {}) };
+}
+
+/** How to evaluate a watch/console expression: LLDB/GDB-based and .NET adapters treat 'repl' as their own command line. */
+export const evalContext = (adapter: DebugAdapter) => (['js-debug', 'debugpy', 'delve', 'dart', 'flutter'].includes(adapter) ? 'repl' : 'watch');
 
 export function validateLaunch(raw: Record<string, unknown>): DebugLaunch {
   const adapter = String(raw.adapter ?? '') as DebugAdapter;
   if (!DEBUG_ADAPTERS.includes(adapter)) throw new Error(`adapter must be one of ${DEBUG_ADAPTERS.join(', ')}`);
+  const request = raw.request === 'attach' ? 'attach' : 'launch';
   const str = (v: unknown, max: number) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : null);
   const strs = (v: unknown, n: number, max: number) => (Array.isArray(v) ? v.filter((x): x is string => typeof x === 'string').slice(0, n).map((x) => x.slice(0, max)) : []);
   const program = str(raw.program, 2000);
   const module = str(raw.module, 200);
   const runtimeExecutable = str(raw.runtimeExecutable, 40);
+  const pid = raw.pid === undefined || raw.pid === null ? null : Number(raw.pid);
+  if (pid !== null && (!Number.isInteger(pid) || pid <= 0)) throw new Error('pid must be a positive integer');
+  const address = str(raw.address, 500);
+  const mainClass = str(raw.mainClass, 300);
   if (module && (adapter !== 'debugpy' || !/^[A-Za-z_][\w.]*$/.test(module))) throw new Error('module: a Python module name, debugpy only');
   if (runtimeExecutable && (adapter !== 'js-debug' || !['node', 'npm', 'npx', 'yarn', 'pnpm', 'tsx', 'ts-node'].includes(runtimeExecutable))) throw new Error('runtimeExecutable: node|npm|npx|yarn|pnpm|tsx|ts-node, js-debug only');
-  if (!program && !module && !runtimeExecutable) throw new Error('program is required');
+  if (mainClass && (adapter !== 'jvm' || !/^([\w.]+\/)?[\w$.]+$/.test(mainClass))) throw new Error('mainClass: a Java class name (or module/class), jvm only');
+  const debuggerName = str(raw.debugger, 300);
+  if (debuggerName && (adapter !== 'gdb' || !/gdb/.test(debuggerName))) throw new Error('debugger: a gdb binary, gdb only');
+  const command = str(raw.command, 1000);
+  if (adapter === 'custom' && !command) throw new Error('custom: command is required');
+  const transport = raw.transport === 'tcp' ? 'tcp' : 'stdio';
+  let config: Record<string, unknown> | undefined;
+  if (raw.config !== undefined && raw.config !== null) {
+    if (typeof raw.config !== 'object' || Array.isArray(raw.config)) throw new Error('config must be an object');
+    if (JSON.stringify(raw.config).length > 32_000) throw new Error('config too large');
+    config = raw.config as Record<string, unknown>;
+  }
+  if (request === 'launch') {
+    const needsProgram = !(module || runtimeExecutable || mainClass || adapter === 'custom' || (adapter === 'probe-rs' && config));
+    if (needsProgram && !program) throw new Error(adapter === 'jvm' ? 'jvm launch: mainClass (or program = an executable .jar) is required' : 'program is required');
+    if (adapter === 'jvm' && !mainClass && !/\.jar$/i.test(program ?? '')) throw new Error('jvm launch: program must be a .jar (or give mainClass + classPath)');
+    if (adapter === 'probe-rs' && !str(raw.chip, 100) && !config?.chip) throw new Error('probe-rs: chip is required (e.g. STM32F411RETx)');
+  } else if (!pid && !address && !(adapter === 'codelldb' || adapter === 'lldb-dap') && !config) {
+    throw new Error('attach: pid or address is required');
+  }
   let env: Record<string, string> | undefined;
   if (raw.env !== undefined && raw.env !== null) {
     if (typeof raw.env !== 'object' || Array.isArray(raw.env)) throw new Error('env must be an object');
@@ -128,7 +274,11 @@ export function validateLaunch(raw: Record<string, unknown>): DebugLaunch {
     if (!path || !Number.isInteger(line) || line < 1) throw new Error('breakpoints: [{path, line, condition?}]');
     return { path, line, condition: str(o.condition, 500) };
   });
-  return { adapter, program, module, runtimeExecutable, args: strs(raw.args, 100, 2000), runtimeArgs: strs(raw.runtimeArgs, 30, 500), cwd: str(raw.cwd, 1000), env, stopOnEntry: raw.stopOnEntry === true, breakpoints };
+  return {
+    adapter, request, program, module, runtimeExecutable, args: strs(raw.args, 100, 2000), runtimeArgs: strs(raw.runtimeArgs, 30, 500), cwd: str(raw.cwd, 1000), env,
+    stopOnEntry: raw.stopOnEntry === true, breakpoints, pid, address, debugger: debuggerName, mainClass, classPath: strs(raw.classPath, 200, 2000),
+    chip: str(raw.chip, 100), probe: str(raw.probe, 200), device: str(raw.device, 200), command, commandArgs: strs(raw.commandArgs, 50, 2000), transport, config,
+  };
 }
 
 export function createDebugHub(deps: { store: Store; runners: DebugRunners }) {
@@ -160,6 +310,12 @@ export function createDebugHub(deps: { store: Store; runners: DebugRunners }) {
   const timer = setInterval(sweep, 60_000); timer.unref();
 
   const unsubscribe = runners.onNotification?.((targetId, method, params) => {
+    if (method === 'dap.output') {
+      // output of a program the runner started for an attach-type adapter (JVM, …)
+      const o = (params ?? {}) as { id?: number; category?: string; text?: string };
+      for (const s of sessions.values()) if (s.targetId === targetId && s.runnerId === o.id && !s.endedAt && typeof o.text === 'string') addOutput(s, o.category === 'stderr' ? 'stderr' : o.category === 'console' ? 'console' : 'stdout', o.text.slice(0, 16_000));
+      return;
+    }
     if (method !== 'dap.exited') return;
     const p = (params ?? {}) as { id?: number; code?: number | null; tail?: string };
     for (const s of sessions.values()) {
@@ -191,7 +347,7 @@ export function createDebugHub(deps: { store: Store; runners: DebugRunners }) {
 
   async function sendBreakpoints(s: Session, c: Conn, path: string) {
     const list = s.breakpoints.get(path) ?? [];
-    const r = await c.dap.request<{ breakpoints?: Array<Record<string, unknown>> }>('setBreakpoints', { source: { path }, breakpoints: list.map((b) => ({ line: b.line, ...(b.condition ? { condition: b.condition } : {}) })), lines: list.map((b) => b.line) });
+    const r = await c.dap.request<{ breakpoints?: Array<Record<string, unknown>> }>('setBreakpoints', { source: { path, name: path.split(/[\\/]/).pop() }, breakpoints: list.map((b) => ({ line: b.line, ...(b.condition ? { condition: b.condition } : {}) })), lines: list.map((b) => b.line) });
     const status = (r.breakpoints ?? []).map((b, i) => {
       if (typeof b.id === 'number') c.bpIds.set(b.id, { path, index: i });
       return { line: Number(b.line ?? list[i]?.line ?? 0), verified: b.verified !== false, message: typeof b.message === 'string' ? b.message : null };
@@ -206,7 +362,9 @@ export function createDebugHub(deps: { store: Store; runners: DebugRunners }) {
     }
     const filters = (Array.isArray(c.caps.exceptionBreakpointFilters) ? c.caps.exceptionBreakpointFilters as Array<{ filter: string; default?: boolean }> : []).filter((f) => f.default || f.filter === 'uncaught').map((f) => f.filter);
     await c.dap.request('setExceptionBreakpoints', { filters }).catch(() => undefined);
-    if (c.caps.supportsConfigurationDoneRequest) await c.dap.request('configurationDone');
+    if (c.caps.supportsConfigurationDoneRequest) {
+      await c.dap.request('configurationDone');
+    }
     c.configured = true;
     push(s, { type: 'breakpoints' });
   }
@@ -266,25 +424,37 @@ export function createDebugHub(deps: { store: Store; runners: DebugRunners }) {
 
   async function connect(s: Session, name: string, child: boolean): Promise<Conn> {
     const stream = await runners.openTunnel(s.targetId, s.port!);
-    const c: Conn = { dap: new DapConnection(stream, name), name, child, configured: false, caps: {}, bpIds: new Map() };
+    const dap = new DapConnection(stream, name);
+    // listen for `initialized` before sending initialize: some adapters send it first
+    const ready = new Promise<void>((resolve, reject) => {
+      const t = setTimeout(() => reject(new DapError('initialized', '디버그 어댑터가 60초 안에 준비되지 않았습니다')), 60_000);
+      t.unref();
+      dap.on('event', (e: DapMessage) => { if (e.event === 'initialized') { clearTimeout(t); resolve(); } });
+      dap.on('close', (why: string) => { clearTimeout(t); reject(new DapError('initialized', why)); });
+    });
+    ready.catch(() => undefined);
+    const c: Conn = { dap, name, child, configured: false, caps: {}, bpIds: new Map(), ready };
     s.conns.push(c);
     wire(s, c);
-    c.caps = await c.dap.request('initialize', { clientID: 'aidev', clientName: 'Nado AI Dev', adapterID: s.adapter, pathFormat: 'path', linesStartAt1: true, columnsStartAt1: true, supportsVariableType: true, supportsStartDebuggingRequest: true, supportsRunInTerminalRequest: false, locale: 'ko' }, 20_000);
+    c.caps = await c.dap.request('initialize', { clientID: 'aidev', clientName: 'Nado AI Dev', adapterID: s.adapter, pathFormat: 'path', linesStartAt1: true, columnsStartAt1: true, supportsVariableType: true, supportsStartDebuggingRequest: true, supportsRunInTerminalRequest: false, locale: 'ko' }, 60_000);
     return c;
   }
 
-  /** initialize → launch/attach (answered only after configurationDone by some adapters) ∥ initialized → configure. */
+  /**
+   * initialize → launch/attach ∥ initialized → configure (breakpoints, exception filters, configurationDone).
+   * Most adapters answer launch only after configurationDone; GDB starts the program as soon as it gets the
+   * launch request, so it is configured first (its breakpoints stay pending until the program loads).
+   */
   async function launchOn(s: Session, c: Conn, request: 'launch' | 'attach', config: Record<string, unknown>) {
-    const initialized = new Promise<void>((resolve, reject) => {
-      const t = setTimeout(() => reject(new DapError('initialized', '디버그 어댑터가 30초 안에 준비되지 않았습니다')), 30_000);
-      t.unref();
-      c.dap.on('event', (e: DapMessage) => { if (e.event === 'initialized') { clearTimeout(t); resolve(); } });
-      c.dap.on('close', (why: string) => { clearTimeout(t); reject(new DapError('initialized', why)); });
-    });
-    initialized.catch(() => undefined);   // the race below reports the first failure; a later one must not go unhandled
+    if (s.configureFirst) {
+      await c.ready;
+      await configure(s, c);
+      await c.dap.request(request, config, 120_000);
+      return;
+    }
     const launched = c.dap.request(request, config, 120_000);
     launched.catch(() => undefined);
-    await Promise.race([initialized, launched.then(() => initialized)]);
+    await Promise.race([c.ready, launched.then(() => c.ready)]);
     await configure(s, c);
     await launched;
   }
@@ -353,11 +523,17 @@ export function createDebugHub(deps: { store: Store; runners: DebugRunners }) {
         runnerId: null, port: null, program: launch.program ?? null, cwd: launch.cwd ?? null, args: launch.args ?? [], module: launch.module ?? null,
         remoteRunId, runId: meta.runId ?? null, by: meta.by, origin: meta.origin ?? 'user', state: 'starting', error: null, exitCode: null, createdAt: Date.now(), endedAt: null,
         conns: [], active: null, stopped: null, stopCount: 0, snapshotCache: null, breakpoints: new Map(), bpStatus: new Map(), output: '', events: [], seq: 0, waiters: new Set(),
+        configureFirst: launch.adapter === 'gdb' || (launch.adapter === 'custom' && /(^|[\\/])[\w.+-]*gdb[\w.+-]*$/i.test(launch.command ?? '')),
       };
       sessions.set(s.id, s);
       console.log(`[debug] ${s.id} target #${target.id} by ${meta.by}: ${cmd.slice(0, 160)}`);
       try {
-        const r = await runners.call<{ id: number; port: number; version: string; cwd: string; program: string | null }>(target.id, 'dap.start', { adapter: launch.adapter, cwd: launch.cwd ?? undefined, program: launch.module || launch.runtimeExecutable ? undefined : launch.program ?? undefined }, 240_000);
+        // the runner checks the program only when it is a file to run (not a module, npm script, class name or attach)
+        const fileProgram = launch.request === 'launch' && !launch.module && !launch.runtimeExecutable && !launch.mainClass && launch.adapter !== 'custom' ? launch.program ?? undefined : undefined;
+        const r = await runners.call<{ id: number; port: number; version: string; cwd: string; program: string | null }>(target.id, 'dap.start', {
+          adapter: launch.adapter, cwd: launch.cwd ?? undefined, program: fileProgram,
+          debugger: launch.debugger ?? undefined, command: launch.command ?? undefined, commandArgs: launch.commandArgs, transport: launch.transport,
+        }, 300_000);
         s.runnerId = r.id; s.port = r.port; s.version = r.version; s.cwd = r.cwd; if (r.program) s.program = r.program;
         for (const b of launch.breakpoints ?? []) {
           const p = targetPath(s.cwd, b.path);
@@ -367,8 +543,9 @@ export function createDebugHub(deps: { store: Store; runners: DebugRunners }) {
         }
         const root = await connect(s, `${s.id}/root`, false);
         s.active = root;
-        const config = launchConfig(launch, launch.module || launch.runtimeExecutable ? (launch.program ? targetPath(s.cwd, launch.program) : null) : s.program, s.cwd!);
-        await launchOn(s, root, 'launch', config);
+        const programArg = fileProgram ? s.program : launch.program ? targetPath(s.cwd, launch.program) : null;
+        const config = launchConfig(launch, programArg, s.cwd!);
+        await launchOn(s, root, config.request === 'attach' ? 'attach' : 'launch', config);
         if (s.state === 'starting') setState(s, 'running');
       } catch (error) {
         s.error = error instanceof Error ? error.message : String(error);
@@ -453,7 +630,7 @@ export function createDebugHub(deps: { store: Store; runners: DebugRunners }) {
       const c = s.stopped?.conn ?? s.active ?? s.conns[0];
       const frame = frameId ?? (s.stopped ? (await pausedDetail(s))?.frames.find((f) => !f.internal)?.id ?? null : null);
       // codelldb's repl context runs LLDB commands; 'watch' evaluates the expression in the program's language
-      const r = await c.dap.request<{ result?: string; type?: string; variablesReference?: number }>('evaluate', { expression, ...(frame !== null ? { frameId: frame } : {}), context: s.adapter === 'codelldb' ? 'watch' : 'repl' }, 20_000);
+      const r = await c.dap.request<{ result?: string; type?: string; variablesReference?: number }>('evaluate', { expression, ...(frame !== null ? { frameId: frame } : {}), context: evalContext(s.adapter) }, 20_000);
       return { result: String(r.result ?? '').slice(0, 4000), type: r.type ?? null, ref: Number(r.variablesReference ?? 0) };
     },
 

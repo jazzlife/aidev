@@ -24,6 +24,7 @@ describe('debug path mapping (F-09)', () => {
   });
   it('picks the adapter from the program and splits arguments', () => {
     expect([adapterFor('main.py'), adapterFor('src/index.ts'), adapterFor('app.mjs'), adapterFor('target/debug/app')]).toEqual(['debugpy', 'js-debug', 'js-debug', 'codelldb']);
+    expect([adapterFor('bin/Debug/net8.0/App.dll'), adapterFor('build/libs/app.jar'), adapterFor('main.go'), adapterFor('bin/main.dart')]).toEqual(['netcoredbg', 'jvm', 'delve', 'dart']);
     expect(splitArgs(`--port 3000 "a b" 'c d' e\\"f`)).toEqual(['--port', '3000', 'a b', 'c d', 'e\\"f']);
   });
   it('keeps editor breakpoints sorted and unique, toggles them', () => {
