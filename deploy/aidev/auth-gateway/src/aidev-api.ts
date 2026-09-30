@@ -555,6 +555,23 @@ export function createAidevApi(deps: AidevDeps) {
       if (rest === '/previews' && m === 'GET') {
         return json(res, 200, { previews: (deps.preview?.list(uid) ?? []).map((p) => ({ ...p, online: Boolean(deps.runners?.online(p.targetId)) })) }), true;
       }
+      // ---- dev servers (F-06b): what is listening on the target and which projects can be started ----------
+      const devMatch = rest.match(/^\/targets\/(\d+)\/dev$/);
+      if (devMatch && m === 'GET') {
+        if (!deps.runners || !deps.preview) throw new HttpError(503, 'runner hub unavailable');
+        const id = Number(devMatch[1]);
+        const target = store.target(uid, id);
+        if (!target) throw new HttpError(404, 'Target not found');
+        const port = Math.round(Number(url.searchParams.get('port')) || 5173);
+        if (port < 1024 || port > 65535) throw new HttpError(400, 'port must be 1024-65535');
+        try {
+          const scan = await deps.runners.devScan(id);
+          const base = deps.preview.baseFor(target, port);
+          return json(res, 200, { ...scan, port, base, url: `${deps.publicOrigin ?? ''}${base}`, allowed_roots: target.allowed_roots ? JSON.parse(target.allowed_roots) : [] }), true;
+        } catch (error) {
+          throw new HttpError(error instanceof RpcError ? (error.code === -32010 ? 409 : error.code === -32021 ? 501 : 502) : 502, error instanceof Error ? error.message : 'scan failed');
+        }
+      }
       const previewMatch = rest.match(/^\/targets\/(\d+)\/preview(?:\/(\d{4,5}))?$/);
       if (previewMatch) {
         if (!deps.preview) throw new HttpError(503, 'preview unavailable');

@@ -1655,3 +1655,16 @@ export type RemoteScreenSource =
   | { kind: 'window'; id: number }
   | { kind: 'console'; streamId: number; remoteRunId: number; pty: boolean }
   | { kind: 'display'; id: number };
+
+// ---------------------------
+
+//----------------- REMOTE DEV SERVERS ------------
+
+/** A TCP port listening on a remote PC (runner `dev.scan`): the preview pane offers these; `loopback` ones are reachable by a preview. */
+export type RemoteListeningPort = { port: number; pid: number | null; process: string | null; address: string; loopback: boolean };
+
+/** A dev project the runner found in the PC's allowed folders, with the command that starts it for a preview (`{port}` / `{base}` placeholders, also in `env` values). `base` = it can serve under the preview path (full HMR). */
+export type RemoteDevProject = { dir: string; name: string; framework: string; pm: string; script: string; command: string; env: Record<string, string>; base: boolean };
+
+/** GET /api/aidev/targets/:id/dev: listening ports, startable projects, and the preview path/url for `port`. */
+export type RemoteDevScan = { ports: RemoteListeningPort[]; projects: RemoteDevProject[]; port: number; base: string; url: string; allowed_roots: string[] };

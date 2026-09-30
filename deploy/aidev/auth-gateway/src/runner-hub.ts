@@ -464,6 +464,13 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
       return { windows: r.windows ?? null, displays: r.displays ?? null, perWindow: Array.isArray(r.windows) };
     },
     screenCount() { return screens.size; },
+    /** F-06b: listening ports (with their programs) and dev projects in the allowed folders, for the preview pane. */
+    async devScan(targetId: number) {
+      if (!hub.online(targetId)) throw new RpcError(-32010, '원격 PC가 오프라인입니다');
+      const caps = screenCaps(targetId);
+      if (!caps.features?.includes('dev')) throw new RpcError(-32021, tooOld(caps, '포트·프로젝트 찾기', '0.7.1'));
+      return hub.call<{ ports: Array<{ port: number; pid: number | null; process: string | null; address: string; loopback: boolean }>; projects: Array<Record<string, unknown>> }>(targetId, 'dev.scan', {}, 20_000);
+    },
     /** JSON-RPC notification to a runner (no reply): remote-control input. */
     notifyRunner(targetId: number, method: string, params: unknown) {
       const c = conns.get(targetId);

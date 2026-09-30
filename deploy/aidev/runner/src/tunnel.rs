@@ -103,7 +103,8 @@ async fn dial(port: u16) -> Result<(TcpStream, String), String> {
             Err(_) => last = "시간 초과".into(),
         }
     }
-    Err(format!("이 PC의 포트 {port}에서 실행 중인 서버가 없습니다 ({last})"))
+    let open = tokio::task::spawn_blocking(crate::devserver::ports_hint).await.unwrap_or_default();
+    Err(format!("이 PC의 포트 {port}에서 실행 중인 서버가 없습니다 ({last}) — {open}"))
 }
 
 async fn open(params: &Value) -> RpcResult {

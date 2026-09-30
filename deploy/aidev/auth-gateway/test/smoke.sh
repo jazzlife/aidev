@@ -200,7 +200,7 @@ if [ -x "$RUNNER_BIN" ]; then
   BAD=$(echo "$PB" | sed -E 's/-[A-Za-z0-9_-]{16}\/$/-AAAAAAAAAAAAAAAA\//'); r=$(curl -s -o /dev/null -w '%{http_code}' "$G$BAD"); check "{\"code\":$r}" 'j.code===404' "forged capability refused"
   OTHER=$(echo "$PB" | sed -E "s/-$PP-/-$PK-/"); r=$(curl -s -o /dev/null -w '%{http_code}' "$G$OTHER"); check "{\"code\":$r}" 'j.code===404' "a capability does not work for another port"
   r=$(post "$A" "/api/aidev/targets/$TID/preview" "{\"port\":$PK}"); KB=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).preview?.base')
-  check "$r" 'j.preview.error && /포트/.test(j.preview.error) && j.preview.base && /base/.test(j.hint)' "nothing listening → error with the base to start the server with"
+  check "$r" "j.preview.error && /포트/.test(j.preview.error) && /열려 있는 포트: .*$PP \\(node\\)/.test(j.preview.error) && j.preview.base && /base/.test(j.hint)" "nothing listening → error with the base to start the server with and the ports that are open"
   node test/fake-devserver.mjs "$PK" "$KB" > "$T/dev2.log" 2>&1 & DEV2=$!; sleep 0.4
   r=$(post "$A" "/api/aidev/targets/$TID/preview" "{\"port\":$PK}"); check "$r" 'j.preview.mode==="keep" && !j.preview.error' "server started with the base → keep mode"
   H=$(curl -s "$G$KB"); check "{\"ok\":$(echo "$H" | grep -q "src=\"${KB}src/main.js\"" && ! echo "$H" | grep -q "${KB}${KB#/}" && echo true || echo false)}" 'j.ok' "keep mode: paths already under the base are not prefixed twice"
@@ -210,6 +210,19 @@ if [ -x "$RUNNER_BIN" ]; then
   r=$(post "$B" "/api/aidev/targets/$TID/preview" "{\"port\":$PP}"); check "$r" 'j.error' "another user cannot open a preview on the target"
   r=$(rpost "/targets/$TID/preview" "{\"port\":$PP,\"label\":\"agent app\"}"); check "$r" 'j.preview.by==="agent" && j.preview.mode==="strip"' "agent (runtime session) opens a preview"
   post "$A" "/api/aidev/targets/$TID" '{"policy":"deny"}' PATCH >/dev/null; r=$(curl -s -o /dev/null -w '%{http_code}' "$G$PB"); check "{\"code\":$r}" 'j.code===403' "policy deny blocks the preview"; post "$A" "/api/aidev/targets/$TID" '{"policy":"ask"}' PATCH >/dev/null
+  # F-06b: the preview pane finds the ports and projects, starts a project's dev server, and previews it
+  PD=$((PK + 1)); APP="$RH/aidev-work/demo-app"; mkdir -p "$APP"
+  printf '{"name":"demo-app","scripts":{"dev":"node server.mjs"},"devDependencies":{"vite":"^6"}}\n' > "$APP/package.json"
+  # stands in for `vite`: takes --base/--port like it, serves the fake dev server
+  printf 'const a = process.argv; const v = (k) => a[a.indexOf(k) + 1];\nprocess.argv = [a[0], a[1], v("--port"), v("--base")];\nawait import(%s);\n' "\"$(pwd)/test/fake-devserver.mjs\"" > "$APP/server.mjs"
+  r=$(get "$A" "/api/aidev/targets/$TID/dev?port=$PD"); DB=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).base')
+  check "$r" "j.ports.some(p=>p.port===$PP && p.loopback && p.process==='node') && j.projects.some(p=>p.name==='demo-app' && p.framework==='vite' && p.base && p.command==='npm run dev -- --base {base} --port {port} --strictPort') && j.port===$PD && /^\\/p\\/\\d+-$PD-/.test(j.base)" "dev scan: open ports with their program, the project with its vite command, the preview path for the port"
+  CMD=$(echo "$r" | node -pe "const j=JSON.parse(require('fs').readFileSync(0)); j.projects.find(p=>p.name==='demo-app').command.split('{port}').join('$PD').split('{base}').join(j.base)")
+  r=$(post "$A" "/api/aidev/targets/$TID/exec" "{\"cmd\":\"$CMD\",\"cwd\":\"$APP\",\"pty\":true}"); DRR=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).stream?.remoteRunId')
+  for i in $(seq 1 40); do r=$(get "$A" "/api/aidev/targets/$TID/dev?port=$PD"); echo "$r" | grep -q "\"port\":$PD,\"pid\"" && break; sleep 0.5; done
+  check "$r" "j.ports.some(p=>p.port===$PD && p.loopback)" "started from the pane: the project's dev server listens on the preview port (run #$DRR)"
+  r=$(post "$A" "/api/aidev/targets/$TID/preview" "{\"port\":$PD}"); check "$r" "j.preview.mode==='keep' && !j.preview.error && j.preview.base==='$DB'" "…and its preview opens in keep mode (HMR path)"
+  post "$A" "/api/aidev/remote-runs/$DRR/signal" '{"signal":"INT"}' >/dev/null
   kill $DEV1 $DEV2 2>/dev/null; wait $DEV1 $DEV2 2>/dev/null || true
   r=$(curl -s -w '|%{http_code}' "$G$PB"); check "{\"ok\":$(echo "$r" | grep -q '연결할 수 없습니다' && echo "$r" | grep -q '|502' && echo true || echo false)}" 'j.ok' "dev server stopped → 502 page"
   # F-07: screen — consent, screenshot (REST + jpg), shared stream with change-only frames, agent audit

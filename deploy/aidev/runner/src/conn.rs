@@ -214,7 +214,10 @@ pub async fn handle(cfg: &Config, hub: &ExecHub, text: &str) -> Option<Value> {
             Some(r) => Some(r),
             None => match crate::screen::rpc(cfg, method, &params).await {
                 Some(r) => Some(r),
-                None => crate::sync::rpc(cfg, method, &params).await,
+                None => match crate::sync::rpc(cfg, method, &params).await {
+                    Some(r) => Some(r),
+                    None => crate::devserver::rpc(cfg, method, &params).await,
+                },
             },
         },
     };

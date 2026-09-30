@@ -107,7 +107,7 @@ pub async fn collect(cfg: &crate::config::Config) -> Value {
         "allowed_roots": cfg.allowed_roots.iter().map(|r| r.display().to_string()).collect::<Vec<_>>(),
         "screen": cfg.screen_consent,
         "control": cfg.control_consent,
-        "features": ["ping", "exec", "sync", "tunnel", "screen", "video", "input", "windows"],
+        "features": ["ping", "exec", "sync", "tunnel", "screen", "video", "input", "windows", "dev"],
         "limits": { "exec_running": crate::exec::MAX_RUNNING },
     })
 }

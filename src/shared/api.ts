@@ -558,7 +558,9 @@ export const api = {
     /** aidev-runner binaries shipped with the active release (served by the gateway without a session). */
     runnerDownloads: () => get('/_runner/download'),
     /** F-03: run a command on the target (the user's own hand; agents use remote_exec with approval). */
-    exec: (targetId: number, input: { cmd: string; cwd?: string; pty?: boolean; cols?: number; rows?: number; timeoutSec?: number }) => post(`/api/aidev/targets/${targetId}/exec`, input),
+    exec: (targetId: number, input: { cmd: string; cwd?: string; pty?: boolean; cols?: number; rows?: number; timeoutSec?: number; env?: Record<string, string> }) => post(`/api/aidev/targets/${targetId}/exec`, input),
+    /** F-06b: listening ports + startable dev projects on the target, and the preview base for `port`. */
+    dev: (targetId: number, port: number) => get(`/api/aidev/targets/${targetId}/dev?port=${port}`),
     runs: (targetId: number, limit = 30) => get(`/api/aidev/targets/${targetId}/runs?limit=${limit}`),
     /** F-04: copy a project of this runtime to the target (only changed files; runtime route). */
     sync: (targetId: number, projectPath: string, opts: { dest?: string; dryRun?: boolean } = {}) => post('/api/aidev-tools/remote-sync', { targetId, projectPath, ...opts }),
