@@ -491,7 +491,8 @@ mod tests {
         let with_gdb = crate::dap_adapters::available().contains(&"gdb");
         // jvm: aidev-jdi from the runner binary (stdio) when this machine has a JDK 11+
         let with_jvm = crate::dap_adapters::available().contains(&"jvm");
-        for adapter in ["js-debug", "debugpy", "codelldb", "gdb", "jvm"] {
+        // probe-rs answers initialize without a probe attached (the launch would need hardware)
+        for adapter in ["js-debug", "debugpy", "codelldb", "gdb", "jvm", "probe-rs"] {
             if adapter == "gdb" && !with_gdb { eprintln!("skip gdb: no GDB 14+"); continue; }
             if adapter == "jvm" && !with_jvm { eprintln!("skip jvm: no java"); continue; }
             let r = start(&c, &json!({ "adapter": adapter, "program": "app.js" })).await.unwrap_or_else(|e| panic!("{adapter}: {}", e.1));

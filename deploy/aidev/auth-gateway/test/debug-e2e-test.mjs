@@ -62,6 +62,7 @@ const cases = [
   { name: 'lldb-dap (LLVM)', ok: avail.available.includes('lldb-dap') && fs.existsSync(`${WORK}/c/app`), launch: { adapter: 'lldb-dap', program: 'app', cwd: `${WORK}/c`, breakpoints: [{ path: 'app.c', line: 3 }] }, file: `${WORK}/c/app.c`, line: 3, a: 'a' },
   { name: 'ios-sim bridge (lldb-dap attach to a waiting app)', ok: avail.available.includes('lldb-dap') && fs.existsSync(`${WORK}/ios/app`) && fs.existsSync(`${FAKE_BIN}/xcrun`), launch: { adapter: 'lldb-dap', mobile: 'ios-sim', appId: 'com.example.App', program: 'app', cwd: `${WORK}/ios`, breakpoints: [{ path: 'app.c', line: 4 }] }, file: `${WORK}/ios/app.c`, line: 4, a: 'a', log: /xcrun simctl launch --wait-for-debugger --terminate-running-process booted com\.example\.App[\s\S]*xcrun simctl terminate/ },
   { name: 'android bridge (jvm over adb JDWP forward)', ok: have('java') && fs.existsSync(`${WORK}/java/Main.class`) && fs.existsSync(`${FAKE_SDK}/platform-tools/adb`), launch: { adapter: 'jvm', mobile: 'android', appId: 'com.example.app', device: 'emulator-5554', cwd: `${WORK}/java`, breakpoints: [{ path: 'Main.java', line: 3 }] }, file: `${WORK}/java/Main.java`, line: 3, a: 'a', log: /adb -s emulator-5554 get-state[\s\S]*am set-debug-app -w com\.example\.app[\s\S]*monkey -p com\.example\.app[\s\S]*forward tcp:\d+ jdwp:4242[\s\S]*forward --remove tcp:\d+[\s\S]*am clear-debug-app/ },
+  { name: 'js-debug attach (node --inspect)', ok: have('node'), pre: () => spawn('node', ['--inspect=127.0.0.1:9339', 'app.js'], { cwd: `${WORK}/js`, stdio: 'ignore' }), launch: { adapter: 'js-debug', request: 'attach', address: '127.0.0.1:9339', cwd: `${WORK}/js`, breakpoints: [{ path: 'app.js', line: 2 }] }, file: `${WORK}/js/app.js`, line: 2, a: 'a' },
   { name: 'mono (C# on Mono)', ok: have('mono') && fs.existsSync(`${WORK}/mono/app.exe`), launch: { adapter: 'mono', program: 'app.exe', cwd: `${WORK}/mono`, breakpoints: [{ path: 'app.cs', line: 4 }] }, file: `${WORK}/mono/app.cs`, line: 4, a: 'a' },
 ].filter((c) => !only.length || only.some((o) => c.name.startsWith(o)));
 
@@ -70,6 +71,8 @@ for (const c of cases) {
   if (!c.ok) { console.log(`SKIP ${c.name}: runtime or sample missing`); continue; }
   const t0 = Date.now();
   let s = null;
+  const preProc = c.pre ? c.pre() : null;
+  if (preProc) await new Promise((r) => setTimeout(r, 700));
   try {
     s = await hub.start(uid, target, validateLaunch(c.launch), { by: 'user' });
     assert.ok(['running', 'paused'].includes(s.state), `${s.state}: ${s.error}`);
@@ -100,6 +103,7 @@ for (const c of cases) {
   } catch (e) {
     failed++;
     console.log(`FAIL ${c.name}: ${e.message}${s?.id ? ` :: output ${hub.get(uid, s.id).error ?? ''}` : ''}`);
+    preProc?.kill();
     if (s?.id) { try { const snap = await hub.snapshot(uid, s.id); console.log(snap.output.slice(-800)); await hub.stop(uid, s.id); } catch { /* ended */ } }
   }
 }
