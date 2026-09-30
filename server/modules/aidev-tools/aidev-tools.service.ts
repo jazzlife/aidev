@@ -131,6 +131,18 @@ type DebugSnapshot = {
   breakpoints: Array<{ path: string; line: number; condition: string | null; verified: boolean | null; message: string | null }>;
   output: string;
 };
+type ConsoleView = { id: string; state: 'running' | 'ended'; exitCode: number | null; atPrompt: boolean; output: string; waited?: string; cmd: string };
+const CONSOLE_OUTPUT_MAX = 12_000;
+/** A console answer for the agent: the new output (tail-trimmed), whether it waits for input, and what to do next. */
+export function consoleSummary(c: ConsoleView) {
+  const out = c.output.length > CONSOLE_OUTPUT_MAX ? `…(앞 ${c.output.length - CONSOLE_OUTPUT_MAX}자 생략)\n${c.output.slice(-CONSOLE_OUTPUT_MAX)}` : c.output;
+  const hint = c.state === 'ended' ? `콘솔이 끝났습니다 (exit ${c.exitCode ?? '?'}). 다시 보려면 remote_console_start.`
+    : c.atPrompt ? '입력 대기(프롬프트): remote_console_send로 다음 명령을 보내세요. 끝나면 remote_console_stop.'
+      : c.waited === 'timeout' || c.waited === 'quiet' ? '아직 실행 중이거나 프롬프트를 못 알아봤습니다: remote_console_read로 더 기다리거나, 멈추려면 remote_console_send interrupt=true.'
+        : '실행 중: remote_console_read로 출력을 더 보세요.';
+  return { session: c.id, state: c.state, exitCode: c.exitCode, waitingForInput: c.atPrompt, output: out, hint };
+}
+
 /** What an agent needs after each debugger step: where it is, the stack, the variables, the recent output. */
 export function debugSummary(s: DebugSnapshot) {
   const frames = s.frames.filter((f) => !f.internal);
@@ -322,7 +334,7 @@ export function composeAgentInstructions(aidev: AidevTurnOptions): string {
     parts.push(`## 원격 실행 대상\n이 작업의 실행·테스트·디버깅은 사용자의 원격 PC \`${aidev.target.name}\` (${aidev.target.platform ?? 'unknown'}; tags ${aidev.target.tags.join(', ') || 'none'})에서 remote_* 도구로 수행한다.${aidev.scope.remoteAction && aidev.scope.remoteAction !== 'none' ? ` 요청된 원격 작업: ${aidev.scope.remoteAction}.` : ''}${aidev.device ? `\n대상 기기: ${aidev.device.tool} serial \`${aidev.device.serial}\` — 기기 명령은 \`${aidev.device.tool} -s ${aidev.device.serial} …\`로 이 기기를 지정한다(연결된 기기가 여럿).` : ''}\n대상 capabilities: ${capabilities}`);
   }
   parts.push('## 판단 도구\n여러 후보(수정안·파일·접근법·위험도) 중 골라야 하면 추측 대신 `aidev_decide` 도구(kind agent.pick / agent.score / agent.yesno)로 판정한다.');
-  parts.push('## 사용자 PC에서 실행\n사용자가 자기 PC·Mac·원격 머신에서 실행·빌드·테스트·확인을 요청하면 이 작업공간의 셸이 아니라 `remote_targets`로 대상을 확인하고 `remote_exec`로 실행한다(허용 폴더 안에서, 결과의 종료 코드·출력을 근거로 판단). 이 작업공간의 프로젝트를 대상에서 돌려야 하면 먼저 `remote_sync`로 복사하고(돌려준 `dest`를 cwd로), 여기서 파일을 고친 뒤에는 다시 `remote_sync` 후 실행한다. 의존성은 복사되지 않으므로 대상에서 설치(npm ci 등)한다. 테스트가 실패하면 원인을 고치고 다시 실행해 통과를 확인한다. 개발 서버처럼 계속 도는 명령은 `background:true` 후 `remote_logs`로 확인하고, 끝나면 `remote_stop`. 웹 앱을 사용자에게 보여줘야 하면 `remote_preview{port}`를 먼저 호출해 `base`를 받고, 개발 서버를 그 base로 실행(Vite: `npm run dev -- --base <base> --port <port>`)한 뒤 `remote_preview`를 다시 호출하면 작업대 미리보기 패널에 열린다(HMR 포함). 돌려준 url을 사용자에게 알려준다. 실행 중 오류·잘못된 값의 원인을 찾을 때는 로그로 추측하기보다 `remote_debug_start`(Node: js-debug, Python: debugpy, C/C++/Rust: codelldb — 디버그 빌드 먼저)로 의심 줄에 중단점을 두고 멈춘 곳의 locals·`remote_debug_eval`로 값을 확인하며 `remote_debug_step`으로 진행하고, 끝나면 `remote_debug_stop`(사용자도 같은 세션을 디버그 창에서 본다). 데스크탑 앱·에뮬레이터 창처럼 화면을 직접 봐야 확인할 수 있는 것은 `remote_windows`로 창을 찾고 `remote_screenshot{window|query}`로 그 창을 보고 판단한다(그 PC에서 화면 캡처를 허용한 경우만, 보기 전용). 파일 삭제·sudo·설치·강제 push 같은 명령은 사용자 승인이 필요하므로 꼭 필요할 때만 쓰고, 거부되면 같은 명령을 반복하지 않는다.');
+  parts.push('## 사용자 PC에서 실행\n사용자가 자기 PC·Mac·원격 머신에서 실행·빌드·테스트·확인을 요청하면 이 작업공간의 셸이 아니라 `remote_targets`로 대상을 확인하고 `remote_exec`로 실행한다(허용 폴더 안에서, 결과의 종료 코드·출력을 근거로 판단). 이 작업공간의 프로젝트를 대상에서 돌려야 하면 먼저 `remote_sync`로 복사하고(돌려준 `dest`를 cwd로), 여기서 파일을 고친 뒤에는 다시 `remote_sync` 후 실행한다. 의존성은 복사되지 않으므로 대상에서 설치(npm ci 등)한다. 테스트가 실패하면 원인을 고치고 다시 실행해 통과를 확인한다. 개발 서버처럼 계속 도는 명령은 `background:true` 후 `remote_logs`로 확인하고, 끝나면 `remote_stop`. 웹 앱을 사용자에게 보여줘야 하면 `remote_preview{port}`를 먼저 호출해 `base`를 받고, 개발 서버를 그 base로 실행(Vite: `npm run dev -- --base <base> --port <port>`)한 뒤 `remote_preview`를 다시 호출하면 작업대 미리보기 패널에 열린다(HMR 포함). 돌려준 url을 사용자에게 알려준다. 실행 중 오류·잘못된 값의 원인을 찾을 때는 로그로 추측하기보다 `remote_debug_start`(언어·런타임에 맞는 어댑터: Node js-debug, Python debugpy, C/C++/Rust codelldb·gdb, Apple lldb-dap, .NET netcoredbg·.NET Framework clrdbg, Mono/Unity mono, Go delve, Java/Kotlin jvm, Dart/Flutter, MCU probe-rs·gdb+OpenOCD, attach(pid·주소)로 실행 중인 것·Android JDWP 포함 — 디버그 빌드 먼저)로 의심 줄에 중단점을 두고 멈춘 곳의 locals·`remote_debug_eval`로 값을 확인하며 `remote_debug_step`으로 진행하고, 끝나면 `remote_debug_stop`(사용자도 같은 세션을 디버그 창에서 본다). 맞는 어댑터가 없거나 디버거 고유 명령이 필요하면 `remote_console_start`로 그 PC의 CLI 디버거(gdb·lldb·cdb+SOS·jdb·pdb·dlv·adb shell·openocd 등)를 열어 `remote_console_send`로 한 줄씩 조작하고 `remote_console_stop`으로 끝낸다. 데스크탑 앱·에뮬레이터 창처럼 화면을 직접 봐야 확인할 수 있는 것은 `remote_windows`로 창을 찾고 `remote_screenshot{window|query}`로 그 창을 보고 판단한다(그 PC에서 화면 캡처를 허용한 경우만, 보기 전용). 파일 삭제·sudo·설치·강제 push 같은 명령은 사용자 승인이 필요하므로 꼭 필요할 때만 쓰고, 거부되면 같은 명령을 반복하지 않는다.');
   return parts.join('\n\n');
 }
 
@@ -519,6 +531,59 @@ export const aidevToolsService = {
   async remoteDebugStop(session: string) {
     const r = await callGateway('DELETE', `/debug/${session}`) as { session: DebugSnapshot };
     return debugSummary(r.session);
+  },
+
+  /**
+   * remote_console_start (F-09c): a command-line debugger or REPL (gdb, lldb, cdb, jdb, pdb, dlv, adb shell …)
+   * in a pty on the target, through the same approval gate as remote_exec. Returns its output up to the first prompt.
+   */
+  async remoteConsoleStart(input: { target?: string | number; command: string; cwd?: string; env?: Record<string, string>; prompt?: string; waitSec?: number }, turn: RemoteTurn = {}) {
+    const target = await resolveTarget(input.target, turn.targetId ?? null);
+    const waitSec = Math.min(Math.max(input.waitSec ?? 30, 0), 120);
+    const started = await callGateway('POST', `/targets/${target.id}/console`, {
+      cmd: input.command, cwd: input.cwd, env: input.env, prompt: input.prompt, waitSec, runId: turn.runId ?? undefined, agent: turn.agent ?? undefined,
+    }, (waitSec + 60) * 1000) as GatewayResponse & { status?: string; console?: ConsoleView; approval?: { id: string }; reason?: string; error?: string; allowed_roots?: string[] };
+    const base = { target: target.name, command: input.command };
+    if (started.status === 'offline') return { ...base, status: 'offline', message: String(started.error ?? 'target offline') };
+    if (started.status === 'error') return { ...base, status: 'error', message: `${String(started.error ?? 'could not start')}${started.allowed_roots?.length ? ` — 허용 폴더: ${started.allowed_roots.join(', ')}` : ''}` };
+    if (started.status === 'denied') return { ...base, status: 'denied', message: String(started.reason ?? 'denied by policy') };
+    if (started.status === 'pending' && started.approval) {
+      const deadline = Date.now() + 11 * 60_000;
+      let decision: { status: string; debugSessionId: string | null; error: string | null } | null = null;
+      while (Date.now() < deadline) {
+        const r = await callGateway('GET', `/approvals/${started.approval.id}/wait?timeout=25`, undefined, 40_000) as { approval?: { status: string; debugSessionId: string | null; error: string | null } };
+        if (r.approval && r.approval.status !== 'pending') { decision = r.approval; break; }
+      }
+      if (!decision || decision.status === 'expired') return { ...base, status: 'expired', message: '사용자가 10분 안에 승인하지 않았습니다. 콘솔을 시작하지 않았습니다.' };
+      if (decision.status === 'denied') return { ...base, status: 'denied', message: '사용자가 이 콘솔 실행을 거부했습니다. 같은 요청을 반복하지 마세요.' };
+      if (decision.error || !decision.debugSessionId) return { ...base, status: 'error', message: decision.error ?? 'approved but could not start' };
+      const r = await callGateway('GET', `/console/${decision.debugSessionId}/transcript`) as { console: ConsoleView };
+      return { ...base, ...consoleSummary(r.console), approvedBy: 'user' };
+    }
+    if (!started.console) return { ...base, status: 'error', message: String(started.error ?? 'could not start') };
+    return { ...base, ...consoleSummary(started.console), approvedBy: 'auto' };
+  },
+
+  /** remote_console_send: one line (or several) to the console, or Ctrl-C; returns its answer. */
+  async remoteConsoleSend(session: string, input: { input?: string; interrupt?: boolean; waitSec?: number; quietMs?: number }) {
+    const waitSec = Math.min(Math.max(input.waitSec ?? 30, 0), 120);
+    if (input.interrupt) return consoleSummary((await callGateway('POST', `/console/${session}/interrupt`, {}) as { console: ConsoleView }).console);
+    if (typeof input.input !== 'string') throw new Error('input (or interrupt: true) is required.');
+    const r = await callGateway('POST', `/console/${session}/send`, { input: input.input, waitSec, quietMs: input.quietMs }, (waitSec + 30) * 1000) as { console: ConsoleView };
+    return consoleSummary(r.console);
+  },
+
+  /** remote_console_read: output that arrived since the last call (a program running inside the debugger). */
+  async remoteConsoleRead(session: string, waitSec = 10) {
+    const w = Math.min(Math.max(waitSec, 0), 120);
+    const r = await callGateway('GET', `/console/${session}/read?wait=${w}`, undefined, (w + 30) * 1000) as { console: ConsoleView };
+    return consoleSummary(r.console);
+  },
+
+  /** remote_console_stop: ends the debugger/REPL (and what runs under it). */
+  async remoteConsoleStop(session: string) {
+    const r = await callGateway('DELETE', `/console/${session}`) as { console: ConsoleView };
+    return consoleSummary(r.console);
   },
 
   /** remote_stop: interrupt (INT) or kill a running remote command. */

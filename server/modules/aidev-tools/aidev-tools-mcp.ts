@@ -16,6 +16,7 @@ import '../../load-env.js';
  *   remote_windows  — the program windows open on a target (id, app, title) (F-07c)
  *   remote_screenshot — look at one program window on a target (image content; needs the PC owner's consent) (F-07)
  *   remote_debug_start / _step / _eval / _breakpoints / _stop — debug a program on a target over DAP (F-09, F-09b: 14 adapters)
+ *   remote_console_start / _send / _read / _stop — drive any command-line debugger or REPL on a target (F-09c)
  * The turn context (chat run id, routed target, agent) comes from this process's env and is sent
  * with every call, so remote results count toward the run's outcome.
  */
@@ -55,7 +56,7 @@ const turnContext = {
   cwd: process.cwd(),
 };
 // approvals can take minutes and a build or test run longer: remote tools get their own ceiling
-const LONG_TOOLS = new Set(['remote_exec', 'remote_logs', 'remote_sync', 'remote_debug_start', 'remote_debug_step']);
+const LONG_TOOLS = new Set(['remote_exec', 'remote_logs', 'remote_sync', 'remote_debug_start', 'remote_debug_step', 'remote_console_start', 'remote_console_send', 'remote_console_read']);
 const LONG_TIMEOUT_MS = 45 * 60_000;
 
 async function callApi(toolName: string, input: Record<string, unknown>) {
@@ -250,6 +251,57 @@ const tools: ToolDefinition[] = [
     },
   },
   {
+    name: 'remote_console_start',
+    description: [
+      'Run a command-line debugger or REPL on one of the user\'s machines in a terminal and drive it line by line — the universal fallback when remote_debug_start has no adapter for the program, or when the debugger\'s own commands are needed.',
+      'Examples: "gdb -q ./app", "gdb-multiarch -q fw.elf" (then target remote :3333), "lldb ./app", "lldb -p 1234", "cdb -o App.exe" / "cdb -p 1234" (Windows, .NET Framework with .loadby sos clr),',
+      '"jdb -classpath out com.acme.App" or "jdb -attach 5005", "python3 -m pdb app.py", "dlv debug", "node inspect app.js", "adb shell", "adb logcat", "openocd -f board.cfg" + "telnet localhost 4444", "xcrun simctl spawn booted log stream".',
+      'Returns the output up to the first prompt; then send commands with remote_console_send (each returns when the debugger shows its prompt again or goes quiet).',
+      'Commands that shell out from inside the debugger (shell …, !…, system()) are refused unless read-only — run those with remote_exec. Like remote_exec, starting may wait for the user\'s approval. Always end with remote_console_stop.',
+    ].join(' '),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string', description: 'Target name or id (optional when routed or only one is online).' },
+        command: { type: 'string', description: 'The debugger/REPL command line, e.g. "gdb -q ./build/app".' },
+        cwd: { type: 'string', description: 'Working folder on the target (inside its allowed folders).' },
+        env: { type: 'object', description: 'Extra environment variables {NAME: value}.' },
+        prompt: { type: 'string', description: 'Regex of this tool\'s prompt when it is unusual (common ones — (gdb) (lldb) (Pdb) (dlv) 0:000> main[1] > >>> $ # — are known).' },
+        waitSec: { type: 'number', description: 'How long to wait for the first prompt (0-120, default 30).' },
+      },
+      required: ['command'],
+    },
+  },
+  {
+    name: 'remote_console_send',
+    description: 'Type into a console from remote_console_start and get its answer: input = one command (several lines = several commands), or interrupt=true for Ctrl-C (stop a running program inside the debugger). Returns output since the command, whether it waits for input again, and a hint.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        session: { type: 'string', description: 'Session id from remote_console_start.' },
+        input: { type: 'string', description: 'The command, e.g. "break app.c:42", "run", "bt", "print x", "info locals".' },
+        interrupt: { type: 'boolean', description: 'Send Ctrl-C instead of input.' },
+        waitSec: { type: 'number', description: 'Longest wait for the answer (0-120, default 30).' },
+        quietMs: { type: 'number', description: 'Treat this much silence as the end of the answer when no prompt shows (300-30000, default 2500).' },
+      },
+      required: ['session'],
+    },
+  },
+  {
+    name: 'remote_console_read',
+    description: 'Output a console printed since the last call (e.g. a program running inside the debugger until it hits a breakpoint). Waits up to waitSec for something new.',
+    inputSchema: {
+      type: 'object',
+      properties: { session: { type: 'string' }, waitSec: { type: 'number', description: '0-120, default 10.' } },
+      required: ['session'],
+    },
+  },
+  {
+    name: 'remote_console_stop',
+    description: 'End a console (the debugger/REPL and the program under it).',
+    inputSchema: { type: 'object', properties: { session: { type: 'string' } }, required: ['session'] },
+  },
+  {
     name: 'remote_debug_step',
     description: 'Move a paused debug session on: continue (to the next breakpoint or the end), next (step over), stepIn, stepOut, or pause a running one. Waits for the next pause/end (waitSec, default 30) and returns where it is, the stack, locals and new output.',
     inputSchema: {
@@ -322,6 +374,10 @@ async function callTool(name: string, args: Record<string, unknown>) {
     case 'remote_debug_eval':
     case 'remote_debug_breakpoints':
     case 'remote_debug_stop':
+    case 'remote_console_start':
+    case 'remote_console_send':
+    case 'remote_console_read':
+    case 'remote_console_stop':
       return jsonResponse(await callApi(name, args));
     case 'remote_screenshot':
       return imageResponse(await callApi(name, args));

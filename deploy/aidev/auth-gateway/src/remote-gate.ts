@@ -28,8 +28,8 @@ export type ApprovalView = {
   risk: number; reasons: string[]; destructive: boolean; policy: string;
   status: 'pending' | 'allowed' | 'denied' | 'expired'; createdAt: number; expiresAt: number; decidedAt: number | null; decidedBy: string | null;
   remoteRunId: number | null; error: string | null;
-  /** F-09: what was asked — a command, or a program under the debugger (then the session id once it started) */
-  kind: 'exec' | 'debug'; debugSessionId: string | null;
+  /** F-09: what was asked — a command, a program under the debugger, or a debugger console (then the session id once it started) */
+  kind: 'exec' | 'debug' | 'console'; debugSessionId: string | null;
 };
 /** Starts something other than a plain command once allowed (F-09 debug sessions); returns its remote run. */
 export type GateStarter = (approvedBy: 'auto' | 'user') => Promise<{ remoteRunId: number; debugSessionId?: string; result?: unknown }>;
@@ -171,7 +171,7 @@ export function createRemoteGate(deps: { store: Store; laya: LayaClient; runners
   return {
     assess,
     /** An agent asks to run `exec` on `target`. */
-    async request(userId: number, target: TargetRow, execIn: ExecParams, meta: { runId?: number | null; agent?: string | null }, starter: GateStarter | null = null): Promise<GateResult> {
+    async request(userId: number, target: TargetRow, execIn: ExecParams, meta: { runId?: number | null; agent?: string | null }, starter: GateStarter | null = null, starterKind: 'debug' | 'console' = 'debug'): Promise<GateResult> {
       let exec = execIn;
       if (target.policy === 'deny') return { status: 'denied', reason: `대상 ${target.name}의 실행 정책이 "실행 금지"입니다`, approval: null, assessment: null };
       const assessment = await assess(userId, target, exec.cmd, exec.cwd ?? null);
@@ -182,7 +182,7 @@ export function createRemoteGate(deps: { store: Store; laya: LayaClient; runners
         id: crypto.randomBytes(9).toString('base64url'), userId, targetId: target.id, targetName: target.name, cmd: exec.cmd, cwd: exec.cwd ?? null,
         agent: meta.agent ?? null, runId: meta.runId ?? null, risk: assessment.risk, reasons: assessment.reasons, destructive: assessment.destructive, policy: target.policy,
         status: 'pending', createdAt: now, expiresAt: now + APPROVAL_TTL_MS, decidedAt: null, decidedBy: null, remoteRunId: null, error: null, exec, waiters: new Set(),
-        kind: starter ? 'debug' : 'exec', debugSessionId: null, starter,
+        kind: starter ? starterKind : 'exec', debugSessionId: null, starter,
       };
       console.log(`[remote-gate] target #${target.id} ${meta.agent ?? 'agent'} risk ${assessment.risk} safe=${assessment.safe} destructive=${assessment.destructive} policy=${target.policy}: ${exec.cmd.slice(0, 120)}`);
       if (!needsApproval(target.policy, assessment)) {
@@ -191,7 +191,7 @@ export function createRemoteGate(deps: { store: Store; laya: LayaClient; runners
         return { status: 'started', ...started, approval: null, assessment };
       }
       approvals.set(a.id, a);
-      void deps.push?.sendToUser(userId, { title: `${starter ? '원격 디버그' : '원격 실행'} 승인 요청 · ${target.name}`, body: `${a.agent ? `${a.agent}: ` : ''}${a.cmd.slice(0, 140)}`, url: `/m/?approval=${a.id}`, tag: `approval-${a.id}` }).catch(() => undefined);
+      void deps.push?.sendToUser(userId, { title: `${starter ? (starterKind === 'console' ? '원격 디버거 콘솔' : '원격 디버그') : '원격 실행'} 승인 요청 · ${target.name}`, body: `${a.agent ? `${a.agent}: ` : ''}${a.cmd.slice(0, 140)}`, url: `/m/?approval=${a.id}`, tag: `approval-${a.id}` }).catch(() => undefined);
       console.log(`[remote-gate] approval ${a.id} pending: target #${target.id} risk ${a.risk} (${a.reasons.join(', ')})`);
       return { status: 'pending', approval: view(a), assessment };
     },

@@ -15,6 +15,7 @@ import { decide, listKinds } from './laya-questions.js';
 import fs from 'node:fs';
 import type { Preview } from './preview.js';
 import { launchCommand, validateLaunch, type DebugHub } from './debug-hub.js';
+import type { ConsoleHub } from './console-hub.js';
 import { evaluateRouting, prejudge, route, TIER_TABLE, type EngineAvailability, type JudgeVerdict, type RouteInput, type SpecialistJudge } from './routing.js';
 /** Hard limit of one judge call in the runtime; a send waits less (routing.ts AIDEV_JUDGE_WAIT_MS) and the rest is cached. */
 const JUDGE_TIMEOUT_MS = Number(process.env.AIDEV_JUDGE_TIMEOUT_MS ?? 60_000);
@@ -40,6 +41,8 @@ export type AidevDeps = {
   preview?: Preview;
   /** Remote debugging sessions (F-09). */
   debug?: DebugHub;
+  /** Debugger consoles (F-09c): any CLI debugger/REPL in a pty, driven line by line. */
+  console?: ConsoleHub;
   /** https://<host> the browser uses (preview URLs). */
   publicOrigin?: string;
 };
@@ -736,6 +739,61 @@ export function createAidevApi(deps: AidevDeps) {
           if (op === 'variables' && m === 'GET') return json(res, 200, { variables: await dbg.variables(uid, sid, Number(url.searchParams.get('ref')) || 0) }), true;
           if (op === 'scopes' && m === 'GET') return json(res, 200, { scopes: await dbg.scopes(uid, sid, Number(url.searchParams.get('frame')) || 0) }), true;
         } catch (error) { if (error instanceof HttpError) throw error; fail(error); }
+      }
+      // ---- debugger consoles (F-09c) ------------------------------------------------------------------
+      const consoleStart = rest.match(/^\/targets\/(\d+)\/console$/);
+      if (consoleStart && m === 'POST') {
+        const con = deps.console;
+        if (!con || !deps.runners) throw new HttpError(503, 'consoles unavailable');
+        const target = store.target(uid, Number(consoleStart[1]));
+        if (!target) throw new HttpError(404, 'Target not found');
+        const agentCall = session.sid.startsWith('runtime:');
+        const b = await readJson(req);
+        const cmd = str(b.cmd ?? b.command, 'cmd', 4000);
+        const cwd = normalizeCwd(optStr(b.cwd, 1000) ?? null, target.allowed_roots ? JSON.parse(target.allowed_roots) as string[] : []);
+        const env = b.env && typeof b.env === 'object' && !Array.isArray(b.env) ? Object.fromEntries(Object.entries(b.env as Record<string, unknown>).filter(([k, v]) => /^[A-Za-z_]\w{0,127}$/.test(k) && typeof v === 'string').slice(0, 50)) as Record<string, string> : undefined;
+        const spec = { cmd, cwd, env, prompt: optStr(b.prompt, 300) ?? null, quietMs: typeof b.quietMs === 'number' ? b.quietMs : undefined };
+        const waitMs = Math.min(Math.max(Number(b.waitSec ?? 30) || 0, 0), 120) * 1000;
+        const runId = typeof b.runId === 'number' && store.run(uid, b.runId) ? b.runId : null;
+        try {
+          if (!agentCall) {
+            if (target.policy === 'deny') throw new HttpError(403, '이 대상의 실행 정책이 "실행 금지"입니다');
+            return json(res, 201, { console: await con.start(uid, target, spec, { by: 'user', runId, waitMs }) }), true;
+          }
+          if (!deps.gate) throw new HttpError(503, 'remote gate unavailable');
+          if (!deps.runners.online(target.id)) return json(res, 200, { status: 'offline', error: `대상 ${target.name}이(가) 오프라인입니다 — 러너가 실행 중인지 확인하라고 사용자에게 알리세요` }), true;
+          const result = await deps.gate.request(uid, target, { cmd, cwd }, { runId, agent: optStr(b.agent, 41) ?? null }, async (approvedBy) => {
+            const r = await con.start(uid, target, spec, { by: approvedBy, origin: 'agent', runId, waitMs });
+            return { remoteRunId: r.remoteRunId, debugSessionId: r.id, result: r };
+          }, 'console');
+          if (result.status === 'started') { const { debug, ...restResult } = result; return json(res, 200, { ...restResult, console: debug }), true; }
+          return json(res, 200, result), true;
+        } catch (error) {
+          if (error instanceof HttpError) throw error;
+          if (agentCall) return json(res, 200, { status: 'error', error: error instanceof Error ? error.message : 'console failed', allowed_roots: target.allowed_roots ? JSON.parse(target.allowed_roots) : [] }), true;
+          throw new HttpError((error as { status?: number }).status ?? (error instanceof RpcError && error.code === -32010 ? 409 : 400), error instanceof Error ? error.message : 'console failed');
+        }
+      }
+      if (rest === '/console' && m === 'GET') return json(res, 200, { consoles: deps.console?.list(uid) ?? [] }), true;
+      const consoleMatch = rest.match(/^\/console\/([A-Za-z0-9]{4,40})(?:\/(send|read|interrupt|transcript))?$/);
+      if (consoleMatch && deps.console) {
+        const con = deps.console; const cid = consoleMatch[1]; const op = consoleMatch[2];
+        const sec = (v: unknown, d: number) => Math.min(Math.max(Number(v ?? d) || 0, 0), 120) * 1000;
+        try {
+          if (!op && m === 'GET') return json(res, 200, { console: con.get(uid, cid) }), true;
+          if (!op && m === 'DELETE') return json(res, 200, { console: await con.stop(uid, cid) }), true;
+          if (op === 'transcript' && m === 'GET') return json(res, 200, { console: con.transcript(uid, cid) }), true;
+          if (op === 'read' && m === 'GET') return json(res, 200, { console: await con.read(uid, cid, sec(url.searchParams.get('wait'), 0)) }), true;
+          if (op === 'interrupt' && m === 'POST') return json(res, 200, { console: await con.interrupt(uid, cid) }), true;
+          if (op === 'send' && m === 'POST') {
+            const b = await readJson(req);
+            if (typeof b.input !== 'string' || b.input.length > 8000) throw new HttpError(400, 'input: a string (≤ 8000 chars)');
+            return json(res, 200, { console: await con.send(uid, cid, b.input, { raw: b.raw === true, waitMs: sec(b.waitSec, 30), quietMs: typeof b.quietMs === 'number' ? Math.min(Math.max(b.quietMs, 300), 30_000) : undefined }) }), true;
+          }
+        } catch (error) {
+          if (error instanceof HttpError) throw error;
+          throw new HttpError((error as { status?: number }).status ?? (error instanceof RpcError && error.code === -32010 ? 409 : 400), error instanceof Error ? error.message : 'console request failed');
+        }
       }
       // a text file on the PC (allowed folders only) — the debugger's source view (runner ≥ 0.8)
       const fileMatch = rest.match(/^\/targets\/(\d+)\/file$/);

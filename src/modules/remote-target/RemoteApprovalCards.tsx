@@ -32,7 +32,7 @@ export function ApprovalCard({ approval, onAnswer }: { approval: RemoteApproval;
     <div className="rounded-lg border border-amber-500/50 bg-amber-500/5 p-2.5 text-xs shadow-sm" data-testid="approval-card">
       <div className="flex items-center gap-1.5">
         <ShieldAlert size={14} className="text-amber-600" />
-        <span className="font-medium">{approval.kind === 'debug' ? '원격 디버그 실행 승인 요청' : '원격 실행 승인 요청'}</span>
+        <span className="font-medium">{approval.kind === 'debug' ? '원격 디버그 실행 승인 요청' : approval.kind === 'console' ? '원격 디버거 콘솔 승인 요청' : '원격 실행 승인 요청'}</span>
         <span className="text-muted-foreground">· {approval.targetName}{approval.agent ? ` · ${approval.agent}` : ''}</span>
         <span className={`ml-auto rounded border px-1.5 py-px text-[10px] ${tone.cls}`}>위험도 {tone.label} {approval.risk.toFixed(1)}</span>
       </div>

@@ -140,6 +140,31 @@ router.post('/tools/:toolName', async (req, res) => {
         }, readTurn(input));
         break;
       }
+      case 'remote_console_start': {
+        const command = typeof input.command === 'string' ? input.command.trim() : '';
+        if (!command) throw new Error('command is required.');
+        result = await aidevToolsService.remoteConsoleStart({
+          target: typeof input.target === 'string' || typeof input.target === 'number' ? input.target : undefined,
+          command,
+          cwd: typeof input.cwd === 'string' && input.cwd.trim() ? input.cwd.trim() : undefined,
+          env: asStringMap(input.env),
+          prompt: typeof input.prompt === 'string' && input.prompt.trim() ? input.prompt.trim() : undefined,
+          waitSec: typeof input.waitSec === 'number' ? input.waitSec : undefined,
+        }, readTurn(input));
+        break;
+      }
+      case 'remote_console_send':
+        result = await aidevToolsService.remoteConsoleSend(debugSession(input), {
+          input: typeof input.input === 'string' ? input.input : undefined, interrupt: input.interrupt === true,
+          waitSec: typeof input.waitSec === 'number' ? input.waitSec : undefined, quietMs: typeof input.quietMs === 'number' ? input.quietMs : undefined,
+        });
+        break;
+      case 'remote_console_read':
+        result = await aidevToolsService.remoteConsoleRead(debugSession(input), typeof input.waitSec === 'number' ? input.waitSec : 10);
+        break;
+      case 'remote_console_stop':
+        result = await aidevToolsService.remoteConsoleStop(debugSession(input));
+        break;
       case 'remote_debug_step': {
         const action = String(input.action ?? '');
         if (!['continue', 'next', 'stepIn', 'stepOut', 'pause'].includes(action)) throw new Error('action must be continue, next, stepIn, stepOut or pause.');
@@ -191,7 +216,7 @@ router.post('/tools/:toolName', async (req, res) => {
 /** A debug session id as the gateway issues them (letters and digits). */
 function debugSession(input: Record<string, unknown>): string {
   const id = typeof input.session === 'string' ? input.session.trim() : '';
-  if (!/^[A-Za-z0-9]{4,40}$/.test(id)) throw new Error('session (from remote_debug_start) is required.');
+  if (!/^[A-Za-z0-9]{4,40}$/.test(id)) throw new Error('session (from remote_debug_start / remote_console_start) is required.');
   return id;
 }
 

@@ -27,7 +27,7 @@ function Pending({ approval, onAnswer }: { approval: RemoteApproval; onAnswer: (
         <span className="truncate">{approval.targetName}{approval.agent ? ` · ${approval.agent}` : ''}</span>
         <span className={`ml-auto font-medium ${tone(approval)}`}>위험도 {approval.risk.toFixed(1)}</span>
       </div>
-      {approval.kind === 'debug' ? <div className="mt-2 text-[12px] text-warn">디버거로 실행 (중단점에서 멈춤)</div> : null}
+      {approval.kind === 'debug' ? <div className="mt-2 text-[12px] text-warn">디버거로 실행 (중단점에서 멈춤)</div> : approval.kind === 'console' ? <div className="mt-2 text-[12px] text-warn">디버거 콘솔 (agent가 명령을 한 줄씩 입력)</div> : null}
       <pre className="mt-2 max-h-40 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-elevated p-2 font-mono text-[13px]">{approval.cmd}</pre>
       <div className="mt-1.5 flex flex-wrap gap-1 text-[12px] text-muted">
         {approval.reasons.map((r) => <span key={r} className="rounded-md bg-elevated px-1.5 py-0.5">{r}</span>)}

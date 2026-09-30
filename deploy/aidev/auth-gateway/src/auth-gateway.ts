@@ -10,6 +10,7 @@ import { createAidevApi } from './aidev-api.js';
 import { createPush } from './push.js';
 import { createRemoteGate } from './remote-gate.js';
 import { createDebugHub } from './debug-hub.js';
+import { createConsoleHub } from './console-hub.js';
 import { createRunnerHub, screenOpts, type RunnerHub } from './runner-hub.js';
 import { createPreview } from './preview.js';
 import { startTierPolicySchedule } from './tier-policy.js';
@@ -174,8 +175,9 @@ runners.onFinish((stream, userId) => gate.onFinished(stream, userId, stream.runI
 const preview = createPreview({ store, runners, secret });
 // Remote debugging (F-09): the gateway speaks DAP to adapters the runner starts on the PC.
 const debug = createDebugHub({ store, runners });
+const consoles = createConsoleHub({ runners });
 const aidev = createAidevApi({
-  runners, gate, preview, debug, publicOrigin: origin,
+  runners, gate, preview, debug, console: consoles, publicOrigin: origin,
   store, laya, json, push,
   async runtimeFetch(session, path, init, timeoutMs = 10_000) {
     const runtime = await ready(session.user.runtime);

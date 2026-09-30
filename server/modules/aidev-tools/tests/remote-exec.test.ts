@@ -199,3 +199,33 @@ test('remote_debug_step / eval / breakpoints / stop (F-09) map onto the gateway 
   const end = await aidevToolsService.remoteDebugStop('dbgabc1') as Record<string, unknown>;
   assert.equal(end.state, 'ended'); assert.equal(end.exitCode, 0); assert.equal(end.locals, undefined);
 });
+
+test('remote_console_* (F-09c): start through the gate, send lines / Ctrl-C, read, stop', async () => {
+  const seen: string[] = [];
+  let polls = 0;
+  const con = (over: Record<string, unknown>) => ({ id: 'conabc1', state: 'running', exitCode: null, atPrompt: true, output: '', cmd: 'gdb -q ./app', ...over });
+  handler = (method, path, body) => {
+    seen.push(`${method} ${path} ${JSON.stringify(body ?? null)}`);
+    if (path === '/targets') return targets;
+    if (method === 'POST' && path === '/targets/7/console') return { status: 'pending', approval: { id: 'apprcon1', risk: 1.5, reasons: [] } };
+    if (path.startsWith('/approvals/apprcon1/wait')) return { approval: ++polls < 2 ? { status: 'pending', debugSessionId: null, error: null } : { status: 'allowed', debugSessionId: 'conabc1', error: null } };
+    if (method === 'GET' && path === '/console/conabc1/transcript') return { console: con({ output: 'Reading symbols from ./app...\n(gdb) ' }) };
+    if (method === 'POST' && path === '/console/conabc1/send') return { console: con({ output: `${'y'.repeat(20_000)}\nBreakpoint 1 at 0x1157\n(gdb) `, waited: 'prompt' }) };
+    if (method === 'POST' && path === '/console/conabc1/interrupt') return { console: con({ output: '^C\nProgram received signal SIGINT\n(gdb) ' }) };
+    if (method === 'GET' && path === '/console/conabc1/read?wait=5') return { console: con({ atPrompt: false, output: 'running…', waited: 'quiet' }) };
+    if (method === 'DELETE' && path === '/console/conabc1') return { console: con({ state: 'ended', atPrompt: false, exitCode: null }) };
+    throw new Error(`unexpected ${method} ${path}`);
+  };
+  const s = await aidevToolsService.remoteConsoleStart({ command: 'gdb -q ./app', cwd: '~/w/c' }, { targetId: 7, runId: 5, agent: 'systems-c' }) as Record<string, unknown>;
+  assert.equal(s.session, 'conabc1'); assert.equal(s.approvedBy, 'user'); assert.equal(s.waitingForInput, true);
+  assert.match(String(s.output), /\(gdb\)/);
+  assert.match(seen.find((x) => x.startsWith('POST /targets/7/console'))!, /"cmd":"gdb -q \.\/app".*"runId":5.*"agent":"systems-c"/);
+  const r = await aidevToolsService.remoteConsoleSend('conabc1', { input: 'break app.c:3' }) as Record<string, unknown>;
+  assert.ok(String(r.output).length < 12_100 && String(r.output).endsWith('(gdb) '), 'long output keeps its tail');
+  assert.match(String(r.hint), /입력 대기/);
+  assert.match(String((await aidevToolsService.remoteConsoleSend('conabc1', { interrupt: true }) as Record<string, unknown>).output), /SIGINT/);
+  assert.match(String((await aidevToolsService.remoteConsoleRead('conabc1', 5) as Record<string, unknown>).hint), /remote_console_read|interrupt/);
+  const end = await aidevToolsService.remoteConsoleStop('conabc1') as Record<string, unknown>;
+  assert.equal(end.state, 'ended');
+  await assert.rejects(aidevToolsService.remoteConsoleSend('conabc1', {}), /input/);
+});
