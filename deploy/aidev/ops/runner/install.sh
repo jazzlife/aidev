@@ -44,8 +44,12 @@ EOF
   exit 0
 fi
 logf="$HOME/.aidev/runner.log"; since=$( [ -f "$logf" ] && wc -c < "$logf" | tr -d ' ' || echo 0)   # only lines written after this
-"$DEST" install-service || true      # LaunchAgent → $DEST start (at login and now)
 uid=$(id -u); label="gui/$uid/work.nado.aidev-runner"
+# the LaunchAgent (→ $DEST start, at login and now): written from the runner's own template and loaded here —
+# `install-service` would first unload it again (already stopped above), which launchd reports as "Boot-out failed: 5"
+mkdir -p "$(dirname "$plist")"
+"$DEST" install-service --print | tail -n +2 > "$plist"
+launchctl bootstrap "gui/$uid" "$plist" 2>/dev/null || true
 # launchd sometimes refuses a bootstrap right after the bootout ("Bootstrap failed: 5") — retry, then check
 for i in 1 2 3 4 5; do
   launchctl print "$label" >/dev/null 2>&1 && break
