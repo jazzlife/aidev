@@ -197,7 +197,7 @@ export function DebugPane({ isVisible = true, project = null, onOpenFile }: { is
           <div className="flex h-full flex-col">
             <pre className="aidev-selectable min-h-0 flex-1 overflow-auto whitespace-pre-wrap break-all p-2 font-mono text-[11px]">{dbg.output || '(출력 없음)'}{evalLog.map((l) => `\n› ${l.expr}\n${l.error ? '✗' : '='} ${l.result}`).join('')}</pre>
             <form onSubmit={(e) => { e.preventDefault(); void evaluate(); }} className="flex shrink-0 gap-1 border-t border-border p-1">
-              <input aria-label="식 계산" value={expr} onChange={(e) => setExpr(e.target.value)} disabled={!live} placeholder={paused ? '식 계산 (멈춘 프레임 기준) — 예: user.items.length' : '멈췄을 때 식을 계산할 수 있습니다'} className="h-7 min-w-0 flex-1 rounded border border-border bg-background px-2 font-mono text-xs" />
+              <input aria-label="식 계산" value={expr} onChange={(e) => setExpr(e.target.value)} disabled={!live} placeholder={paused ? '식 계산 (멈춘 프레임 기준) — 예: user.items.length' : '멈췄을 때 식을 계산할 수 있습니다'} className="h-7 min-w-0 flex-1 rounded border border-border bg-background px-2 font-mono text-xs text-foreground" />
             </form>
           </div>
         ) : null}
@@ -209,7 +209,7 @@ export function DebugPane({ isVisible = true, project = null, onOpenFile }: { is
     <div ref={rootRef} tabIndex={-1} onKeyDown={onKey} className="flex h-full min-h-0 flex-col bg-background text-sm outline-none" data-testid="debug-pane">
       <div className="flex h-9 shrink-0 items-center gap-1 border-b border-border px-2">
         <Bug size={14} className="shrink-0 text-muted-foreground" />
-        <select aria-label="디버그 세션" value={creating ? '' : store.selected ?? ''} onChange={(e) => { setCreating(false); debugStore.select(e.target.value || null); }} className="h-7 min-w-0 max-w-[16rem] flex-1 rounded border border-border bg-background px-1 text-xs">
+        <select aria-label="디버그 세션" value={creating ? '' : store.selected ?? ''} onChange={(e) => { setCreating(false); debugStore.select(e.target.value || null); }} className="h-7 min-w-0 max-w-64 flex-1 rounded border border-border bg-background px-1 text-xs text-foreground">
           {!sessions.length || creating ? <option value="">{creating ? '새 디버그' : '세션 없음'}</option> : null}
           {sessions.map((s) => <option key={s.id} value={s.id}>{sessionLabel(s)}</option>)}
         </select>

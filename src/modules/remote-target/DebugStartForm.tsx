@@ -91,7 +91,7 @@ export function DebugStartForm({ project, onStarted, onCancel }: { project: Debu
     }
   };
 
-  const field = 'h-7 rounded border border-border bg-background px-2 text-xs';
+  const field = 'h-7 rounded border border-border bg-background px-2 text-xs text-foreground';
   const ready = target?.online && !noDap && (program || (adapter === 'debugpy' && module) || npmMode);
   return (
     <div className="space-y-2 p-3 text-xs" data-testid="debug-start-form">
