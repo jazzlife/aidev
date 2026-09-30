@@ -1,0 +1,86 @@
+﻿<#
+.SYNOPSIS
+  Windows: build aidev-clrdbg (the .NET Framework debug adapter) natively and publish it for runners.
+
+.DESCRIPTION
+  Same result as build.sh: <Out>\aidev-clrdbg-<ver>-win32-x64.zip (aidev-clrdbg.exe for 64-bit/AnyCPU debuggees,
+  aidev-clrdbg-x86.exe for 32-bit) and <Out>\manifest.json ("clrdbg-win32-x64"), which the gateway serves at
+  /_runner/adapters/ (release: runner\dist\adapters). Needs the .NET SDK (winget install Microsoft.DotNet.SDK.8);
+  the .NET Framework 4.7.2 reference assemblies come from NuGet. debugger-libs and mono-debug are downloaded and
+  checked unless given.
+
+.EXAMPLE
+  powershell -ExecutionPolicy Bypass -File deploy\aidev\clrdbg\build.ps1 -Out deploy\aidev\runner\dist\adapters
+#>
+[CmdletBinding()]
+param(
+  [Parameter(Mandatory = $true)] [string] $Out,
+  [string] $DebuggerLibsSrc,
+  [string] $MonoDebugVsix
+)
+$ErrorActionPreference = 'Stop'
+$Version = '1.0.0'
+$LibsCommit = 'e7fbb713d156d11193ed404783ad6fe9c4042a6d'
+$VsixSha256 = 'a9a6b460583f81f96077bdec636671058ca89fd4b4b07fec3c77a2bcf60deace'
+$here = $PSScriptRoot
+if (-not (Get-Command dotnet -ErrorAction SilentlyContinue)) { throw '.NET SDK가 필요합니다: winget install -e --id Microsoft.DotNet.SDK.8' }
+New-Item -ItemType Directory -Force $Out | Out-Null
+$Out = (Resolve-Path $Out).Path
+$work = Join-Path ([IO.Path]::GetTempPath()) ("clrdbg-" + [guid]::NewGuid())
+New-Item -ItemType Directory -Force $work | Out-Null
+try {
+  [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+  if (-not $DebuggerLibsSrc) {
+    Invoke-WebRequest -UseBasicParsing "https://github.com/mono/debugger-libs/archive/$LibsCommit.zip" -OutFile "$work\libs.zip"
+    Expand-Archive "$work\libs.zip" -DestinationPath $work
+    $DebuggerLibsSrc = Join-Path $work "debugger-libs-$LibsCommit"
+  }
+  if (-not $MonoDebugVsix) {
+    $MonoDebugVsix = "$work\mono-debug.vsix"
+    Invoke-WebRequest -UseBasicParsing 'https://github.com/microsoft/vscode-mono-debug/releases/download/v0.16.3/mono-debug-0.16.3.vsix' -OutFile $MonoDebugVsix
+  }
+  $got = (Get-FileHash -Algorithm SHA256 $MonoDebugVsix).Hash.ToLower()
+  if ($got -ne $VsixSha256) { throw "mono-debug vsix SHA-256이 다릅니다 ($got)" }
+  $lib = "$work\lib"; New-Item -ItemType Directory -Force $lib | Out-Null
+  Copy-Item $MonoDebugVsix "$work\vsix.zip"
+  Expand-Archive "$work\vsix.zip" -DestinationPath "$work\vsix"
+  Copy-Item "$work\vsix\extension\bin\Release\*.dll" $lib
+  Remove-Item "$lib\Mono.Debugging.Soft.dll", "$lib\Mono.Debugger.Soft.dll", "$lib\Mono.Cecil*.dll" -ErrorAction SilentlyContinue
+
+  $props = @("-p:DebuggerLibs=$DebuggerLibsSrc", "-p:ClrLibs=$lib", '-nologo', '-v:q', '-c', 'Release')
+  dotnet build "$here\libs\Mono.Debugging.Win32.csproj" @props
+  if ($LASTEXITCODE -ne 0) { throw 'debugger-libs 빌드 실패' }
+  $pkg = "$work\pkg"
+  dotnet build "$here\aidev-clrdbg.csproj" @props -o $pkg
+  if ($LASTEXITCODE -ne 0) { throw 'aidev-clrdbg 빌드 실패' }
+  dotnet build "$here\aidev-clrdbg.csproj" @props -p:PlatformTarget=x86 -p:AssemblyName=aidev-clrdbg-x86 -o "$work\x86"
+  if ($LASTEXITCODE -ne 0) { throw 'aidev-clrdbg (x86) 빌드 실패' }
+  Copy-Item "$work\x86\aidev-clrdbg-x86.exe", "$work\x86\aidev-clrdbg-x86.exe.config" $pkg
+  Copy-Item "$lib\*.dll" $pkg -Force
+  Copy-Item "$here\LICENSE-vscode-mono-debug.txt", "$here\LICENSE-debugger-libs.txt" $pkg
+  Remove-Item "$pkg\*.pdb" -ErrorAction SilentlyContinue
+  $zipName = "aidev-clrdbg-$Version-win32-x64.zip"
+  $zip = Join-Path $Out $zipName
+  Remove-Item $zip -ErrorAction SilentlyContinue
+  Compress-Archive -Path "$pkg\*" -DestinationPath $zip
+  $sha = (Get-FileHash -Algorithm SHA256 $zip).Hash.ToLower()
+  $manifestPath = Join-Path $Out 'manifest.json'
+  $m = if (Test-Path $manifestPath) { Get-Content $manifestPath -Raw | ConvertFrom-Json } else { New-Object PSObject }
+  $entry = [pscustomobject]@{ file = $zipName; sha256 = $sha; version = $Version }
+  $m | Add-Member -NotePropertyName 'clrdbg-win32-x64' -NotePropertyValue $entry -Force
+  $m | ConvertTo-Json -Depth 5 | Set-Content -Encoding ascii $manifestPath
+  Write-Host "$sha  $zipName"
+  # quick self-check: the adapter answers initialize (it runs on this Windows PC)
+  $exe = Join-Path $pkg 'aidev-clrdbg.exe'
+  $req = '{"seq":1,"type":"request","command":"initialize","arguments":{"adapterID":"clr","linesStartAt1":true,"pathFormat":"path"}}'
+  $psi = New-Object Diagnostics.ProcessStartInfo $exe
+  $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.UseShellExecute = $false
+  $proc = [Diagnostics.Process]::Start($psi)
+  $bytes = [Text.Encoding]::UTF8.GetBytes($req)
+  $proc.StandardInput.Write("Content-Length: $($bytes.Length)`r`n`r`n$req"); $proc.StandardInput.Flush()
+  $task = $proc.StandardOutput.ReadLineAsync()
+  if ($task.Wait(15000) -and $task.Result -match 'Content-Length') { Write-Host ' ✓ aidev-clrdbg가 DAP initialize에 응답합니다' } else { Write-Host ' ✗ aidev-clrdbg가 응답하지 않습니다' }
+  $proc.Kill()
+} finally {
+  Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
+}

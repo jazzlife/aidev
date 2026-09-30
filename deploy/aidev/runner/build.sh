@@ -50,5 +50,9 @@ for w in $want; do
   esac
 done
 [ ${#built[@]} -gt 0 ] || { echo "nothing built"; exit 1; }
-(cd dist && { command -v sha256sum >/dev/null && sha256sum "${built[@]}" || shasum -a 256 "${built[@]}"; } >> SHA256SUMS && sort -u -k2 SHA256SUMS -o SHA256SUMS)
+# a rebuilt file replaces its old line (sort -u would keep either one)
+(cd dist && {
+  [ -f SHA256SUMS ] && grep -v -F -f <(printf '  %s\n' "${built[@]}") SHA256SUMS || true
+  command -v sha256sum >/dev/null && sha256sum "${built[@]}" || shasum -a 256 "${built[@]}"
+} | sort -k2 > SHA256SUMS.new && mv SHA256SUMS.new SHA256SUMS)
 ls -la dist

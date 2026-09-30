@@ -14,6 +14,7 @@ mod encoder;
 mod exec;
 mod input;
 mod pair;
+mod proc_util;
 mod roots;
 mod screen;
 mod service;
@@ -43,7 +44,14 @@ enum Cmd {
         name: Option<String>,
     },
     /// 포그라운드로 실행 (Ctrl+C로 종료)
-    Start,
+    Start {
+        /// 출력을 이 파일에 덧붙임 (서비스로 실행할 때)
+        #[arg(long)]
+        log: Option<PathBuf>,
+        /// Windows: 콘솔 창 없이 (로그온 작업이 씀; --log 기본값 ~/.aidev/runner.log)
+        #[arg(long)]
+        hidden: bool,
+    },
     /// 설정·연결 대상 표시 (토큰은 표시하지 않음)
     Status,
     /// 이 PC가 보고할 capabilities를 JSON으로 출력
@@ -97,7 +105,13 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let cfg = pair::pair(&code, &gateway, name.as_deref())?;
             println!("등록 완료: 대상 #{} {}\n{}\n\n다음: `aidev-runner start` (또는 `aidev-runner install-service`)", cfg.target_id, cfg.name, config::describe(&cfg));
         }
-        Cmd::Start => {
+        Cmd::Start { log, hidden } => {
+            if hidden {
+                proc_util::detach_console();
+            }
+            if let Some(path) = log.or_else(|| hidden.then(|| config::dir().join("runner.log"))) {
+                proc_util::redirect_output(&path)?;
+            }
             let cfg = config::load()?;
             // one runner per config: a second `start` (terminal + service) would keep stealing the connection
             let _lock = config::lock_instance()?;

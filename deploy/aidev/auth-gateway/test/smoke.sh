@@ -10,7 +10,8 @@ MOCK_CODEX_ONLY=rt-codexonly node test/mock-services.mjs >"$T/mock.log" 2>&1 &
 sleep 0.5
 export DATABASE_PATH="$T/auth.db" JWT_SECRET_FILE="$T/secrets/jwt" RUNTIME_MANAGER_TOKEN_FILE="$T/secrets/rt" \
   RUNTIME_MANAGER_URL=http://127.0.0.1:18090 LAYA_URL=http://127.0.0.1:18095 PUBLIC_ORIGIN=http://127.0.0.1:18080 PORT=18080 STATIC_ROOT="$T/dist" LAYA_RETRY_MS=1500 AIDEV_JUDGE_WAIT_MS=1500
-export RUNNER_DIST_DIR="$(cd .. && pwd)/runner/dist"
+# what the release serves under /_runner/: binaries, adapters, per-OS scripts, runner source (runner/scripts/stage-dist.sh)
+"$(cd .. && pwd)/runner/scripts/stage-dist.sh" "$T/runner"; export RUNNER_DIST_DIR="$T/runner"
 mkdir -p "$T/dist" "$T/dist-mobile"; echo '<html>workbench</html>' > "$T/dist/index.html"; echo '<html>mobile</html>' > "$T/dist-mobile/index.html"
 # accounts: alice (both engines), bob (codex only, runtime rt-codexonly)
 node -e "
@@ -147,6 +148,11 @@ if [ -f "$RUNNER_DIST_DIR/adapters/manifest.json" ]; then
   h=$(curl -s "$G/_runner/adapters/$F" | sha256sum | cut -d' ' -f1); check "{\"ok\":$([ "$h" = "$W" ] && echo true || echo false)}" 'j.ok' "adapter archive download matches its SHA-256"
 fi
 c=$(curl -s "$G/_runner/adapters/..%2F..%2Fauth.db" | grep -ac "SQLite format" || true); check "{\"c\":$c}" 'j.c===0' "adapter path traversal cannot read files"
+# per-OS install/build scripts and the runner source, served for PCs to install or build the runner
+for f in scripts/install-linux.sh scripts/install-macos.sh scripts/install-windows.ps1 scripts/build-linux.sh scripts/build-macos.sh scripts/build-windows.ps1; do
+  h=$(curl -s -o /dev/null -w '%{http_code}' "$G/_runner/$f"); check "{\"h\":$h}" 'j.h===200' "served: /_runner/$f"
+done
+n=$(curl -s "$G/_runner/source/aidev-runner-src.tar.gz" | tar -tz 2>/dev/null | grep -cE '^aidev-runner-src/(Cargo.toml|src/main.rs|scripts/build-linux.sh|assets/aidev-jdi/aidev-jdi.jar)$' || true); check "{\"n\":$n}" 'j.n===4' "runner source tarball (Cargo.toml, src, scripts, embedded JVM adapter)"
 # mocks back up (Laya + runtime manager) for the runner / gate checks
 MOCK_CODEX_ONLY=rt-codexonly node test/mock-services.mjs >>"$T/mock.log" 2>&1 &
 for i in $(seq 1 30); do curl -s -o /dev/null http://127.0.0.1:18095/health && break; sleep 0.1; done; sleep 1.6   # past the gateway's Laya retry window
@@ -183,6 +189,11 @@ if [ -x "$RUNNER_BIN" ]; then
     r=$(echo "$PC" | grep '"shell":"powershell"'); if echo "$r" | grep -q skipped; then echo "SKIP pairing card, Windows (no pwsh)"; else
       check "${r:-null}" 'j.parseErrors===0 && j.binDir && /curl -fsSL http:\/\/127\.0\.0\.1:18080\/_runner\/download\/aidev-runner-0\.7\.0-win-x64\.exe -o /.test(j.curl) && j.curl.endsWith(j.home+"\\.aidev\\bin\\aidev-runner.exe") && j.runner.length===2 && j.runner[0]===j.home+"\\.aidev\\bin\\aidev-runner.exe pair CODE1234 --gateway http://127.0.0.1:18080" && j.runner[1].endsWith("aidev-runner.exe install-service")' "pairing card, Windows (PowerShell): parses, folder made, curl.exe to %USERPROFILE%\\.aidev\\bin, runner called with pair/install-service ($(echo "$r" | cut -c1-200))"; fi
   else echo "SKIP pairing card commands (needs runner dist + zsh)"; fi
+  # the per-OS install scripts from the gateway, run for real (Linux; the Windows script in PowerShell test mode)
+  IS=$(PWSH="${PWSH:-$(command -v pwsh || true)}" bash test/install-scripts.sh "$G" "$A" "$T/install" 2>"$T/install.err")
+  r=$(echo "$IS" | grep '"case":"linux"'); check "${r:-null}" 'j.exit===0 && j.downloaded && j.exe && j.paired && j.connected && j.online && j.stoppedAfterUninstall' "install-linux.sh via curl|bash: download (SHA-256), pair, keep running, connected → online, --uninstall stops it"
+  r=$(echo "$IS" | grep '"case":"windows-ps1"'); if echo "$r" | grep -q skipped; then echo "SKIP install-windows.ps1 (no pwsh)"; else
+    check "${r:-null}" 'j.exit===0 && j.exe && j.paired' "install-windows.ps1 via irm (PowerShell, test mode): installs to .aidev\\bin, pairs ($(echo "$r" | cut -c1-160))"; fi
   r=$(post "$B" "/api/aidev/targets/$TID/ping" '{}'); check "$r" 'j.error' "another user cannot reach the target"
   # F-08: which PC a command goes to — named in the command, chat pin, account default; remote_action from Laya + lexical prior
   r=$(post "$A" /api/aidev/route '{"text":"dev-mac에서 이 코드 한번 봐줘"}'); check "$r" 'j.plan.target && j.plan.target.name==="dev-mac" && j.plan.target.source==="mention" && j.scope.remote_action!=="none" && j.targets.length===1' "F-08: a PC named in the command gets the work ($(echo "$r" | node -pe 'const j=JSON.parse(require("fs").readFileSync(0)); j.scope.remote_action+" on "+j.plan.target?.name+" ("+j.plan.target?.source+")"'))"

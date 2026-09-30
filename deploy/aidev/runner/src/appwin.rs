@@ -122,7 +122,7 @@ mod imp {
             // Windows only lets the foreground process hand the focus over; an Alt keystroke from the same
             // process first lifts that lock (the usual AppActivate workaround)
             let script = format!("$s = New-Object -ComObject WScript.Shell; $s.SendKeys('%'); $s.AppActivate({}) | Out-Null", w.pid);
-            let _ = std::process::Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-Command", &script]).output();
+            let _ = { use crate::proc_util::NoWindow; std::process::Command::new("powershell").args(["-NoProfile", "-NonInteractive", "-Command", &script]).no_window().output() };
         }
     }
 }

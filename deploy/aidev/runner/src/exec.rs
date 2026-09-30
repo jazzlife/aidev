@@ -11,6 +11,7 @@
 //! is a small safe baseline (PATH, HOME, LANG, …) plus the variables the job sends, unless the owner
 //! set `inherit_env = true`.
 
+use crate::proc_util::NoWindow;
 use crate::config::Config;
 use base64::Engine as _;
 use serde_json::{json, Value};
@@ -533,6 +534,7 @@ fn spawn_piped(
     use std::process::Stdio;
     use tokio::io::{AsyncReadExt, AsyncWriteExt};
     let mut cmd = tokio::process::Command::new(&argv[0]);
+    cmd.no_window();
     #[cfg(windows)]
     {
         // cmd.exe /s /c "<line>": hand the line over untouched (Rust's quoting would mangle it)

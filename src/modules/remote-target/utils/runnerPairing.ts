@@ -19,8 +19,12 @@ export function guessPlatform(files: RunnerFile[], userAgent: string, userAgentP
   const family = /win/.test(ua) ? 'windows' : /mac|iphone|ipad/.test(ua) ? 'mac' : /linux|x11|android/.test(ua) ? 'linux' : null;
   const shipped = files.map((f) => f.platform ?? '').filter(Boolean);
   if (family) {
-    const match = shipped.find((p) => platformFamily(p) === family && p.endsWith('universal')) ?? shipped.find((p) => platformFamily(p) === family);
-    return match ?? (family === 'mac' ? 'mac-universal' : family === 'windows' ? 'win-x64' : 'linux-x64');
+    // the CPU when the browser tells it (a Raspberry Pi / ARM laptop browser), else the common one
+    const cpu = /aarch64|arm64/.test(ua) ? 'arm64' : /armv7|armv8l|armhf/.test(ua) ? 'armv7' : 'x64';
+    const want = family === 'mac' ? 'mac-universal' : family === 'windows' ? `win-${cpu === 'armv7' ? 'x64' : cpu}` : `linux-${cpu}`;
+    const match = shipped.find((p) => p === want) ?? shipped.find((p) => platformFamily(p) === family && p.endsWith('universal'))
+      ?? shipped.find((p) => platformFamily(p) === family && p.endsWith('-x64')) ?? shipped.find((p) => platformFamily(p) === family);
+    return match ?? want;
   }
   return shipped[0] ?? 'mac-universal';
 }
@@ -50,7 +54,9 @@ export function pairingSteps(p: { platform: string; file: RunnerFile | undefined
     return {
       commands: lines.join('\n'),
       shell: 'PowerShell',
-      prerequisite: p.file ? null : `이 릴리스에는 ${p.platform} 러너가 없습니다 — 빌드한 aidev-runner.exe를 ${'$HOME\\.aidev\\bin\\'}에 넣은 뒤 아래를 실행하세요`,
+      prerequisite: p.file ? null : `이 릴리스에는 ${p.platform} 러너가 없습니다 — 이 PC에서 소스로 빌드·설치하세요 (PowerShell): `
+        + `curl.exe -fsSL ${p.gateway}/_runner/source/aidev-runner-src.tar.gz -o aidev-runner-src.tar.gz; tar -xzf aidev-runner-src.tar.gz; `
+        + `powershell -ExecutionPolicy Bypass -File aidev-runner-src\\scripts\\build-windows.ps1 -InstallTools -Install -Code ${p.code} -Gateway ${p.gateway} — 또는 빌드한 aidev-runner.exe를 ${'$HOME\\.aidev\\bin\\'}에 넣은 뒤 아래를 실행`,
     };
   }
   const exe = '~/.aidev/bin/aidev-runner';
@@ -67,7 +73,8 @@ export function pairingSteps(p: { platform: string; file: RunnerFile | undefined
     commands: lines.join('\n'),
     shell: family === 'mac' ? '터미널 (zsh)' : '터미널 (bash)',
     prerequisite: p.file ? null
-      : family === 'mac' ? '이 릴리스에는 macOS 러너가 없습니다 — 먼저 Mac의 ops 폴더에서 ./runner/build.sh mac 후 ./runner/install.sh 로 설치하고, 아래를 실행하세요'
-        : `이 릴리스에는 ${p.platform} 러너가 없습니다 — 빌드한 aidev-runner를 ~/.aidev/bin/ 에 넣은 뒤 아래를 실행하세요`,
+      : `이 릴리스에는 ${p.platform} 러너가 없습니다 — 이 ${family === 'mac' ? 'Mac' : 'PC'}에서 소스로 빌드·설치하세요: `
+        + `curl -fsSL ${p.gateway}/_runner/source/aidev-runner-src.tar.gz | tar -xz && ./aidev-runner-src/scripts/build-${family === 'mac' ? 'macos' : 'linux'}.sh --install --code ${p.code} --gateway ${p.gateway}`
+        + (family === 'mac' ? ' (ops 폴더가 있으면 ./runner/build.sh mac)' : '') + ' — 또는 빌드한 aidev-runner를 ~/.aidev/bin/ 에 넣은 뒤 아래를 실행',
   };
 }

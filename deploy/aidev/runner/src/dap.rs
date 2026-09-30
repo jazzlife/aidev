@@ -11,6 +11,7 @@
 //! resolved paths are what the gateway puts in the launch request. Adapters end when the connection to
 //! the platform is lost.
 
+use crate::proc_util::NoWindow;
 use crate::config::Config;
 use crate::exec::Out;
 use serde_json::{json, Value};
@@ -279,7 +280,7 @@ async fn start(cfg: &Config, params: &Value) -> RpcResult {
         let program = if Path::new(&argv[0]).is_absolute() { Some(std::path::PathBuf::from(&argv[0])) } else { crate::dap_adapters::which(&argv[0]) };
         let Some(program) = program else { return fail(format!("{}을(를) 찾지 못했습니다", argv[0])) };
         let mut cmd = tokio::process::Command::new(&program);
-        cmd.args(&argv[1..]).current_dir(&cwd).kill_on_drop(true).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
+        cmd.no_window().args(&argv[1..]).current_dir(&cwd).kill_on_drop(true).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::piped()).stderr(std::process::Stdio::piped());
         if let Some(path) = crate::exec::user_path() { cmd.env("PATH", path); }
         if let Some(env) = spawn.get("env").and_then(Value::as_object) {
             for (k, v) in env { if let Some(v) = v.as_str() { cmd.env(k, v); } }
@@ -288,6 +289,8 @@ async fn start(cfg: &Config, params: &Value) -> RpcResult {
         cmd.process_group(0);
         let mut prog = match cmd.spawn() { Ok(c) => c, Err(e) => return fail(format!("{}: {e}", program.display())) };
         let ppid = prog.id();
+        #[cfg(not(unix))]
+        let _ = ppid;
         for (pipe, category) in [(prog.stdout.take().map(|s| Box::new(s) as Box<dyn tokio::io::AsyncRead + Unpin + Send>), "stdout"), (prog.stderr.take().map(|s| Box::new(s) as Box<dyn tokio::io::AsyncRead + Unpin + Send>), "stderr")] {
             let Some(mut pipe) = pipe else { continue };
             tokio::spawn(async move {

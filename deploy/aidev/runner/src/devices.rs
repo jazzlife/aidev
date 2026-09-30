@@ -10,6 +10,7 @@
 //!
 //! Every command runs with a time limit; its output is part of the error when a step fails.
 
+use crate::proc_util::NoWindow;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -39,7 +40,7 @@ fn text(o: &std::process::Output) -> String {
 /// Runs argv with a time limit; Ok(output text) when it exited 0.
 pub fn run(argv: &[String], limit: Duration) -> Result<String, String> {
     let mut cmd = Command::new(&argv[0]);
-    cmd.args(&argv[1..]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.no_window().args(&argv[1..]).stdin(Stdio::null()).stdout(Stdio::piped()).stderr(Stdio::piped());
     if let Some(path) = crate::exec::user_path() {
         cmd.env("PATH", path);
     }

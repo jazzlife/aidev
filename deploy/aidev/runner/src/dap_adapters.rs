@@ -26,6 +26,7 @@
 //!                                                        download from the platform gateway
 //!   custom      any other DAP server: `command` + `args` (`{port}` for a TCP one)
 
+use crate::proc_util::NoWindow;
 use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
@@ -261,7 +262,7 @@ fn java_for_jdi() -> Result<PathBuf, String> {
     let exe = if cfg!(windows) { "java.exe" } else { "java" };
     let java = std::env::var_os("JAVA_HOME").map(|h| Path::new(&h).join("bin").join(exe)).filter(|p| p.is_file()).or_else(|| which("java"))
         .ok_or("JVM 디버깅에는 이 PC에 JDK 11 이상(java)이 있어야 합니다")?;
-    let out = std::process::Command::new(&java).arg("--list-modules").stdin(std::process::Stdio::null()).output().map_err(|e| format!("{}: {e}", java.display()))?;
+    let out = std::process::Command::new(&java).arg("--list-modules").stdin(std::process::Stdio::null()).no_window().output().map_err(|e| format!("{}: {e}", java.display()))?;
     let modules = String::from_utf8_lossy(&out.stdout);
     if !out.status.success() {
         return Err(format!("{}는 JDK 11 이상이 아닙니다 (JDK 8 프로그램도 JDK 11+로 디버깅할 수 있으니 JDK 11+를 설치하거나 JAVA_HOME을 지정하세요)", java.display()));
@@ -290,7 +291,7 @@ fn ensure_debugpy(python: &Path) -> Result<PathBuf, String> {
     let dir = adapters_dir().join(format!("debugpy-{DEBUGPY_VERSION}"));
     provision(&dir, |tmp| {
         let mut cmd = std::process::Command::new(python);
-        cmd.args(["-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--quiet", "--target"]).arg(tmp).arg(format!("debugpy=={DEBUGPY_VERSION}"));
+        cmd.no_window().args(["-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--quiet", "--target"]).arg(tmp).arg(format!("debugpy=={DEBUGPY_VERSION}"));
         if let Some(mirror) = std::env::var_os("AIDEV_ADAPTER_MIRROR") {
             cmd.args(["--no-index", "--find-links"]).arg(mirror);
         }
@@ -312,7 +313,7 @@ fn ensure_debugpy(python: &Path) -> Result<PathBuf, String> {
 
 /// `<tool> --version` output's first line (for the version checks and the report).
 fn version_line(program: &Path, arg: &str) -> Option<String> {
-    let out = std::process::Command::new(program).arg(arg).stdin(std::process::Stdio::null()).output().ok()?;
+    let out = std::process::Command::new(program).arg(arg).stdin(std::process::Stdio::null()).no_window().output().ok()?;
     let text = if out.stdout.is_empty() { out.stderr } else { out.stdout };
     String::from_utf8_lossy(&text).lines().map(str::trim).find(|l| !l.is_empty()).map(|l| l.chars().take(120).collect())
 }
@@ -422,7 +423,7 @@ fn ensure_delve() -> Result<PathBuf, String> {
     let dir = adapters_dir().join("delve");
     provision(&dir, |tmp| {
         let mut cmd = std::process::Command::new(&go);
-        cmd.args(["install", "github.com/go-delve/delve/cmd/dlv@latest"]).env("GOBIN", tmp).stdin(std::process::Stdio::null());
+        cmd.no_window().args(["install", "github.com/go-delve/delve/cmd/dlv@latest"]).env("GOBIN", tmp).stdin(std::process::Stdio::null());
         if let Some(path) = crate::exec::user_path() {
             cmd.env("PATH", path);
         }

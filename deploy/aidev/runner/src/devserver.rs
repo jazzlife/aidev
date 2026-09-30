@@ -159,7 +159,8 @@ fn listening_os() -> Vec<Listen> {
 
 #[cfg(target_os = "windows")]
 fn listening_os() -> Vec<Listen> {
-    let run = |cmd: &str, args: &[&str]| std::process::Command::new(cmd).args(args).output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
+    use crate::proc_util::NoWindow;
+    let run = |cmd: &str, args: &[&str]| std::process::Command::new(cmd).args(args).no_window().output().map(|o| String::from_utf8_lossy(&o.stdout).into_owned()).unwrap_or_default();
     let names = parse_tasklist(&run("tasklist", &["/FO", "CSV", "/NH"]));
     let mut v = parse_netstat(&run("netstat", &["-ano", "-p", "TCP"]), &names);
     v.extend(parse_netstat(&run("netstat", &["-ano", "-p", "TCPv6"]), &names));

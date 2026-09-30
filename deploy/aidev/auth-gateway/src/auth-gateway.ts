@@ -307,6 +307,27 @@ const server = http.createServer(async (req, res) => {
       if (req.method === 'HEAD') return res.end();
       return fs.createReadStream(file).pipe(res);
     }
+    // per-OS install scripts and the runner's source (to build it on a PC the release has no binary for)
+    const rs = url.pathname.match(/^\/_runner\/(scripts\/(?:install|build)-(?:linux|macos)\.sh|scripts\/(?:install|build)-windows\.ps1|source\/aidev-runner-src\.tar\.gz)$/);
+    if (rs && (req.method === 'GET' || req.method === 'HEAD')) {
+      const base = await fs.promises.realpath(runnerDir()).catch(() => null);
+      const file = base ? path.join(base, rs[1]) : null;
+      const stat = file ? await fs.promises.stat(file).catch(() => null) : null;
+      if (!stat?.isFile()) return json(res, 404, { error: 'Not found' });
+      if (rs[1].endsWith('.ps1')) {
+        // the .ps1 files carry a UTF-8 BOM (Windows PowerShell 5.1 reads BOM-less files as the ANSI code page);
+        // fetched with irm and run as a scriptblock, a BOM would be part of the first token — served without it
+        let text = await fs.promises.readFile(file!, 'utf8');
+        if (text.charCodeAt(0) === 0xfeff) text = text.slice(1);
+        const buf = Buffer.from(text, 'utf8');
+        res.writeHead(200, { 'content-type': 'text/plain; charset=utf-8', 'content-length': String(buf.length), 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+        return res.end(req.method === 'HEAD' ? undefined : buf);
+      }
+      const type = rs[1].endsWith('.gz') ? 'application/gzip' : 'text/plain; charset=utf-8';
+      res.writeHead(200, { 'content-type': type, 'content-length': String(stat.size), 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+      if (req.method === 'HEAD') return res.end();
+      return fs.createReadStream(file!).pipe(res);
+    }
     const ad = url.pathname.match(/^\/_runner\/adapters\/(manifest\.json|[A-Za-z0-9][A-Za-z0-9._-]*\.(?:zip|tar\.gz|tar\.xz))$/);
     if (ad && (req.method === 'GET' || req.method === 'HEAD')) {
       const base = await fs.promises.realpath(adaptersDir()).catch(() => null);

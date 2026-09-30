@@ -72,7 +72,8 @@ pub fn install(print_only: bool) -> Result<String, String> {
             Ok(format!("LaunchAgent 등록: {}\n로그: {}", plist.display(), log.display()))
         }
         "windows" => {
-            let tr = format!("\"{exe_s}\" start");
+            // no console window at sign-in; output to ~/.aidev/runner.log
+            let tr = format!("\"{exe_s}\" start --hidden");
             if print_only { return Ok(format!("schtasks /Create /F /SC ONLOGON /RL LIMITED /TN aidev-runner /TR {tr}")); }
             run("schtasks", &["/Create", "/F", "/SC", "ONLOGON", "/RL", "LIMITED", "/TN", "aidev-runner", "/TR", &tr])?;
             let _ = run("schtasks", &["/Run", "/TN", "aidev-runner"]);

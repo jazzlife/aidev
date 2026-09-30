@@ -1,6 +1,7 @@
 //! What this PC offers, reported to the gateway on every connect: OS, shell, tool versions, attached
 //! Android/Tizen devices and the allowed folders. Probes run in parallel with a short timeout.
 
+use crate::proc_util::NoWindow;
 use serde_json::{json, Value};
 use std::time::Duration;
 use tokio::process::Command;
@@ -35,12 +36,12 @@ const NPM_SHIMS: &[&str] = &["npm", "claude", "codex", "gemini"];
 
 async fn first_line(cmd: &str, args: &[&str]) -> Option<String> {
     let mut c = Command::new(cmd);
-    c.args(args).stdin(std::process::Stdio::null()).kill_on_drop(true);
+    c.args(args).stdin(std::process::Stdio::null()).kill_on_drop(true).no_window();
     #[cfg(windows)]
     {
         if NPM_SHIMS.contains(&cmd) {
             c = Command::new("cmd");
-            c.args(["/C", cmd]).args(args).stdin(std::process::Stdio::null()).kill_on_drop(true);
+            c.args(["/C", cmd]).args(args).stdin(std::process::Stdio::null()).kill_on_drop(true).no_window();
         }
     }
     let out = tokio::time::timeout(PROBE_TIMEOUT, c.output()).await.ok()?.ok()?;
@@ -51,7 +52,7 @@ async fn first_line(cmd: &str, args: &[&str]) -> Option<String> {
 
 /// `adb devices` / `sdb devices`: serials in state "device".
 async fn devices(tool: &str) -> Vec<String> {
-    let Ok(Ok(out)) = tokio::time::timeout(PROBE_TIMEOUT, Command::new(tool).arg("devices").kill_on_drop(true).output()).await else {
+    let Ok(Ok(out)) = tokio::time::timeout(PROBE_TIMEOUT, Command::new(tool).arg("devices").kill_on_drop(true).no_window().output()).await else {
         return vec![];
     };
     String::from_utf8_lossy(&out.stdout)

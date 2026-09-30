@@ -33,8 +33,21 @@ aidev-runner unpair                       # 토큰 삭제
   러너 종료(Ctrl+C·서비스 중지) 시 실행 중인 명령은 모두 종료.
 - 경로 검사(`roots.rs`): 심볼릭 링크·`..` 해석 후 허용 폴더 안인지 확인. 아직 없는 경로는 가장 가까운 기존 상위로 확인.
 
-## 빌드
-- 클라우드: `./build.sh` → `dist/aidev-runner-<ver>-linux-x64` (zig로 glibc 2.28 링크, 설치된 std가 있는 대상만).
-  이 작업 환경은 static.rust-lang.org 접근이 막혀 다른 대상의 std를 받을 수 없음 → Windows·ARM·macOS는 Mac에서.
-- Mac: `ops/runner/build.sh` → macOS universal(+ zig·cargo-zigbuild가 있으면 Windows x64, Linux arm64).
+## OS별 빌드·설치 (`scripts/`)
+| OS | 빌드 (그 PC에서) | 설치·페어링·상시 실행 |
+|---|---|---|
+| Linux (x64, ARM64, ARMv7 — 라즈베리 파이 등 SBC 포함) | `scripts/build-linux.sh [--install --code <코드>]` | `scripts/install-linux.sh` — systemd 사용자 서비스(+linger), 없으면 백그라운드 + cron @reboot |
+| macOS (Apple Silicon·Intel, universal) | `scripts/build-macos.sh [--install] [--cross]` | `scripts/install-macos.sh` — LaunchAgent (ops: `./runner/build.sh mac` → `./runner/install.sh`) |
+| Windows (x64, ARM64) | `scripts\build-windows.ps1 [-InstallTools] [-Install -Code <코드>]` | `scripts\install-windows.ps1` — 로그온 작업, 콘솔 창 없이(`start --hidden`), 로그 `%USERPROFILE%\.aidev\runner.log` |
+| Android · iPhone | 러너가 돌지 않음 — 연결된 PC의 러너가 adb / Xcode(simctl)로 다룸 | |
+
+- 설치 스크립트는 `--file`/`--dist`(직접 빌드한 것) 또는 게이트웨이에서 내려받기(SHA-256 확인)를 쓰고, `--code`면 페어링, 이전 러너를 멈추고 교체한 뒤 **연결까지 확인**한다.
+- 게이트웨이가 스크립트와 소스를 제공: `/_runner/scripts/<이름>`, `/_runner/source/aidev-runner-src.tar.gz`(릴리스에 이 OS·CPU의 바이너리가 없을 때 그 PC에서 빌드). 예:
+  - Linux: `curl -fsSL https://dev.nado.work/_runner/scripts/install-linux.sh | bash -s -- --code <코드>`
+  - Windows(PowerShell): `& ([scriptblock]::Create((irm https://dev.nado.work/_runner/scripts/install-windows.ps1))) -Code <코드>`
+  - 소스 빌드: `curl -fsSL https://dev.nado.work/_runner/source/aidev-runner-src.tar.gz | tar -xz && ./aidev-runner-src/scripts/build-linux.sh --install --code <코드>`
+- 필요한 도구: Rust(rustup, `Cargo.toml` rust-version 이상), C/C++ 컴파일러(내장 H.264 OpenH264), x86에서는 nasm. Windows는 MSVC Build Tools(`-InstallTools`가 winget으로 설치). 각 빌드 스크립트의 `--check`/`-Check`가 빠진 것과 설치 명령을 알려준다.
+- 교차 빌드(릴리스용): `./build.sh [linux-x64 linux-arm64 linux-armv7 win-x64 mac]` — Linux·Windows는 zig(cargo-zigbuild)로 glibc 2.28 링크, macOS는 Mac에서. 클라우드 릴리스는 linux-x64·linux-arm64·linux-armv7·win-x64를 포함.
+- .NET Framework 디버그 어댑터: `deploy/aidev/clrdbg/build.sh`(Linux·Mac, Mono 참조 어셈블리) / `build.ps1`(Windows). Apple Silicon netcoredbg: `ops/runner/build-netcoredbg.sh`.
+- `scripts/stage-dist.sh <out>`: 게이트웨이가 `/_runner/`로 제공할 것(바이너리·어댑터·스크립트·소스)을 모음 — release/pack.sh와 smoke가 사용.
 - 테스트: `cargo test`(경로 검사·RPC·서비스 파일·exec 4종: 파이프 출력/exit/env 비상속, pty 입력·크기·신호, 허용 폴더·중복·제한 시간, 연결 없이 실행 후 tail), `test/e2e.sh`(mock 게이트웨이로 페어링→연결→ping→재연결→폐기 종료).
