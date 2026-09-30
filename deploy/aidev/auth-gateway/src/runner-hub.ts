@@ -44,7 +44,15 @@ import type { TargetRow } from './store-aidev.js';
  * screenshot() is one `screen.shot`. Screen needs runner ≥ 0.5 (video, input ≥ 0.6) and the owner's consent. */
 type Store = ReturnType<typeof openStore>;
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
-type Conn = { ws: WebSocket; targetId: number; userId: number; connectedAt: number; lastFrame: number; pending: Map<number, Pending>; nextId: number; hello: boolean };
+type Conn = { ws: WebSocket; targetId: number; userId: number; connectedAt: number; lastFrame: number; pending: Map<number, Pending>; nextId: number; hello: boolean; version: string };
+
+/** Semver-ish compare of runner versions ("0.7.1" > "0.3.0"); unknown versions sort lowest. */
+export function compareVersions(a: string, b: string) {
+  const p = (v: string) => (/^\d+(\.\d+){0,3}$/.test(v) ? v.split('.').map(Number) : [-1]);
+  const x = p(a); const y = p(b);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] ?? 0) - (y[i] ?? 0); if (d) return Math.sign(d); }
+  return 0;
+}
 
 export const hashToken = (token: string) => crypto.createHash('sha256').update(token).digest('hex');
 const PING_MS = 20_000;
@@ -102,6 +110,7 @@ export class RunnerTunnel extends Duplex {
 
 export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logDir?: string } = {}) {
   const conns = new Map<number, Conn>();
+  const dupLogged = new Map<string, number>();   // refused old duplicates, logged once per 10 min
   const attempts = new Map<string, { count: number; until: number }>();
   const streams = new Map<string, Stream>();               // `${targetId}:${streamId}`
   const tunnels = new Map<string, RunnerTunnel>();         // `${targetId}:${streamId}` (F-06)
@@ -281,13 +290,24 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
       const target = /^[0-9a-f]{64}$/.test(token) ? store.targetByTokenHash(hashToken(token)) : undefined;
       // runners are not browsers: a request carrying an Origin header is refused
       if (!target || req.headers.origin) { socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'); return true; }
+      const version = String(req.headers['x-aidev-runner'] ?? '?').slice(0, 20);
+      // two runners with the same token (an old copy left running somewhere) would take the connection from each
+      // other forever: a newer runner that is connected keeps it, the older one is refused
+      const current = conns.get(target.id);
+      if (current && current.ws.readyState === WebSocket.OPEN && compareVersions(current.version, version) > 0) {
+        const from = String(req.headers['x-forwarded-for'] ?? req.socket.remoteAddress ?? '?').split(',')[0].trim().slice(0, 60);
+        const k = `${target.id}:${version}:${from}`;
+        if ((dupLogged.get(k) ?? 0) < Date.now() - 600_000) { dupLogged.set(k, Date.now()); console.log(`[runner] target #${target.id} ${target.name}: refused an older runner ${version} from ${from} — ${current.version} is connected with the same token (stop the old one)`); }
+        socket.end(`HTTP/1.1 409 Conflict\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\nnewer runner ${current.version} is connected for this PC; stop this old runner (${version})`);
+        return true;
+      }
       wss.handleUpgrade(req, socket, head, (ws) => {
         const previous = conns.get(target.id);
         if (previous) { try { previous.ws.close(4000, 'replaced by a new connection'); } catch { /* ignore */ } drop(previous, 'replaced'); }
-        const conn: Conn = { ws, targetId: target.id, userId: target.user_id, connectedAt: Date.now(), lastFrame: Date.now(), pending: new Map(), nextId: 1, hello: false };
+        const conn: Conn = { ws, targetId: target.id, userId: target.user_id, connectedAt: Date.now(), lastFrame: Date.now(), pending: new Map(), nextId: 1, hello: false, version };
         conns.set(target.id, conn);
         setStatus(target, { status: 'online', lastSeen: Date.now() });
-        console.log(`[runner] target #${target.id} ${target.name} connected (runner ${String(req.headers['x-aidev-runner'] ?? '?').slice(0, 20)})`);
+        console.log(`[runner] target #${target.id} ${target.name} connected (runner ${version}${previous ? `, replacing ${previous.version}` : ''})`);
         const timer = setInterval(() => {
           if (Date.now() - conn.lastFrame > SILENCE_MS) { ws.terminate(); return; }
           if (ws.readyState === WebSocket.OPEN) ws.ping();

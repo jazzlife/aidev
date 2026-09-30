@@ -158,6 +158,15 @@ if [ -x "$RUNNER_BIN" ]; then
   check "$r" "j.targets.find(t=>t.id===$TID).online && j.targets.find(t=>t.id===$TID).capabilities.os && j.targets.find(t=>t.id===$TID).paired && !('token_hash' in j.targets.find(t=>t.id===$TID) && j.targets.find(t=>t.id===$TID).token_hash)" "runner online with capabilities ($(echo "$r" | node -pe "const t=JSON.parse(require('fs').readFileSync(0)).targets.find(t=>t.id===$TID); t.capabilities.os+'/'+t.capabilities.arch+' tools '+Object.keys(t.capabilities.tools).length+' roots '+t.allowed_roots.length"))"
   r=$(post "$A" "/api/aidev/targets/$TID/ping" '{}'); check "$r" 'j.ok===true && j.result.pong===true && j.rtt_ms>=0' "ping through the hub ($(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).rtt_ms')ms)"
   r=$(post "$A" "/api/aidev/targets/$TID/refresh-caps" '{}'); check "$r" 'j.target.capabilities.runner' "capabilities refreshed on demand"
+  # an old copy of the runner with the same token must not take the connection from the newer one
+  RTOK=$(sed -n 's/^token = "\(.*\)"/\1/p' "$AIDEV_RUNNER_HOME/runner.toml")
+  r=$(node -e "
+    const { WebSocket } = require('ws'); const ws = new WebSocket(process.argv[1].replace(/^http/, 'ws') + '/_runner/ws', { headers: { authorization: 'Bearer ' + process.argv[2], 'x-aidev-runner': '0.3.0' } });
+    ws.on('unexpected-response', (_q, res) => { console.log(JSON.stringify({ status: res.statusCode })); process.exit(0); });
+    ws.on('open', () => { console.log(JSON.stringify({ status: 101 })); process.exit(0); });
+    ws.on('error', (e) => { console.log(JSON.stringify({ error: e.message })); process.exit(0); });" "$G" "$RTOK")
+  sleep 0.3; r2=$(get "$A" /api/aidev/targets)
+  check "{\"dup\":$r,\"targets\":$r2}" "j.dup.status===409 && j.targets.targets.find(t=>t.id===$TID).online" "an older runner with the same token is refused (409), the newer one stays connected"
   # the workbench pairing card's commands, pasted into bash (Linux), interactive zsh (macOS) and PowerShell (Windows)
   if [ -d "$RUNNER_DIST_DIR" ] && command -v zsh >/dev/null; then
     PC=$(PWSH="${PWSH:-$(command -v pwsh || true)}" bash test/pairing-commands.sh "$G" "$A" "$T/paste" 2>"$T/paste.err")
