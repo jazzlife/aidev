@@ -8,6 +8,11 @@
 set -euo pipefail
 cd "$(dirname "$0")"
 ver=$(sed -n 's/^version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+need=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' Cargo.toml | head -1)
+have=$(rustc --version | awk '{print $2}')
+if [ -n "$need" ] && [ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | head -1)" != "$need" ]; then
+  echo "error: Rust $have is too old — this runner needs $need or newer (rustup update stable)"; exit 1
+fi
 mkdir -p dist
 have_std() { rustup target list --installed 2>/dev/null | grep -qx "$1"; }
 # zig on PATH or the `ziglang` pip package (cargo-zigbuild finds either); `cargo zigbuild --version` is not a flag

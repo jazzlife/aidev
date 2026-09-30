@@ -2,6 +2,8 @@
 name = "aidev-runner"
 version = "0.7.0"
 edition = "2021"
+# wide 1.x (SIMD for the built-in H.264 encoder, via openh264 0.9.8) needs Rust 1.89
+rust-version = "1.89"
 description = "Nado AI Dev remote runner: connects a developer PC to the platform (outbound only) to run, sync, preview, show and debug code"
 license = "UNLICENSED"
 publish = false

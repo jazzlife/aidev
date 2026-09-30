@@ -14,6 +14,13 @@ REPO=${AIDEV_REPO:-$OPS/../aidev}
 SRC="$REPO/deploy/aidev/runner"
 command -v cargo >/dev/null || { echo "Rust가 필요합니다: https://rustup.rs"; exit 1; }
 [ -f "$SRC/Cargo.toml" ] || { echo "$SRC 없음 — ./push-source.sh 로 소스를 최신으로 만든 뒤 다시 실행하세요"; exit 1; }
+# the runner declares its minimum Rust (Cargo.toml rust-version): update the stable toolchain when older
+need=$(sed -n 's/^rust-version = "\(.*\)"/\1/p' "$SRC/Cargo.toml" | head -1)
+have=$(rustc --version | awk '{print $2}')
+if [ -n "$need" ] && [ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | head -1)" != "$need" ]; then
+  echo "==> Rust $have < $need: rustup update stable"
+  rustup update stable
+fi
 rustup target add aarch64-apple-darwin x86_64-apple-darwin >/dev/null
 cd "$SRC" && ./build.sh ${*:-mac win-x64 linux-arm64}
 mkdir -p "$OPS/runner/dist" && cp dist/* "$OPS/runner/dist/"
