@@ -14,6 +14,8 @@ export type AidevSendDecoration = {
   effort: string | null;
   route: RouteResult;
   runId: number | null;
+  /** the send carried a one-shot agent or plan: the app re-sending (agent creation, self-check, escalation, handoff) */
+  appResend: boolean;
 };
 
 export type BeforeSendContext = {
@@ -28,6 +30,15 @@ export type BeforeSendContext = {
 };
 
 const ENGINES: Engine[] = ['claude', 'codex'];
+
+/**
+ * Used by the workbench composer and the mobile chat (C-05/C-09): whether a routed send should wait for one line of
+ * detail (§3.1). Never for agent creation (the architect asks its own questions) or for the app's own re-sends —
+ * the user already chose there.
+ */
+export function shouldAskClarify(decoration: AidevSendDecoration | null): decoration is AidevSendDecoration {
+  return Boolean(decoration && decoration.route.scope.ask_clarify && decoration.route.decision !== 'create' && !decoration.appResend);
+}
 const asEngine = (value: string): Engine | null => (ENGINES.includes(value as Engine) ? value as Engine : null);
 
 function buildAidevPayload(route: RouteResult, runId: number | null) {
@@ -138,6 +149,7 @@ export function useAidevRouting() {
         effort: applyPlan ? route.plan.effort : null,
         route,
         runId,
+        appResend: Boolean(current.oneShotAgent || oneShot),
       };
     } catch (error) {
       routingStore.patch({ busy: false, error: error instanceof Error ? error.message : 'routing failed' });

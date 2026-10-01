@@ -54,7 +54,7 @@
 | 단계 | [x] / [~] / [ ] | 상태 | 남은 것 |
 |---|---|---|---|
 | B 판정·선택·실행 | 1 / 13 / 4 | 구현 완료, 서버 검증 대기. 최종 agent 판정은 LLM judge(서버 22/22, 2~4초), 기준선 B-16 | B-13·B-14·B-15 서버 검증, B-17 배포·롤백 리허설·백업 확인 (B-11은 D-03으로 이동) |
-| C 두 개의 UI | 0 / 13 / 1 | 모바일·작업대 두 앱, 푸시, Claude 앱 내 로그인, `ui.focus`/`ui.artifact` 구현 | 구현: C-09 작업대 `ClarifyPrompt`, C-06 `notify.level`·Lighthouse. 결정: C-07a provider 선택기 처리. 검증: C-11 실기기 |
+| C 두 개의 UI | 0 / 13 / 1 | 모바일·작업대 두 앱, 푸시, Claude 앱 내 로그인, `ui.focus`/`ui.artifact` 구현 | 구현: C-06 `notify.level`·Lighthouse. 결정: C-07a provider 선택기 처리. 검증: C-11 실기기 |
 | F 원격 PC | 5 / 8 / 1 | F-02~F-05·F-11 서버 확인(F-11 재확인 `6b99680f`), 러너 0.11.0, agent 전체 권한(`full`), OS별 빌드·설치 스크립트 | F-12 e2e, Windows·macOS 실기(디버거·스크립트), F-08 다중 PC 대상 선택 |
 | D 생성 | 0 / 3 / 3 | 판정→생성→재전송 로컬 e2e 확인 | 구현: D-04 `create_queue`·반복 시 백그라운드 생성 제안, D-05 Codex 전용 생성. 검증: D-06 |
 | E 축적·학습 | 1 / 5 / 3 | E-01 서버 확인, 교훈 게이트·escalate/handoff·지식 갱신·tier_policy·engine_weights 구현 | 구현: E-07 Laya kind별 보정, E-08 fine-tune(≥300건). 검증: E-09 |
@@ -354,7 +354,7 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 - [~] C-07c 데스크탑 배치 변경(2026-09-28): 채팅이 가운데 기본 열, 코드 패널(에디터 그룹+터미널/브라우저/작업)은 오른쪽으로 옮기고 필요할 때만 표시 — 파일 열기·터미널 켜기 시 나타나고 마지막 탭을 닫으면(터미널 꺼짐 상태) 사라짐, 액티비티 바 "코드 패널"/"터미널 패널" 토글과 패널 머리글 닫기 버튼, 숨겨도 탭·터미널 세션 유지(마운트 유지)
 - [~] C-07a 좌측 내비 단일화(2026-09-27): 워크벤치 활성 시 CloudCLI 도킹 사이드바 제거 → 세션 목록은 데스크탑 액티비티 바 첫 뷰 "세션"(항상 마운트: 설정·새 프로젝트 모달 보유), 태블릿은 헤더 버튼 슬라이드 드로어(백드롭/Esc/세션 선택 시 닫힘); `Sidebar embedded` 변형(로고·GitHub Star·Report Issue·Community·버전 푸터·접기 버튼 제거); 떠 있는 빠른설정 핸들 제거 → 액티비티 바/태블릿 헤더의 빠른설정·설정 버튼; `aidev.legacy_layout=1`로 원복. 로컬 1440/1024/820 확인, 서버 확인 대기. 남은 정리: "Choose Your AI Assistant" provider 선택기(라우터 자동 모드와 중복) 처리 방식 결정
 - [~] 다중 탭·닫기·chat 링크 열기 구현, diff 탭(merge)은 CodeEditor 내장 diff 재사용, 실기기 확인 대기 — C-08 작업대 에디터 그룹: 다중 탭, dirty 표시, chat `path:line` 링크 → 탭, diff 탭(`@codemirror/merge`), 이미지 탭
-- [~] 라우터 바(범위·agent·엔진/모델 칩, 대안·엔진 드롭다운, 모드, override 기록, 👍/👎) 구현·로컬 에뮬레이션에서 확인; AgentCatalog는 활동바 카탈로그 뷰로 구현됨, ClarifyPrompt 남음(모바일 C-05 방식 그대로: `useChatComposerState` 전송 직전) — C-09 작업대 `AidevRouterBar`(범위·agent·엔진/모델·대상 칩, 대안, 수동/자동/off, 불가 엔진 사유), `ClarifyPrompt`, `RunFeedback`, `AgentCatalog`(편집·새 버전·승격), override `PATCH /decisions/:id`
+- [~] 라우터 바(범위·agent·엔진/모델 칩, 대안·엔진 드롭다운, 모드, override 기록, 👍/👎) 구현·로컬 에뮬레이션에서 확인; AgentCatalog는 활동바 카탈로그 뷰로 구현됨, ClarifyPrompt 구현(2026-10-01: `useChatComposerState`가 라우팅 직후 `shouldAskClarify`면 전송을 멈추고 명령은 입력창에 둠 → 카드에서 답하면 "명령 + (추가 정보) 답", "그대로 진행", 닫기; 재개 시 받아 둔 판정·업로드 첨부를 재사용해 라우팅·업로드를 다시 하지 않음; 앱 재전송(oneShotAgent/Plan — 생성·자가 검증·escalate·handoff)과 create는 묻지 않음 — 판단 함수는 aidev-router 공용으로 모바일과 같음, 테스트 `composerClarifyHold` 3건) — C-09 작업대 `AidevRouterBar`(범위·agent·엔진/모델·대상 칩, 대안, 수동/자동/off, 불가 엔진 사유), `ClarifyPrompt`, `RunFeedback`, `AgentCatalog`(편집·새 버전·승격), override `PATCH /decisions/:id`
 - [~] C-10 `ui.focus`·`ui.artifact` 연결(작업대): run 이벤트 → Laya → 패널 포커스/파일 자동 열기, 3회 되돌림 시 off
   - 구현(2026-10-01, c6ff486a 배포): `workbench/hooks/useUiFocus` — agent 미리보기·디버거 정지·agent가 PC에서 돌린 명령 실패(`useAgentRunFailures`, remote runs 8초 폴링) → Laya `ui.focus`(확신할 때만 그 답, 아니면 이벤트의 기본 패널 — 기존 자동 표시보다 줄지 않음), 15초 안에 사용자가 치우면 override 기록(`final_answer: reverted`), 3회 연속이면 그 채팅 세션에서 off(sessionStorage). run 완료 시 채팅이 도구로 쓴 파일 목록을 알림(`aidev:run-complete`) → 여러 개면 Laya `ui.artifact`로 하나 골라 엶(데스크탑 코드 패널, 태블릿은 탭만 — 채팅 유지). 테스트: `changedFilesSince` 2건, 클라이언트 457 PASS. 남은 확인: 실제 채팅에서 동작(F-12와 함께).
 - [ ] C-11 실기기 확인(스크린샷 inbox 회수): iPhone 세로(모바일 앱), iPad 가로·세로(작업대 태블릿 모드), 데스크탑(작업대). 두 앱에서 같은 세션 딥링크가 열림

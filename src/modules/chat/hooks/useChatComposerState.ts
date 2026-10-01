@@ -11,7 +11,7 @@ import type {
 } from 'react';
 import { useDropzone } from 'react-dropzone';
 
-import { useAidevRouting, usePrejudge } from '@/modules/aidev-router';
+import { shouldAskClarify, useAidevRouting, usePrejudge, type AidevSendDecoration } from '@/modules/aidev-router';
 import { api } from '@/shared/api';
 import { PROVIDER_PERMISSION_PREFERENCE_KEYS } from '@/shared/constants';
 import { readUserPreference } from '@/shared/userSettings';
@@ -616,6 +616,11 @@ export function useChatComposerState({
   // agent, engine and model tier for this turn (IMPLEMENTATION-PLAN §3.6). Failures
   // never block the send — the message goes out exactly as an unrouted send would.
   const { beforeSend: aidevBeforeSend } = useAidevRouting();
+  // §3.1 clarify (C-09): a routed send held until the user adds the missing detail or lets it go; the command
+  // stays in the composer, and the hold belongs to the chat it was typed in
+  const [clarifyHold, setClarifyHold] = useState<{ sessionKey: string | null; text: string; decoration: AidevSendDecoration; uploadedAttachments: unknown[] } | null>(null);
+  // the hold being released: the next submit reuses its routing and uploads instead of doing both again
+  const clarifyResumeRef = useRef<{ decoration: AidevSendDecoration; uploadedAttachments: unknown[] } | null>(null);
   // …and while the user is still typing, the specialist judge already looks at the draft
   usePrejudge(input, typeof selectedProject?.displayName === 'string' ? selectedProject.displayName : (typeof selectedProject?.name === 'string' ? selectedProject.name : null));
 
@@ -749,8 +754,10 @@ export function useChatComposerState({
       }
 
       const messageContent = currentInput;
+      const resume = queuedSubmission ? null : clarifyResumeRef.current;
+      clarifyResumeRef.current = null;
 
-      let uploadedAttachments = previouslyUploadedAttachments;
+      let uploadedAttachments = previouslyUploadedAttachments.length ? previouslyUploadedAttachments : resume?.uploadedAttachments ?? [];
       if (uploadedAttachments.length === 0 && currentAttachments.length > 0) {
         try {
           uploadedAttachments = await uploadAttachmentFiles(currentAttachments);
@@ -777,13 +784,19 @@ export function useChatComposerState({
       // Routing (IMPLEMENTATION-PLAN §3.1) runs before a brand-new session is allocated: the plan's
       // engine decides the provider of that session (sessions are provider-bound), so a Codex plan
       // never lands on a Claude session with a Codex model — and vice versa.
-      const aidevDecoration = await aidevBeforeSend(messageContent, {
+      const aidevDecoration = resume ? resume.decoration : await aidevBeforeSend(messageContent, {
         sessionId: targetSessionId,
         provider,
         isNewSession: !targetSessionId,
         projectHint: typeof selectedProject?.displayName === 'string' ? selectedProject.displayName : (typeof selectedProject?.name === 'string' ? selectedProject.name : null),
         userPinnedModel: false,
       });
+      // a new send supersedes a hold; a command missing essential detail waits for one line (ClarifyPrompt)
+      setClarifyHold(null);
+      if (!resume && !queuedSubmission && shouldAskClarify(aidevDecoration)) {
+        setClarifyHold({ sessionKey, text: messageContent, decoration: aidevDecoration, uploadedAttachments });
+        return;
+      }
       const plannedEngine = aidevDecoration?.route.plan.engine;
       const sessionProvider: LLMProvider = !targetSessionId && (plannedEngine === 'claude' || plannedEngine === 'codex') ? plannedEngine : provider;
       if (!targetSessionId) {
@@ -934,6 +947,21 @@ export function useChatComposerState({
   useEffect(() => {
     handleSubmitRef.current = handleSubmit;
   }, [handleSubmit]);
+
+  /** Sends the held command — with the answer appended, or as it is (`null`) — on its original routing. */
+  const releaseClarify = useCallback((answer: string | null) => {
+    const hold = clarifyHold;
+    if (!hold) return;
+    setClarifyHold(null);
+    clarifyResumeRef.current = { decoration: hold.decoration, uploadedAttachments: hold.uploadedAttachments };
+    // the composer still holds the command (possibly touched up meanwhile)
+    const base = inputValueRef.current.trim() ? inputValueRef.current : hold.text;
+    const next = answer ? `${base.trimEnd()}\n\n(추가 정보) ${answer}` : base;
+    setInput(next);
+    inputValueRef.current = next;
+    handleSubmitRef.current?.(createFakeSubmitEvent());
+  }, [clarifyHold, setInput]);
+  const dismissClarify = useCallback(() => setClarifyHold(null), []);
 
   // The VPS dispatcher owns sending. While the card is visible, periodically
   // reconcile only its removal so the UI notices when the server claims it.
@@ -1299,5 +1327,8 @@ export function useChatComposerState({
     commandModalPayload,
     closeCommandModal,
     showCostModal,
+    clarify: clarifyHold && clarifyHold.sessionKey === sessionKey ? { question: clarifyHold.decoration.route.scope.clarify_question ?? null, decisionId: clarifyHold.decoration.route.decision_id } : null,
+    releaseClarify,
+    dismissClarify,
   };
 }

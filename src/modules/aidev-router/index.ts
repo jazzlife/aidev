@@ -8,7 +8,9 @@ export { useRemoteApprovals, focusRemoteRun, REMOTE_RUN_FOCUS_EVENT } from '@/mo
 export { announceRunComplete, changedFilesSince, RUN_COMPLETE_EVENT } from '@/modules/aidev-router/runEvents';
 export { routingStore, useRoutingState } from '@/modules/aidev-router/store';
 export type { RoutingMode, RoutingOverrides, RoutingState } from '@/modules/aidev-router/store';
-export { useAidevRouting } from '@/modules/aidev-router/hooks/useAidevRouting';
+export { useAidevRouting, shouldAskClarify } from '@/modules/aidev-router/hooks/useAidevRouting';
+// §3.1 clarify card for the workbench composer (the mobile app has its own).
+export { ClarifyPrompt } from '@/modules/aidev-router/ClarifyPrompt';
 export { usePrejudge } from '@/modules/aidev-router/hooks/usePrejudge';
 export type { AidevSendDecoration, BeforeSendContext } from '@/modules/aidev-router/hooks/useAidevRouting';
 export { useAidevDecide } from '@/modules/aidev-router/hooks/useAidevDecide';

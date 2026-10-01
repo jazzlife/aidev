@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Search } from 'lucide-react';
 
 import { api, useChatRealtimeHandlers, useSessionStore, useWebSocket, type LLMProvider, type NormalizedMessage, type PendingPermissionRequest, type ProjectSession } from '@/modules/chat-core';
-import { AgentCreateCard, useAgentCreation, useAidevRouting, useEscalation, usePrejudge, type AidevSendDecoration, type Engine } from '@/modules/aidev-router';
+import { AgentCreateCard, shouldAskClarify, useAgentCreation, useAidevRouting, useEscalation, usePrejudge, type AidevSendDecoration, type Engine } from '@/modules/aidev-router';
 import { Composer } from '@m/components/Composer';
 import { MessageList } from '@m/components/MessageList';
 import { PermissionSheet } from '@m/components/PermissionSheet';
@@ -173,18 +173,17 @@ export function ChatScreen() {
     });
   }, [meta, navigate, project, provider, sendMessage, sessionStore]);
 
-  /** `askClarify: false` for the app's own re-sends (creation, escalation, handoff) — the user already chose. */
-  const send = useCallback(async (text: string, askClarify = true) => {
+  const send = useCallback(async (text: string) => {
     if (busy) return;
     if (!meta && !project) { setPickingProject(true); return; }
     setClarify(null);
     const decoration = await beforeSend(text, { sessionId: meta?.id ?? null, provider, isNewSession: !meta, projectHint: (meta?.projectName || project?.displayName) ?? null, userPinnedModel: false });
-    // §3.1: essential detail missing from a deeper command → ask once (agent creation asks its own questions)
-    if (askClarify && decoration?.route.scope.ask_clarify && decoration.route.decision !== 'create') { setClarify({ text, decoration }); return; }
+    // §3.1: essential detail missing from a deeper command → ask once (not for agent creation or the app's re-sends)
+    if (shouldAskClarify(decoration)) { setClarify({ text, decoration }); return; }
     await dispatch(text, decoration);
   }, [beforeSend, busy, dispatch, meta, project, provider, setClarify]);
 
-  useEffect(() => { sendRef.current = (text) => { void send(text, false); }; }, [send]);
+  useEffect(() => { sendRef.current = (text) => { void send(text); }; }, [send]);
   // E-03: one-tap follow-up for a failed run; a handoff opens the new session on the other engine
   // and its brief is sent there once the screen has resolved that session.
   const escalation = useEscalation({
