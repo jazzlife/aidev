@@ -292,6 +292,12 @@ export type SubagentInfo = {
 };
 
 /** One rendered entry in a chat transcript — user turn, assistant turn, tool call and result, local command output, or subagent container — and the shape the chat message list and message components consume. */
+/**
+ * A routed chat run just ended (C-10): sent by the chat module, read by the workbench to pick a changed file
+ * to open (Laya `ui.artifact`) and which pane to bring forward (`ui.focus`). Paths are as the tools wrote them.
+ */
+export type RunCompleteDetail = { sessionId: string | null; exitCode: number; changedFiles: string[] };
+
 export type ChatMessage = {
   type: string;
   content?: string;

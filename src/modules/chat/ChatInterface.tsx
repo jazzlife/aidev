@@ -26,7 +26,7 @@ import {
 } from '@/shared/context/SessionProtectionContext';
 import ChatMessagesPane from '@/modules/chat/transcript/ChatMessagesPane';
 import ChatComposer from '@/modules/chat/composer/ChatComposer';
-import { AgentCreateCard, AidevRouterBar, EscalationCard, routingStore, useAgentCreation, useAidevRouting, useEffortCap, useEscalation, useRoutingState } from '@/modules/aidev-router';
+import { AgentCreateCard, AidevRouterBar, announceRunComplete, changedFilesSince, EscalationCard, routingStore, useAgentCreation, useAidevRouting, useEffortCap, useEscalation, useRoutingState } from '@/modules/aidev-router';
 import CommandResultModal from '@/modules/chat/modals/CommandResultModal';
 
 type ChatInterfaceProps = {
@@ -88,6 +88,8 @@ function ChatInterface({
     if (event.sessionId && selectedSession?.id && event.sessionId !== selectedSession.id) return;
     const exitCode = typeof event.exitCode === 'number' ? event.exitCode : (event.isError ? 1 : 0);
     void reportAidevOutcome({ exit_code: exitCode, session_id: event.sessionId ?? selectedSession?.id ?? null });
+    // the workbench opens a changed file and brings the right pane forward (C-10)
+    announceRunComplete({ sessionId: event.sessionId ?? selectedSession?.id ?? null, exitCode, changedFiles: changedFilesSince(chatMessagesRef.current) });
     // the store applies the final assistant text on the same tick; read it after React commits
     setTimeout(() => { void agentCreationRef.current.onRunComplete(); }, 400);
   }), [reportAidevOutcome, selectedSession?.id, subscribe]);

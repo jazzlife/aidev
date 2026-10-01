@@ -12,17 +12,19 @@ import { toggleQuickSettings } from '@/modules/quick-settings-panel';
 import { TaskMasterPanel, useTaskMasterProjectSync, useTasksSettings } from '@/modules/task-master';
 import { useUiPreferences } from '@/shared/context/UiPreferencesContext';
 import { useFileOpenResolver, WorkspaceErrorBoundary, WorkspaceStateView } from '@/modules/project-workspace';
-import type { DirectoryRevealRequest, WorkspaceMainProps } from '@/shared/types';
+import type { DirectoryRevealRequest, RunCompleteDetail, WorkspaceMainProps } from '@/shared/types';
 import { AgentCatalog } from '@/modules/aidev-router';
 import { DebugPane, PreviewPane, RemoteApprovalCards, requestRunFocus, RunOutputPane, ScreenPane, TargetsPanel } from '@/modules/remote-target';
 import { usePreviewList } from '@/modules/remote-preview';
 import { LiveWindowHost, liveWindows, useLiveWindows, type LiveWindowSpec } from '@/modules/live-window';
 import { useAgentDebugSessions } from '@/modules/remote-debug';
-import { REMOTE_RUN_FOCUS_EVENT } from '@/modules/aidev-router';
+import { REMOTE_RUN_FOCUS_EVENT, RUN_COMPLETE_EVENT, useAidevDecide } from '@/modules/aidev-router';
 import { EditorGroup, useEditorGroup } from '@/modules/workbench/EditorGroup';
 import { SplitHandle } from '@/modules/workbench/SplitHandle';
 import { layoutStore, useWorkbenchLayout, type BottomTab, type SideView, type TabletPane } from '@/modules/workbench/layoutStore';
 import { useDeviceTier, type DeviceTier } from '@/modules/workbench/hooks/useDeviceTier';
+import { useAgentRunFailures } from '@/modules/workbench/hooks/useAgentRunFailures';
+import { useUiFocus, type FocusPane } from '@/modules/workbench/hooks/useUiFocus';
 
 type WorkbenchLayoutProps = WorkspaceMainProps & {
   tier: Exclude<DeviceTier, 'mobile'>;
@@ -130,15 +132,55 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
     window.addEventListener(REMOTE_RUN_FOCUS_EVENT, onFocus);
     return () => window.removeEventListener(REMOTE_RUN_FOCUS_EVENT, onFocus);
   }, [tier]);
-  // A preview an agent opened (remote_preview) comes forward on its own, once.
+  // C-10 ui.focus: run events bring a pane forward (Laya decides; the event's usual pane when it is unsure)
+  const applyFocus = useCallback((pane: FocusPane) => {
+    if (pane === 'preview' || pane === 'screen' || pane === 'debug') liveWindows.open(pane);
+    else if (isTablet) layoutStore.patch('tablet', pane === 'chat' ? { tabletShowChat: true } : { tabletShowChat: false, tabletPane: pane === 'run_output' ? 'remote' : pane === 'terminal' ? 'terminal' : 'files' });
+    else if (pane === 'run_output' || pane === 'terminal') layoutStore.patch('desktop', { workOpen: true, bottomOpen: true, bottomTab: pane });
+    else if (pane === 'editor' || pane === 'diff') layoutStore.patch('desktop', { workOpen: true });
+  }, [isTablet]);
+  const paneShown = useCallback((pane: FocusPane) => {
+    if (pane === 'preview' || pane === 'screen' || pane === 'debug') { const w = liveWindows.get(pane); return Boolean(w?.open && w.mode !== 'min'); }
+    const l = layoutStore.get(tier);
+    if (isTablet) return pane === 'chat' ? l.tabletShowChat : !l.tabletShowChat && l.tabletPane === (pane === 'run_output' ? 'remote' : pane === 'terminal' ? 'terminal' : 'files');
+    if (pane === 'run_output' || pane === 'terminal') return l.workOpen && l.bottomOpen && l.bottomTab === pane;
+    return pane === 'chat' || ((pane === 'editor' || pane === 'diff') && l.workOpen);
+  }, [isTablet, tier]);
+  const { focus } = useUiFocus({ sessionId: selectedSession?.id ?? null, tier, apply: applyFocus, isShown: paneShown });
+  // A preview an agent opened (remote_preview), once.
   const { previews } = usePreviewList(!noProject, 8000);
   const previewSeenRef = useRef<number>(Date.now());
   useEffect(() => {
     const fresh = previews.find((p) => p.by === 'agent' && p.createdAt > previewSeenRef.current);
     if (!fresh) return;
     previewSeenRef.current = Math.max(...previews.map((p) => p.createdAt));
-    liveWindows.open('preview');
-  }, [previews]);
+    void focus({ event: 'agent opened a preview of a running web app', summary: `${fresh.label ?? ''} port ${fresh.port} on ${fresh.targetName ?? 'PC'}`, suggested: 'preview' });
+  }, [previews, focus]);
+  // A command an agent ran on the PC failed: its output, once.
+  useAgentRunFailures(!noProject, useCallback((run) => {
+    void focus({ event: 'a test or command the agent ran on the user PC failed', summary: `exit ${run.exit_code ?? run.artifacts?.signal ?? '?'}: ${run.cmd ?? ''}`, suggested: 'run_output' }).then((pane) => {
+      if (pane === 'run_output') requestRunFocus({ remoteRunId: run.id, targetId: run.target_id });
+    });
+  }, [focus]));
+  // C-10 ui.artifact: when a run changed files, open the one most worth reviewing (desktop shows the code panel;
+  // a tablet keeps the chat in front and only loads the tab).
+  const { decide } = useAidevDecide();
+  useEffect(() => {
+    const onComplete = (event: Event) => {
+      const detail = (event as CustomEvent<RunCompleteDetail>).detail;
+      if (!detail?.changedFiles.length || (detail.sessionId && selectedSession?.id && detail.sessionId !== selectedSession.id)) return;
+      try { if (detail.sessionId && sessionStorage.getItem(`aidev.uiFocusOff.${detail.sessionId}`) === '1') return; } catch { /* storage blocked: keep going */ }
+      const files = detail.changedFiles.slice(0, 12);
+      const options = Object.fromEntries(files.map((file, index) => [`f${index}`, file]));
+      void (files.length === 1 ? Promise.resolve(null) : decide('ui.artifact', { exitCode: detail.exitCode, count: files.length }, options)).then((result) => {
+        const picked = typeof result?.answer === 'string' && options[result.answer] ? options[result.answer] : files[0];
+        if (isTablet) editor.api.open(picked, null, null);
+        else resolvedFileOpen(picked, undefined, null);
+      });
+    };
+    window.addEventListener(RUN_COMPLETE_EVENT, onComplete);
+    return () => window.removeEventListener(RUN_COMPLETE_EVENT, onComplete);
+  }, [decide, editor.api, isTablet, resolvedFileOpen, selectedSession?.id]);
   // The legacy tab state still drives a few upstream effects (task banner, palette); keep it on chat.
   useEffect(() => { setActiveTab('chat'); }, [setActiveTab]);
 
@@ -156,7 +198,7 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
     { id: 'debug', title: '디버그', icon: Bug, render: (visible) => <DebugPane isVisible={visible} project={remoteProject} onOpenFile={openFileInEditor} />, popoutPath: '/live/debug' },
   ], [remoteProject, openFileInEditor]);
   // a debug session an agent started (remote_debug_start) brings the debug window forward, once
-  const openDebugWindow = useCallback(() => liveWindows.open('debug'), []);
+  const openDebugWindow = useCallback(() => { void focus({ event: 'a debugger the agent started stopped at a breakpoint', summary: 'remote debug session', suggested: 'debug' }); }, [focus]);
   useAgentDebugSessions(!noProject, openDebugWindow);
 
   const stateView = <WorkspaceStateView mode={isLoading ? 'loading' : 'empty'} isMobile={false} onMenuClick={openSessions} />;

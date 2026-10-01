@@ -17,7 +17,7 @@
 #                                             (deploy·rollback·status·list·restart·diag·gpu·logs·verify; 임의 명령·스크립트는 거부)
 #   ./relay.sh scripts [dir]                  ops/scripts/*.sh 를 서버 deploy/release/ 에 동기화 (릴리스 스크립트 갱신)
 #   ./relay.sh sh <local.sh> [args...]        로컬 스크립트를 서버 bash 로 스트림 실행 → inbox/sh-*.log
-#   ./relay.sh verify USER [--bench] [--backup]        서버 verify-b.sh 실행 — 비밀번호 없음(서버 안에서 10분 세션 발급 후 폐기)
+#   ./relay.sh verify USER [--bench] [--backup] [--security]   서버 verify-b.sh 실행 — 비밀번호 없음(서버 안에서 10분 세션 발급 후 폐기)
 #   ./relay.sh claude-token USER                        `claude setup-token`으로 받은 장기 토큰을 USER 런타임에 설치 (프롬프트 입력, 기록에 남지 않음)
 #   ./relay.sh logs <container> [lines]       docker logs 회수 → inbox/logs-*.log
 #
@@ -111,8 +111,8 @@ run_job() {
       [[ "${argv[1]:-}" =~ ^[A-Za-z0-9_.-]{1,64}$ ]] && { [ -z "${argv[2]:-}" ] || [[ "${argv[2]}" =~ ^[0-9]{1,5}$ ]]; } || { job_reject "logs <container> [lines]"; return; }
       do_logs "${argv[1]}" "${argv[2]:-200}" ;;
     verify)
-      [[ "${argv[1]:-}" =~ ^[a-z0-9][a-z0-9_.-]{2,63}$ ]] || { job_reject "verify <user> [--bench|--backup|--experiments]"; return; }
-      for a in "${argv[@]:2}"; do [[ "$a" =~ ^--(bench|backup|experiments)$ ]] || { job_reject "verify 옵션 거부: $a"; return; }; done
+      [[ "${argv[1]:-}" =~ ^[a-z0-9][a-z0-9_.-]{2,63}$ ]] || { job_reject "verify <user> [--bench|--backup|--experiments|--security]"; return; }
+      for a in "${argv[@]:2}"; do [[ "$a" =~ ^--(bench|backup|experiments|security)$ ]] || { job_reject "verify 옵션 거부: $a"; return; }; done
       do_verify "${argv[1]}" "${argv[@]:2}" ;;
     *) job_reject "허용되지 않는 작업: ${cmd:-(빈 줄)}" ;;
   esac
