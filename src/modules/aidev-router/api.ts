@@ -157,11 +157,37 @@ export type AgentDraft = {
 };
 
 /** Used by the create-flow watcher (ChatInterface / mobile ChatScreen) to pull the architect's draft out of an assistant message. */
+/**
+ * Closes the brackets an LLM left open at the end of a JSON object — the usual slip in a long design block
+ * (D-06 on the server: the architect's 3.3 KB block lacked its final `}`, and the whole draft was dropped).
+ * String-aware; returns null when the text ends inside a string (nothing safe to repair).
+ */
+function closeOpenJson(text: string): string | null {
+  const open: string[] = [];
+  let inString = false; let escaped = false;
+  for (const ch of text) {
+    if (inString) {
+      if (escaped) escaped = false;
+      else if (ch === '\\') escaped = true;
+      else if (ch === '"') inString = false;
+      continue;
+    }
+    if (ch === '"') inString = true;
+    else if (ch === '{' || ch === '[') open.push(ch === '{' ? '}' : ']');
+    else if (ch === '}' || ch === ']') open.pop();
+  }
+  if (inString) return null;
+  return text.replace(/,\s*$/, '') + open.reverse().join('');
+}
+
 export function parseAgentDraft(text: string): AgentDraft | null {
   const match = /<aidev-agent>\s*([\s\S]*?)\s*<\/aidev-agent>/.exec(text);
   if (!match) return null;
+  const body = match[1].replace(/^```(?:json)?/m, '').replace(/```$/m, '').trim();
+  const parse = (json: string | null) => { if (!json) return null; try { return JSON.parse(json) as Record<string, unknown>; } catch { return null; } };
   try {
-    const raw = JSON.parse(match[1].replace(/^```(?:json)?/m, '').replace(/```$/m, '')) as Record<string, unknown>;
+    const raw = parse(body) ?? parse(closeOpenJson(body));
+    if (!raw) return null;
     if (typeof raw.name !== 'string' || typeof raw.prompt !== 'string') return null;
     return {
       name: raw.name.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 41),
