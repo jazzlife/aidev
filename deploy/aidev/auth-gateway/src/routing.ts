@@ -281,8 +281,8 @@ export function enqueueCreate(store: Store, userId: number, p: { name: string; d
   return { id: row.id, name: row.name, domain: row.domain, count: row.count, proposedNow };
 }
 /** Bumped whenever the runtime judge prompt changes meaning (specialist-judge.service.ts): cached verdicts of an older
- *  prompt are not reused. 2: `question` + "command execution is never a specialist" (2026-10-01). */
-const JUDGE_VERSION = 2;
+ *  prompt are not reused. 2: `question` + "command execution is never a specialist"; 3: "size alone never makes a specialist" (2026-10-01). */
+const JUDGE_VERSION = 3;
 /** How long a send waits for the judge (env AIDEV_JUDGE_WAIT_MS). A slower verdict is still cached for the next send. */
 const JUDGE_WAIT_MS = Number(process.env.AIDEV_JUDGE_WAIT_MS ?? 20_000);
 const MAX_PREJUDGE_PER_USER = 3;
