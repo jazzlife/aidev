@@ -29,7 +29,8 @@ else
 fi
 (cd "$tmp" && sums -c --quiet SHA256SUMS) || { echo "SHA-256 확인 실패"; exit 1; }
 if [ -f "$tmp/adapter-SHA256SUMS" ]; then
-  (cd "$tmp" && sed 's/  /  adapter-/' adapter-SHA256SUMS | sums -c --quiet) || { echo "어댑터 SHA-256 확인 실패"; exit 1; }
+  # a list file, not stdin: macOS sha256sum reads the check list only from a file
+  (cd "$tmp" && sed 's/  /  adapter-/' adapter-SHA256SUMS > check-adapters.sha256 && sums -c --quiet check-adapters.sha256) || { echo "어댑터 SHA-256 확인 실패"; exit 1; }
 fi
 mkdir -p "$out/adapters"
 # the dist mirrors this release: binaries of other versions (older local builds) are not served next to it
