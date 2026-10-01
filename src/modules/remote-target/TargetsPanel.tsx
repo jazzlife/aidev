@@ -4,6 +4,7 @@ import { Check, ChevronDown, ChevronRight, Copy, Laptop, Plus, RefreshCw, Star, 
 import { api, readApiJson } from '@/shared/api';
 import { copyTextToClipboard } from '@/shared/utils';
 import type { RunnerFile } from '@/shared/types';
+import { DevicesSection } from '@/modules/remote-target/DevicesSection';
 import { guessPlatform, pairingSteps } from '@/modules/remote-target/utils/runnerPairing';
 
 /** A developer PC registered for remote run/debug, as the gateway reports it (GET /api/aidev/targets). */
@@ -25,7 +26,7 @@ type Target = {
   allowed_roots: string[];
   capabilities: {
     runner?: string; os?: string; arch?: string; hostname?: string; shell?: string;
-    tools?: Record<string, string>; devices?: { adb?: string[]; sdb?: string[] }; screen?: boolean;
+    tools?: Record<string, string>; devices?: { adb?: string[]; sdb?: string[] }; screen?: boolean; features?: string[];
   } | null;
 };
 
@@ -118,7 +119,7 @@ function TargetRow({ target, files, reload, setNote }: { target: Target; files: 
           {caps ? (
             <>
               <div className="flex flex-wrap gap-1">{Object.entries(caps.tools ?? {}).map(([tool, version]) => <span key={tool} title={version} className="rounded bg-muted px-1 text-[10px]">{tool}</span>)}</div>
-              {(caps.devices?.adb?.length || caps.devices?.sdb?.length) ? <div className="text-muted-foreground">기기: {[...(caps.devices?.adb ?? []).map((d) => `adb ${d}`), ...(caps.devices?.sdb ?? []).map((d) => `sdb ${d}`)].join(', ')}</div> : null}
+              {target.online && caps.features?.includes('device') ? <DevicesSection targetId={target.id} /> : (caps.devices?.adb?.length || caps.devices?.sdb?.length) ? <div className="text-muted-foreground">기기: {[...(caps.devices?.adb ?? []).map((d) => `adb ${d}`), ...(caps.devices?.sdb ?? []).map((d) => `sdb ${d}`)].join(', ')}</div> : null}
               <div className="aidev-selectable text-muted-foreground">허용 폴더: {target.allowed_roots.length ? target.allowed_roots.join(', ') : '없음'}</div>
               <div className="aidev-selectable text-[10px] text-muted-foreground">러너 {caps.runner ?? '?'} · 셸 {caps.shell ?? '?'} · 화면 캡처 {caps.screen ? '허용' : '꺼짐'}</div>
             </>

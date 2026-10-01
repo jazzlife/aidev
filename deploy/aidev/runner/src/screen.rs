@@ -30,7 +30,7 @@ const MAX_STREAMS: usize = 4;
 const DEFAULT_WIDTH: u32 = 1440;
 const KIND_H264: u8 = 1;
 const KIND_JPEG: u8 = 3;
-const NO_CONSENT: &str = "이 PC는 화면 보기를 허용하지 않았습니다 — PC에서 `aidev-runner consent screen on` 후 러너를 다시 시작하세요";
+pub(crate) const NO_CONSENT: &str = "이 PC는 화면 보기를 허용하지 않았습니다 — PC에서 `aidev-runner consent screen on` 후 러너를 다시 시작하세요";
 
 struct Ctl {
     stop: Arc<AtomicBool>,
@@ -117,7 +117,7 @@ impl Source {
     }
 }
 
-fn jpeg(rgba: &[u8], w: u32, h: u32, quality: u8) -> Result<Vec<u8>, String> {
+pub(crate) fn jpeg(rgba: &[u8], w: u32, h: u32, quality: u8) -> Result<Vec<u8>, String> {
     let img = image::RgbaImage::from_raw(w, h, rgba.to_vec()).ok_or("bad frame")?;
     let rgb = image::DynamicImage::ImageRgba8(img).to_rgb8();
     let mut out = Vec::with_capacity(256 * 1024);

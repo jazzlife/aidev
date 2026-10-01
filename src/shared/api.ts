@@ -575,6 +575,10 @@ export const api = {
     openPreview: (targetId: number, port: number, label?: string) => post(`/api/aidev/targets/${targetId}/preview`, { port, label }),
     closePreview: (targetId: number, port: number) => del(`/api/aidev/targets/${targetId}/preview/${port}`),
     previews: () => get('/api/aidev/previews'),
+    /** F-10: phones, TVs and simulators attached to the target ({devices:[{tool, serial, state, name}]}; runner ≥ 0.10). */
+    devices: (targetId: number) => get(`/api/aidev/targets/${targetId}/devices`),
+    /** F-10: one screenshot (base64 JPEG) of an attached device. */
+    deviceShot: (targetId: number, opts: { tool?: string; serial?: string; maxWidth?: number } = {}) => post(`/api/aidev/targets/${targetId}/devices/shot`, opts),
     /** F-07c: the program windows on the target ({windows, perWindow}; runners before 0.7 answer {displays}). */
     windows: (targetId: number) => get(`/api/aidev/targets/${targetId}/windows`),
     /** One screenshot as JSON (base64 JPEG) of a window (id or `query` = part of its app/title; default the focused one). */

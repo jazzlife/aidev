@@ -15,6 +15,7 @@ import '../../load-env.js';
  *   remote_preview  — show a dev server running on a target in the workbench preview panel (F-06)
  *   remote_windows  — the program windows open on a target (id, app, title) (F-07c)
  *   remote_screenshot — look at one program window on a target (image content; needs the PC owner's consent) (F-07)
+ *   remote_devices / remote_device_shot — phones, TVs, simulators attached to a target and their screen (F-10)
  *   remote_debug_start / _step / _eval / _breakpoints / _stop — debug a program on a target over DAP (F-09, F-09b: 14 adapters)
  *   remote_console_start / _send / _read / _stop — drive any command-line debugger or REPL on a target (F-09c)
  *   remote_agent / remote_agent_result — delegate a task to an agent CLI on the target (Claude Code, Codex, Gemini CLI) (F-09d)
@@ -183,6 +184,27 @@ const tools: ToolDefinition[] = [
     inputSchema: {
       type: 'object',
       properties: { target: { type: 'string', description: 'Target name or id (optional when routed or only one is online).' } },
+    },
+  },
+  {
+    name: 'remote_devices',
+    description: 'List the phones, TVs, watches and simulators attached to one of the user\'s machines: Android (adb), Tizen (sdb) and booted iOS simulators — tool, serial, state ("device" = usable; "unauthorized" = allow USB debugging on the phone), name. Pick one for remote_device_shot or remote_debug_start.',
+    inputSchema: {
+      type: 'object',
+      properties: { target: { type: 'string', description: 'Target name or id (optional when routed or only one is online).' } },
+    },
+  },
+  {
+    name: 'remote_device_shot',
+    description: 'Take a screenshot of an attached phone / TV / simulator (from remote_devices) and look at it (returned as an image) — e.g. to check what a mobile app shows after running it. Without serial the only usable device is used. Needs the PC owner\'s screen-capture consent; every capture is recorded. View only.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string', description: 'Target name or id (optional when routed or only one is online).' },
+        tool: { type: 'string', enum: ['adb', 'sdb', 'sim'], description: 'adb (Android), sdb (Tizen) or sim (iOS simulator).' },
+        serial: { type: 'string', description: 'Device serial / simulator UDID from remote_devices.' },
+        maxWidth: { type: 'number', description: 'Scale down to this width (default 1080).' },
+      },
     },
   },
   {
@@ -413,6 +435,7 @@ async function callTool(name: string, args: Record<string, unknown>) {
     case 'remote_stop':
     case 'remote_preview':
     case 'remote_windows':
+    case 'remote_devices':
     case 'remote_debug_start':
     case 'remote_debug_step':
     case 'remote_debug_eval':
@@ -426,6 +449,7 @@ async function callTool(name: string, args: Record<string, unknown>) {
     case 'remote_agent_result':
       return jsonResponse(await callApi(name, args));
     case 'remote_screenshot':
+    case 'remote_device_shot':
       return imageResponse(await callApi(name, args));
     default:
       throw new Error(`Unknown tool: ${name}`);

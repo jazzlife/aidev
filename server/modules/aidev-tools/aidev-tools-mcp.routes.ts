@@ -113,6 +113,19 @@ router.post('/tools/:toolName', async (req, res) => {
           maxWidth: typeof input.maxWidth === 'number' ? input.maxWidth : undefined,
         }, readTurn(input));
         break;
+      case 'remote_devices':
+        result = await aidevToolsService.remoteDevices({
+          target: typeof input.target === 'string' || typeof input.target === 'number' ? input.target : undefined,
+        }, readTurn(input));
+        break;
+      case 'remote_device_shot':
+        result = await aidevToolsService.remoteDeviceShot({
+          target: typeof input.target === 'string' || typeof input.target === 'number' ? input.target : undefined,
+          tool: input.tool === 'adb' || input.tool === 'sdb' || input.tool === 'sim' ? input.tool : undefined,
+          serial: typeof input.serial === 'string' && input.serial.trim() ? input.serial.trim().slice(0, 120) : undefined,
+          maxWidth: typeof input.maxWidth === 'number' ? input.maxWidth : undefined,
+        }, readTurn(input));
+        break;
       case 'remote_debug_start': {
         const adapter = DEBUG_ADAPTERS.find((a) => a === input.adapter);
         if (!adapter) throw new Error(`adapter must be one of ${DEBUG_ADAPTERS.join(', ')}.`);

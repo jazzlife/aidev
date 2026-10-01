@@ -618,9 +618,10 @@ fn spawn_piped(
     Ok(pid)
 }
 
-/// portable-pty reports strsignal() text ("Interrupt"); pipes report numbers — both become SIGINT etc.
+/// portable-pty reports strsignal() text ("Interrupt"; macOS adds the number: "Terminated: 15"); pipes report
+/// numbers — all become SIGINT etc.
 fn signal_name(text: &str) -> String {
-    match text.to_ascii_lowercase().as_str() {
+    match text.split(':').next().unwrap_or(text).trim().to_ascii_lowercase().as_str() {
         "interrupt" => "SIGINT".into(),
         "terminated" => "SIGTERM".into(),
         "killed" => "SIGKILL".into(),

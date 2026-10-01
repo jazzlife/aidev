@@ -573,6 +573,39 @@ export function createAidevApi(deps: AidevDeps) {
           throw new HttpError(status(error), error instanceof Error ? error.message : 'screen failed');
         }
       }
+      // ---- devices (F-10): phones, TVs and simulators attached to the target (adb / sdb / iOS simulator) ------
+      //   GET devices · POST devices/shot {tool?, serial?, maxWidth?, quality?} · GET devices/shot.jpg?…
+      const deviceMatch = rest.match(/^\/targets\/(\d+)\/devices(?:\/(shot|shot\.jpg))?$/);
+      if (deviceMatch) {
+        if (!deps.runners) throw new HttpError(503, 'runner hub unavailable');
+        const id = Number(deviceMatch[1]);
+        const target = store.target(uid, id);
+        if (!target) throw new HttpError(404, 'Target not found');
+        const agentCall = session.sid.startsWith('runtime:');
+        const status = (error: unknown) => (error instanceof RpcError ? (error.code === -32010 ? 409 : error.code === -32030 ? 403 : error.code === -32021 ? 501 : error.code === -32033 ? 404 : error.code === -32034 || error.code === -32602 ? 400 : 503) : 503);
+        try {
+          if (!deviceMatch[2] && m === 'GET') return json(res, 200, await deps.runners.deviceList(id)), true;
+          if (agentCall && target.policy === 'deny') throw new HttpError(403, '이 대상의 실행 정책이 "실행 금지"입니다');
+          const q = deviceMatch[2] === 'shot.jpg' && m === 'GET' ? Object.fromEntries(url.searchParams) : deviceMatch[2] === 'shot' && m === 'POST' ? await readJson(req) : null;
+          if (!q) throw new HttpError(405, 'Method not allowed');
+          const text = (v: unknown, max: number) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, max) : undefined);
+          const shot = await deps.runners.deviceShot(id, { tool: text(q.tool, 8), serial: text(q.serial, 120), maxWidth: Math.min(Math.max(Number(q.maxWidth) || 1080, 240), 2160), quality: Math.min(Math.max(Number(q.quality) || 70, 30), 90) });
+          const d = shot.device;
+          // every capture leaves a trace in the target's run history, like screen.shot
+          const rr = store.addRemoteRun({ runId: typeof q.runId === 'number' && store.run(uid, q.runId) ? q.runId : null, targetId: id, userId: uid, kind: 'screenshot', cmd: `device.shot ${d.tool} ${d.serial} — ${String(d.name).slice(0, 120)}`, cwd: null, risk: null, approvedBy: agentCall ? 'agent' : 'user' });
+          store.finishRemoteRun(rr, { exitCode: 0, artifacts: { width: shot.width, height: shot.height, bytes: shot.bytes, ms: shot.ms, device: d } });
+          if (deviceMatch[2] === 'shot.jpg') {
+            const bytes = Buffer.from(shot.b64, 'base64');
+            res.writeHead(200, { 'content-type': 'image/jpeg', 'content-length': String(bytes.length), 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+            res.end(bytes);
+            return true;
+          }
+          return json(res, 200, { image: shot.b64, mime: shot.mime, width: shot.width, height: shot.height, bytes: shot.bytes, ms: shot.ms, device: d, remoteRunId: rr }), true;
+        } catch (error) {
+          if (error instanceof HttpError) throw error;
+          throw new HttpError(status(error), error instanceof Error ? error.message : 'device failed');
+        }
+      }
       // ---- previews (F-06): a dev server on the target's loopback, shown in the workbench -----------------
       if (rest === '/previews' && m === 'GET') {
         return json(res, 200, { previews: (deps.preview?.list(uid) ?? []).map((p) => ({ ...p, online: Boolean(deps.runners?.online(p.targetId)) })) }), true;

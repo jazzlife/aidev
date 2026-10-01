@@ -177,7 +177,13 @@ pub fn listening() -> Vec<Listen> {
 
 /// For a refused preview: "열려 있는 포트: 3000 (node), 8080 (java)" — or that nothing listens at all.
 pub fn ports_hint() -> String {
-    let open: Vec<String> = listening().into_iter().filter(|l| l.loopback)
+    // dev runtimes first: a developer's PC also listens for system services (AirPlay, sync, emulators), and only
+    // 12 ports are shown (lsof truncates names to 9 characters: "python3.1")
+    const DEV: &[&str] = &["node", "bun", "deno", "python", "ruby", "java", "php", "go", "dotnet", "vite", "next", "esbuild", "uvicorn", "gunicorn", "flask", "rails"];
+    let dev = |l: &Listen| l.process.as_deref().is_some_and(|p| DEV.iter().any(|d| p.to_ascii_lowercase().starts_with(d)));
+    let mut ports: Vec<Listen> = listening().into_iter().filter(|l| l.loopback).collect();
+    ports.sort_by_key(|l| (!dev(l), l.port));
+    let open: Vec<String> = ports.into_iter()
         .map(|l| match l.process { Some(p) => format!("{} ({p})", l.port), None => l.port.to_string() })
         .take(12).collect();
     if open.is_empty() { "이 PC에는 지금 열려 있는 개발 서버 포트가 없습니다".into() } else { format!("지금 열려 있는 포트: {}", open.join(", ")) }

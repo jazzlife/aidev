@@ -139,7 +139,7 @@ r=$(post "$A" /api/aidev/push/subscribe '{"subscription":{"endpoint":"https://pu
 r=$(post "$A" /api/aidev/claude-auth '{"expires_at":4102444800000}'); check "$r" 'j.ok===true' "claude-auth: expiry report accepted"
 r=$(post "$A" /api/aidev/push/unsubscribe '{"endpoint":"https://push.example/abc"}'); check "$r" 'j.removed===1' "push: unsubscribe"
 r=$(curl -s "$G/_runner/download"); if [ -d "$RUNNER_DIST_DIR" ]; then check "$r" 'j.files.length>=1 && j.files[0].sha256 && j.files[0].platform' "runner binaries listed ($(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).files.map(f=>f.platform).join(",")'))"
-  F=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).files[0].name'); n=$(curl -s "$G/_runner/download/$F" | wc -c); check "{\"n\":$n,\"want\":$(stat -c %s "$RUNNER_DIST_DIR/$F")}" 'j.n===j.want' "runner binary download ($n bytes)"; fi
+  F=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).files[0].name'); n=$(curl -s "$G/_runner/download/$F" | wc -c); check "{\"n\":$n,\"want\":$(wc -c < "$RUNNER_DIST_DIR/$F" | tr -d ' ')}" 'j.n===j.want' "runner binary download ($n bytes)"; fi
 r=$(curl -s "$G/_runner/download/..%2F..%2Fetc%2Fpasswd" | grep -c "root:" || true); check "{\"c\":$r}" 'j.c===0' "download path traversal cannot read files"
 # F-09b: platform-built debug adapters (aidev-clrdbg) listed and served with the SHA-256 the runner checks
 if [ -f "$RUNNER_DIST_DIR/adapters/manifest.json" ]; then
@@ -181,19 +181,21 @@ if [ -x "$RUNNER_BIN" ]; then
   sleep 0.3; r2=$(get "$A" /api/aidev/targets)
   check "{\"dup\":$r,\"targets\":$r2}" "j.dup.status===409 && j.targets.targets.find(t=>t.id===$TID).online" "an older runner with the same token is refused (409), the newer one stays connected"
   # the workbench pairing card's commands, pasted into bash (Linux), interactive zsh (macOS) and PowerShell (Windows)
-  if [ -d "$RUNNER_DIST_DIR" ] && command -v zsh >/dev/null; then
+  if [ "$(uname -s)" = Linux ] && [ -d "$RUNNER_DIST_DIR" ] && command -v zsh >/dev/null; then
     PC=$(PWSH="${PWSH:-$(command -v pwsh || true)}" bash test/pairing-commands.sh "$G" "$A" "$T/paste" 2>"$T/paste.err")
     r=$(echo "$PC" | grep '"shell":"bash"'); check "${r:-null}" 'j.exitCode===0 && j.exe && j.paired && j.serviceStarted && j.unitPointsAtFixedPath' "pairing card, Linux (bash): download to ~/.aidev/bin, pair, service points at that file ($r)"
     r=$(echo "$PC" | grep '"shell":"zsh"'); check "${r:-null}" 'j.paired && j.serviceStarted && j.unitPointsAtFixedPath' "pairing card, macOS (interactive zsh, no comment words): pair + install-service as pasted"
     r=$(echo "$PC" | grep 'zsh-comment-check'); check "${r:-null}" 'j.commentIsWord===true' "(why: a trailing # comment is an argument in interactive zsh)"
     r=$(echo "$PC" | grep '"shell":"powershell"'); if echo "$r" | grep -q skipped; then echo "SKIP pairing card, Windows (no pwsh)"; else
       check "${r:-null}" 'j.parseErrors===0 && j.binDir && /curl -fsSL http:\/\/127\.0\.0\.1:18080\/_runner\/download\/aidev-runner-0\.7\.0-win-x64\.exe -o /.test(j.curl) && j.curl.endsWith(j.home+"\\.aidev\\bin\\aidev-runner.exe") && j.runner.length===2 && j.runner[0]===j.home+"\\.aidev\\bin\\aidev-runner.exe pair CODE1234 --gateway http://127.0.0.1:18080" && j.runner[1].endsWith("aidev-runner.exe install-service")' "pairing card, Windows (PowerShell): parses, folder made, curl.exe to %USERPROFILE%\\.aidev\\bin, runner called with pair/install-service ($(echo "$r" | cut -c1-200))"; fi
-  else echo "SKIP pairing card commands (needs runner dist + zsh)"; fi
+  else echo "SKIP pairing card commands (needs Linux, runner dist + zsh)"; fi
   # the per-OS install scripts from the gateway, run for real (Linux; the Windows script in PowerShell test mode)
+  if [ "$(uname -s)" = Linux ]; then
   IS=$(PWSH="${PWSH:-$(command -v pwsh || true)}" bash test/install-scripts.sh "$G" "$A" "$T/install" 2>"$T/install.err")
   r=$(echo "$IS" | grep '"case":"linux"'); check "${r:-null}" 'j.exit===0 && j.downloaded && j.exe && j.paired && j.connected && j.online && j.stoppedAfterUninstall' "install-linux.sh via curl|bash: download (SHA-256), pair, keep running, connected → online, --uninstall stops it"
   r=$(echo "$IS" | grep '"case":"windows-ps1"'); if echo "$r" | grep -q skipped; then echo "SKIP install-windows.ps1 (no pwsh)"; else
     check "${r:-null}" 'j.exit===0 && j.exe && j.paired' "install-windows.ps1 via irm (PowerShell, test mode): installs to .aidev\\bin, pairs ($(echo "$r" | cut -c1-160))"; fi
+  else echo "SKIP install scripts run for real (needs Linux: they install the linux-x64 runner)"; fi
   r=$(post "$B" "/api/aidev/targets/$TID/ping" '{}'); check "$r" 'j.error' "another user cannot reach the target"
   # F-08: which PC a command goes to — named in the command, chat pin, account default; remote_action from Laya + lexical prior
   r=$(post "$A" /api/aidev/route '{"text":"dev-mac에서 이 코드 한번 봐줘"}'); check "$r" 'j.plan.target && j.plan.target.name==="dev-mac" && j.plan.target.source==="mention" && j.scope.remote_action!=="none" && j.targets.length===1' "F-08: a PC named in the command gets the work ($(echo "$r" | node -pe 'const j=JSON.parse(require("fs").readFileSync(0)); j.scope.remote_action+" on "+j.plan.target?.name+" ("+j.plan.target?.source+")"'))"
@@ -318,6 +320,25 @@ if [ -x "$RUNNER_BIN" ]; then
   r=$(post "$B" "/api/aidev/targets/$TID/screenshot" '{}'); check "$r" 'j.error' "another user cannot see the screen"
   r=$(rpost "/targets/$TID/screenshot" '{"maxWidth":320}'); check "$r" 'j.image && j.width===320' "agent (runtime session) takes a screenshot"
   post "$A" "/api/aidev/targets/$TID" '{"policy":"deny"}' PATCH >/dev/null; r=$(rpost "/targets/$TID/screenshot" '{}'); check "$r" '/실행 금지/.test(j.error)' "policy deny: agent screenshots refused"; post "$A" "/api/aidev/targets/$TID" '{"policy":"ask"}' PATCH >/dev/null
+  # F-10: attached devices — a stand-in adb with one usable phone, one waiting for USB-debugging consent
+  FADB="$T/fake-adb"; cat > "$FADB" <<FAKE
+#!/bin/sh
+case "\$*" in
+  "devices -l") printf 'List of devices attached\\nfake-0001 device product:p model:Pixel_7 device:d transport_id:1\\nfake-0002 unauthorized usb:1 transport_id:2\\n\\n' ;;
+  "-s fake-0001 exec-out screencap -p") cat "$SRC" ;;
+  *) echo "unexpected: \$*" >&2; exit 1 ;;
+esac
+FAKE
+  chmod +x "$FADB"
+  kill $RPID 2>/dev/null; wait $RPID 2>/dev/null || true
+  HOME="$RH" AIDEV_ADB="$FADB" AIDEV_SCREEN_CMD="cp $SRC {out}" "$RUNNER_BIN" start > "$T/runner-devices.log" 2>&1 & RPID=$!
+  for i in $(seq 1 40); do r=$(get "$A" /api/aidev/targets); echo "$r" | node -e "const j=JSON.parse(require('fs').readFileSync(0));process.exit(j.targets.find(t=>t.id===$TID)?.online ? 0 : 1)" && break; sleep 0.25; done
+  r=$(get "$A" "/api/aidev/targets/$TID/devices"); check "$r" 'j.devices.some(d=>d.tool==="adb" && d.serial==="fake-0001" && d.name==="Pixel 7" && d.state==="device") && j.devices.some(d=>d.serial==="fake-0002" && d.state==="unauthorized")' "F-10: attached devices listed (adb, one waiting for USB-debugging consent)"
+  r=$(post "$A" "/api/aidev/targets/$TID/devices/shot" '{"tool":"adb","serial":"fake-0001","maxWidth":320}'); check "$r" 'j.mime==="image/jpeg" && j.width===320 && j.height===180 && j.device.name==="Pixel 7" && j.remoteRunId>0' "device screen as a 320px JPEG, recorded as a run"
+  r=$(get "$A" "/api/aidev/targets/$TID/runs?limit=3"); check "$r" 'j.runs.some(x=>x.kind==="screenshot" && /^device\.shot adb fake-0001/.test(x.cmd))' "the capture's trace names the device"
+  r=$(post "$A" "/api/aidev/targets/$TID/devices/shot" '{"serial":"fake-0002"}'); check "$r" '/fake-0002/.test(j.error)' "a device without USB-debugging consent is not captured"
+  r=$(rpost "/targets/$TID/devices/shot" '{"serial":"fake-0001","maxWidth":320}'); check "$r" 'j.image && j.device.serial==="fake-0001"' "agent (runtime session) looks at the device screen"
+  r=$(post "$B" "/api/aidev/targets/$TID/devices/shot" '{"serial":"fake-0001"}'); check "$r" 'j.error' "another user cannot see the device"
   # F-05: agent (runtime session) → gate: safe commands run, risky ones wait for the user, tests feed the chat run
   rpost() { curl -s -X POST "$G/internal/aidev$1" -H 'authorization: Bearer rtjwt-rt-alice' -H 'x-aidev-runtime: rt-alice' -H 'content-type: application/json' -d "$2"; }
   rget() { curl -s "$G/internal/aidev$1" -H 'authorization: Bearer rtjwt-rt-alice' -H 'x-aidev-runtime: rt-alice'; }
@@ -404,7 +425,7 @@ if [ -x "$RUNNER_BIN" ]; then
   r=$(post "$A" "/api/aidev/targets/$TID" '{}' DELETE); check "$r" 'j.ok' "target deleted"
   for i in $(seq 1 40); do kill -0 $RPID 2>/dev/null || break; sleep 0.25; done; code=0; wait $RPID || code=$?
   check "{\"code\":$code}" 'j.code===3' "deleting the target disconnects the runner (exit 3)"
-  cp "$T/old-runner.toml" "$AIDEV_RUNNER_HOME/runner.toml"; code=0; HOME="$RH" timeout 10 "$RUNNER_BIN" start >/dev/null 2>&1 || code=$?
+  cp "$T/old-runner.toml" "$AIDEV_RUNNER_HOME/runner.toml"; code=0; HOME="$RH" perl -e 'alarm shift; exec @ARGV' 10 "$RUNNER_BIN" start >/dev/null 2>&1 || code=$?
   check "{\"code\":$code}" 'j.code===3' "old token no longer connects"
   unset AIDEV_RUNNER_HOME
 else echo "SKIP runner checks (build deploy/aidev/runner first: cargo build)"; fi

@@ -491,6 +491,18 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
       screenReady(targetId);
       return hub.call<{ b64: string; mime: string; width: number; height: number; bytes: number; ms: number; window?: Record<string, unknown> }>(targetId, 'screen.shot', opts, 30_000);
     },
+    /** Attached phones, TVs and simulators (F-10, runner ≥ 0.10): adb / sdb / booted iOS simulators. */
+    async deviceList(targetId: number) {
+      if (!hub.online(targetId)) throw new RpcError(-32010, 'target is offline');
+      hub.requireFeature(targetId, 'device', '기기 목록·화면', '0.10.0');
+      return hub.call<{ devices: Array<{ tool: string; serial: string; state: string; name: string }>; errors: Record<string, string>; tools: Record<string, boolean> }>(targetId, 'device.list', {}, 30_000);
+    },
+    /** One screenshot (JPEG, base64) of an attached device; the only usable one when serial is omitted. */
+    async deviceShot(targetId: number, opts: { tool?: string; serial?: string; maxWidth?: number; quality?: number } = {}) {
+      if (!hub.online(targetId)) throw new RpcError(-32010, 'target is offline');
+      hub.requireFeature(targetId, 'device', '기기 목록·화면', '0.10.0');
+      return hub.call<{ b64: string; mime: string; width: number; height: number; bytes: number; ms: number; device: { tool: string; serial: string; name: string } }>(targetId, 'device.shot', opts, 60_000);
+    },
     /** Program windows (runner ≥ 0.7: {windows}) or displays (older: {displays}). */
     async screenList(targetId: number) {
       if (!hub.online(targetId)) throw new RpcError(-32010, 'target is offline');

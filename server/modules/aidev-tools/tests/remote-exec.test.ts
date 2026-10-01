@@ -152,6 +152,22 @@ test('remote_windows / remote_screenshot{query} (F-07c): program windows, then o
   assert.equal((r.window as { id: number }).id, 42);
 });
 
+test('remote_devices / remote_device_shot (F-10): attached devices, then one device\'s screen', async () => {
+  let sent: Record<string, unknown> = {};
+  handler = (method, path, body) => {
+    if (path === '/targets') return targets;
+    if (method === 'GET' && path === '/targets/7/devices') return { devices: [{ tool: 'adb', serial: 'emulator-5554', state: 'device', name: 'Pixel 7' }], errors: {}, tools: { adb: true, sdb: false, sim: true } };
+    if (method === 'POST' && path === '/targets/7/devices/shot') { sent = body; return { image: '/9j/CCCC', mime: 'image/jpeg', width: 1080, height: 2400, bytes: 4, ms: 600, device: { tool: 'adb', serial: 'emulator-5554', name: 'Pixel 7' }, remoteRunId: 42 }; }
+    throw new Error(`unexpected ${method} ${path}`);
+  };
+  const d = await aidevToolsService.remoteDevices({}, { targetId: 7 }) as { target: string; devices: Array<Record<string, unknown>> };
+  assert.equal(d.target, 'm4pro');
+  assert.equal(d.devices[0].serial, 'emulator-5554');
+  const r = await aidevToolsService.remoteDeviceShot({ serial: 'emulator-5554' }, { targetId: 7, runId: 12 }) as Record<string, unknown>;
+  assert.deepEqual(sent, { serial: 'emulator-5554', runId: 12 });
+  assert.equal(r.image, '/9j/CCCC');
+});
+
 const pausedSnap = (id: string, line: number, locals: Array<Record<string, unknown>>) => ({
   id, state: 'paused', error: null, exitCode: null, program: '/w/app.py', cwd: '/w', version: '1.8.22',
   stopped: { reason: 'breakpoint', description: null },
