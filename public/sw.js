@@ -1,7 +1,8 @@
 // Service Worker for CloudCLI PWA
 // Cache only manifest (needed for PWA install). HTML and JS are never pre-cached
 // so a rebuild + refresh always picks up the latest assets.
-const CACHE_NAME = 'claude-ui-v2';
+// v3: drops responses v2 cached without checking them (a 520 during a deploy stuck forever)
+const CACHE_NAME = 'claude-ui-v3';
 const urlsToCache = [
   '/manifest.json'
 ];
@@ -36,14 +37,18 @@ self.addEventListener('fetch', event => {
     return;
   }
 
-  // Hashed assets (JS/CSS in /assets/) — cache-first since filenames change per build
-  if (url.includes('/assets/')) {
+  // Hashed assets (JS/CSS in /assets/) — cache-first since filenames change per build. Only this app's
+  // /assets/ (the mobile app's /m/assets/ belong to its own worker) and only good responses: an error page
+  // cached here would be served for that file forever.
+  if (new URL(url).pathname.startsWith('/assets/')) {
     event.respondWith(
       caches.match(event.request).then(cached => {
         if (cached) return cached;
         return fetch(event.request).then(response => {
-          const clone = response.clone();
-          caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+          if (response.ok) {
+            const clone = response.clone();
+            caches.open(CACHE_NAME).then(cache => cache.put(event.request, clone));
+          }
           return response;
         });
       })
