@@ -20,6 +20,8 @@ export type RouteScope = {
   remote_action_probability?: number;
   needs_llm_analysis: boolean;
   ask_clarify: boolean;
+  /** the question to ask when `ask_clarify` (worded by the specialist judge); null → the app's generic prompt */
+  clarify_question?: string | null;
 };
 
 export type AgentDefinition = {
@@ -196,6 +198,15 @@ export type NextAction = {
 
 /** A stored knowledge item as the catalog shows it (E-04 adds the re-check fields). */
 export type KnowledgeItem = { id: number; agent_id: number; title: string; body: string; source_url: string | null; source_date: string | null; status: string; expires_at: number | null; checked_at: number | null; check_fails: number; check_note: string | null; replaces: number | null; owner_id: number | null };
+
+/** One agent with what the catalog shows about it (`GET /agents/:id`): knowledge, lessons, run statistics, versions. */
+export type AgentDetail = {
+  agent: CatalogAgent;
+  knowledge: KnowledgeItem[];
+  lessons: Array<{ id: number; trigger: string; rule: string; status: string; hits: number; fails?: number; verified_by?: string | null; promoted_to_prompt?: number; promoted_version?: number | null }>;
+  stats: { runs: number; success: number | null; fail: number | null; avg_ms: number | null };
+  versions: Array<{ version: number; changelog: string | null; createdAt: number }>;
+};
 export type KnowledgeProposal = KnowledgeItem & { agent_name: string; replaces_item: KnowledgeItem | null };
 export type KnowledgeRefreshJob = { running: boolean; total: number; done: number; results: Array<{ id: number; title: string; outcome: string; note: string; newId?: number }>; startedAt: number; finishedAt: number | null; error: string | null };
 
@@ -247,7 +258,7 @@ export const aidevApi = {
   claudeLoginCode: (loginId: string, code: string) => post('/api/aidev-tools/claude-login/code', { login_id: loginId, code }).then((response) => readRuntimeData<{ issuedAt: number; expiresAt: number }>(response)),
   claudeLoginCancel: (loginId: string) => post('/api/aidev-tools/claude-login/cancel', { login_id: loginId }).then(() => undefined),
   agents: () => authenticatedFetch('/api/aidev/agents').then((response) => readJson<{ agents: CatalogAgent[] }>(response)),
-  agent: (id: number) => authenticatedFetch(`/api/aidev/agents/${id}`).then((response) => readJson<Record<string, unknown>>(response)),
+  agent: (id: number) => authenticatedFetch(`/api/aidev/agents/${id}`).then((response) => readJson<AgentDetail>(response)),
   createAgent: (input: Record<string, unknown>) => post('/api/aidev/agents', input).then((response) => readJson<{ agent: CatalogAgent }>(response)),
   updateAgent: (id: number, input: Record<string, unknown>) => post(`/api/aidev/agents/${id}`, input, 'PUT').then((response) => readJson<{ agent: CatalogAgent; version: number }>(response)),
   createRun: (input: Record<string, unknown>) => post('/api/aidev/runs', input).then((response) => readJson<{ run_id: number }>(response)),

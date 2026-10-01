@@ -1,8 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useNavigate, useParams } from 'react-router-dom';
+import { Search } from 'lucide-react';
 
 import { api, useChatRealtimeHandlers, useSessionStore, useWebSocket, type LLMProvider, type NormalizedMessage, type PendingPermissionRequest, type ProjectSession } from '@/modules/chat-core';
-import { AgentCreateCard, useAgentCreation, useAidevRouting, useEscalation, usePrejudge, type Engine } from '@/modules/aidev-router';
+import { AgentCreateCard, useAgentCreation, useAidevRouting, useEscalation, usePrejudge, type AidevSendDecoration, type Engine } from '@/modules/aidev-router';
 import { Composer } from '@m/components/Composer';
 import { MessageList } from '@m/components/MessageList';
 import { PermissionSheet } from '@m/components/PermissionSheet';
@@ -16,8 +17,12 @@ import { useDebugSessions } from '@/modules/remote-debug';
 import { BottomSheet } from '@m/components/BottomSheet';
 import { EscalationPrompt } from '@m/components/EscalationPrompt';
 import { ProjectPicker, readLastProject, type PickedProject } from '@m/components/ProjectPicker';
+import { ClarifyPrompt } from '@m/components/ClarifyPrompt';
+import { DiffPeek } from '@m/components/DiffPeek';
+import { FilePeek } from '@m/components/FilePeek';
+import type { FileEdit, FileRef } from '@m/lib/peek';
 
-type SessionMeta = { id: string; provider: LLMProvider; projectPath: string; projectName: string; title: string };
+type SessionMeta = { id: string; provider: LLMProvider; projectId: string; projectPath: string; projectName: string; title: string };
 const PROVIDER_KEY = 'm.provider';
 const readProvider = (): LLMProvider => { try { const value = localStorage.getItem(PROVIDER_KEY); return value === 'codex' ? 'codex' : 'claude'; } catch { return 'claude'; } };
 
@@ -52,6 +57,11 @@ export function ChatScreen() {
   const { sessions: debugSessions } = useDebugSessions(true, 8000);
   const agentDebug = debugSessions.find((d) => d.origin === 'agent' && d.createdAt > debugSeen && d.state !== 'ended' && d.state !== 'failed') ?? null;
   const [copied, setCopied] = useState(false);
+  // C-05 peeks: the file sheet (null file = search) and the diff of one file tool call
+  const [filePeek, setFilePeek] = useState<{ open: boolean; file: FileRef | null; fromSearch: boolean }>({ open: false, file: null, fromSearch: false });
+  const [diffPeek, setDiffPeek] = useState<FileEdit | null>(null);
+  // §3.1 clarify: a routed command held back until the user adds the missing detail or lets it go as is
+  const [clarify, setClarify] = useState<{ text: string; decoration: AidevSendDecoration } | null>(null);
   const copyMessage = async () => {
     if (!copyText) return;
     try { await navigator.clipboard.writeText(copyText); }
@@ -76,13 +86,15 @@ export function ChatScreen() {
     if (!routeSessionId) { setMeta(null); return; }
     let cancelled = false;
     setLoadError(null);
+    // a command held for clarification belongs to the chat it was typed in
+    setClarify(null);
     api.sessionDetails(routeSessionId).then(async (response) => {
-      const payload = await response.json() as { data?: { sessionId?: string; provider?: string; summary?: string; project?: { fullPath?: string; path?: string; displayName?: string } | null } };
+      const payload = await response.json() as { data?: { sessionId?: string; provider?: string; summary?: string; project?: { projectId?: string; fullPath?: string; path?: string; displayName?: string } | null } };
       if (cancelled) return;
       const data = payload.data;
       if (!response.ok || !data) { setLoadError('세션을 찾을 수 없습니다'); return; }
       const resolvedProvider: LLMProvider = data.provider === 'codex' ? 'codex' : 'claude';
-      setMeta({ id: routeSessionId, provider: resolvedProvider, projectPath: data.project?.fullPath || data.project?.path || '', projectName: data.project?.displayName || '', title: data.summary || '' });
+      setMeta({ id: routeSessionId, provider: resolvedProvider, projectId: data.project?.projectId || '', projectPath: data.project?.fullPath || data.project?.path || '', projectName: data.project?.displayName || '', title: data.summary || '' });
     }).catch(() => { if (!cancelled) setLoadError('세션을 불러오지 못했습니다'); });
     return () => { cancelled = true; };
   }, [routeSessionId]);
@@ -125,20 +137,17 @@ export function ChatScreen() {
   }), [subscribe, sessionId, reportOutcome]);
 
   // ---- send ------------------------------------------------------------------------------------
-  const send = useCallback(async (text: string) => {
-    if (busy) return;
+  // Creates the session for a new chat (on the routed engine) and sends the turn with the routing decoration.
+  const dispatch = useCallback(async (text: string, decoration: AidevSendDecoration | null) => {
     let target = meta;
-    const isNew = !target;
-    if (isNew && !project) { setPickingProject(true); return; }
-    const decoration = await beforeSend(text, { sessionId: target?.id ?? null, provider, isNewSession: isNew, projectHint: (target?.projectName || project?.displayName) ?? null, userPinnedModel: false });
-    if (isNew && project) {
+    if (!target && project) {
       // The router's engine choice decides the provider of a brand-new session (§0: sessions are provider-bound).
       const engine = (decoration?.route.plan.engine ?? provider) as Engine;
       try {
         const response = await api.providers.createSession({ provider: engine, projectPath: project.fullPath, initialMessage: text });
         const body = await response.json() as { data?: { sessionId?: string } };
         if (!response.ok || !body.data?.sessionId) throw new Error('세션을 만들지 못했습니다');
-        target = { id: body.data.sessionId, provider: engine, projectPath: project.fullPath, projectName: project.displayName, title: text.slice(0, 60) };
+        target = { id: body.data.sessionId, provider: engine, projectId: project.projectId, projectPath: project.fullPath, projectName: project.displayName, title: text.slice(0, 60) };
         try { localStorage.setItem(PROVIDER_KEY, engine); } catch { /* ignore */ }
         setMeta(target);
         navigate(`/session/${encodeURIComponent(target.id)}`, { replace: true });
@@ -162,9 +171,20 @@ export function ChatScreen() {
         sessionSummary: text.slice(0, 80),
       },
     });
-  }, [beforeSend, busy, meta, navigate, project, provider, sendMessage, sessionStore]);
+  }, [meta, navigate, project, provider, sendMessage, sessionStore]);
 
-  useEffect(() => { sendRef.current = (text) => { void send(text); }; }, [send]);
+  /** `askClarify: false` for the app's own re-sends (creation, escalation, handoff) — the user already chose. */
+  const send = useCallback(async (text: string, askClarify = true) => {
+    if (busy) return;
+    if (!meta && !project) { setPickingProject(true); return; }
+    setClarify(null);
+    const decoration = await beforeSend(text, { sessionId: meta?.id ?? null, provider, isNewSession: !meta, projectHint: (meta?.projectName || project?.displayName) ?? null, userPinnedModel: false });
+    // §3.1: essential detail missing from a deeper command → ask once (agent creation asks its own questions)
+    if (askClarify && decoration?.route.scope.ask_clarify && decoration.route.decision !== 'create') { setClarify({ text, decoration }); return; }
+    await dispatch(text, decoration);
+  }, [beforeSend, busy, dispatch, meta, project, provider, setClarify]);
+
+  useEffect(() => { sendRef.current = (text) => { void send(text, false); }; }, [send]);
   // E-03: one-tap follow-up for a failed run; a handoff opens the new session on the other engine
   // and its brief is sent there once the screen has resolved that session.
   const escalation = useEscalation({
@@ -187,12 +207,14 @@ export function ChatScreen() {
 
   const messages = sessionId ? sessionStore.getMessages(sessionId) : [];
   const slot = sessionId ? sessionStore.getSessionSlot(sessionId) : undefined;
+  const peekProject = meta?.projectId ? { projectId: meta.projectId, projectPath: meta.projectPath } : !meta && project ? { projectId: project.projectId, projectPath: project.fullPath } : null;
+  const openFile = (file: FileRef | null) => { setDiffPeek(null); setFilePeek({ open: true, file, fromSearch: false }); };
   const title = meta?.title || (routeSessionId ? '대화' : '새 대화');
   const subtitle = meta ? `${meta.provider}${meta.projectName ? ` · ${meta.projectName}` : ''}` : (project ? `${provider} · ${project.displayName}` : '프로젝트를 선택하세요');
 
   return (
     <div className="m-app">
-      <TopBar title={title} subtitle={subtitle} back="/" right={<div className="flex items-center"><RemoteMenu />{!meta ? <button type="button" className="text-[13px] text-accent px-3 m-touch" onClick={() => setPickingProject(true)}>프로젝트</button> : null}</div>} />
+      <TopBar title={title} subtitle={subtitle} back="/" right={<div className="flex items-center">{peekProject ? <button type="button" aria-label="파일 찾기" onClick={() => openFile(null)} className="m-touch flex items-center justify-center rounded-full text-muted"><Search size={19} /></button> : null}<RemoteMenu />{!meta ? <button type="button" className="text-[13px] text-accent px-3 m-touch" onClick={() => setPickingProject(true)}>프로젝트</button> : null}</div>} />
       {agentPreview ? (
         <div className="flex items-center gap-2 border-b border-line bg-accent/10 px-4 py-2 text-[13px]">
           <span className="min-w-0 flex-1 truncate">미리보기가 열렸습니다 · {agentPreview.label ?? agentPreview.targetName}:{agentPreview.port}</span>
@@ -209,7 +231,7 @@ export function ChatScreen() {
       ) : null}
       {loadError ? <div className="px-4 py-2 text-danger text-sm">{loadError}</div> : null}
       {!isConnected ? <div className="px-4 py-1 text-[12px] text-warn bg-warn/10">연결 중…</div> : null}
-      <MessageList messages={messages} loading={slot?.status === 'loading'} onMessageLongPress={(text) => { setCopied(false); setCopyText(text); }} footer={sessionId ? <SessionResults sessionId={sessionId} refreshKey={lastRunFinished ?? 0} /> : null} />
+      <MessageList messages={messages} loading={slot?.status === 'loading'} onMessageLongPress={(text) => { setCopied(false); setCopyText(text); }} onPeekFile={openFile} onPeekDiff={setDiffPeek} footer={sessionId ? <SessionResults sessionId={sessionId} refreshKey={lastRunFinished ?? 0} /> : null} />
       <BottomSheet open={copyText !== null} onClose={() => setCopyText(null)} title="메시지">
         <div className="text-[13px] text-muted line-clamp-4 whitespace-pre-wrap mb-3">{copyText}</div>
         <button type="button" className="w-full h-12 rounded-xl bg-accent text-accent-ink text-[15px] font-medium" onClick={() => { void copyMessage(); }}>{copied ? '복사했습니다' : '복사'}</button>
@@ -217,9 +239,12 @@ export function ChatScreen() {
       {agentCreation.pending ? <div className="m-scroll max-h-[45dvh]"><AgentCreateCard compact pending={agentCreation.pending} onApprove={(draft) => { void agentCreation.approve(draft); }} onSelfCheck={agentCreation.runSelfCheck} onDismiss={agentCreation.dismiss} /></div> : null}
       {escalation.escalation && !busy ? <EscalationPrompt next={escalation.escalation.next} label={escalation.label} busy={escalation.busy} error={escalation.error} onRun={() => { void escalation.run(); }} onDismiss={escalation.dismiss} /> : null}
       {lastRunFinished && !busy ? <RunFeedback key={lastRunFinished} onFeedback={(value) => { void reportOutcome({ user_feedback: value }); }} /> : null}
+      {clarify ? <ClarifyPrompt key={clarify.decoration.route.decision_id} text={clarify.text} question={clarify.decoration.route.scope.clarify_question} onProceed={() => { setClarify(null); void dispatch(clarify.text, clarify.decoration); }} onAnswer={(answer) => { setClarify(null); void dispatch(`${clarify.text}\n\n(추가 정보) ${answer}`, clarify.decoration); }} /> : null}
       <RouterChip sessionId={sessionId} />
       <Composer busy={busy} disabled={!isConnected} onDraftChange={setDraft} onSend={(text) => { void send(text); }} onAbort={abort} placeholder={meta ? undefined : '무엇을 만들까요?'} />
       <PermissionSheet request={pendingPermissionRequests[0] ?? null} onDecide={decidePermission} />
+      <FilePeek open={filePeek.open} onClose={() => setFilePeek({ open: false, file: null, fromSearch: false })} project={peekProject} file={filePeek.file} fromSearch={filePeek.fromSearch} onFile={(file) => setFilePeek({ open: true, file, fromSearch: file !== null })} />
+      <DiffPeek edit={diffPeek} onClose={() => setDiffPeek(null)} onOpenFile={(path) => openFile({ path, line: null })} />
       <ProjectPicker open={pickingProject} onClose={() => setPickingProject(false)} onPick={(picked) => { setProject(picked); setPickingProject(false); }} />
     </div>
   );

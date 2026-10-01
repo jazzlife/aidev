@@ -11,6 +11,8 @@ import os from 'node:os';
  *   agent   — an existing specialist whose declared domain covers the command's main technology/domain
  *   generalist — a trivial or domain-less request (a quick question, one shell command, a tiny edit)
  *   null    — no specialist exists → the platform creates one (`new` is the proposed domain)
+ * It also writes the one question to ask when the command lacks something essential (`question`); the gateway
+ * shows it only when Laya's `clarify` says to ask (§3.1), so Laya decides and the model only words it.
  * Claude haiku first, Codex mini when Claude is unavailable. Nothing is written into any conversation.
  */
 export type JudgeCandidate = { name: string; description: string };
@@ -20,6 +22,8 @@ export type JudgeResult = {
   fit: number;
   reason: string;
   new: { name: string; domain: string; description: string; technologies: string[] } | null;
+  /** the single clarifying question for this command (its language), or null when nothing essential is missing */
+  question: string | null;
   engine: string;
   ms: number;
 };
@@ -32,9 +36,10 @@ Rules:
 - "generalist" only when the command is trivial or domain-less: a quick factual question, running one or two ready-made shell commands the user spelled out (also on their own/remote machine, e.g. "run sw_vers on my Mac"), a tiny generic edit such as renaming. Do not create a specialist for such requests.
 - Otherwise, if no listed agent is a true specialist, answer agent null and propose the specialist that SHOULD exist (kebab-case name, domain, one-line description, key technologies).
 - Prefer the narrowest agent whose domain covers the command. Never choose META agents.
+- question: if information ESSENTIAL to start is missing and cannot be inferred (which file or screen, which project, which target machine, what the expected behavior is), write the ONE most important question to ask, in the command's language, short and concrete. Otherwise null.
 
 Output ONLY this JSON (no prose):
-{"agent": "<existing name>" | "generalist" | null, "fit": <0..1 how precisely the chosen agent's domain covers the command>, "reason": "<short>", "new": null | {"name": "<kebab-case>", "domain": "<domain>", "description": "<one line>", "technologies": ["..."]}}`;
+{"agent": "<existing name>" | "generalist" | null, "fit": <0..1 how precisely the chosen agent's domain covers the command>, "reason": "<short>", "new": null | {"name": "<kebab-case>", "domain": "<domain>", "description": "<one line>", "technologies": ["..."]}, "question": null | "<one short question>"}`;
 
 /** The first balanced `{…}` in `text` once it is complete and parses (strings and escapes respected), else null. */
 export function firstCompleteJson(text: string): Record<string, unknown> | null {
@@ -79,7 +84,8 @@ export function parseJudge(text: string, names: Set<string>): Omit<JudgeResult, 
           technologies: Array.isArray(n.technologies) ? (n.technologies as unknown[]).map(String).slice(0, 12) : [],
         }
       : null;
-    return { agent, fit, reason: typeof raw.reason === 'string' ? raw.reason.slice(0, 300) : '', new: agent ? null : proposal };
+    const question = typeof raw.question === 'string' && raw.question.trim() ? raw.question.trim().slice(0, 300) : null;
+    return { agent, fit, reason: typeof raw.reason === 'string' ? raw.reason.slice(0, 300) : '', new: agent ? null : proposal, question };
   } catch {
     return null;
   }

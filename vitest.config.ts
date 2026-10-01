@@ -7,6 +7,7 @@ import { defineConfig } from 'vitest/config';
 export default defineConfig({
   resolve: {
     alias: {
+      '@m': fileURLToPath(new URL('./src-mobile', import.meta.url)),
       '@': fileURLToPath(new URL('./src', import.meta.url)),
     },
   },
@@ -23,7 +24,7 @@ export default defineConfig({
       VITE_IS_PLATFORM: 'false',
     },
     setupFiles: ['./vitest.setup.ts'],
-    include: ['src/**/*.test.ts', 'src/**/*.test.tsx'],
+    include: ['src/**/*.test.ts', 'src/**/*.test.tsx', 'src-mobile/**/*.test.ts', 'src-mobile/**/*.test.tsx'],
     restoreMocks: true,
   },
 });

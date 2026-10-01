@@ -7,7 +7,7 @@ import { firstCompleteJson, parseJudge } from '@/modules/aidev-tools/specialist-
 const names = new Set(['frontend-react', 'database']);
 
 test('existing specialist, generalist, and a proposal', () => {
-  assert.deepEqual(parseJudge('{"agent":"database","fit":0.9,"reason":"SQL","new":null}', names), { agent: 'database', fit: 0.9, reason: 'SQL', new: null });
+  assert.deepEqual(parseJudge('{"agent":"database","fit":0.9,"reason":"SQL","new":null}', names), { agent: 'database', fit: 0.9, reason: 'SQL', new: null, question: null });
   assert.equal(parseJudge('```json\n{"agent":"generalist","fit":0.7,"reason":"trivial","new":null}\n```', names)?.agent, 'generalist');
   const created = parseJudge('Sure: {"agent":null,"fit":0,"reason":"no iOS agent","new":{"name":"iOS Swift!","domain":"ios","description":"SwiftUI apps","technologies":["Swift","SwiftUI"]}}', names);
   assert.equal(created?.agent, null);
@@ -17,6 +17,9 @@ test('existing specialist, generalist, and a proposal', () => {
 test('an invented agent name is treated as "no specialist"; garbage is rejected', () => {
   assert.equal(parseJudge('{"agent":"unity-expert","fit":0.9,"reason":"x","new":null}', names)?.agent, null);
   assert.equal(parseJudge('no json here', names), null);
+  // the clarifying question is kept (trimmed, capped) and an empty one means none
+  assert.equal(parseJudge('{"agent":"database","fit":0.9,"reason":"x","new":null,"question":"  어느 테이블인가요? "}', names)?.question, '어느 테이블인가요?');
+  assert.equal(parseJudge('{"agent":"database","fit":0.9,"reason":"x","new":null,"question":""}', names)?.question, null);
   assert.equal(parseJudge('{"agent":"database","fit":7}', names)?.fit, 1);
 });
 

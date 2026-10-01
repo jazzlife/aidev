@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Monitor, Sparkles, Star } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 import { useRoutingState, routingStore, aidevApi, claudeAuth, useClaudeAuth, useTargetChoice, type Engine } from '@/modules/aidev-router';
 import { ClaudeLoginSheet } from '@m/components/ClaudeLoginSheet';
@@ -12,6 +13,7 @@ const DEPTH_LABEL = ['즉답', '한 파일', '기능', '심층', '설계'];
 export function RouterChip({ sessionId = null }: { sessionId?: string | null }) {
   const state = useRoutingState();
   const [open, setOpen] = useState(false);
+  const navigate = useNavigate();
   const auth = useClaudeAuth();
   const last = state.last;
   // F-08: the PC this chat's remote work goes to (pin / automatic)
@@ -49,7 +51,7 @@ export function RouterChip({ sessionId = null }: { sessionId?: string | null }) 
             </div>
             <div>
               <div className="text-[12px] text-muted mb-1">agent</div>
-              <div className="flex items-center gap-2"><span className="font-medium">{last.agent.name}</span><span className="text-muted text-[12px]">{Math.round(last.agent.probability * 100)}%</span></div>
+              <div className="flex items-center gap-2"><span className="font-medium">{last.agent.name}</span><span className="text-muted text-[12px]">{Math.round(last.agent.probability * 100)}%</span><button type="button" className="ml-auto text-[12px] text-accent" onClick={() => { setOpen(false); navigate(`/catalog/${last.agent.id}`); }}>카탈로그</button></div>
               <div className="h-1.5 rounded bg-elevated mt-1"><div className="h-1.5 rounded bg-accent" style={{ width: `${Math.round(last.agent.probability * 100)}%` }} /></div>
               {last.alternatives.length ? (
                 <div className="mt-2 space-y-1">

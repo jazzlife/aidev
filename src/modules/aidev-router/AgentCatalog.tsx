@@ -1,19 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { BookOpen, Bot, CheckCircle2, ChevronLeft, ListChecks, Plus, RefreshCw, Sparkles } from 'lucide-react';
 
-import { aidevApi, type CatalogAgent, type KnowledgeItem } from '@/modules/aidev-router/api';
+import { aidevApi, type AgentDetail, type CatalogAgent } from '@/modules/aidev-router/api';
 import { KnowledgePanel, KnowledgeProposalCard } from '@/modules/aidev-router/KnowledgePanel';
 import { TierPolicyPanel } from '@/modules/aidev-router/TierPolicyPanel';
 import { refreshSummary, useKnowledgeRefresh } from '@/modules/aidev-router/hooks/useKnowledgeRefresh';
 import { routingStore } from '@/modules/aidev-router/store';
-
-type AgentDetail = {
-  agent: CatalogAgent;
-  knowledge: KnowledgeItem[];
-  lessons: Array<{ id: number; trigger: string; rule: string; status: string; hits: number; fails?: number; verified_by?: string | null; promoted_to_prompt?: number; promoted_version?: number | null }>;
-  stats: { runs: number; success: number | null; fail: number | null; avg_ms: number | null };
-  versions: Array<{ version: number; changelog: string | null; createdAt: number }>;
-};
 
 /**
  * Used by the workbench side view "Agent 카탈로그" (C-09): the catalog list, an agent's detail
@@ -32,7 +24,7 @@ export function AgentCatalog() {
   const loadList = useCallback(() => { aidevApi.agents().then((response) => setAgents(response.agents)).catch((err: Error) => setError(err.message)); }, []);
   const loadDetail = useCallback((id: number) => {
     setDetail(null); setEditing(null);
-    aidevApi.agent(id).then((response) => setDetail(response as unknown as AgentDetail)).catch((err: Error) => setError(err.message));
+    aidevApi.agent(id).then((response) => setDetail(response)).catch((err: Error) => setError(err.message));
     aidevApi.agentExamples(id).then((response) => setExamples(response.examples)).catch(() => setExamples([]));
   }, []);
   // E-04: re-checks refresh the open agent when they finish; proposals are listed above the catalog

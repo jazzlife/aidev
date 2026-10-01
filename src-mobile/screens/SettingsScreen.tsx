@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { Bot, ChevronRight } from 'lucide-react';
+import { useNavigate } from 'react-router-dom';
 
 import { useAuth } from '@/modules/chat-core';
 import { aidevApi, claudeAuth, routingStore, useClaudeAuth, useRoutingState, type EnginesResult, type RoutingMode } from '@/modules/aidev-router';
@@ -21,6 +23,7 @@ const MODES: Array<{ value: RoutingMode; label: string; hint: string }> = [
 /** Mobile settings: routing mode, engine status, UI switch, sign out. */
 export function SettingsScreen() {
   const { user, logout } = useAuth();
+  const navigate = useNavigate();
   const routing = useRoutingState();
   const [engines, setEngines] = useState<EnginesResult | null>(null);
   const auth = useClaudeAuth();
@@ -91,6 +94,14 @@ export function SettingsScreen() {
             {push === 'on' ? <button type="button" className="w-full text-left px-4 py-3 text-[15px] text-accent" onClick={() => { void aidevApi.pushTest().then((r) => setPushNote(r.delivered ? '테스트 알림을 보냈습니다' : '보낼 기기가 없습니다')).catch((error: Error) => setPushNote(error.message)); }}>테스트 알림 보내기</button> : null}
           </div>
           {pushNote ? <div className="text-[12px] text-muted mt-2">{pushNote}</div> : null}
+        </section>
+        <section>
+          <div className="text-[12px] uppercase tracking-wide text-muted mb-2">Agent</div>
+          <button type="button" onClick={() => navigate('/catalog')} className="w-full rounded-xl2 border border-line bg-surface px-4 py-3 text-left flex items-center gap-3">
+            <Bot size={18} className="text-accent" />
+            <span className="flex-1"><div className="text-[15px]">Agent 카탈로그</div><div className="text-[12px] text-muted">전문 agent의 성공률·교훈·지식 보기</div></span>
+            <ChevronRight size={18} className="text-muted" />
+          </button>
         </section>
         <KnowledgeSection />
         <RemoteRunsSection />

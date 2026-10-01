@@ -54,6 +54,15 @@ body {
 .m-prose a { color: rgb(var(--m-accent)); text-decoration: underline; }
 .m-prose table { border-collapse: collapse; font-size: 0.9em; display: block; overflow-x: auto; }
 .m-prose td, .m-prose th { border: 1px solid rgb(var(--m-line)); padding: 3px 8px; }
+/* A file named in the chat (`src/app.ts:12`): tappable inline code that opens the file peek. */
+.m-file-ref { display: inline; padding: 0; border: 0; background: none; color: rgb(var(--m-accent)); text-decoration: underline dotted; text-underline-offset: 2px; }
+/* highlight.js tokens for the file peek, from the theme's own colours (light and dark follow the tokens). */
+.m-hljs .hljs-keyword, .m-hljs .hljs-selector-tag, .m-hljs .hljs-built_in, .m-hljs .hljs-name, .m-hljs .hljs-tag { color: rgb(var(--m-accent)); }
+.m-hljs .hljs-string, .m-hljs .hljs-attr, .m-hljs .hljs-symbol, .m-hljs .hljs-bullet, .m-hljs .hljs-addition { color: rgb(var(--m-ok)); }
+.m-hljs .hljs-number, .m-hljs .hljs-literal, .m-hljs .hljs-type, .m-hljs .hljs-variable, .m-hljs .hljs-template-variable { color: rgb(var(--m-warn)); }
+.m-hljs .hljs-title, .m-hljs .hljs-section, .m-hljs .hljs-attribute, .m-hljs .hljs-selector-id, .m-hljs .hljs-selector-class { color: rgb(var(--m-ink)); font-weight: 600; }
+.m-hljs .hljs-comment, .m-hljs .hljs-quote, .m-hljs .hljs-meta { color: rgb(var(--m-muted)); font-style: italic; }
+.m-hljs .hljs-deletion { color: rgb(var(--m-danger)); }
 @keyframes m-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
 .m-pulse { animation: m-pulse 1.2s ease-in-out infinite; }
 

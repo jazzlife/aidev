@@ -1,10 +1,11 @@
 import { useState } from 'react';
-import { AlertTriangle, ChevronDown, ChevronRight, Wrench } from 'lucide-react';
+import { AlertTriangle, ChevronDown, ChevronRight, FileDiff, FileText, Wrench } from 'lucide-react';
 
 import { parseToolPayload, type NormalizedMessage } from '@/modules/chat-core';
 import { Prose } from '@m/lib/markdown';
 import { clampText } from '@m/lib/format';
 import { useLongPress } from '@m/lib/useLongPress';
+import { fileEditFromTool, filePathFromTool, type FileEdit, type FileRef } from '@m/lib/peek';
 
 function summarizeInput(input: unknown): string {
   const parsed = parseToolPayload(input);
@@ -17,8 +18,15 @@ function summarizeInput(input: unknown): string {
   return clampText(JSON.stringify(record), 120);
 }
 
+export type PeekHandlers = {
+  /** opens a file (and line) in the file peek */
+  onPeekFile?: (ref: FileRef) => void;
+  /** opens what a file tool changed in the diff peek */
+  onPeekDiff?: (edit: FileEdit) => void;
+};
+
 /** Used by MessageList: one transcript row — user bubble, assistant prose, or a collapsible tool/thinking card. */
-export function MessageBubble({ message, result, onLongPress }: { message: NormalizedMessage; result?: NormalizedMessage | null; /** text messages: long-press opens the copy sheet (text selection is off in the app) */ onLongPress?: (text: string) => void }) {
+export function MessageBubble({ message, result, onLongPress, onPeekFile, onPeekDiff }: { message: NormalizedMessage; result?: NormalizedMessage | null; /** text messages: long-press opens the copy sheet (text selection is off in the app) */ onLongPress?: (text: string) => void } & PeekHandlers) {
   const [open, setOpen] = useState(false);
   const text = message.kind === 'text' || message.kind === 'stream_delta' ? String((message.role === 'user' ? message.displayText || message.content : message.content) ?? '') : '';
   const press = useLongPress(() => { if (text) onLongPress?.(text); });
@@ -32,13 +40,15 @@ export function MessageBubble({ message, result, onLongPress }: { message: Norma
   if (message.kind === 'text' || message.kind === 'stream_delta') {
     return (
       <div className="px-3 py-1" {...press}>
-        <Prose text={message.content ?? ''} />
+        <Prose text={message.content ?? ''} onFileRef={onPeekFile} />
         {message.kind === 'stream_delta' ? <span className="inline-block w-2 h-4 bg-accent/70 m-pulse align-middle ml-0.5 rounded-sm" /> : null}
       </div>
     );
   }
   if (message.kind === 'tool_use') {
     const isError = Boolean(result?.toolResult?.isError);
+    const edit = fileEditFromTool(message.toolName, message.toolInput);
+    const readPath = edit?.path ?? filePathFromTool(message.toolName, message.toolInput);
     return (
       <div className="px-3 py-0.5">
         <button type="button" onClick={() => setOpen((value) => !value)} className={`w-full text-left rounded-xl border px-3 py-2 flex items-start gap-2 bg-surface ${isError ? 'border-danger/50' : 'border-line'}`}>
@@ -49,6 +59,12 @@ export function MessageBubble({ message, result, onLongPress }: { message: Norma
           </span>
           {open ? <ChevronDown size={16} className="text-muted" /> : <ChevronRight size={16} className="text-muted" />}
         </button>
+        {(edit && onPeekDiff) || (readPath && onPeekFile && !edit?.deleted) ? (
+          <div className="flex gap-4 pl-8 pt-0.5 text-[12px] text-accent">
+            {edit && onPeekDiff ? <button type="button" className="flex h-8 items-center gap-1" onClick={() => onPeekDiff(edit)}><FileDiff size={13} /> 변경 보기</button> : null}
+            {readPath && onPeekFile && !edit?.deleted ? <button type="button" className="flex h-8 items-center gap-1" onClick={() => onPeekFile({ path: readPath, line: null })}><FileText size={13} /> 파일 보기</button> : null}
+          </div>
+        ) : null}
         {open ? (
           <div className="mt-1 rounded-xl bg-elevated border border-line p-2 text-[12px] font-mono whitespace-pre-wrap break-words max-h-72 overflow-auto">
             {JSON.stringify(parseToolPayload(message.toolInput), null, 1)}

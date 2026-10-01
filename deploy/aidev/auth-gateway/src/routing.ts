@@ -242,7 +242,7 @@ export async function evaluateRouting(store: Store, laya: LayaClient, userId: nu
  * so their top pick "wins" even when nothing fits; the judge makes the absolute call. Only a true specialist
  * is used; a trivial/domain-less command goes to the generalist; otherwise a new specialist is created.
  */
-export type JudgeVerdict = { agent: string | null; fit: number; reason: string; new: { name: string; domain: string; description: string; technologies: string[] } | null; engine?: string; ms?: number; source?: 'llm' | 'cache' | 'similar' };
+export type JudgeVerdict = { agent: string | null; fit: number; reason: string; new: { name: string; domain: string; description: string; technologies: string[] } | null; /** the judge's wording of the clarifying question (used only when Laya's clarify asks) */ question?: string | null; engine?: string; ms?: number; source?: 'llm' | 'cache' | 'similar' };
 export type SpecialistJudge = (input: { command: string; candidates: Array<{ name: string; description: string }>; project?: string | null }) => Promise<JudgeVerdict | null>;
 const normText = (text: string) => text.toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 500);
 function cosine(a: string[], b: string[]) {
@@ -286,7 +286,7 @@ function startJudge(store: Store, userId: number, ctx: JudgeContext, text: strin
     .then((v) => (v ? { ...v, source: 'llm' as const } : null))
     .catch(() => null)
     .then((v) => {
-      if (v) store.cacheJudge(userId, ctx.textNorm, ctx.catalogSig, { agent: v.agent, fit: v.fit, reason: v.reason, new: v.new, engine: v.engine });
+      if (v) store.cacheJudge(userId, ctx.textNorm, ctx.catalogSig, { agent: v.agent, fit: v.fit, reason: v.reason, new: v.new, question: v.question ?? null, engine: v.engine });
       return v;
     })
     .finally(() => judging.delete(ctx.key));
@@ -622,7 +622,7 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     decision_id: decisionId,
     decision, fallback, laya_error: layaError, create,
     judge: verdict ? { agent: verdict.agent, fit: verdict.fit, reason: verdict.reason, source: verdict.source ?? null, engine: verdict.engine ?? null, ms: verdict.ms ?? null, wait_ms: judgeWaitMs, prejudged: joined, proposal: verdict.new } : null,
-    scope: { depth, depth_raw: depthRaw, task_kind: taskKind, task_kind_probability: taskKindP, risk, multi_domain: multiDomain, clarify, remote_action: remoteAction, remote_action_probability: remoteActionP, needs_llm_analysis: needsLlmAnalysis, ask_clarify: askClarify },
+    scope: { depth, depth_raw: depthRaw, task_kind: taskKind, task_kind_probability: taskKindP, risk, multi_domain: multiDomain, clarify, remote_action: remoteAction, remote_action_probability: remoteActionP, needs_llm_analysis: needsLlmAnalysis, ask_clarify: askClarify, clarify_question: askClarify ? verdict?.question ?? null : null },
     agent: { id: agent.id, name: agent.name, version: agent.version, domain: agent.domain, description: agent.description, probability: agentTop.probability, confidence: agentTop.confidence,
       definition: { prompt, tools: agent.tools ? JSON.parse(agent.tools) as string[] : null, model: agent.model, maxTurns: agent.max_turns, skills: agent.skills ? JSON.parse(agent.skills) as string[] : null, mcpServers: agent.mcp_servers ? JSON.parse(agent.mcp_servers) as Record<string, unknown> : null } },
     alternatives: agentTop.ranked.filter(([name]) => name !== agentName).slice(0, 3).map(([name, probability]) => ({ name, probability, description: descriptions[name] })),

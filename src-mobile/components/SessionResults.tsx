@@ -3,14 +3,17 @@ import { useNavigate } from 'react-router-dom';
 import { Camera } from 'lucide-react';
 
 import { aidevApi, type RemoteRun } from '@/modules/aidev-router';
+import { ImageViewer } from '@m/components/ImageViewer';
 import { RemoteRunCard } from '@m/components/RemoteRunCard';
 
 const POLL_MS = 5000;
 
-/** One capture the agent (or the user) took during the chat: the kept image, or what it showed. */
+/** One capture the agent (or the user) took during the chat: the kept image (tap → full screen with pinch zoom), or what it showed. */
 function SnapshotCard({ run }: { run: RemoteRun }) {
   const navigate = useNavigate();
   const [src, setSrc] = useState<string | null>(null);
+  // the capture shown full screen for zooming
+  const [zoomed, setZoomed] = useState(false);
   useEffect(() => {
     if (!run.snapshot) return undefined;
     let url: string | null = null;
@@ -24,7 +27,8 @@ function SnapshotCard({ run }: { run: RemoteRun }) {
         <Camera size={13} /><span className="min-w-0 flex-1 truncate">{run.target_name ?? `대상 #${run.target_id}`} · {what}</span>
         <span className="whitespace-nowrap">{new Date(run.started_at).toLocaleTimeString()}</span>
       </div>
-      {src ? <img src={src} alt={what} className="mt-2 max-h-[50dvh] w-full rounded-lg object-contain" /> : null}
+      {src ? <button type="button" aria-label="크게 보기" className="mt-2 block w-full" onClick={() => setZoomed(true)}><img src={src} alt={what} className="max-h-[50dvh] w-full rounded-lg object-contain" /></button> : null}
+      {src && zoomed ? <ImageViewer src={src} alt={what} onClose={() => setZoomed(false)} /> : null}
       <button type="button" className="m-touch mt-2 text-[13px] text-accent" onClick={() => navigate(`/screen/${run.target_id}`)}>지금 화면 보기</button>
     </div>
   );

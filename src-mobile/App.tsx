@@ -8,6 +8,7 @@ import { SettingsScreen } from '@m/screens/SettingsScreen';
 import { PreviewScreen } from '@m/screens/PreviewScreen';
 import { DebugScreen } from '@m/screens/DebugScreen';
 import { RemoteScreenScreen } from '@m/screens/RemoteScreenScreen';
+import { CatalogScreen } from '@m/screens/CatalogScreen';
 import { Splash } from '@m/components/Splash';
 import { ApprovalSheet } from '@m/components/ApprovalSheet';
 
@@ -37,6 +38,8 @@ export default function App() {
           <Route path="/screen/:targetId" element={<Gate><RemoteScreenScreen /></Gate>} />
           <Route path="/preview" element={<Gate><PreviewScreen /></Gate>} />
           <Route path="/debug" element={<Gate><DebugScreen /></Gate>} />
+          <Route path="/catalog" element={<Gate><CatalogScreen /></Gate>} />
+          <Route path="/catalog/:agentId" element={<Gate><CatalogScreen /></Gate>} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>
       </AuthProvider>

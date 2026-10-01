@@ -1,0 +1,58 @@
+// Clarify (§3.1, C-05): Laya decides whether to ask (clarify > 0.7 and depth ≥ 2); the specialist judge words the
+// question. The question reaches the route only when Laya asks, and a cached verdict keeps it.
+import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
+const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aidev-clarify-'));
+const { openStore } = await import('../dist/store.js');
+const { seedAgents } = await import('../dist/seed-agents.js');
+const { route } = await import('../dist/routing.js');
+const store = openStore(path.join(dir, 'auth.db'));
+store.seedAgents(seedAgents);
+await store.add('alice', 'pw1234pw', 'u' + 'a'.repeat(24), 1);
+const uid = store.account('alice').id;
+const engines = { claude: { allowed: true, authenticated: true }, codex: { allowed: false, authenticated: false } };
+
+/** Laya stand-in: frontend-react at the given depth, with the given clarify probability. */
+const laya = ({ depth, clarify }) => ({
+  status: {},
+  predict: async (_state, questions) => {
+    const answers = {};
+    for (const [id, q] of Object.entries(questions)) {
+      if (id === 'agent') answers[id] = { choice: 'frontend-react', probabilities: { 'frontend-react': 0.97 }, confidence: 0.97 };
+      else if (id === 'depth') answers[id] = { score: depth };
+      else if (id === 'risk') answers[id] = { score: 0 };
+      else if (id === 'task_kind') answers[id] = { choice: 'implement', probabilities: { implement: 0.95 }, confidence: 0.95 };
+      else if (id === 'clarify') answers[id] = { noul: clarify };
+      else if (q.type === 'noul') answers[id] = { noul: 0.05 };
+      else if (q.type === 'choice') { const k = Object.keys(q.criteria)[0]; answers[id] = { choice: k, probabilities: { [k]: 0.9 } }; }
+      else answers[id] = { score: 0 };
+    }
+    return { answers, latency_ms: 1, device: 'mock' };
+  },
+});
+const judge = (question) => async () => ({ agent: 'frontend-react', fit: 0.9, reason: 'react', new: null, question });
+const go = (l, text, j) => route(store, l, uid, engines, { text }, { judge: j });
+
+let r = await go(laya({ depth: 2.5, clarify: 0.9 }), '로그인 버튼 고쳐줘', judge('어느 화면의 로그인 버튼인가요?'));
+assert.equal(r.scope.ask_clarify, true); assert.equal(r.scope.clarify_question, '어느 화면의 로그인 버튼인가요?');
+console.log('PASS Laya asks → the judge\'s question is on the route');
+
+r = await go(laya({ depth: 2.5, clarify: 0.2 }), 'web/Login.tsx의 버튼 색 바꿔줘', judge('어떤 색인가요?'));
+assert.equal(r.scope.ask_clarify, false); assert.equal(r.scope.clarify_question, null);
+r = await go(laya({ depth: 0.5, clarify: 0.9 }), '버튼 색 바꿔줘', judge('어떤 버튼인가요?'));
+assert.equal(r.scope.ask_clarify, false); assert.equal(r.scope.clarify_question, null);
+console.log('PASS no question when Laya does not ask (low clarify, or a shallow command)');
+
+r = await go(laya({ depth: 2.5, clarify: 0.9 }), '대시보드 만들어줘', judge(null));
+assert.equal(r.scope.ask_clarify, true); assert.equal(r.scope.clarify_question, null);
+console.log('PASS Laya asks but the judge has no question → null (the app shows its generic ask)');
+
+r = await go(laya({ depth: 2.5, clarify: 0.9 }), '로그인 버튼 고쳐줘', async () => { throw new Error('judge must not run'); });
+assert.equal(r.judge.source, 'cache'); assert.equal(r.scope.clarify_question, '어느 화면의 로그인 버튼인가요?');
+console.log('PASS a cached verdict keeps its question');
+
+fs.rmSync(dir, { recursive: true, force: true });
+console.log('clarify question: all checks passed');
