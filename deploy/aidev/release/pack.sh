@@ -25,6 +25,8 @@ mkdir -p "$R/control/laya" && cp -a deploy/aidev/laya/app/. "$R/control/laya/"  
 deploy/aidev/runner/scripts/stage-dist.sh "$R/control/runner"
 # routing benchmark needs the seed catalog exactly as the gateway sends it to Laya
 node --input-type=module -e "import('$ROOT/deploy/aidev/auth-gateway/dist/seed-agents.js').then(m=>console.log(JSON.stringify(Object.fromEntries(m.seedAgents.filter(a=>a.domain!=='meta').map(a=>[a.name,{hint:a.hint,description:a.description,domain:a.domain}])),null,1)))" > "$R/control/laya/bench/catalog.json"
+# E-07 calibration asks Laya the gateway's own route questions (wording and criteria from the gateway build)
+node --input-type=module -e "Promise.all([import('$ROOT/deploy/aidev/auth-gateway/dist/routing.js'), import('$ROOT/deploy/aidev/auth-gateway/dist/laya-questions.js')]).then(([r, q]) => console.log(JSON.stringify({ agent_instructions: r.ROUTE_INSTRUCTIONS.agent, task_kind_instructions: r.ROUTE_INSTRUCTIONS.task_kind, remote_action_instructions: r.ROUTE_INSTRUCTIONS.remote_action, task_kind: q.TASK_KIND_CRITERIA, remote_action: q.REMOTE_ACTIONS }, null, 1)))" > "$R/control/laya/bench/questions.json"
 echo "$sha" > "$R/RELEASE"
 h() { sha256sum "$1" | cut -c1-12; }
 cat > "$R/manifest.json" <<EOF

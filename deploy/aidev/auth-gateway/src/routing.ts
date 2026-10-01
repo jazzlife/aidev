@@ -153,7 +153,7 @@ async function evaluateRemote(laya: LayaClient, rows: Array<{ text: string; remo
   for (const row of rows) {
     let layaP: Record<string, number> | null = null;
     try {
-      const r = await laya.predict({ command: row.text }, { remote_action: { type: 'choice', instructions: 'Does this developer command require running something on the user\'s remote machine, and what?', criteria: REMOTE_ACTIONS } });
+      const r = await laya.predict({ command: row.text }, { remote_action: { type: 'choice', instructions: ROUTE_INSTRUCTIONS.remote_action, criteria: REMOTE_ACTIONS } });
       layaP = r.answers.remote_action?.probabilities ?? null;
     } catch { failures++; }
     items.push({ label: row.remote_action, lang: row.lang, laya: layaP, nb: remotePrior(row.text) });
@@ -254,6 +254,12 @@ function cosine(a: string[], b: string[]) {
   return na && nb ? dot / (na * nb) : 0;
 }
 const SIMILAR_JUDGED = 0.8;
+/** The route questions' wording — one source for the gateway and the Laya calibration bench (pack.sh → questions.json). */
+export const ROUTE_INSTRUCTIONS = {
+  agent: 'Which specialist should handle the developer request in `command`?',
+  task_kind: 'What kind of work is this command mainly asking for?',
+  remote_action: 'Does this developer command require running something on the user\'s remote machine, and what?',
+};
 /** D-04: the same domain this many times → offer to create its specialist (§3.7 "동일 분야 3회"). */
 export const CREATE_PROPOSE_AT = 3;
 /** D-04: a judge proposal belongs to a queued domain at this token similarity (names vary: verilog-hdl / fpga-hardware). */
@@ -358,7 +364,7 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   const catalog: Record<string, string> = Object.fromEntries(all.map((a) => [a.name, routingHint(a)]));
   const descriptions: Record<string, string> = Object.fromEntries(all.map((a) => [a.name, a.description]));
   const state = budgetState({ command: text, project: input.projectHint ?? undefined, recent_files: input.recentFiles?.slice(0, 10)?.join(', ') || undefined });
-  const agentInstructions = 'Which specialist should handle the developer request in `command`?';
+  const agentInstructions = ROUTE_INSTRUCTIONS.agent;
   let shortlisted: string[] | null = null;
   let criteria = catalog;
   if (Object.keys(catalog).length > 20) {
@@ -371,12 +377,12 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     agent: { type: 'choice', instructions: agentInstructions, criteria },
     needs_new: { type: 'noul', instructions: 'Does this command need a specialist that is NOT in the list above (none of the listed agents fits the domain well)?' },
     depth: { type: 'score', instructions: 'How deep is this task?', criteria: DEPTH_LEVELS },
-    task_kind: { type: 'choice', instructions: 'What kind of work is this command mainly asking for?', criteria: TASK_KIND_CRITERIA },
+    task_kind: { type: 'choice', instructions: ROUTE_INSTRUCTIONS.task_kind, criteria: TASK_KIND_CRITERIA },
     risk: { type: 'score', instructions: 'How risky is executing this command on a developer workstation?', criteria: RISK_LEVELS },
     multi_domain: { type: 'noul', instructions: 'Does this command span two or more distinct specialist domains (for example frontend and database)?' },
     clarify: { type: 'noul', instructions: 'Is essential information missing (which file, project, target, expected behavior) so that one clarifying question should be asked before starting?' },
   };
-  if (targets.length) questions.remote_action = { type: 'choice', instructions: 'Does this developer command require running something on the user\'s remote machine, and what?', criteria: REMOTE_ACTIONS };
+  if (targets.length) questions.remote_action = { type: 'choice', instructions: ROUTE_INSTRUCTIONS.remote_action, criteria: REMOTE_ACTIONS };
 
   // ---- Laya --------------------------------------------------------------------------
   let fallback = false; let latency: number | null = null; let device: string | null = null; let layaError: string | null = null;
