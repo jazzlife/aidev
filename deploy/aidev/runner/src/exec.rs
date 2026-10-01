@@ -1,6 +1,11 @@
 //! `exec.*` (IMPLEMENTATION-PLAN §3.12, F-03): run commands on this PC and stream their output.
-//!   exec.start {cmd | program+args, cwd, env, pty, cols, rows, timeoutSec, stdin?, streamId?, tag?} → {streamId, pid}
+//!   exec.start {cmd | program+args, shell?, cwd, env, pty, cols, rows, timeoutSec, stdin?, streamId?, tag?} → {streamId, pid}
 //!     `stdin` (text, no pty): written to the command's input, which is then closed (a prompt for an agent CLI)
+//!     `shell` (0.12): which shell runs `cmd` — default (login shell / cmd.exe), "powershell" (Windows PowerShell;
+//!     pwsh elsewhere), "pwsh", "cmd" (Windows), "bash" (Git Bash on Windows), "sh". PowerShell gets the command as
+//!     -EncodedCommand (no quoting layer at all) and exits with the last native exit code or 1 on an error.
+//! Windows: output is UTF-8 (cmd runs `chcp 65001` first, Python gets PYTHONIOENCODING) and a stop ends the whole
+//! process tree (`taskkill /T /F`) — killing cmd.exe alone would leave `npm run dev`'s node running.
 //!   exec.write {streamId, data | b64}   exec.resize {streamId, cols, rows}   exec.signal {streamId, signal}
 //!   exec.list → running + recently finished     exec.tail {streamId, bytes} → last output (base64)
 //!   notification exec.exit {streamId, code, signal, durationMs}
@@ -151,6 +156,11 @@ fn job_env(cfg: &Config, extra: &serde_json::Map<String, Value>, pty: bool) -> R
         env.retain(|(ek, _)| ek != k);
         env.push((k.to_string(), v.to_string()));
     }
+    if cfg!(windows) && !pty {
+        // Python writes pipes in the ANSI code page (cp949 …) unless told otherwise; the gateway reads UTF-8
+        env.push(("PYTHONIOENCODING".into(), "utf-8".into()));
+    }
+    add_to_path(&mut env, &crate::devices::sdk_bin_dirs());
     for (k, v) in extra {
         if !valid_env_key(k) {
             return Err(format!("잘못된 환경 변수 이름: {k}"));
@@ -165,6 +175,30 @@ fn job_env(cfg: &Config, extra: &serde_json::Map<String, Value>, pty: bool) -> R
         env.push((k.clone(), v));
     }
     Ok(env)
+}
+
+/// Appends `dirs` that are not on the job's PATH yet (adb found in the Android SDK folder: `adb logcat` must work
+/// in a command too, not only in device.list).
+fn add_to_path(env: &mut Vec<(String, String)>, dirs: &[std::path::PathBuf]) {
+    if dirs.is_empty() {
+        return;
+    }
+    let key = env.iter().find(|(k, _)| k.eq_ignore_ascii_case("PATH")).map(|(k, _)| k.clone()).unwrap_or_else(|| "PATH".into());
+    let current = env.iter().find(|(k, _)| *k == key).map(|(_, v)| v.clone()).unwrap_or_default();
+    let mut parts: Vec<std::path::PathBuf> = std::env::split_paths(&current).collect();
+    let before = parts.len();
+    for d in dirs {
+        if !parts.iter().any(|p| p == d) {
+            parts.push(d.clone());
+        }
+    }
+    if parts.len() == before {
+        return;
+    }
+    if let Ok(joined) = std::env::join_paths(parts) {
+        env.retain(|(k, _)| *k != key);
+        env.push((key, joined.to_string_lossy().into_owned()));
+    }
 }
 
 fn user_shell() -> String {
@@ -210,11 +244,92 @@ pub fn user_path() -> Option<String> {
 fn shell_argv(cmd: &str, pty: bool) -> Vec<String> {
     if cfg!(windows) {
         let comspec = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into());
-        return vec![comspec, "/d".into(), "/s".into(), "/c".into(), cmd.into()];
+        // a pipe gets the console code page (cp949 …); a pty (ConPTY) is UTF-8 already
+        let line = if pty { cmd.to_string() } else { format!("chcp 65001>nul & {cmd}") };
+        return vec![comspec, "/d".into(), "/s".into(), "/c".into(), line];
     }
     let shell = user_shell();
     let flags = if pty && shell.ends_with("/zsh") { "-ilc" } else { "-lc" };
     vec![shell, flags.into(), cmd.into()]
+}
+
+/// PowerShell script around the job's command: UTF-8 output, no progress bars, and a shell-like exit code — the
+/// last statement decides (0 when it succeeded; a failed native program's own code; 1 for a failed cmdlet).
+/// The command runs at the top level, not in a `& { }` block: a cmdlet error inside a block leaves `$?` true.
+fn powershell_script(cmd: &str) -> String {
+    format!(
+        "$ProgressPreference='SilentlyContinue'\n\
+         try {{ [Console]::OutputEncoding = New-Object System.Text.UTF8Encoding $false }} catch {{}}\n\
+         $OutputEncoding = New-Object System.Text.UTF8Encoding $false\n\
+         $global:LASTEXITCODE = 0\n\
+         {cmd}\n\
+         if (-not $?) {{ if ($global:LASTEXITCODE) {{ exit $global:LASTEXITCODE }} else {{ exit 1 }} }}\n\
+         exit 0\n"
+    )
+}
+
+/// -EncodedCommand: base64 of the UTF-16LE script — nothing on the way can re-quote it.
+pub fn powershell_encoded(cmd: &str) -> String {
+    let utf16: Vec<u8> = powershell_script(cmd).encode_utf16().flat_map(u16::to_le_bytes).collect();
+    base64::engine::general_purpose::STANDARD.encode(utf16)
+}
+
+/// Windows: Git for Windows' bash (not System32\bash.exe, which is WSL).
+fn git_bash() -> Option<std::path::PathBuf> {
+    let pf = std::env::var_os("ProgramFiles").map(std::path::PathBuf::from).unwrap_or_else(|| r"C:\Program Files".into());
+    [pf.join(r"Git\bin\bash.exe")].into_iter().find(|p| p.is_file())
+        .or_else(|| crate::dap_adapters::which("bash").filter(|p| !p.to_string_lossy().to_ascii_lowercase().contains("system32")))
+}
+
+/// argv for `cmd` in the shell the job named (None = the default login shell / cmd.exe).
+fn named_shell_argv(shell: &str, cmd: &str, pty: bool) -> Result<Vec<String>, String> {
+    let ps = |exe: String| {
+        let mut v = vec![exe, "-NoLogo".into(), "-NoProfile".into()];
+        if !pty {
+            v.push("-NonInteractive".into());
+        }
+        v.extend(["-ExecutionPolicy".into(), "Bypass".into(), "-EncodedCommand".into(), powershell_encoded(cmd)]);
+        v
+    };
+    let found = |bin: &str| crate::dap_adapters::which(bin).map(|p| p.display().to_string());
+    match shell {
+        "powershell" if cfg!(windows) => {
+            let root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+            let exe = std::path::Path::new(&root).join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
+            Ok(ps(if exe.is_file() { exe.display().to_string() } else { "powershell.exe".into() }))
+        }
+        "powershell" | "pwsh" => found("pwsh").map(ps).ok_or_else(|| "PowerShell 7(pwsh)이 이 PC에 없습니다".into()),
+        "cmd" if cfg!(windows) => Ok(shell_argv(cmd, pty)),
+        "cmd" => Err("cmd는 Windows에서만 씁니다".into()),
+        "bash" if cfg!(windows) => git_bash().map(|b| vec![b.display().to_string(), "-lc".into(), cmd.into()]).ok_or_else(|| "bash(Git for Windows)가 이 PC에 없습니다".into()),
+        "bash" => Ok(vec![found("bash").unwrap_or_else(|| "/bin/bash".into()), "-lc".into(), cmd.into()]),
+        "sh" if !cfg!(windows) => Ok(vec!["/bin/sh".into(), "-c".into(), cmd.into()]),
+        other => Err(format!("지원하지 않는 shell: {other} (powershell|pwsh|cmd|bash|sh)")),
+    }
+}
+
+/// The `shell` values that work on this PC (reported in capabilities).
+pub fn available_shells() -> Vec<&'static str> {
+    let has = |bin: &str| crate::dap_adapters::which(bin).is_some();
+    let mut v = Vec::new();
+    if cfg!(windows) {
+        v.extend(["cmd", "powershell"]);
+        if has("pwsh") { v.push("pwsh"); }
+        if git_bash().is_some() { v.push("bash"); }
+    } else {
+        v.push("sh");
+        if has("bash") || std::path::Path::new("/bin/bash").exists() { v.push("bash"); }
+        if has("pwsh") { v.extend(["powershell", "pwsh"]); }
+    }
+    v
+}
+
+/// Windows: end the process and everything it started (cmd.exe → npm → node …).
+#[cfg(windows)]
+fn kill_tree(pid: u32) {
+    let _ = std::process::Command::new("taskkill").args(["/T", "/F", "/PID", &pid.to_string()])
+        .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
+        .no_window().status();
 }
 
 impl ExecHub {
@@ -350,7 +465,10 @@ impl ExecHub {
                 }
                 v
             }
-            (None, Some(cmd)) if !cmd.trim().is_empty() => shell_argv(cmd, pty),
+            (None, Some(cmd)) if !cmd.trim().is_empty() => match params.get("shell").and_then(Value::as_str).filter(|s| !s.is_empty() && *s != "default") {
+                Some(shell) => named_shell_argv(shell, cmd, pty).map_err(|e| (-32602, e))?,
+                None => shell_argv(cmd, pty),
+            },
             _ => return Err((-32602, "cmd 또는 program 필요".into())),
         };
         let display = params.get("cmd").and_then(Value::as_str).map(String::from).unwrap_or_else(|| argv.join(" "));
@@ -518,6 +636,8 @@ fn spawn_pty(
                         let _ = std::io::Write::write_all(&mut writer, b"\x03");
                         let _ = std::io::Write::flush(&mut writer);
                     } else {
+                        #[cfg(windows)]
+                        if let Some(pid) = pid { kill_tree(pid); }
                         let _ = killer.kill();
                     }
                 }
@@ -594,6 +714,8 @@ fn spawn_piped(
                         #[cfg(unix)]
                         if let Some(pid) = pid { signal_group(pid, sig); continue; }
                         let _ = sig;
+                        #[cfg(windows)]
+                        if let Some(pid) = pid { kill_tree(pid); }
                         let _ = child.start_kill();
                     }
                     None => { let s = child.wait().await; break s; }
@@ -780,5 +902,156 @@ mod tests {
         let d = std::env::temp_dir().join(format!("aidev-exec-{}", rand::thread_rng().gen::<u64>()));
         std::fs::create_dir_all(&d).unwrap();
         d
+    }
+
+    async fn run(hub: &ExecHub, rx: &mut mpsc::Receiver<Message>, c: &Config, id: u32, p: Value) -> (String, Value) {
+        let mut p = p;
+        p["streamId"] = json!(id);
+        hub.rpc(c, "exec.start", &p).await.unwrap().unwrap();
+        collect(rx, id).await
+    }
+
+    #[test]
+    fn powershell_command_travels_encoded() {
+        let b = base64::engine::general_purpose::STANDARD.decode(powershell_encoded("Write-Output \"a'b\" | % { $_ }")).unwrap();
+        let units: Vec<u16> = b.chunks(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        let script = String::from_utf16(&units).unwrap();
+        assert!(script.contains("\nWrite-Output \"a'b\" | % { $_ }\nif (-not $?)"), "{script}");
+    }
+
+    #[test]
+    fn sdk_dirs_join_the_path_once() {
+        let sep = if cfg!(windows) { ";" } else { ":" };
+        let mut env = vec![("PATH".to_string(), format!("/usr/bin{sep}/bin"))];
+        let sdk = std::path::PathBuf::from("/opt/sdk/platform-tools");
+        add_to_path(&mut env, &[sdk.clone(), std::path::PathBuf::from("/bin")]);
+        add_to_path(&mut env, &[sdk]);
+        assert_eq!(env, vec![("PATH".to_string(), format!("/usr/bin{sep}/bin{sep}/opt/sdk/platform-tools"))]);
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn named_shells() {
+        let dir = tempdir();
+        let hub = ExecHub::default();
+        let (tx, mut rx) = mpsc::channel(256);
+        hub.attach(tx);
+        let c = cfg(&dir);
+        let (out, exit) = run(&hub, &mut rx, &c, 31, json!({ "cmd": "echo $((2+3)); exit 4", "shell": "bash" })).await;
+        assert!(out.contains('5'), "{out}");
+        assert_eq!(exit["code"], 4);
+        let (out, _) = run(&hub, &mut rx, &c, 32, json!({ "cmd": "echo sh-ok", "shell": "sh" })).await;
+        assert!(out.contains("sh-ok"));
+        assert_eq!(hub.rpc(&c, "exec.start", &json!({ "cmd": "dir", "shell": "cmd" })).await.unwrap().unwrap_err().0, -32602);
+        assert_eq!(hub.rpc(&c, "exec.start", &json!({ "cmd": "x", "shell": "fish" })).await.unwrap().unwrap_err().0, -32602);
+        if crate::dap_adapters::which("pwsh").is_none() {
+            eprintln!("SKIP pwsh: not installed");
+            return;
+        }
+        // UTF-8, quotes and pipes untouched; native exit code; a failing cmdlet → 1; success → 0
+        let (out, exit) = run(&hub, &mut rx, &c, 33, json!({ "cmd": "$x = 'a\"b' ; Write-Output \"한글 $x\" | ForEach-Object { $_ }; sh -c 'exit 3'", "shell": "powershell" })).await;
+        assert!(out.contains("한글 a\"b"), "{out}");
+        assert_eq!(exit["code"], 3);
+        let (_, exit) = run(&hub, &mut rx, &c, 34, json!({ "cmd": "Get-Item /no/such/file", "shell": "pwsh" })).await;
+        assert_eq!(exit["code"], 1);
+        let (out, exit) = run(&hub, &mut rx, &c, 35, json!({ "cmd": "sh -c 'exit 2'; Write-Output fine", "shell": "pwsh" })).await;
+        assert!(out.contains("fine"));
+        assert_eq!(exit["code"], 0, "like a shell: the last statement succeeded");
+        let (_, exit) = run(&hub, &mut rx, &c, 36, json!({ "cmd": "throw 'boom'", "shell": "pwsh" })).await;
+        assert_eq!(exit["code"], 1);
+    }
+}
+
+/// Windows-only checks (CI: `cargo test win_` on windows-2022).
+#[cfg(all(test, windows))]
+mod win_tests {
+    use super::*;
+
+    fn setup() -> (std::path::PathBuf, ExecHub, mpsc::Receiver<Message>, Config) {
+        use rand::Rng;
+        let d = std::env::temp_dir().join(format!("aidev-exec-win-{}", rand::thread_rng().gen::<u64>()));
+        std::fs::create_dir_all(&d).unwrap();
+        let hub = ExecHub::default();
+        let (tx, rx) = mpsc::channel(256);
+        hub.attach(tx);
+        let c = Config { allowed_roots: vec![d.clone()], ..Default::default() };
+        (d, hub, rx, c)
+    }
+
+    async fn run(hub: &ExecHub, rx: &mut mpsc::Receiver<Message>, c: &Config, id: u32, mut p: Value) -> (String, Value) {
+        p["streamId"] = json!(id);
+        hub.rpc(c, "exec.start", &p).await.unwrap().unwrap();
+        let mut out = Vec::new();
+        loop {
+            match tokio::time::timeout(Duration::from_secs(60), rx.recv()).await.expect("timeout").expect("closed") {
+                Message::Binary(b) if u32::from_be_bytes([b[0], b[1], b[2], b[3]]) == id => out.extend_from_slice(&b[4..]),
+                Message::Text(t) => {
+                    let v: Value = serde_json::from_str(&t).unwrap();
+                    if v["method"] == "exec.exit" && v["params"]["streamId"] == id {
+                        return (String::from_utf8_lossy(&out).into_owned(), v["params"].clone());
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[tokio::test]
+    async fn win_cmd_output_is_utf8() {
+        let (_d, hub, mut rx, c) = setup();
+        let (out, exit) = run(&hub, &mut rx, &c, 1, json!({ "cmd": "echo 한글 ok& exit /b 6" })).await;
+        assert!(out.contains("한글 ok"), "{out:?}");
+        assert_eq!(exit["code"], 6);
+        let (out, _) = run(&hub, &mut rx, &c, 2, json!({ "cmd": "dir /b", "shell": "cmd" })).await;
+        assert!(!out.contains('\u{fffd}'), "{out:?}");
+    }
+
+    #[tokio::test]
+    async fn win_powershell_exit_codes_and_utf8() {
+        let (_d, hub, mut rx, c) = setup();
+        let (out, exit) = run(&hub, &mut rx, &c, 3, json!({ "cmd": "$x = 'a\"b'; Write-Output \"한글 $x\" | ForEach-Object { $_ }; cmd /c exit 4", "shell": "powershell" })).await;
+        assert!(out.contains("한글 a\"b"), "{out:?}");
+        assert_eq!(exit["code"], 4);
+        let (_, exit) = run(&hub, &mut rx, &c, 4, json!({ "cmd": "Get-Item C:\\no\\such\\file", "shell": "powershell" })).await;
+        assert_eq!(exit["code"], 1);
+        let (out, exit) = run(&hub, &mut rx, &c, 5, json!({ "cmd": "(Get-CimInstance Win32_OperatingSystem).Caption; Get-Service | Select-Object -First 1 | Out-Null; 'cim-ok'", "shell": "powershell" })).await;
+        assert!(out.contains("cim-ok") && out.contains("Windows"), "{out:?}");
+        assert_eq!(exit["code"], 0);
+    }
+
+    #[tokio::test]
+    async fn win_stop_ends_the_process_tree() {
+        let (d, hub, mut rx, c) = setup();
+        // cmd.exe → powershell (grandchild) that records its pid and sleeps
+        let p = json!({ "cmd": "powershell -NoProfile -Command \"$PID | Out-File -Encoding ascii child.pid; Start-Sleep 120\"", "streamId": 7 });
+        hub.rpc(&c, "exec.start", &p).await.unwrap().unwrap();
+        let pidfile = d.join("child.pid");
+        for _ in 0..200 {
+            if std::fs::read_to_string(&pidfile).map(|s| !s.trim().is_empty()).unwrap_or(false) { break; }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        let child: u32 = std::fs::read_to_string(&pidfile).unwrap().trim().parse().unwrap();
+        hub.rpc(&c, "exec.signal", &json!({ "streamId": 7, "signal": "TERM" })).await.unwrap().unwrap();
+        loop {
+            if let Message::Text(t) = tokio::time::timeout(Duration::from_secs(30), rx.recv()).await.unwrap().unwrap() {
+                if t.contains("exec.exit") { break; }
+            }
+        }
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        let list = std::process::Command::new("tasklist").args(["/FI", &format!("PID eq {child}"), "/NH"]).output().unwrap();
+        assert!(!String::from_utf8_lossy(&list.stdout).contains(&child.to_string()), "grandchild {child} still running");
+    }
+
+    #[tokio::test]
+    async fn win_git_bash() {
+        if git_bash().is_none() {
+            eprintln!("SKIP: no Git Bash");
+            return;
+        }
+        let (_d, hub, mut rx, c) = setup();
+        let (out, exit) = run(&hub, &mut rx, &c, 8, json!({ "cmd": "echo $((2+3)); exit 3", "shell": "bash" })).await;
+        assert!(out.contains('5'), "{out:?}");
+        assert_eq!(exit["code"], 3);
+        assert!(available_shells().contains(&"bash"));
     }
 }

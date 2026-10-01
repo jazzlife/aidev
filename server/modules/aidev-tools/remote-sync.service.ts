@@ -168,3 +168,54 @@ export async function remoteSync(input: SyncInput, turn: SyncTurn = {}) {
     hint: `대상에서 실행할 때 cwd는 "${remoteRoot}". 의존성(node_modules 등)은 복사하지 않으므로 필요하면 먼저 설치(npm ci 등)하세요.`,
   };
 }
+
+export type PullInput = { target?: string | number; path: string; dest?: string };
+const MAX_PULL_BYTES = 200 * 1024 * 1024;
+
+/**
+ * remote_pull (2026-10-02 — what scp, WinRM's Copy-Item -FromSession and adb pull give): copy one file from a target's
+ * allowed folders into this runtime — logs, build outputs, crash dumps, an APK, anything binary. The runner's
+ * `fs.pull` sends 4 MB chunks; the copy is checked against its sha256 and only then renamed into place.
+ * Default dest: <session folder>/.aidev/pulled/<file name> (remote_sync never sends .aidev/ back to the target).
+ */
+export async function remotePull(input: PullInput, turn: SyncTurn = {}) {
+  const t0 = Date.now();
+  const remotePath = input.path.trim();
+  if (!remotePath) throw new Error('path가 필요합니다 (대상의 허용 폴더 안 파일)');
+  const target = await resolveTarget(input.target, turn.targetId ?? null);
+  if (!target.online) throw new Error(`대상 ${target.name}이(가) 오프라인입니다 — 러너가 실행 중인지 확인하세요`);
+  const base = turn.cwd || path.join(os.homedir(), 'workspace');
+  const name = remotePath.split(/[\\/]+/).filter(Boolean).pop() ?? 'file';
+  let dest = input.dest?.trim() ? path.resolve(base, input.dest.trim()) : path.join(base, '.aidev', 'pulled', name);
+  if (fs.existsSync(dest) && fs.statSync(dest).isDirectory()) dest = path.join(dest, name);
+  fs.mkdirSync(path.dirname(dest), { recursive: true });
+  const part = `${dest}.aidev-part`;
+  const hash = createHash('sha256');
+  const fd = fs.openSync(part, 'w');
+  let offset = 0;
+  let first: Record<string, unknown> | null = null;
+  try {
+    for (;;) {
+      const r = await rpc(target.id, 'fs.pull', { path: remotePath, offset });
+      first ??= r;
+      if (Number(r.size) > MAX_PULL_BYTES) throw new Error(`파일이 너무 큽니다: ${r.size} bytes (최대 ${MAX_PULL_BYTES / 1024 / 1024} MB) — 대상에서 압축하거나 필요한 부분만 잘라서 가져오세요`);
+      const chunk = Buffer.from(String(r.b64 ?? ''), 'base64');
+      fs.writeSync(fd, chunk);
+      hash.update(chunk);
+      offset += chunk.length;
+      if (r.eof === true || chunk.length === 0) break;
+    }
+  } catch (error) {
+    fs.closeSync(fd);
+    fs.rmSync(part, { force: true });
+    throw error;
+  }
+  fs.closeSync(fd);
+  const sha256 = hash.digest('hex');
+  if (offset !== Number(first?.size) || sha256 !== first?.sha256) {
+    fs.rmSync(part, { force: true });
+    throw new Error(`복사 중 대상 파일이 바뀌었습니다 (${offset}/${first?.size} bytes) — 파일 쓰기가 끝난 뒤 다시 가져오세요`);
+  }
+  fs.renameSync(part, dest);
+  return { target: target.name, from: String(first?.path ?? remotePath), to: dest, bytes: offset, sha256, ms: Date.now() - t0, hint: `여기 경로 ${dest}로 읽거나 분석하세요(Read·grep 등).` };
+}

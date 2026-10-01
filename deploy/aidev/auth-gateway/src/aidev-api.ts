@@ -5,7 +5,7 @@ import { EFFORT_LADDER, ENGINES, type Engine } from './store-aidev.js';
 import type { LayaClient } from './laya.js';
 import type { Push } from './push.js';
 import { createNotifier } from './notify.js';
-import { RpcError, screenOpts, type RunnerHub } from './runner-hub.js';
+import { EXEC_SHELLS, RpcError, screenOpts, type ExecShell, type RunnerHub } from './runner-hub.js';
 import type { RemoteGate } from './remote-gate.js';
 import { applyLessonOutcome, promote } from './lesson-loop.js';
 import { downgradeEnabled, runTierPolicy, setTierPolicy } from './tier-policy.js';
@@ -575,13 +575,17 @@ export function createAidevApi(deps: AidevDeps) {
         // file batches for sync.write reach 8 MB (base64 ~11 MB)
         const b = await readJson(req, 12 * 1024 * 1024);
         const method = str(b.method, 'method', 40);
-        const allowed = ['sync.manifest', 'sync.write', 'sync.delete', 'runner.capabilities', 'fs.resolve', 'dap.list'];
+        // fs.pull (runner ≥ 0.12): a file of the target copied to the runtime (remote_pull); refused under policy deny
+        const allowed = ['sync.manifest', 'sync.write', 'sync.delete', 'runner.capabilities', 'fs.resolve', 'dap.list', 'fs.pull'];
         if (!allowed.includes(method)) throw new HttpError(403, `method not allowed: ${method}`);
         if (method !== 'sync.manifest' && method !== 'fs.resolve' && method !== 'runner.capabilities' && target.policy === 'deny') throw new HttpError(403, '이 대상의 실행 정책이 "실행 금지"입니다');
         if (!deps.runners?.online(id)) throw new HttpError(409, `대상 ${target.name}이(가) 오프라인입니다`);
         const params = b.params && typeof b.params === 'object' ? b.params as Record<string, unknown> : {};
         if (typeof params.root === 'string') params.root = normalizeCwd(params.root, target.allowed_roots ? JSON.parse(target.allowed_roots) as string[] : []);
-        try { return json(res, 200, { result: await deps.runners.call(id, method, params, method === 'sync.manifest' ? 180_000 : 120_000) }), true; }
+        try {
+          if (method === 'fs.pull') deps.runners.requireFeature(id, 'pull', '파일 가져오기(remote_pull)', '0.12.0');
+          return json(res, 200, { result: await deps.runners.call(id, method, params, method === 'sync.manifest' ? 180_000 : 120_000) }), true;
+        }
         catch (error) { throw new HttpError(error instanceof RpcError && error.code === -32010 ? 409 : 400, error instanceof Error ? error.message : 'rpc failed'); }
       }
       // ---- screen (F-07/F-07c): program windows on the target (the PC owner's consent) ----------------------
@@ -781,7 +785,9 @@ export function createAidevApi(deps: AidevDeps) {
           const int = (v: unknown, lo: number, hi: number) => (v === undefined || v === null ? undefined : Math.min(Math.max(Math.round(num(v, 'number')), lo), hi));
           if (b.stdin !== undefined && b.stdin !== null && (typeof b.stdin !== 'string' || Buffer.byteLength(b.stdin) > 256 * 1024)) throw new HttpError(400, 'stdin: text up to 256 KB');
           const stdin = typeof b.stdin === 'string' && b.stdin ? b.stdin : null;
-          const exec = { cmd, cwd: normalizeCwd(optStr(b.cwd, 1000) || null, target.allowed_roots ? JSON.parse(target.allowed_roots) as string[] : []), pty: agentCall || stdin ? false : b.pty === true, cols: int(b.cols, 10, 500), rows: int(b.rows, 4, 300), env, timeoutSec: int(b.timeoutSec, 1, 86400), stdin };
+          if (b.shell !== undefined && b.shell !== null && b.shell !== 'default' && !EXEC_SHELLS.includes(b.shell as ExecShell)) throw new HttpError(400, `shell: ${EXEC_SHELLS.join(' | ')}`);
+          const shell = typeof b.shell === 'string' && b.shell !== 'default' ? b.shell as ExecShell : null;
+          const exec = { cmd, cwd: normalizeCwd(optStr(b.cwd, 1000) || null, target.allowed_roots ? JSON.parse(target.allowed_roots) as string[] : []), pty: agentCall || stdin ? false : b.pty === true, cols: int(b.cols, 10, 500), rows: int(b.rows, 4, 300), env, timeoutSec: int(b.timeoutSec, 1, 86400), stdin, shell };
           try {
             if (agentCall) {
               if (!deps.gate) throw new HttpError(503, 'remote gate unavailable');

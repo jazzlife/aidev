@@ -52,13 +52,22 @@ const DESTRUCTIVE: Array<[RegExp, string]> = [
   [/\brm\s+(-[a-zA-Z]*[rRf][a-zA-Z]*\b|--recursive|--force)/, '파일 삭제 (rm -r/-f)'],
   [/\b(sudo|doas)\b|\bsu\s+-?\s*\w*/, '관리자 권한 (sudo)'],
   [/\bdd\s+if=|\bmkfs\b|\bdiskutil\s+(erase|partition|reformat|unmount)|\bformat\s+[a-z]:/i, '디스크 조작'],
-  [/\b(shutdown|reboot|halt|poweroff)\b/, '시스템 종료·재시작'],
+  [/\b(shutdown|reboot|halt|poweroff)\b|\b(Restart|Stop)-Computer\b/i, '시스템 종료·재시작'],
   [/\b(chmod|chown)\s+-R\b/, '권한 일괄 변경'],
-  [/\b(curl|wget|iwr|Invoke-WebRequest)\b[^|]*\|\s*(sh|bash|zsh|iex|powershell)\b/i, '내려받은 스크립트 바로 실행'],
+  [/\b(curl|wget|iwr|irm|Invoke-WebRequest|Invoke-RestMethod)\b[^|]*\|\s*(sh|bash|zsh|iex|Invoke-Expression|powershell|pwsh)\b|\b(iex|Invoke-Expression)\b[^;&|]*\b(iwr|irm|Invoke-WebRequest|Invoke-RestMethod|DownloadString)\b/i, '내려받은 스크립트 바로 실행'],
   [/\bgit\s+push\b[^;&|]*(\s--force\b|\s-f\b|\s--force-with-lease\b)|\bgit\s+reset\s+--hard\b|\bgit\s+clean\s+-[a-zA-Z]*f/, '되돌리기 어려운 git 작업'],
   [/\b(brew|apt|apt-get|yum|dnf|pacman|choco|winget)\s+(install|uninstall|remove|purge|upgrade)\b|\bnpm\s+(i|install|uninstall)\s+(-g|--global)\b|\bpip3?\s+install\b(?![^;&|]*(-r\b|--user|\.\s|-e\s))/, '시스템 소프트웨어 설치·제거'],
   [/\b(launchctl|systemctl|defaults\s+write|crontab\s+-r|security\s+(delete|add)|csrutil|spctl|nvram|scutil)\b/, '시스템 설정 변경'],
-  [/\b(del|erase)\s+\/[sSqQ]|\brd\s+\/s|\bRemove-Item\b[^;&|]*-Recurse/i, '파일 삭제 (Windows)'],
+  [/\b(del|erase)\s+\/[sSqQ]|\b(rd|rmdir)\s+\/s|\b(Remove-Item|ri|rm|del|rmdir|rd)\b[^;&|]*\s-Recurse\b|\b(Remove-Item|ri)\b[^;&|]*\s-(r|Force)\b/i, '파일 삭제 (Windows)'],
+  // Windows administration (2026-10-02: PowerShell runs through the runner's `shell`, as over WinRM)
+  [/\b(Stop|Restart|Set|New|Remove|Suspend)-Service\b|\bsc(\.exe)?\s+(stop|delete|config|create|failure)\b|\bnet\s+(stop|user|localgroup)\b/i, '서비스·계정 변경 (Windows)'],
+  [/\breg(\.exe)?\s+(add|delete|import|restore|load|unload|copy)\b|\b(Set|New|Remove|Rename|Clear)-Item(Property)?\b[^;&|]*\b(HKLM|HKCU|HKCR|HKU|Registry)::?/i, '레지스트리 변경'],
+  [/\b(Format-Volume|Clear-Disk|Initialize-Disk|Remove-Partition|Resize-Partition|diskpart|cipher\s+\/w)\b/i, '디스크 조작'],
+  [/\b(Set-ExecutionPolicy|Set-MpPreference|Add-MpPreference|Remove-MpPreference|netsh|bcdedit|(Enable|Disable)-WindowsOptionalFeature|(Install|Uninstall)-WindowsFeature|(New|Set|Remove|Enable|Disable)-NetFirewall\w*|icacls|takeown|schtasks|(Register|Unregister|Set)-ScheduledTask|Set-LocalUser|(Add|Remove)-LocalGroupMember|wevtutil\s+cl|Clear-EventLog)\b/i, '시스템 설정 변경 (Windows)'],
+  [/\b(Install|Uninstall|Update)-(Module|Package|Script)\b|\bmsiexec\b|\b(Add|Remove)-AppxPackage\b|\b(scoop)\s+(install|uninstall)\b/i, '시스템 소프트웨어 설치·제거'],
+  [/\b(Stop-Process|taskkill|spps)\b/i, '프로세스 종료'],
+  // phones / TVs over adb, fastboot, sdb: wiping app data, flashing, system changes
+  [/\b(adb|sdb)\b[^;&|]*\s(uninstall|root|remount|disable-verity|shell\s+(pm\s+(clear|uninstall|disable)|wipe|settings\s+put|svc\s+\w+\s+(disable|enable)|setprop))\b|\bfastboot\b[^;&|]*\s(flash|erase|format|oem|flashing|-w|update)\b/i, '기기 데이터·시스템 변경 (adb/fastboot)'],
   [/\bdrop\s+(database|table|schema)\b|\btruncate\s+table\b/i, '데이터베이스 삭제'],
   [/\b(kill|pkill|killall)\b/, '프로세스 종료'],
   [/>\s*\/dev\/(sd|disk|nvme)|:\(\)\s*\{/, '장치 덮어쓰기·폭주 스크립트'],
@@ -85,6 +94,10 @@ const SAFE_SUB: Record<string, RegExp> = {
   java: /^java\s+(-version|--version)\b/, ruby: /^ruby\s+(-v|--version)\b/, deno: /^deno\s+(test|check|lint|fmt\s+--check|--version)\b/, bun: /^bun\s+(test|run|install|--version)\b/,
 };
 const SUB_HEADS = new Set(Object.keys(SAFE_SUB));
+/** Windows read-only commands: cmd built-ins and PowerShell's read verbs (Get-/Test-/Select- …), any case. */
+const WIN_SAFE = /^(dir|type|where|ipconfig|systeminfo|tasklist|hostname|ver|chcp|set|(Get|Test|Select|Measure|Format|Resolve|Compare|Sort|ConvertTo|ConvertFrom)-\w+|Write-(Output|Host)|Out-String|gci|gc|ls|cat|pwd|echo)$/i;
+/** adb/sdb that only reads: device list, logs, properties, package and process listings. */
+const ADB_SAFE = /^(adb|sdb)\s+(-s\s+\S+\s+)?(devices|version|get-state|get-serialno|logcat|bugreport\s+\S+|shell\s+(getprop|dumpsys|pm\s+(list|path)|ps|top\s+-n|ls|cat|df|wm\s+size|uptime|id))\b/;
 
 /** Splits `a && b; c | d` into its simple commands (quotes respected well enough for classification). */
 export function segments(cmd: string) {
@@ -97,8 +110,10 @@ export function assessRules(cmd: string) {
   const safe = !reasons.length && segments(cmd).every((seg) => {
     const words = seg.replace(/^(\w+=\S*\s+)+/, '').split(/\s+/);
     const head = words[0] ?? '';
-    if (head === 'cd') return true;
+    if (head === 'cd' || /^(Set-Location|sl|pushd|popd)$/i.test(head)) return true;
     if (SUB_HEADS.has(head)) return SAFE_SUB[head]!.test(seg.replace(/^(\w+=\S*\s+)+/, ''));
+    if (head === 'adb' || head === 'sdb') return ADB_SAFE.test(seg);
+    if (WIN_SAFE.test(head) && !/^(\w+=\S*\s+)/.test(seg)) return !/(^|\s)(>|>>)/.test(seg);
     if (/^(>|>>)/.test(words[1] ?? '')) return false;
     return SAFE_HEAD.has(head);
   }) && !/(^|[^>])>>?\s*[^&\s]/.test(cmd.replace(/2>&1|>\s*\/dev\/null/g, ''));   // writing files is not "read-only"

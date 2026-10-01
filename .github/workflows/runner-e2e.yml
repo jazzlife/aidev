@@ -1,0 +1,104 @@
+name: Runner e2e (Windows, Linux)
+
+# The real runner on a real Windows and Linux machine, connected to a real runner-hub (deploy/aidev/auth-gateway):
+# shells (cmd / PowerShell / Git Bash / sh / bash) with UTF-8 and exit codes, a stop ending the whole process tree,
+# fs.pull, adb from the SDK folder, capabilities — test/runner-parity-e2e-test.mjs — plus the Windows-only cargo tests
+# (`win_`) and the elevated / at-startup logon task. macOS runs the same e2e on the Mac (ops).
+# Runs on pushes that touch the runner or its gateway side, and by hand (Actions → Run workflow).
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'deploy/aidev/runner/**'
+      - 'deploy/aidev/auth-gateway/src/runner-hub.ts'
+      - 'deploy/aidev/auth-gateway/src/remote-gate.ts'
+      - 'deploy/aidev/auth-gateway/test/runner-parity-e2e-test.mjs'
+      - '.github/workflows/runner-e2e.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: runner-e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUNNER_DIR: deploy/aidev/runner
+  GATEWAY_DIR: deploy/aidev/auth-gateway
+  CARGO_TERM_COLOR: never
+
+jobs:
+  e2e:
+    name: ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [windows-2022, ubuntu-24.04]
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - if: runner.os == 'Linux'
+        run: sudo apt-get update -q && sudo apt-get install -y -q nasm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ env.RUNNER_DIR }}
+          key: e2e
+      - uses: actions/setup-node@v5
+        with:
+          node-version: 22
+
+      - name: cargo build
+        working-directory: ${{ env.RUNNER_DIR }}
+        run: cargo build --release --locked
+      - name: cargo test (Windows-only checks)
+        if: runner.os == 'Windows'
+        working-directory: ${{ env.RUNNER_DIR }}
+        run: cargo test --release --locked win_ -- --nocapture
+      - name: cargo test (all)
+        if: runner.os == 'Linux'
+        working-directory: ${{ env.RUNNER_DIR }}
+        run: cargo test --release --locked
+
+      - name: gateway build
+        working-directory: ${{ env.GATEWAY_DIR }}
+        run: npm ci --no-audit --no-fund && npm run build
+      - name: remote gate rules
+        working-directory: ${{ env.GATEWAY_DIR }}
+        run: node test/remote-gate-test.mjs
+      - name: runner parity e2e
+        working-directory: ${{ env.GATEWAY_DIR }}
+        shell: bash
+        run: |
+          bin="$GITHUB_WORKSPACE/$RUNNER_DIR/target/release/aidev-runner"
+          [ "$RUNNER_OS" = Windows ] && bin="$bin.exe"
+          RUNNER_BIN="$bin" node test/runner-parity-e2e-test.mjs
+
+      # what WinRM gives an administrator: the runner as an elevated task, and one that starts at boot without a sign-in
+      - name: elevated / at-startup task (Windows)
+        if: runner.os == 'Windows'
+        shell: powershell
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $bin = "$env:GITHUB_WORKSPACE\$env:RUNNER_DIR\target\release\aidev-runner.exe"
+          $env:AIDEV_RUNNER_HOME = "$env:RUNNER_TEMP\task-home"
+          New-Item -ItemType Directory -Force $env:AIDEV_RUNNER_HOME | Out-Null
+          Set-Content "$env:AIDEV_RUNNER_HOME\runner.toml" "gateway = `"http://127.0.0.1:9`"`ntoken = `"x`"`ntarget_id = 1`nname = `"ci`"`nallowed_roots = ['$env:RUNNER_TEMP']" -Encoding utf8
+          & $bin install-service --elevated --at-startup
+          if ($LASTEXITCODE) { throw "install-service exit $LASTEXITCODE" }
+          $t = Get-ScheduledTask -TaskName aidev-runner
+          "RunLevel=$($t.Principal.RunLevel) LogonType=$($t.Principal.LogonType) Trigger=$($t.Triggers[0].CimClass.CimClassName)"
+          if ($t.Principal.RunLevel -ne 'Highest') { throw 'not elevated' }
+          if ($t.Principal.LogonType -ne 'S4U') { throw 'not S4U (runs without a sign-in)' }
+          if ($t.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger') { throw 'not a boot trigger' }
+          & $bin install-service
+          $t = Get-ScheduledTask -TaskName aidev-runner
+          "RunLevel=$($t.Principal.RunLevel) Trigger=$($t.Triggers[0].CimClass.CimClassName)"
+          if ($t.Principal.RunLevel -ne 'Limited' -or $t.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskLogonTrigger') { throw 'default task changed' }
+          & $bin uninstall-service
+          Stop-Process -Name aidev-runner -Force -ErrorAction SilentlyContinue
+          'task options ok'

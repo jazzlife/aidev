@@ -92,6 +92,30 @@ pub fn adb() -> Option<PathBuf> {
     roots.into_iter().map(|r| r.join("platform-tools").join(exe)).find(|p| p.is_file())
 }
 
+/// Folders of the device tools found outside PATH (Android SDK platform-tools and emulator, Tizen tools): commands
+/// get them on their PATH, so `adb logcat` or `emulator -list-avds` work wherever device.list finds the tools.
+/// Looked up once per runner process.
+pub fn sdk_bin_dirs() -> Vec<PathBuf> {
+    static DIRS: std::sync::OnceLock<Vec<PathBuf>> = std::sync::OnceLock::new();
+    DIRS.get_or_init(|| {
+        let mut dirs = Vec::new();
+        for (found, on_path) in [(adb(), crate::dap_adapters::which("adb")), (sdb(), crate::dap_adapters::which("sdb"))] {
+            let Some(dir) = found.as_deref().and_then(Path::parent).map(Path::to_path_buf) else { continue };
+            if on_path.is_some() {
+                continue;
+            }
+            // platform-tools/adb → the SDK's emulator/ beside it
+            if dir.ends_with("platform-tools") {
+                if let Some(emu) = dir.parent().map(|sdk| sdk.join("emulator")).filter(|e| e.is_dir()) {
+                    dirs.push(emu);
+                }
+            }
+            dirs.insert(0, dir);
+        }
+        dirs
+    }).clone()
+}
+
 /// sdb (Tizen): $AIDEV_SDB, PATH, then the Tizen Studio / VS Code Tizen extension folders.
 pub fn sdb() -> Option<PathBuf> {
     if let Some(p) = std::env::var_os("AIDEV_SDB").map(PathBuf::from).filter(|p| p.is_file()) {

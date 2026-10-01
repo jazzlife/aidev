@@ -195,7 +195,7 @@ where
     }
 }
 
-/// JSON-RPC requests from the gateway: liveness, capabilities, fs.resolve and exec.* (F-03).
+/// JSON-RPC requests from the gateway: liveness, capabilities, fs.resolve, fs.pull and the modules' methods.
 pub async fn handle(cfg: &Config, hub: &ExecHub, text: &str) -> Option<Value> {
     let msg: Value = match serde_json::from_str(text) {
         Ok(v) => v,
@@ -242,6 +242,10 @@ pub async fn handle(cfg: &Config, hub: &ExecHub, text: &str) -> Option<Value> {
             // lets the gateway check a path against allowed_roots (used by later file/sync methods)
             let path = msg.pointer("/params/path").and_then(Value::as_str).unwrap_or("");
             crate::roots::resolve(&cfg.allowed_roots, path).map(|p| json!({ "path": p.display().to_string() })).map_err(|e| (-32001, e))
+        }
+        "fs.pull" => {
+            let (cfg, params) = (cfg.clone(), params.clone());
+            tokio::task::spawn_blocking(move || crate::sync::pull(&cfg, &params)).await.unwrap_or_else(|e| Err((-32603, e.to_string())))
         }
         _ => Err((-32601, format!("method not found: {method}"))),
     };

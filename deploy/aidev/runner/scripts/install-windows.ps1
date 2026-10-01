@@ -12,6 +12,9 @@
   powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 -Code ABCD-1234
   powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 -File dist\aidev-runner-0.9.0-win-x64.exe
   powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 -Uninstall
+  # from an administrator PowerShell — what WinRM gives: commands run elevated (services, registry, firewall),
+  # and/or the runner starts at boot without a sign-in (build/test machines; no screen capture then)
+  powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 -Code ABCD-1234 -Elevated -AtStartup
 #>
 [CmdletBinding()]
 param(
@@ -21,6 +24,8 @@ param(
   [string] $Gateway,
   [string] $Name,
   [switch] $NoService,
+  [switch] $Elevated,
+  [switch] $AtStartup,
   [switch] $Uninstall
 )
 $ErrorActionPreference = 'Stop'
@@ -127,7 +132,13 @@ if ($NoService) { Write-Host "설치만 했습니다 (-NoService). 실행: & `"$
 
 # ---- keep it running: logon task, started now ----------------------------------------------------------------
 $since = if (Test-Path $Log) { (Get-Item $Log).Length } else { 0 }
-if ((Invoke-Native $Dest @('install-service')) -ne 0) { throw 'install-service 실패' }
+$svcArgs = @('install-service')
+if ($Elevated) { $svcArgs += '--elevated' }
+if ($AtStartup) { $svcArgs += '--at-startup' }
+if (($Elevated -or $AtStartup) -and -not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
+  throw '-Elevated / -AtStartup은 관리자 권한 PowerShell에서 실행하세요'
+}
+if ((Invoke-Native $Dest $svcArgs) -ne 0) { throw 'install-service 실패' }
 
 # ---- verify ---------------------------------------------------------------------------------------------
 $ok = $false; $line = $null

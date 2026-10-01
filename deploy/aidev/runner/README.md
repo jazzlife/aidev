@@ -8,6 +8,7 @@
 aidev-runner pair <코드> [--gateway https://dev.nado.work] [--name 이름]   # 작업대 "원격 대상"에서 받은 10분짜리 코드
 aidev-runner start                        # 포그라운드 실행 (Ctrl+C 종료)
 aidev-runner install-service [--print]    # 로그인 시 자동 실행: systemd 사용자 서비스 / LaunchAgent / 로그온 작업
+aidev-runner install-service --elevated --at-startup   # Windows(관리자 PowerShell): 관리자 권한 실행 / 로그인 없이 부팅 때 실행(S4U, 화면 없음)
 aidev-runner uninstall-service
 aidev-runner status                       # 설정 표시 (토큰은 표시 안 함)
 aidev-runner caps                         # 보고할 capabilities(JSON)
@@ -26,7 +27,12 @@ aidev-runner unpair                       # 토큰 삭제
   `exec.start{cmd | program+args, cwd, env, pty, cols, rows, timeoutSec, streamId, tag}` → `{streamId, pid, cwd}`,
   `exec.write{streamId, data|b64}`, `exec.resize`, `exec.signal{INT|TERM|KILL}`(프로세스 그룹), `exec.list`, `exec.tail{bytes}`,
   알림 `exec.exit{streamId, code, signal, durationMs}` (0.2.0, F-03).
+  0.12.0: `exec.start{shell}` — `powershell`(Windows PowerShell, 그 외 pwsh)·`pwsh`·`cmd`·`bash`(Windows는 Git Bash)·`sh`; PowerShell은
+  `-EncodedCommand`로 전달(인용 계층 없음), 종료 코드는 마지막 문장 기준(실패한 프로그램의 코드, cmdlet 실패 1). `fs.pull{path, offset, length}` →
+  4MB 조각(바이너리 포함)+첫 조각에 전체 sha256 — 허용 폴더 안 파일을 플랫폼으로 복사(scp·adb pull 대응). capabilities에 `shells`·`admin{elevated, sudo}`.
 - 실행(`exec.rs`): `cmd`는 사용자 셸(zsh `-ilc`, 그 외 `-lc`; Windows `cmd /d /s /c`)로 실행해 프로필의 PATH가 적용됨.
+  Windows: 파이프 출력은 UTF-8(`chcp 65001`, `PYTHONIOENCODING=utf-8`), 중지·제한 시간·러너 종료는 프로세스 트리 전체(`taskkill /T /F`).
+  Android SDK·Tizen 폴더에서 찾은 adb/sdb(·emulator)는 명령의 PATH에도 추가.
   cwd는 allowed_roots 안(기본: 첫 허용 폴더). 환경 변수는 PATH·HOME·LANG 등 기본값 + 작업이 보낸 것만(러너 자신의 env는 `inherit_env=true`일 때만).
   pty(portable-pty, Windows ConPTY) 또는 파이프(stdout+stderr 합침). 동시 16개, 스트림별 마지막 64KB 보관.
   연결이 끊겨도 프로세스는 계속 실행(개발 서버 유지) → 재연결 후 게이트웨이가 `exec.list`로 대조·`exec.tail`로 놓친 출력 복구.

@@ -219,6 +219,37 @@ fn delete_files(root: &Path, paths: &[Value]) -> RpcResult {
     Ok(json!({ "deleted": deleted, "skipped": skipped }))
 }
 
+const MAX_PULL_CHUNK: u64 = 4 * 1024 * 1024;
+
+/// `fs.pull {path, offset?, length?}` → {path, size, mtime, offset, b64, eof, sha256 (with offset 0)}: one chunk
+/// (≤ 4 MB) of a file inside allowed_roots, so the platform can copy it off this PC — logs, build outputs, crash
+/// dumps, an APK (SSH's scp / adb pull). Any content, text or binary; the whole-file sha256 checks the copy.
+pub fn pull(cfg: &Config, params: &Value) -> RpcResult {
+    use std::io::Seek;
+    let path = params.get("path").and_then(Value::as_str).unwrap_or("");
+    let real = crate::roots::resolve(&cfg.allowed_roots, path).map_err(|e| (-32001, e))?;
+    let meta = std::fs::metadata(&real).map_err(|e| (-32001, format!("{}: {e}", real.display())))?;
+    if !meta.is_file() {
+        return Err((-32001, format!("파일이 아닙니다: {}", real.display())));
+    }
+    let size = meta.len();
+    let offset = params.get("offset").and_then(Value::as_u64).unwrap_or(0).min(size);
+    let length = params.get("length").and_then(Value::as_u64).unwrap_or(MAX_PULL_CHUNK).clamp(1, MAX_PULL_CHUNK);
+    let mut f = std::fs::File::open(&real).map_err(|e| (-32001, format!("{}: {e}", real.display())))?;
+    f.seek(std::io::SeekFrom::Start(offset)).map_err(|e| (-32001, e.to_string()))?;
+    let mut buf = Vec::with_capacity(length.min(size - offset) as usize);
+    f.take(length).read_to_end(&mut buf).map_err(|e| (-32001, e.to_string()))?;
+    let mtime = meta.modified().ok().and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok()).map(|d| d.as_millis() as u64);
+    let mut out = json!({
+        "path": real.display().to_string(), "size": size, "mtime": mtime, "offset": offset,
+        "b64": base64::engine::general_purpose::STANDARD.encode(&buf), "eof": offset + buf.len() as u64 >= size,
+    });
+    if offset == 0 {
+        out["sha256"] = json!(sha256_file(&real).map_err(|e| (-32001, e.to_string()))?);
+    }
+    Ok(out)
+}
+
 /// JSON-RPC entry point for `sync.*`; None when the method is not a sync method.
 pub async fn rpc(cfg: &Config, method: &str, params: &Value) -> Option<RpcResult> {
     if !method.starts_with("sync.") {
@@ -246,6 +277,26 @@ pub async fn rpc(cfg: &Config, method: &str, params: &Value) -> Option<RpcResult
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pull_reads_any_file_in_roots_in_chunks() {
+        let (c, root) = cfg();
+        let data: Vec<u8> = (0..(MAX_PULL_CHUNK as usize + 1000)).map(|i| (i % 251) as u8).collect();
+        std::fs::write(root.join("big.bin"), &data).unwrap();
+        let path = root.join("big.bin").display().to_string();
+        let first = pull(&c, &json!({ "path": path })).unwrap();
+        assert_eq!(first["size"], data.len() as u64);
+        assert_eq!(first["eof"], false);
+        assert_eq!(first["sha256"], sha256_bytes(&data));
+        let mut got = base64::engine::general_purpose::STANDARD.decode(first["b64"].as_str().unwrap()).unwrap();
+        let rest = pull(&c, &json!({ "path": path, "offset": got.len() })).unwrap();
+        assert_eq!(rest["eof"], true);
+        assert!(rest.get("sha256").is_none());
+        got.extend(base64::engine::general_purpose::STANDARD.decode(rest["b64"].as_str().unwrap()).unwrap());
+        assert_eq!(got, data);
+        assert!(pull(&c, &json!({ "path": "/etc/hosts" })).is_err(), "outside allowed_roots");
+        assert!(pull(&c, &json!({ "path": root.display().to_string() })).unwrap_err().1.contains("파일이 아닙니다"));
+    }
 
     fn cfg() -> (Config, PathBuf) {
         use rand::Rng;

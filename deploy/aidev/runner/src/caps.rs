@@ -1,5 +1,7 @@
 //! What this PC offers, reported to the gateway on every connect: OS, shell, tool versions, attached
 //! Android/Tizen devices and the allowed folders. Probes run in parallel with a short timeout.
+//! 0.12: `shells` (what exec.start's `shell` accepts here) and `admin` — whether commands run elevated
+//! (Windows: an elevated logon task; Unix: root) and whether `sudo -n` works without a password.
 
 use crate::proc_util::NoWindow;
 use serde_json::{json, Value};
@@ -51,7 +53,7 @@ async fn first_line(cmd: &str, args: &[&str]) -> Option<String> {
 }
 
 /// `adb devices` / `sdb devices`: serials in state "device".
-async fn devices(tool: &str) -> Vec<String> {
+async fn devices(tool: &std::path::Path) -> Vec<String> {
     let Ok(Ok(out)) = tokio::time::timeout(PROBE_TIMEOUT, Command::new(tool).arg("devices").kill_on_drop(true).no_window().output()).await else {
         return vec![];
     };
@@ -64,6 +66,35 @@ async fn devices(tool: &str) -> Vec<String> {
             (parts.next()? == "device").then(|| serial.to_string())
         })
         .collect()
+}
+
+#[cfg(windows)]
+#[link(name = "shell32")]
+extern "system" {
+    fn IsUserAnAdmin() -> i32;
+}
+
+/// {elevated, sudo}: elevated = commands run with administrator rights (Windows elevated token / Unix root);
+/// sudo (Unix) = "nopasswd" when `sudo -n true` succeeds, "password" when sudo needs one, null without sudo.
+async fn admin() -> Value {
+    #[cfg(windows)]
+    {
+        json!({ "elevated": unsafe { IsUserAnAdmin() } != 0, "sudo": null })
+    }
+    #[cfg(not(windows))]
+    {
+        let elevated = unsafe { libc::geteuid() } == 0;
+        let sudo = if elevated {
+            Value::Null
+        } else {
+            match tokio::time::timeout(PROBE_TIMEOUT, Command::new("sudo").args(["-n", "true"]).stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).kill_on_drop(true).status()).await {
+                Ok(Ok(s)) if s.success() => json!("nopasswd"),
+                Ok(Ok(_)) => json!("password"),
+                _ => Value::Null,
+            }
+        };
+        json!({ "elevated": elevated, "sudo": sudo })
+    }
 }
 
 pub fn hostname() -> String {
@@ -101,9 +132,20 @@ pub async fn collect(cfg: &crate::config::Config) -> Value {
             tools.insert(name.to_string(), json!(v));
         }
     }
-    let (adb, sdb) = tokio::join!(
-        async { if tools.contains_key("adb") { devices("adb").await } else { vec![] } },
-        async { if tools.contains_key("sdb") { devices("sdb").await } else { vec![] } }
+    // adb/sdb in the SDK folder (not on PATH) count too: commands get that folder on their PATH
+    let (adb_bin, sdb_bin) = tokio::join!(tokio::task::spawn_blocking(crate::devices::adb), tokio::task::spawn_blocking(crate::devices::sdb));
+    let (adb_bin, sdb_bin) = (adb_bin.ok().flatten(), sdb_bin.ok().flatten());
+    for (name, bin) in [("adb", &adb_bin), ("sdb", &sdb_bin)] {
+        if let (false, Some(bin)) = (tools.contains_key(name), bin) {
+            if let Some(v) = first_line(&bin.display().to_string(), &["version"]).await {
+                tools.insert(name.to_string(), json!(v));
+            }
+        }
+    }
+    let (adb, sdb, admin) = tokio::join!(
+        async { match &adb_bin { Some(b) => devices(b).await, None => vec![] } },
+        async { match &sdb_bin { Some(b) => devices(b).await, None => vec![] } },
+        admin()
     );
     json!({
         "runner": env!("CARGO_PKG_VERSION"),
@@ -111,12 +153,14 @@ pub async fn collect(cfg: &crate::config::Config) -> Value {
         "arch": std::env::consts::ARCH,
         "hostname": hostname(),
         "shell": shell(),
+        "shells": crate::exec::available_shells(),
+        "admin": admin,
         "tools": tools,
         "devices": { "adb": adb, "sdb": sdb },
         "allowed_roots": cfg.allowed_roots.iter().map(|r| r.display().to_string()).collect::<Vec<_>>(),
         "screen": cfg.screen_consent,
         "control": cfg.control_consent,
-        "features": ["ping", "exec", "sync", "tunnel", "screen", "video", "input", "windows", "dev", "dap", "stdin", "device"],
+        "features": ["ping", "exec", "sync", "tunnel", "screen", "video", "input", "windows", "dev", "dap", "stdin", "device", "shell", "pull"],
         "limits": { "exec_running": crate::exec::MAX_RUNNING },
     })
 }

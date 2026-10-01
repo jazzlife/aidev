@@ -3,6 +3,9 @@
 //!   macOS  — LaunchAgent        ~/Library/LaunchAgents/work.nado.aidev-runner.plist
 //!   Windows — logon task        schtasks "aidev-runner" (runs `aidev-runner start` at sign-in)
 //! Runs as the current user, never as root/SYSTEM: the runner only needs the user's own folders.
+//! Windows options (0.12, what WinRM gives an administrator): `--elevated` runs the task with the user's full
+//! administrator token (no UAC prompt per command), `--at-startup` starts it at boot without a sign-in (S4U: no
+//! stored password, no desktop — for build and test machines). Both need an administrator prompt to register.
 
 use crate::config;
 use std::path::PathBuf;
@@ -41,8 +44,23 @@ pub fn plist_text(exe: &str, log: &str) -> String {
     )
 }
 
-pub fn install(print_only: bool) -> Result<String, String> {
+/// schtasks /Create arguments for the Windows task.
+pub fn schtasks_args(tr: &str, elevated: bool, at_startup: bool, user: &str) -> Vec<String> {
+    let mut a: Vec<String> = ["/Create", "/F", "/TN", "aidev-runner", "/TR", tr].iter().map(|s| s.to_string()).collect();
+    if at_startup {
+        a.extend(["/SC", "ONSTART", "/RU", user, "/NP"].iter().map(|s| s.to_string()));
+    } else {
+        a.extend(["/SC", "ONLOGON"].iter().map(|s| s.to_string()));
+    }
+    a.extend(["/RL", if elevated { "HIGHEST" } else { "LIMITED" }].iter().map(|s| s.to_string()));
+    a
+}
+
+pub fn install(print_only: bool, elevated: bool, at_startup: bool) -> Result<String, String> {
     config::load()?; // must be paired first
+    if (elevated || at_startup) && std::env::consts::OS != "windows" {
+        return Err("--elevated/--at-startup은 Windows 전용입니다 — Linux·macOS에서 관리자 명령은 sudo(NOPASSWD 설정 시 agent도 사용), Linux 부팅 시 실행은 loginctl enable-linger".into());
+    }
     let exe = exe()?;
     let exe_s = exe.display().to_string();
     let home = config::home();
@@ -74,10 +92,14 @@ pub fn install(print_only: bool) -> Result<String, String> {
         "windows" => {
             // no console window at sign-in; output to ~/.aidev/runner.log
             let tr = format!("\"{exe_s}\" start --hidden");
-            if print_only { return Ok(format!("schtasks /Create /F /SC ONLOGON /RL LIMITED /TN aidev-runner /TR {tr}")); }
-            run("schtasks", &["/Create", "/F", "/SC", "ONLOGON", "/RL", "LIMITED", "/TN", "aidev-runner", "/TR", &tr])?;
+            let user = format!("{}\\{}", std::env::var("USERDOMAIN").unwrap_or_default(), std::env::var("USERNAME").unwrap_or_default());
+            let args = schtasks_args(&tr, elevated, at_startup, user.trim_start_matches('\\'));
+            if print_only { return Ok(format!("schtasks {}", args.join(" "))); }
+            let refs: Vec<&str> = args.iter().map(String::as_str).collect();
+            run("schtasks", &refs).map_err(|e| if elevated || at_startup { format!("{e} — 관리자 권한 PowerShell에서 다시 실행하세요") } else { e })?;
             let _ = run("schtasks", &["/Run", "/TN", "aidev-runner"]);
-            Ok("로그온 작업 등록: aidev-runner (로그인할 때마다 실행)".into())
+            Ok(format!("{} 작업 등록: aidev-runner ({}{})", if at_startup { "부팅" } else { "로그온" },
+                if at_startup { "로그인 없이 부팅 때 실행, 화면 없음" } else { "로그인할 때마다 실행" }, if elevated { ", 관리자 권한" } else { "" }))
         }
         other => Err(format!("{other}: 서비스 등록을 지원하지 않습니다 — `aidev-runner start`를 직접 실행하세요")),
     }
@@ -109,6 +131,14 @@ pub fn uninstall() -> Result<String, String> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn windows_task_options() {
+        let a = super::schtasks_args("\"C:\\a b\\aidev-runner.exe\" start --hidden", false, false, "PC\\me").join(" ");
+        assert!(a.contains("/SC ONLOGON") && a.contains("/RL LIMITED") && !a.contains("/RU"));
+        let a = super::schtasks_args("x", true, true, "PC\\me").join(" ");
+        assert!(a.contains("/SC ONSTART /RU PC\\me /NP") && a.contains("/RL HIGHEST"));
+    }
+
     #[test]
     fn service_files_quote_the_path() {
         assert!(super::unit_text("/opt/a b/aidev-runner").contains("ExecStart=\"/opt/a b/aidev-runner\" start"));

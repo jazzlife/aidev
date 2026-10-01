@@ -72,7 +72,11 @@ export type TargetEvent =
   | { type: 'online' } | { type: 'offline' };
 type Stream = StreamInfo & { userId: number; ring: Buffer[]; ringBytes: number; log: fs.WriteStream | null; logPath: string | null; logBytes: number; finishedAt: number | null };
 export type ExecParams = { cmd: string; cwd?: string | null; pty?: boolean; cols?: number; rows?: number; env?: Record<string, string>; timeoutSec?: number;
-  /** text written to the command's input, then closed (runner ≥ 0.9, feature "stdin"; no pty) */ stdin?: string | null };
+  /** text written to the command's input, then closed (runner ≥ 0.9, feature "stdin"; no pty) */ stdin?: string | null;
+  /** the shell that runs `cmd` (runner ≥ 0.12, feature "shell"): powershell | pwsh | cmd | bash | sh; default = the login shell / cmd.exe */
+  shell?: ExecShell | null };
+export const EXEC_SHELLS = ['powershell', 'pwsh', 'cmd', 'bash', 'sh'] as const;
+export type ExecShell = typeof EXEC_SHELLS[number];
 
 export const streamFrame = (streamId: number, chunk: Buffer) => { const head = Buffer.alloc(4); head.writeUInt32BE(streamId >>> 0, 0); return Buffer.concat([head, chunk]); };
 
@@ -438,12 +442,13 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
       if (!hub.online(targetId)) throw new RpcError(-32010, 'target is offline');
       const cmd = p.cmd.trim();
       if (p.stdin) hub.requireFeature(targetId, 'stdin', '명령 입력(stdin) 전달', '0.9.0');
+      if (p.shell) hub.requireFeature(targetId, 'shell', `셸 선택(${p.shell})`, '0.12.0');
       const remoteRunId = store.addRemoteRun({ runId: meta.runId ?? null, targetId, userId, kind: 'exec', cmd, cwd: p.cwd ?? null, risk: meta.risk ?? null, approvedBy: meta.approvedBy });
       nextStream = nextStream >= 0x3fff_fff0 ? 1 : nextStream + 1;
       const st = newStream({ targetId, userId, streamId: nextStream, remoteRunId, runId: meta.runId ?? null, cmd, cwd: p.cwd ?? null, pty: Boolean(p.pty), by: meta.approvedBy });
       try {
         const r = await hub.call<{ streamId: number; pid: number | null; cwd: string }>(targetId, 'exec.start', {
-          cmd, cwd: p.cwd || undefined, pty: Boolean(p.pty), cols: p.cols, rows: p.rows, env: p.env, timeoutSec: p.timeoutSec, stdin: p.stdin || undefined, streamId: st.streamId, tag: `rr:${remoteRunId}`,
+          cmd, cwd: p.cwd || undefined, pty: Boolean(p.pty), cols: p.cols, rows: p.rows, env: p.env, timeoutSec: p.timeoutSec, stdin: p.stdin || undefined, shell: p.shell || undefined, streamId: st.streamId, tag: `rr:${remoteRunId}`,
         }, 20_000);
         st.pid = r.pid ?? null; st.cwd = r.cwd ?? st.cwd;
       } catch (error) {

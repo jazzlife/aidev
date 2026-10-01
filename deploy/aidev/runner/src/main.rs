@@ -71,6 +71,12 @@ enum Cmd {
         /// 등록하지 않고 내용만 출력
         #[arg(long)]
         print: bool,
+        /// Windows: 관리자 권한으로 실행 (관리자 PowerShell에서 등록 — WinRM처럼 서비스·레지스트리·방화벽까지)
+        #[arg(long)]
+        elevated: bool,
+        /// Windows: 로그인하지 않아도 부팅 때 실행 (화면 캡처는 불가 — 빌드·테스트 전용 PC, 관리자 필요)
+        #[arg(long)]
+        at_startup: bool,
     },
     UninstallService,
     /// 이 PC의 토큰을 지움 (작업대에서도 대상을 삭제하세요)
@@ -165,7 +171,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             println!("화면 보기: {} / 원격 제어(마우스·키보드): {}", if cfg.screen_consent { "허용" } else { "꺼짐" }, if cfg.control_consent { "허용" } else { "꺼짐" });
             println!("(실행 중인 러너는 다시 시작해야 반영됩니다)");
         }
-        Cmd::InstallService { print } => println!("{}", service::install(print)?),
+        Cmd::InstallService { print, elevated, at_startup } => println!("{}", service::install(print, elevated, at_startup)?),
         Cmd::UninstallService => println!("{}", service::uninstall()?),
         Cmd::Unpair => {
             let p = config::path();

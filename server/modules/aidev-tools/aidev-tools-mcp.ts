@@ -59,7 +59,7 @@ const turnContext = {
   cwd: process.cwd(),
 };
 // approvals can take minutes and a build or test run longer: remote tools get their own ceiling
-const LONG_TOOLS = new Set(['remote_agent', 'remote_agent_result', 'remote_exec', 'remote_logs', 'remote_sync', 'remote_debug_start', 'remote_debug_step', 'remote_console_start', 'remote_console_send', 'remote_console_read']);
+const LONG_TOOLS = new Set(['remote_agent', 'remote_agent_result', 'remote_exec', 'remote_logs', 'remote_sync', 'remote_pull', 'remote_debug_start', 'remote_debug_step', 'remote_console_start', 'remote_console_send', 'remote_console_read']);
 const LONG_TIMEOUT_MS = 45 * 60_000;
 
 async function callApi(toolName: string, input: Record<string, unknown>) {
@@ -127,8 +127,26 @@ const tools: ToolDefinition[] = [
         timeoutSec: { type: 'number', description: 'Kill the command after this many seconds (runner-side limit).' },
         env: { type: 'object', description: 'Extra environment variables {NAME: value}. The runner passes only these plus a safe baseline (PATH, HOME, LANG…).' },
         outputBytes: { type: 'number', description: 'How much trailing output to return (1000-60000, default 12000).' },
+        shell: { type: 'string', enum: ['powershell', 'pwsh', 'cmd', 'bash', 'sh'], description: 'Shell for cmd (see the target\'s `shells`). Windows: "powershell" for PowerShell/CIM administration and monitoring (Get-CimInstance, Get-WinEvent, Get-Service, Get-Process, Get-Counter …; the command is passed encoded — write it as you would in a .ps1, no extra quoting), "bash" for Git Bash; default is cmd.exe on Windows and the login shell elsewhere. Output is UTF-8; exit code = the last statement\'s.' },
       },
       required: ['cmd'],
+    },
+  },
+  {
+    name: 'remote_pull',
+    description: [
+      'Copy one file from one of the user\'s machines (inside its allowed folders) into this workspace — logs, test reports, build outputs, crash dumps, an APK or binary; then read or analyse it here.',
+      'Use instead of printing big files through remote_exec (its output is cut to the last 60 KB). Up to 200 MB, checked with sha256. For a folder or a phone\'s file, first pack or copy it on the target (tar/Compress-Archive, adb pull) and pull that file.',
+      'Default destination: .aidev/pulled/<file name> in the current project (never sent back by remote_sync).',
+    ].join(' '),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string', description: 'Target name or id (optional when routed or only one is online).' },
+        path: { type: 'string', description: 'File on the target: absolute inside an allowed folder, ~/…, or relative to the first allowed folder.' },
+        dest: { type: 'string', description: 'Where to put it here (relative to the project folder, or absolute; an existing folder keeps the file name).' },
+      },
+      required: ['path'],
     },
   },
   {
@@ -309,7 +327,7 @@ const tools: ToolDefinition[] = [
       'Use it when the work needs what only that machine has and your own remote tools are not enough: its IDE toolchain (Xcode, Visual Studio + .NET Framework, Android Studio), device/simulator/emulator/board debugging, GUI-only debuggers, a VPN or local services — or when a long local investigation (build → run → debug → fix → re-run) is faster done there.',
       'mode "full" (default) lets it run commands and edit files in cwd (always asks the user first); "readonly" only reads and analyses. The task should say what to find/fix, where, and how to verify.',
       'Waits up to waitSec (default 900) and returns its report (result), the steps it took, and sessionId — pass resume: sessionId to continue the same conversation. Still running → remote_agent_result{remoteRunId}.',
-      'Check its claims (e.g. re-run the test with remote_exec). Sync your edits with remote_sync first if it should see them, and pull its edits back by reading files (remote_exec cat / git diff).',
+      'Check its claims (e.g. re-run the test with remote_exec). Sync your edits with remote_sync first if it should see them, and pull its edits back with remote_pull (or remote_exec git diff).',
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -455,6 +473,7 @@ async function callTool(name: string, args: Record<string, unknown>) {
       return jsonResponse(await callApi(name, {}));
     case 'remote_exec':
     case 'remote_sync':
+    case 'remote_pull':
     case 'remote_logs':
     case 'remote_stop':
     case 'remote_preview':

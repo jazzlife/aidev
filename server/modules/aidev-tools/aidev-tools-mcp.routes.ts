@@ -1,7 +1,7 @@
 import express from 'express';
 
 import { aidevToolsService, DEBUG_ADAPTERS } from '@/modules/aidev-tools/aidev-tools.service.js';
-import { remoteSync } from '@/modules/aidev-tools/remote-sync.service.js';
+import { remotePull, remoteSync } from '@/modules/aidev-tools/remote-sync.service.js';
 
 /**
  * Local HTTP endpoint used only by the aidev-tools stdio MCP process
@@ -72,9 +72,18 @@ router.post('/tools/:toolName', async (req, res) => {
           background: input.background === true,
           env,
           outputBytes: typeof input.outputBytes === 'number' ? input.outputBytes : undefined,
+          shell: typeof input.shell === 'string' && input.shell.trim() ? input.shell.trim() : undefined,
         }, readTurn(input));
         break;
       }
+      case 'remote_pull':
+        if (typeof input.path !== 'string' || !input.path.trim()) throw new Error('path is required.');
+        result = await remotePull({
+          target: typeof input.target === 'string' || typeof input.target === 'number' ? input.target : undefined,
+          path: input.path,
+          dest: typeof input.dest === 'string' ? input.dest : undefined,
+        }, readTurn(input));
+        break;
       case 'remote_sync':
         result = await remoteSync({
           target: typeof input.target === 'string' || typeof input.target === 'number' ? input.target : undefined,
