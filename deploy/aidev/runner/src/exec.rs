@@ -4,8 +4,10 @@
 //!     `shell` (0.12): which shell runs `cmd` — default (login shell / cmd.exe), "powershell" (Windows PowerShell;
 //!     pwsh elsewhere), "pwsh", "cmd" (Windows), "bash" (Git Bash on Windows), "sh". PowerShell gets the command as
 //!     -EncodedCommand (no quoting layer at all) and exits with the last native exit code or 1 on an error.
-//! Windows: output is UTF-8 (cmd runs `chcp 65001` first, Python gets PYTHONIOENCODING) and a stop ends the whole
-//! process tree (`taskkill /T /F`) — killing cmd.exe alone would leave `npm run dev`'s node running.
+//! Windows: piped output reaches the gateway as UTF-8 — a job has no console (CREATE_NO_WINDOW), so cmd built-ins and
+//! legacy tools write the ANSI code page (cp949 …); such chunks are converted (`AnsiToUtf8`), UTF-8 passes as is, and
+//! Python gets PYTHONIOENCODING. A stop ends the whole process tree (`taskkill /T /F`) — killing cmd.exe alone would
+//! leave `npm run dev`'s node running.
 //!   exec.write {streamId, data | b64}   exec.resize {streamId, cols, rows}   exec.signal {streamId, signal}
 //!   exec.list → running + recently finished     exec.tail {streamId, bytes} → last output (base64)
 //!   notification exec.exit {streamId, code, signal, durationMs}
@@ -244,9 +246,7 @@ pub fn user_path() -> Option<String> {
 fn shell_argv(cmd: &str, pty: bool) -> Vec<String> {
     if cfg!(windows) {
         let comspec = std::env::var("ComSpec").unwrap_or_else(|_| "cmd.exe".into());
-        // a pipe gets the console code page (cp949 …); a pty (ConPTY) is UTF-8 already
-        let line = if pty { cmd.to_string() } else { format!("chcp 65001>nul & {cmd}") };
-        return vec![comspec, "/d".into(), "/s".into(), "/c".into(), line];
+        return vec![comspec, "/d".into(), "/s".into(), "/c".into(), cmd.into()];
     }
     let shell = user_shell();
     let flags = if pty && shell.ends_with("/zsh") { "-ilc" } else { "-lc" };
@@ -322,6 +322,58 @@ pub fn available_shells() -> Vec<&'static str> {
         if has("pwsh") { v.extend(["powershell", "pwsh"]); }
     }
     v
+}
+
+#[cfg(windows)]
+#[link(name = "kernel32")]
+extern "system" {
+    fn MultiByteToWideChar(code_page: u32, flags: u32, src: *const u8, src_len: i32, dst: *mut u16, dst_len: i32) -> i32;
+}
+
+/// Piped output → UTF-8 on Windows. UTF-8 passes through (an incomplete sequence at a chunk end waits for the next
+/// chunk); anything else is text in the ANSI code page (what a console-less cmd.exe and legacy tools write) and is
+/// converted. A no-op elsewhere.
+#[derive(Default)]
+pub struct AnsiToUtf8 {
+    pending: Vec<u8>,
+}
+
+impl AnsiToUtf8 {
+    pub fn push(&mut self, chunk: &[u8]) -> Vec<u8> {
+        if !cfg!(windows) {
+            return chunk.to_vec();
+        }
+        self.pending.extend_from_slice(chunk);
+        match std::str::from_utf8(&self.pending) {
+            Ok(_) => std::mem::take(&mut self.pending),
+            // a UTF-8 sequence cut by the chunk boundary: send what is complete, keep the rest (≤ 3 bytes)
+            Err(e) if e.error_len().is_none() && self.pending.len() - e.valid_up_to() < 4 => {
+                let rest = self.pending.split_off(e.valid_up_to());
+                std::mem::replace(&mut self.pending, rest)
+            }
+            Err(_) => ansi_to_utf8(&std::mem::take(&mut self.pending)),
+        }
+    }
+
+    /// End of output: whatever is left.
+    pub fn finish(&mut self) -> Vec<u8> {
+        let rest = std::mem::take(&mut self.pending);
+        if rest.is_empty() || std::str::from_utf8(&rest).is_ok() { rest } else { ansi_to_utf8(&rest) }
+    }
+}
+
+fn ansi_to_utf8(bytes: &[u8]) -> Vec<u8> {
+    #[cfg(windows)]
+    unsafe {
+        const CP_ACP: u32 = 0;
+        let n = MultiByteToWideChar(CP_ACP, 0, bytes.as_ptr(), bytes.len() as i32, std::ptr::null_mut(), 0);
+        if n > 0 {
+            let mut wide = vec![0u16; n as usize];
+            MultiByteToWideChar(CP_ACP, 0, bytes.as_ptr(), bytes.len() as i32, wide.as_mut_ptr(), n);
+            return String::from_utf16_lossy(&wide).into_bytes();
+        }
+    }
+    String::from_utf8_lossy(bytes).into_owned().into_bytes()
 }
 
 /// Windows: end the process and everything it started (cmd.exe → npm → node …).
@@ -686,15 +738,21 @@ fn spawn_piped(
         let mut pipe = pipe;
         tokio::spawn(async move {
             let mut buf = vec![0u8; CHUNK];
+            let mut text = AnsiToUtf8::default();
             loop {
                 match pipe.read(&mut buf).await {
                     Ok(0) | Err(_) => break,
                     Ok(n) => {
-                        if tx.send(buf[..n].to_vec()).await.is_err() {
-                            break;
+                        let out = text.push(&buf[..n]);
+                        if !out.is_empty() && tx.send(out).await.is_err() {
+                            return;
                         }
                     }
                 }
+            }
+            let rest = text.finish();
+            if !rest.is_empty() {
+                let _ = tx.send(rest).await;
             }
         });
     }
@@ -996,11 +1054,26 @@ mod win_tests {
         }
     }
 
+    #[test]
+    fn win_utf8_split_across_chunks_is_kept_whole() {
+        let mut t = AnsiToUtf8::default();
+        let s = "한글 ok".as_bytes();
+        let mut out = t.push(&s[..2]);
+        out.extend(t.push(&s[2..]));
+        out.extend(t.finish());
+        assert_eq!(out, s);
+        // not UTF-8 (cp1252 é) → converted
+        assert_eq!(AnsiToUtf8::default().push(b"caf\xe9"), "café".as_bytes());
+    }
+
     #[tokio::test]
     async fn win_cmd_output_is_utf8() {
         let (_d, hub, mut rx, c) = setup();
-        let (out, exit) = run(&hub, &mut rx, &c, 1, json!({ "cmd": "echo 한글 ok& exit /b 6" })).await;
-        assert!(out.contains("한글 ok"), "{out:?}");
+        // cmd.exe without a console writes the ANSI code page: é is 0xE9 in cp1252 (GitHub's image), 한 is
+        // 0xC7D1 in cp949 (a Korean PC) — both must arrive as UTF-8. Characters outside the code page are lost by
+        // cmd itself (→ "?"), which is why PowerShell is the shell for such text.
+        let (out, exit) = run(&hub, &mut rx, &c, 1, json!({ "cmd": "echo café ok& exit /b 6" })).await;
+        assert!(out.contains("café ok"), "{out:?}");
         assert_eq!(exit["code"], 6);
         let (out, _) = run(&hub, &mut rx, &c, 2, json!({ "cmd": "dir /b", "shell": "cmd" })).await;
         assert!(!out.contains('\u{fffd}'), "{out:?}");
@@ -1026,7 +1099,8 @@ mod win_tests {
         let p = json!({ "cmd": "powershell -NoProfile -Command \"$PID | Out-File -Encoding ascii child.pid; Start-Sleep 120\"", "streamId": 7 });
         hub.rpc(&c, "exec.start", &p).await.unwrap().unwrap();
         let pidfile = d.join("child.pid");
-        for _ in 0..200 {
+        // Windows PowerShell's first start on a fresh CI image can take well over 20 s
+        for _ in 0..1200 {
             if std::fs::read_to_string(&pidfile).map(|s| !s.trim().is_empty()).unwrap_or(false) { break; }
             tokio::time::sleep(Duration::from_millis(100)).await;
         }

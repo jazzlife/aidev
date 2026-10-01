@@ -65,12 +65,15 @@ jobs:
         run: cargo test --release --locked
 
       - name: gateway build
+        if: ${{ !cancelled() }}
         working-directory: ${{ env.GATEWAY_DIR }}
         run: npm ci --no-audit --no-fund && npm run build
       - name: remote gate rules
+        if: ${{ !cancelled() }}
         working-directory: ${{ env.GATEWAY_DIR }}
         run: node test/remote-gate-test.mjs
       - name: runner parity e2e
+        if: ${{ !cancelled() }}
         working-directory: ${{ env.GATEWAY_DIR }}
         shell: bash
         run: |
@@ -80,7 +83,7 @@ jobs:
 
       # what WinRM gives an administrator: the runner as an elevated task, and one that starts at boot without a sign-in
       - name: elevated / at-startup task (Windows)
-        if: runner.os == 'Windows'
+        if: ${{ !cancelled() && runner.os == 'Windows' }}
         shell: powershell
         run: |
           $ErrorActionPreference = 'Stop'

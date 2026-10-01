@@ -80,8 +80,10 @@ await check('capabilities: shells, admin, features', async () => {
 });
 
 await check('default shell: UTF-8 output and the exit code', async () => {
-  const r = await run(WIN ? 'echo 한글 ok& exit /b 6' : "printf '한글 ok\\n'; exit 6");
-  assert.ok(r.out.includes('한글 ok'), JSON.stringify(r.out));
+  // cmd.exe writes the ANSI code page (cp1252 on GitHub's image, cp949 on a Korean PC); the runner makes it UTF-8
+  const text = WIN ? 'café ok' : '한글 ok';
+  const r = await run(WIN ? `echo ${text}& exit /b 6` : `printf '${text}\\n'; exit 6`);
+  assert.ok(r.out.includes(text), JSON.stringify(r.out));
   assert.equal(r.code, 6);
 });
 
