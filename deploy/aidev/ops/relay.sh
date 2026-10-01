@@ -30,11 +30,26 @@ SOCK="/tmp/aidev-relay-$(id -u).sock"
 REMOTE_DEPLOY='/home/turtlelab/aidev/deploy'   # 서버 절대경로 ($HOME은 Mac에서 풀리므로 금지)
 SSH_OPTS=(-o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30)
 
+# Credentials come from the macOS keychain: an SSH key registered once (ssh-add --apple-use-keychain) opens the
+# connection without a password, so the relay also reconnects on its own. A password prompt is only offered
+# on a terminal; anywhere else (Claude, the watcher) it fails at once with the steps to register the key.
+key_help() {
+  local h=${HOST#*@} u=${HOST%@*}
+  echo "SSH 키가 키체인에 등록돼 있지 않습니다 — 한 번만 등록하면 비밀번호 없이 연결됩니다:" >&2
+  echo "  ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519            # 이미 있으면 건너뛰기" >&2
+  echo "  ssh-add --apple-use-keychain ~/.ssh/id_ed25519" >&2
+  echo "  ssh-copy-id -i ~/.ssh/id_ed25519.pub $HOST           # 서버 비밀번호 1회" >&2
+  echo "  printf 'Host $h\\n  User $u\\n  IdentityFile ~/.ssh/id_ed25519\\n  UseKeychain yes\\n  AddKeysToAgent yes\\n' >> ~/.ssh/config" >&2
+}
 ensure_master() {
-  if ! ssh -S "$SOCK" -O check "$HOST" >/dev/null 2>&1; then
-    echo "==> $HOST 접속 (비밀번호 1회 입력)"
-    ssh "${SSH_OPTS[@]}" -M -S "$SOCK" -o ControlPersist=8h -fN "$HOST" || { echo "SSH 실패"; exit 1; }
+  ssh -S "$SOCK" -O check "$HOST" >/dev/null 2>&1 && return 0
+  if ssh "${SSH_OPTS[@]}" -o BatchMode=yes -o ConnectTimeout=15 -M -S "$SOCK" -o ControlPersist=8h -fN "$HOST" 2>/dev/null; then
+    echo "==> $HOST 접속 (키체인의 SSH 키)"; return 0
   fi
+  key_help
+  [ -t 0 ] || exit 1
+  echo "==> $HOST 접속 (이번만 비밀번호 입력)"
+  ssh "${SSH_OPTS[@]}" -M -S "$SOCK" -o ControlPersist=8h -fN "$HOST" || { echo "SSH 실패"; exit 1; }
 }
 rsh() { ssh -S "$SOCK" "$HOST" "$@"; }
 logto() { local name="$1"; shift; "$@" 2>&1 | tee "$OPS/inbox/$name.log"; return "${PIPESTATUS[0]}"; }

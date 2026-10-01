@@ -121,7 +121,9 @@ if [ $security -eq 1 ]; then
     t0=$(date +%s%N); jpost "/api/aidev/targets/$STID" '' DELETE >/dev/null
     code=$(timeout 15 docker wait "aidev-sec-$$" 2>/dev/null || echo timeout); ms=$(( ($(date +%s%N) - t0) / 1000000 ))
     check "{\"code\":\"$code\",\"ms\":$ms}" 'j.code==="3" && j.ms<10000' "F-11 deleted target: its runner is cut off and exits 3 (${ms}ms)"
-    $RUN /r/aidev-runner start < /dev/null >/dev/null 2>&1 & SP=$!; sleep 6; if kill -0 $SP 2>/dev/null; then kill $SP; code=running; else wait $SP; code=$?; fi
+    # a named container (killing the docker client would leave the container running), up to 20s to give up
+    docker run -d --name "aidev-sec-$$-again" --network "$NET" -v "$SEC:/r" -e AIDEV_RUNNER_HOME=/r/home node:22-bookworm-slim /r/aidev-runner start < /dev/null >/dev/null
+    code=$(timeout 20 docker wait "aidev-sec-$$-again" 2>/dev/null || echo running); docker rm -f "aidev-sec-$$-again" >/dev/null 2>&1
     check "{\"code\":\"$code\"}" 'j.code==="3"' "F-11 revoked token no longer connects (exit $code)"
   else echo "FAIL F-11 throw-away runner (binary ${BIN:-none}, target ${STID:-none})"; fail=1; fi
   docker rm -f "aidev-sec-$$" >/dev/null 2>&1; [ -n "$STID" ] && jpost "/api/aidev/targets/$STID" '' DELETE >/dev/null 2>&1
