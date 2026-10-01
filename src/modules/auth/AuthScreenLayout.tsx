@@ -2,9 +2,11 @@ import type { ReactNode } from 'react';
 
 type AuthScreenLayoutProps = {
   title: string;
-  description: string;
+  /** optional line under the title */
+  description?: string;
   children: ReactNode;
-  footerText: string;
+  /** optional line under the form */
+  footerText?: string;
   logo?: ReactNode;
 };
 
@@ -36,14 +38,16 @@ export default function AuthScreenLayout({
               )}
             </div>
             <h1 className="font-serif text-3xl font-bold tracking-tight text-foreground">{title}</h1>
-            <p className="mx-auto mt-2 max-w-xs text-sm leading-relaxed text-muted-foreground">{description}</p>
+            {description ? <p className="mx-auto mt-2 max-w-xs text-sm leading-relaxed text-muted-foreground">{description}</p> : null}
           </div>
 
           <div className="mt-8">{children}</div>
 
-          <div className="mt-6 border-t border-border/60 pt-5 text-center">
-            <p className="text-xs leading-relaxed text-muted-foreground">{footerText}</p>
-          </div>
+          {footerText ? (
+            <div className="mt-6 border-t border-border/60 pt-5 text-center">
+              <p className="text-xs leading-relaxed text-muted-foreground">{footerText}</p>
+            </div>
+          ) : null}
 
         </div>
       </div>

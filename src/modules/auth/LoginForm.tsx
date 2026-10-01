@@ -60,8 +60,6 @@ export default function LoginForm() {
   return (
     <AuthScreenLayout
       title={t('login.title')}
-      description={t('login.description')}
-      footerText={t('login.footerText')}
     >
       <form onSubmit={handleSubmit} className="space-y-4">
         <AuthInputField
