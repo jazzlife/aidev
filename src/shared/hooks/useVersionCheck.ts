@@ -23,6 +23,9 @@ const compareVersions = (v1: string, v2: string) => {
 };
 
 
+/** Off in NadoVibe: see the release-check effect. */
+const UPSTREAM_RELEASE_CHECK = false as boolean;
+
 export const useVersionCheck = (owner: string, repo: string) => {
   const [updateAvailable, setUpdateAvailable] = useState(false);
   const [latestVersion, setLatestVersion] = useState<string | null>(null);
@@ -56,6 +59,9 @@ export const useVersionCheck = (owner: string, repo: string) => {
   }, []);
 
   useEffect(() => {
+    // NadoVibe is released through its own pipeline (deploy/aidev/release); the upstream CloudCLI releases are not
+    // updates for it, and the upgrade modal would run CloudCLI's git pull / npm install in the runtime. No check.
+    if (UPSTREAM_RELEASE_CHECK === false) return;
     const checkVersion = async () => {
       try {
         const response = await fetch(`https://api.github.com/repos/${owner}/${repo}/releases/latest`);

@@ -1,4 +1,4 @@
-// Service Worker for CloudCLI PWA
+// Service Worker for the NadoVibe PWA
 // Cache only manifest (needed for PWA install). HTML and JS are never pre-cached
 // so a rebuild + refresh always picks up the latest assets.
 // v3: drops responses v2 cached without checking them (a 520 during a deploy stuck forever)

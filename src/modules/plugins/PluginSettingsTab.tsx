@@ -148,10 +148,6 @@ const UNOFFICIAL_PLUGIN_RECOMMENDATIONS: PluginRecommendation[] = [
   },
 ];
 
-function repoSlug(repoUrl: string) {
-  return repoUrl.replace(/^https?:\/\/(www\.)?github\.com\//, '');
-}
-
 function normalizeRepoUrl(repoUrl: string | null) {
   return repoUrl?.replace(/\.git$/, '').replace(/\/$/, '').toLowerCase() ?? null;
 }
@@ -287,9 +283,7 @@ function PluginCard({
                     className="inline-flex items-center gap-1 text-xs text-muted-foreground/60 transition-colors hover:text-foreground"
                   >
                     <GitBranch className="h-3 w-3" />
-                    <span className="max-w-[200px] truncate">
-                      {plugin.repoUrl.replace(/^https?:\/\/(www\.)?github\.com\//, '')}
-                    </span>
+                    <span className="max-w-[200px] truncate">GitHub</span>
                   </a>
                 )}
               </div>
@@ -370,7 +364,8 @@ function RecommendationSection({
   children,
 }: {
   title: string;
-  description: string;
+  /** omitted for the official section (its line named the upstream team) */
+  description?: string;
   children: ReactNode;
 }) {
   return (
@@ -379,9 +374,11 @@ function RecommendationSection({
         <h4 className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
           {title}
         </h4>
-        <p className="mt-0.5 text-xs text-muted-foreground/70">
-          {description}
-        </p>
+        {description ? (
+          <p className="mt-0.5 text-xs text-muted-foreground/70">
+            {description}
+          </p>
+        ) : null}
       </div>
       <div className="space-y-2">
         {children}
@@ -437,7 +434,7 @@ function PluginRecommendationCard({
                 className="mt-1 inline-flex items-center gap-1 text-xs text-muted-foreground/60 transition-colors hover:text-foreground"
               >
                 <GitBranch className="h-3 w-3" />
-                {repoSlug(recommendation.repoUrl)}
+                GitHub
               </a>
             </div>
           </div>
@@ -636,7 +633,6 @@ export default function PluginSettingsTab() {
           {hasOfficialSection && (
             <RecommendationSection
               title={t('pluginSettings.sections.officialTitle')}
-              description={t('pluginSettings.sections.officialDescription')}
             >
               {officialPlugins.map((plugin, index) => renderPluginCard(plugin, index))}
               {officialRecommendations.map((recommendation) => (

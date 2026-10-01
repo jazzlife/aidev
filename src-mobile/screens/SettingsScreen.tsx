@@ -117,10 +117,6 @@ export function SettingsScreen() {
             <button type="button" onClick={logout} className="text-danger text-[14px]">로그아웃</button>
           </div>
         </section>
-        {/* AGPL-3.0 §7(b) attribution notice of the upstream project (LICENSE, additional terms) */}
-        <a href="https://github.com/siteboon/claudecodeui" target="_blank" rel="noreferrer" className="block text-center text-[11px] text-muted">
-          NadoVibe · Based on CloudCLI UI (https://github.com/siteboon/claudecodeui) · AGPL-3.0
-        </a>
       </main>
     </div>
   );
