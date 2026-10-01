@@ -57,7 +57,7 @@
 | C 두 개의 UI | 0 / 13 / 1 | 모바일·작업대 두 앱, 푸시, Claude 앱 내 로그인, `ui.focus`/`ui.artifact` 구현 | 구현: C-06 `notify.level`·Lighthouse. 결정: C-07a provider 선택기 처리. 검증: C-11 실기기 |
 | F 원격 PC | 5 / 8 / 1 | F-02~F-05·F-11 서버 확인(F-11 재확인 `6b99680f`), 러너 0.11.0, agent 전체 권한(`full`), OS별 빌드·설치 스크립트 | F-12 e2e, Windows·macOS 실기(디버거·스크립트), F-08 다중 PC 대상 선택 |
 | D 생성 | 0 / 5 / 1 | 판정→생성→재전송 로컬 e2e 확인 | 구현 완료(D-04 대기열·제안, D-05 Codex 전용). 검증: D-06 |
-| E 축적·학습 | 1 / 5 / 3 | E-01 서버 확인, 교훈 게이트·escalate/handoff·지식 갱신·tier_policy·engine_weights 구현 | 구현: E-07 Laya kind별 보정, E-08 fine-tune(≥300건). 검증: E-09 |
+| E 축적·학습 | 1 / 6 / 2 | E-01 서버 확인, 교훈 게이트·escalate/handoff·지식 갱신·tier_policy·engine_weights 구현 | E-07 측정·저장 완료(연결은 Laya 전용 결정의 정답 데이터가 쌓인 뒤). 데이터 대기: E-08 fine-tune(정답 ≥300건, 현재 route 정답 71건). 검증: E-09 |
 
 진행 방식(§4): 구현 + 기본 검증 후 다음 단계로 넘어가고, 실사용 검증은 전체 구현 후 최종 테스트에서 한꺼번에 한다. 저장소 `main` 최신: `530df00f`.
 
@@ -468,7 +468,8 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
   - 구현(2026-09-28): 게이트웨이 `tier-policy.ts`가 매일(6시간마다 확인, `AIDEV_TIER_POLICY=off`로 끔) 최근 30일(`AIDEV_TIER_WINDOW_DAYS`) run을 agent 분야×깊이×엔진 칸으로 집계 — 그 칸의 **현재 등급으로 실제 실행된 run만** 셈(사용자 지정 모델·agent 고정 모델 제외), 칸이 바뀌면 그 시점부터 다시 셈. 성공률 <60%·5회↑ → 한 단계 상향, ≥90%·10회↑ → 한 단계 하향(표보다 최대 1단계 아래), 하향한 칸이 <75%·5회↑ → 복귀. 칸은 `tier_policy.level/model/effort`(route가 기존대로 override 적용), 변경은 `tier_policy_log`. 관리자: `GET /tier-policy`(칸·기록), `POST /tier-policy/run`(지금 집계), `PUT /tier-policy`(등급 지정·고정·초기화), `manage-users tier-policy [run]`(verify-b에 출력 추가), 카탈로그 "등급 정책·엔진 가중치(관리자)" 패널. 로컬: 시나리오 6종 + smoke +6(관리자 고정 → 라우팅이 D4 best/xhigh 적용 확인). 서버 확인 대기
 - [~] E-06 `engine_weights` 학습(task_kind×engine 성공률·시간), 관리자 편집 API
   - 구현(2026-09-28): `engine-weights.ts`가 E-05와 같은 일일 패스에서 작업 종류×엔진 가중치 = 최근 30일 성공률을 사전값(시드 또는 관리자 값) 쪽으로 가상 10회 보정(`(성공 + 10·사전값)/(n + 10)`, 0.05~0.95), 두 엔진 성공률 차이 5%p 이내면 20% 이상 빠른 엔진 +0.05. 고정된 가중치는 통계만 갱신. 0.02 이상 바뀌면 `engine_weight_log`. `engine_weights`에 prior/pinned/success_n/fail_n/avg_ms/updated_at 추가. 관리자 API: 기존 `PUT /engines/weights`에 `pinned` + 값이 새 사전값이 됨, `GET /engines/weights`(통계·기록). 패널에 작업 종류별 두 엔진 가중치·성공 수·고정 토글. 로컬: 시나리오 4종(2회 실패 0.417 / 18·20 성공 0.767 / 속도 +0.05 / 고정·사전값). 서버 확인 대기
-- [ ] E-07 Laya: `/export/decisions?kind=` → kind별 온도 보정 스크립트(서버 GPU) → `aidev_models`에 보정 파라미터 원자 교체 → 벤치마크 재측정
+- [~] E-07 Laya: `/export/decisions?kind=` → kind별 온도 보정 스크립트(서버 GPU) → `aidev_models`에 보정 파라미터 원자 교체 → 벤치마크 재측정
+  - 구현·측정(2026-10-01, ba44f741): `bench/calibrate.py`(Laya 컨테이너, 서버 GPU 19초) — 게이트웨이와 같은 route 질문(문구는 `ROUTE_INSTRUCTIONS` 하나, pack.sh가 `questions.json`으로 내보냄)으로 정답 세트(commands 126, remote-actions 93)에 대해 종류별 온도 T(p∝p^(1/T))를 NLL로 맞추고 2분할 교차 검증. 결과: Laya는 과신 — agent T=1.9(교차 검증 ECE 0.281→0.104, NLL 2.07→1.76), task_kind T=1.75(0.212→0.135), remote_action T=1.4(0.161→0.121), 정확도 불변. `--write`로 held-out이 좋아진 종류만 `/models/calibration.json`에 원자 교체(임시 파일+rename) 저장 완료. 결정: 게이트웨이에는 아직 연결하지 않음 — route는 Laya와 어휘 확률을 로그 선형(α·log p)으로 융합해 T는 α 재조정과 수학적으로 같으므로 판정이 바뀌지 않음(벤치로 맞춘 α가 이미 흡수). 보정이 판정에 영향을 주는 곳은 Laya 확률만 쓰는 결정(needs_new·clarify fallback·decide 종류 임계값)인데 실사용 정답 데이터가 없음(decision_log: route 144건 중 정답 71건, 대부분 verify 반복; decide 종류는 정답 없음). 그 데이터가 쌓이면(E-08과 같은 조건) 같은 스크립트로 그 종류의 T를 구해 연결
 - [ ] E-08 Laya fine-tune 파이프라인(공식 노트북 기반, 서버 iGPU, ≥300건부터) → 가중치 원자 교체 → 벤치마크 비교
 - [ ] E-09 서버 검증: 같은 실패를 2회 유도 → 2회째에 교훈이 주입되어 회피되는 것을 로그로 확인; fallback 비율(`decision_log.fallback`)이 5% 미만
 
