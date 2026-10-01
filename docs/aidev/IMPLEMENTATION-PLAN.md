@@ -446,6 +446,17 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 - [~] F-12 e2e(서버 로그·스크린샷): "이 React 앱을 내 Mac에서 실행해서 화면 보여줘" → route(remote_action=run, target=Mac) → sync → `npm run dev` → preview 패널 자동 표시(`ui.focus`) → "테스트 돌려" → exit code → outcome → 모바일에서 같은 세션 열면 결과 카드·스냅샷
   - 서버(2026-10-02, test/react-demo Vite+React): "…react-demo React 앱을 내 Mac(m4pro)에서 실행해서 화면 보여줘" → route remote target m4pro → agent가 동기화·`npm run dev` → 미리보기 m4pro:5173(by agent) 생성(87초); "테스트 돌려" → Mac에서 테스트, 세션 원격 실행 기록(모바일 결과 카드). 확인 중 수정: 통과한 마지막 `node --test` 재실행이 테스트로 인식되지 않아 앞선 실패가 결과로 남음 → `node --test`·`python -m pytest|unittest`·`make test`·`ctest` 인식(ee71fdee), 재확인 test_result pass·outcome success. 남음: 작업대 미리보기 패널 자동 표시(ui.focus)·스냅샷 카드 화면 확인(C-11과 함께)
 
+- [~] F-14 러너를 SSH·WinRM·adb 수준으로(2026-10-02, 사용자 요구 "윈도우는 WinRM, unix 계열은 SSH, 안드로이드는 adb로 개발에 필요한 모든 것을 만족할 것으로 기대 — 러너 개선과 검증까지"). 러너 구조(밖으로만 연결, 사용자 세션 안 실행, 허용 폴더·동의·게이트)는 유지하고 세 도구가 주는 능력과 대조해 빠진 것을 채움(러너 0.12.0):
+  - Windows 중지·제한 시간·러너 종료가 cmd.exe만 끝내 `npm run dev`의 node가 남던 문제 → `taskkill /T /F`로 프로세스 트리 전체.
+  - 셸 선택 `exec.start{shell}`(powershell·pwsh·cmd·bash(Windows는 Git Bash)·sh) — PowerShell은 `-EncodedCommand`(인용 계층 없음), 종료 코드는 마지막 문장 기준(실패한 프로그램 코드, cmdlet 실패 1). agent `remote_exec{shell}`, 대상 요약에 `shells`·`admin`. WinRM처럼 CIM·이벤트 로그·서비스·레지스트리·성능 카운터를 PowerShell로.
+  - Windows 파이프 출력 UTF-8: 콘솔 없는 cmd.exe는 OEM 코드 페이지로 씀(CI: `chcp 65001`은 효과 없음, "café"가 cp437 0x82로 옴) → UTF-8이 아닌 조각은 OEM→UTF-8 변환(한국어 PC cp949 그대로 복원; 코드 페이지 밖 문자는 cmd가 이미 "?" — 그런 텍스트는 PowerShell), Python은 PYTHONIOENCODING.
+  - 파일 가져오기(scp·adb pull 대응): 러너 `fs.pull`(4MB 조각, 바이너리, 전체 sha256) + agent `remote_pull{path, dest}` → `.aidev/pulled/`(최대 200MB, sha256 확인 후 rename). 이전엔 출력 마지막 60KB만 볼 수 있었음.
+  - adb: SDK 폴더에서 찾은 adb(·emulator, sdb)를 명령 PATH에도 추가하고 capabilities에 포함(이전엔 기기 목록만 되고 `adb logcat`은 command not found).
+  - 관리자: capabilities `admin{elevated, sudo}`; Windows `install-service --elevated`(최고 권한)·`--at-startup`(로그인 없이 부팅, S4U), 설치 스크립트 `-Elevated -AtStartup`. 작업 등록을 schtasks에서 Register-ScheduledTask로 — schtasks `/NP`는 비밀번호를 물었고, schtasks 작업은 기본 72시간 제한이라 기존 설치의 러너가 3일째 멈출 수 있던 잠재 버그도 해결(시간 제한 없음, 멈추면 재시작).
+  - 게이트: Windows·PowerShell(Stop-Process·taskkill, 서비스, 레지스트리, 방화벽·netsh, 실행 정책, 디스크, Install-Module·msiexec, `irm|iex`)과 adb·fastboot(uninstall, pm clear, flash) 파괴적 분류, Get-/Test- cmdlet·dir/type·adb devices/logcat/dumpsys는 읽기 전용.
+  - 테스트: 러너 cargo 40(+Windows 전용 5: cmd UTF-8, PowerShell 종료 코드·한글·CIM, 프로세스 트리, Git Bash, 청크 경계), 게이트 60건, runtime `remote-pull.test.ts`, 실제 러너 e2e `auth-gateway/test/runner-parity-e2e-test.mjs`(셸·UTF-8·트리 종료·fs.pull·SDK adb·capabilities), CI `runner-e2e.yml`(windows-2022·ubuntu-24.04 + Windows 작업 옵션 확인). smoke 223, server 497, client 483.
+  - 검증: Mac 실제 러너 e2e 7/7; GitHub Actions Windows 7/7·Linux 7/7, Windows 전용 cargo 5/5, 작업 등록(Highest·S4U·부팅 트리거·PT0S); 운영(0fec65e2, m4pro 러너 0.12.0) agent 경로(runtime MCP → 게이트웨이 → 러너) 9/9 — pwsh 한글·종료 코드, bash, adb, 9MB `remote_pull` sha256 일치, 허용 폴더 밖 거부. 남은 확인: 한국어 Windows 실기(cp949 cmd 출력), 실제 Android 기기, Windows 러너 0.12.0 릴리스(runner-v0.12.0 태그) 배포.
+
 **F 완료 기준**: F-12 e2e, F-11 점검 통과, 러너 3 OS 바이너리 존재(macOS는 Mac 빌드).
 
 ### D. 생성 (목표: 없는 분야를 스스로 만들어 검증하고 쓴다)
