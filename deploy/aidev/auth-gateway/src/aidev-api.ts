@@ -193,11 +193,18 @@ export function createAidevApi(deps: AidevDeps) {
         const b = await readJson(req);
         const input: RouteInput = { text: str(b.text, 'text', 32000), sessionId: optStr(b.sessionId, 200), sessionEngine: ENGINES.includes(b.sessionEngine as Engine) ? b.sessionEngine as Engine : null,
           preferEngine: ENGINES.includes(b.preferEngine as Engine) ? b.preferEngine as Engine : null, targetId: b.targetId === undefined || b.targetId === null ? null : num(b.targetId, 'targetId'),
-          forceAgent: optStr(b.forceAgent, 41) ?? null, projectHint: optStr(b.projectHint, 400), recentFiles: Array.isArray(b.recentFiles) ? (b.recentFiles as unknown[]).map(String).slice(0, 10) : null, model: optStr(b.model, 100), effort: optStr(b.effort, 20),
+          forceAgent: optStr(b.forceAgent, 41) ?? null, createProposal: b.createProposal === undefined || b.createProposal === null ? null : num(b.createProposal, 'createProposal'), projectHint: optStr(b.projectHint, 400), recentFiles: Array.isArray(b.recentFiles) ? (b.recentFiles as unknown[]).map(String).slice(0, 10) : null, model: optStr(b.model, 100), effort: optStr(b.effort, 20),
           effortCap: b.effortCap && typeof b.effortCap === 'object' ? { claude: optStr((b.effortCap as Record<string, unknown>).claude, 20), codex: optStr((b.effortCap as Record<string, unknown>).codex, 20) } as Partial<Record<Engine, string>> : null };
         const engines = await engineAvailability(session);
         const judge = judgeFor(session, engines);
-        return json(res, 200, await route(store, laya, uid, engines, input, { judge })), true;
+        const result = await route(store, laya, uid, engines, input, { judge });
+        // D-04: the same quick domain came up often enough — offer its specialist (Laya notify.level decides how loudly)
+        const queued = result.create?.queue;
+        if (queued?.proposed_now && result.create?.proposal) {
+          void notifier.handle(uid, { code: 'agent.proposal', sessionId: null, sessionName: '전문 agent 제안', provider: null, url: `/m/?proposal=${queued.id}`,
+            detail: `'${result.create.proposal.domain}' 작업을 ${queued.count}번 했습니다 — ${queued.name} agent를 만들까요?` }).catch(() => undefined);
+        }
+        return json(res, 200, result), true;
       }
       // F-08: the PC a chat's remote work is pinned to (router chip); null unpins
       const sessTargetMatch = rest.match(/^\/session-settings\/([A-Za-z0-9._:-]{1,200})\/target$/);
@@ -295,6 +302,15 @@ export function createAidevApi(deps: AidevDeps) {
         const b = await readJson(req);
         return json(res, 200, await notifier.handle(uid, { code: str(b.code, 'code', 60), sessionId: optStr(b.session_id, 200) ?? null, sessionName: optStr(b.session_name, 200) ?? null, provider: optStr(b.provider, 20) ?? null, detail: optStr(b.detail, 300) ?? null })), true;
       }
+      // D-04 create queue: proposals to accept (via /route createProposal) or dismiss
+      if (rest === '/create-queue' && m === 'GET') return json(res, 200, { entries: store.createQueue(uid, ['queued', 'proposed']) }), true;
+      const cqMatch = rest.match(/^\/create-queue\/(\d+)$/);
+      if (cqMatch && m === 'PATCH') {
+        const b = await readJson(req);
+        const status = str(b.status, 'status', 20);
+        if (status !== 'dismissed' && status !== 'queued') throw new HttpError(400, 'status must be dismissed or queued');
+        return json(res, 200, { changed: store.setCreateQueueStatus(uid, Number(cqMatch[1]), status) }), true;
+      }
       if (rest === '/notify/unread' && m === 'GET') return json(res, 200, { sessions: store.unread(uid) }), true;
       if (rest === '/notify/seen' && m === 'POST') {
         const b = await readJson(req);
@@ -342,6 +358,8 @@ export function createAidevApi(deps: AidevDeps) {
           model: optStr(b.model, 100) ?? null, maxTurns: b.maxTurns === undefined ? null : num(b.maxTurns, 'maxTurns'), skills: Array.isArray(b.skills) ? (b.skills as unknown[]).map(String) : null, mcpServers: b.mcpServers && typeof b.mcpServers === 'object' ? b.mcpServers as Record<string, unknown> : null,
           ownerId: b.global === true ? (requireAdmin(session), null) : uid, source: optStr(b.source, 20) ?? 'user' });
         if (b.min_tier !== undefined && b.min_tier !== null) store.setAgentMinTier(id, num(b.min_tier, 'min_tier'));
+        // D-04: the specialist of a queued domain now exists
+        if (b.queue_id !== undefined && b.queue_id !== null) store.setCreateQueueStatus(uid, num(b.queue_id, 'queue_id'), 'created');
         if (Array.isArray(b.examples)) store.addExamples(id, (b.examples as unknown[]).filter((e): e is string => typeof e === 'string').slice(0, 200).map((text) => ({ text, source: 'generated' })));
         if (Array.isArray(b.knowledge)) for (const k of b.knowledge as Array<Record<string, unknown>>) {
           if (typeof k?.title === 'string' && typeof k?.body === 'string') store.addKnowledge({ agentId: id, title: k.title, body: k.body, sourceUrl: optStr(k.source_url, 2000) ?? null, sourceDate: optStr(k.source_date, 40) ?? null, ownerId: uid });

@@ -5,6 +5,7 @@ import { aidevApi, type AgentDetail, type CatalogAgent } from '@/modules/aidev-r
 import { KnowledgePanel, KnowledgeProposalCard } from '@/modules/aidev-router/KnowledgePanel';
 import { TierPolicyPanel } from '@/modules/aidev-router/TierPolicyPanel';
 import { refreshSummary, useKnowledgeRefresh } from '@/modules/aidev-router/hooks/useKnowledgeRefresh';
+import { COMPOSE_EVENT, useCreateProposals } from '@/modules/aidev-router/hooks/useCreateProposals';
 import { routingStore } from '@/modules/aidev-router/store';
 
 /**
@@ -35,6 +36,8 @@ export function AgentCatalog() {
   const [isAdmin, setIsAdmin] = useState(false);
   useEffect(() => { aidevApi.engines().then((response) => setIsAdmin(response.role === 'admin')).catch(() => setIsAdmin(false)); }, []);
   useEffect(() => { loadList(); }, [loadList]);
+  // D-04: domains worked in repeatedly without a specialist — "만들기" sends the creation turn through the open chat
+  const creation = useCreateProposals();
   useEffect(() => { if (selected !== null) loadDetail(selected); }, [selected, loadDetail]);
 
   const save = async () => {
@@ -59,6 +62,21 @@ export function AgentCatalog() {
         </div>
         {error ? <div className="px-3 py-2 text-red-600">{error}</div> : null}
         <div className="flex-1 overflow-auto">
+          {creation.proposals?.length ? (
+            <div className="space-y-1.5 border-b border-border bg-primary/5 px-3 py-2" data-testid="create-proposals">
+              <div className="flex items-center gap-1 text-muted-foreground"><Sparkles size={12} /> 새 전문 agent 제안</div>
+              {creation.proposals.map((entry) => (
+                <div key={entry.id} className="rounded-md border border-border bg-background p-2">
+                  <div className="font-medium">{entry.name} <span className="font-normal text-muted-foreground">· {entry.domain}</span></div>
+                  <div className="mt-0.5 text-muted-foreground">이 분야 작업을 {entry.count}번 했습니다. 최근: {entry.commands[0]}</div>
+                  <div className="mt-1.5 flex gap-1.5">
+                    <button type="button" className="h-6 rounded bg-primary px-2 text-primary-foreground" onClick={() => { window.dispatchEvent(new CustomEvent(COMPOSE_EVENT, { detail: { text: creation.accept(entry) } })); }}>만들기</button>
+                    <button type="button" className="h-6 rounded border border-border px-2 hover:bg-accent" onClick={() => creation.dismiss(entry)}>그만</button>
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : null}
           <div className="space-y-1.5 border-b border-border px-3 py-2" data-testid="knowledge-review">
             <div className="flex items-center gap-1 text-muted-foreground">
               <BookOpen size={12} /> 지식 갱신{knowledge.proposals?.length ? ` · 검토 ${knowledge.proposals.length}` : ''}

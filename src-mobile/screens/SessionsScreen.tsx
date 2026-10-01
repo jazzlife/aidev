@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Archive, ArrowLeft, EyeOff, MoreHorizontal, Plus, RotateCcw, Settings, Trash2 } from 'lucide-react';
+import { Archive, ArrowLeft, EyeOff, MoreHorizontal, Plus, RotateCcw, Settings, Sparkles, Trash2 } from 'lucide-react';
 import { Link, useNavigate } from 'react-router-dom';
 
 import { api } from '@/modules/chat-core';
-import { aidevApi, type UnreadSession } from '@/modules/aidev-router';
+import { aidevApi, useCreateProposals, type UnreadSession } from '@/modules/aidev-router';
 import { BottomSheet } from '@m/components/BottomSheet';
 import { RemoteMenu } from '@m/components/RemoteMenu';
 import { TopBar } from '@m/components/TopBar';
@@ -57,6 +57,8 @@ export function SessionsScreen() {
   const toastTimer = useRef<number | null>(null);
   // C-06: sessions with news (run finished / failed / waiting for approval) since they were last opened
   const [unread, setUnread] = useState<Map<string, UnreadSession>>(new Map());
+  // D-04: domains worked in repeatedly without a specialist; "만들기" opens a new chat that sends the creation turn
+  const creation = useCreateProposals();
 
   const load = useCallback((which: View) => {
     setItems(null); setError(null);
@@ -124,6 +126,17 @@ export function SessionsScreen() {
         {error ? <div className="p-4 text-danger text-sm">{error}</div> : null}
         {items === null && !error ? <div className="p-4 text-muted text-sm m-pulse">불러오는 중…</div> : null}
         {items && items.length === 0 ? <div className="p-6 text-center text-muted text-sm">{hidden ? '숨긴 대화가 없습니다.' : '아직 대화가 없습니다. 아래 + 로 시작하세요.'}</div> : null}
+        {!hidden ? creation.proposals?.map((entry) => (
+          <div key={entry.id} className="mx-3 mt-3 rounded-xl2 border border-accent/40 bg-surface p-3" data-testid="create-proposal">
+            <div className="flex items-center gap-1.5 text-[12px] text-muted"><Sparkles size={13} className="text-accent" /> 새 전문 agent 제안</div>
+            <div className="mt-1 text-[15px] font-medium">{entry.name}</div>
+            <div className="text-[13px] text-muted">'{entry.domain}' 작업을 {entry.count}번 했습니다. 이 분야 전문 agent를 만들까요?</div>
+            <div className="mt-2 grid grid-cols-2 gap-2">
+              <button type="button" className="h-10 rounded-xl bg-accent text-[14px] font-medium text-accent-ink" onClick={() => navigate('/new', { state: { compose: creation.accept(entry) } })}>만들기</button>
+              <button type="button" className="h-10 rounded-xl border border-line text-[14px]" onClick={() => creation.dismiss(entry)}>그만</button>
+            </div>
+          </div>
+        )) : null}
         {items && items.length > 0 && !hidden ? <div className="px-4 pt-2 pb-1 text-[11px] text-muted">길게 누르면 숨기기·삭제</div> : null}
         <ul>
           {items?.map((item) => (

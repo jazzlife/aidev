@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useNavigate, useParams } from 'react-router-dom';
 import { Search } from 'lucide-react';
 
 import { api, useChatRealtimeHandlers, useSessionStore, useWebSocket, type LLMProvider, type NormalizedMessage, type PendingPermissionRequest, type ProjectSession } from '@/modules/chat-core';
-import { AgentCreateCard, aidevApi, shouldAskClarify, useAgentCreation, useAidevRouting, useEscalation, usePrejudge, type AidevSendDecoration, type Engine } from '@/modules/aidev-router';
+import { AgentCreateCard, aidevApi, routingStore, shouldAskClarify, useAgentCreation, useAidevRouting, useEscalation, usePrejudge, type AidevSendDecoration, type Engine } from '@/modules/aidev-router';
 import { Composer } from '@m/components/Composer';
 import { MessageList } from '@m/components/MessageList';
 import { PermissionSheet } from '@m/components/PermissionSheet';
@@ -41,7 +41,11 @@ export function ChatScreen() {
 
   const [meta, setMeta] = useState<SessionMeta | null>(null);
   const [project, setProject] = useState<PickedProject | null>(() => readLastProject());
-  const [pickingProject, setPickingProject] = useState(false);
+  // D-04: "만들기" on a proposal opens this new chat with the creation turn; it goes out once a project is chosen
+  const location = useLocation();
+  const composeText = (location.state as { compose?: string } | null)?.compose ?? null;
+  const composeRef = useRef<string | null>(composeText);
+  const [pickingProject, setPickingProject] = useState(() => Boolean(composeText) && !readLastProject());
   const [busy, setBusy] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [pendingPermissionRequests, setPendingPermissionRequests] = useState<PendingPermissionRequest[]>([]);
@@ -197,6 +201,14 @@ export function ChatScreen() {
   }, [beforeSend, busy, dispatch, meta, project, provider, setClarify]);
 
   useEffect(() => { sendRef.current = (text) => { void send(text); }; }, [send]);
+  useEffect(() => {
+    const text = composeRef.current;
+    if (!text || meta || !isConnected || !project) return;
+    composeRef.current = null;
+    void send(text);
+  }, [isConnected, meta, project, send]);
+  // leaving before it went out disarms the proposal, so it cannot hijack a later send
+  useEffect(() => () => { if (composeRef.current) routingStore.patch({ oneShotCreate: null }); }, []);
   // E-03: one-tap follow-up for a failed run; a handoff opens the new session on the other engine
   // and its brief is sent there once the screen has resolved that session.
   const escalation = useEscalation({

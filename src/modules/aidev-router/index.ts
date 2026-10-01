@@ -3,7 +3,7 @@
  * Non-visual core shared by the workbench and the mobile app; UI components live in each app.
  */
 export { aidevApi } from '@/modules/aidev-router/api';
-export type { RouteResult, RouteScope, RouteTarget, DecideResult, EnginesResult, CatalogAgent, AgentDetail, UnreadSession, Engine, RouteRequest, RemoteRun, RemoteApproval } from '@/modules/aidev-router/api';
+export type { RouteResult, RouteScope, RouteTarget, DecideResult, EnginesResult, CatalogAgent, AgentDetail, UnreadSession, CreateQueueEntry, Engine, RouteRequest, RemoteRun, RemoteApproval } from '@/modules/aidev-router/api';
 export { useRemoteApprovals, focusRemoteRun, REMOTE_RUN_FOCUS_EVENT } from '@/modules/aidev-router/hooks/useRemoteApprovals';
 export { announceRunComplete, changedFilesSince, RUN_COMPLETE_EVENT } from '@/modules/aidev-router/runEvents';
 export { routingStore, useRoutingState } from '@/modules/aidev-router/store';
@@ -14,6 +14,8 @@ export { ClarifyPrompt } from '@/modules/aidev-router/ClarifyPrompt';
 export { usePrejudge } from '@/modules/aidev-router/hooks/usePrejudge';
 export type { AidevSendDecoration, BeforeSendContext } from '@/modules/aidev-router/hooks/useAidevRouting';
 export { useAidevDecide } from '@/modules/aidev-router/hooks/useAidevDecide';
+// D-04: domains offered for background creation (workbench catalog + mobile conversation list).
+export { useCreateProposals, COMPOSE_EVENT } from '@/modules/aidev-router/hooks/useCreateProposals';
 // Workbench-only UI (the mobile app has its own chip in src-mobile).
 export { AidevRouterBar } from '@/modules/aidev-router/AidevRouterBar';
 export { AgentCreateCard } from '@/modules/aidev-router/AgentCreateCard';

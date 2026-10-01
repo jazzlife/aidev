@@ -22,9 +22,12 @@ export type RoutingOverrides = {
 /** Agent creation in progress (§3.7): architect turn → review card → optional self-check turn. */
 export type PendingCreate = {
   stage: 'architect' | 'review' | 'selfcheck' | 'done';
+  /** the command to re-send with the new agent; empty for a queued domain (its commands already ran — D-04) */
   originalText: string;
   sessionId: string | null;
   decisionId: number;
+  /** D-04: the create-queue entry being created (marked created with the agent) */
+  queueId?: number | null;
   draft: AgentDraft | null;
   agentId: number | null;
   agentName: string | null;
@@ -37,6 +40,8 @@ export type RoutingState = {
   pendingCreate: PendingCreate | null;
   /** Agent forced for exactly the next send (creation re-send, self-check); consumed by beforeSend. */
   oneShotAgent: string | null;
+  /** D-04: create-queue entry whose specialist the next send creates; consumed by beforeSend. */
+  oneShotCreate: number | null;
   busy: boolean;
   last: RouteResult | null;
   lastText: string | null;
@@ -71,7 +76,7 @@ function readMode(): RoutingMode {
   }
 }
 
-let state: RoutingState = { mode: readMode(), pendingCreate: null, oneShotAgent: null, busy: false, last: null, lastText: null, error: null, overrides: {}, runId: null, runSessionId: null, runFinishedAt: null, runFeedback: null, oneShotPlan: null, escalation: null, pendingHandoff: null, chatCap: { sessionId: null, cap: null } };
+let state: RoutingState = { mode: readMode(), pendingCreate: null, oneShotAgent: null, oneShotCreate: null, busy: false, last: null, lastText: null, error: null, overrides: {}, runId: null, runSessionId: null, runFinishedAt: null, runFeedback: null, oneShotPlan: null, escalation: null, pendingHandoff: null, chatCap: { sessionId: null, cap: null } };
 const listeners = new Set<() => void>();
 
 function emit() {

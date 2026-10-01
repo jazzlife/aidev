@@ -26,7 +26,7 @@ import {
 } from '@/shared/context/SessionProtectionContext';
 import ChatMessagesPane from '@/modules/chat/transcript/ChatMessagesPane';
 import ChatComposer from '@/modules/chat/composer/ChatComposer';
-import { AgentCreateCard, AidevRouterBar, ClarifyPrompt, announceRunComplete, changedFilesSince, EscalationCard, routingStore, useAgentCreation, useAidevRouting, useEffortCap, useEscalation, useRoutingState } from '@/modules/aidev-router';
+import { AgentCreateCard, AidevRouterBar, ClarifyPrompt, COMPOSE_EVENT, announceRunComplete, changedFilesSince, EscalationCard, routingStore, useAgentCreation, useAidevRouting, useEffortCap, useEscalation, useRoutingState } from '@/modules/aidev-router';
 import CommandResultModal from '@/modules/chat/modals/CommandResultModal';
 
 type ChatInterfaceProps = {
@@ -282,6 +282,17 @@ function ChatInterface({
     resolvePermissionModeForProvider,
   });
   useEffect(() => { chatMessagesRef.current = chatMessages; handleVoiceTranscriptRef.current = handleVoiceTranscript; });
+  // D-04: the catalog's "만들기" on a proposed domain sends the creation turn through this chat (needs a project)
+  useEffect(() => {
+    const onCompose = (event: Event) => {
+      const text = (event as CustomEvent<{ text?: string }>).detail?.text;
+      if (!text) return;
+      if (!selectedProject) { routingStore.patch({ oneShotCreate: null }); return; }
+      handleVoiceTranscriptRef.current?.(text, true);
+    };
+    window.addEventListener(COMPOSE_EVENT, onCompose);
+    return () => window.removeEventListener(COMPOSE_EVENT, onCompose);
+  }, [selectedProject]);
 
   // E-03: one-tap follow-up for a failed run. A handoff opens a new session on the other engine in
   // this project; its brief is sent once that session is selected and the composer's provider has

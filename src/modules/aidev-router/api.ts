@@ -50,7 +50,9 @@ export type RouteResult = {
   decision_id: number;
   decision: 'use' | 'generalist' | 'create' | 'create_background';
   /** Present when no fitting agent exists: what to send to the agent-architect first (§3.7). */
-  create: { architect: ArchitectDefinition; catalog: string; background: boolean; proposal?: SpecialistProposal | null } | null;
+  create: { architect: ArchitectDefinition; catalog: string; background: boolean; proposal?: SpecialistProposal | null;
+    /** D-04: the create-queue entry this command counted toward (background) or is creating (from_queue) */
+    queue?: { id: number; name: string; count: number; proposed_now: boolean } | null; from_queue?: boolean } | null;
   /** Specialist judge verdict (LLM / cache / judge-confirmed similar command); null when unavailable. */
   judge?: { agent: string | null; fit: number; reason: string; source: 'llm' | 'cache' | 'similar' | null; engine: string | null; ms: number | null; wait_ms?: number; prejudged?: boolean; proposal: SpecialistProposal | null } | null;
   fallback: boolean;
@@ -121,7 +123,12 @@ export type CatalogAgent = {
 /** The specialist the router says should exist (seed for the agent-architect). */
 export type SpecialistProposal = { name: string; domain: string; description: string; technologies: string[] };
 
+/** D-04: a domain the judge found no specialist for while the work was quick; `proposed` once it came up 3 times. */
+export type CreateQueueEntry = { id: number; name: string; domain: string; description: string; technologies: string[]; count: number; commands: string[]; status: 'queued' | 'proposed'; updated_at: number };
+
 export type RouteRequest = {
+  /** D-04: create the specialist of this create-queue entry (the turn goes to the agent-architect) */
+  createProposal?: number | null;
   /** this chat's own effort ceiling (a new chat sends it with its first message) */
   effortCap?: Partial<Record<Engine, string>> | null;
   text: string;
@@ -296,6 +303,10 @@ export const aidevApi = {
   pushSubscribe: (subscription: PushSubscriptionJSON) => post('/api/aidev/push/subscribe', { subscription }).then((response) => readJson<{ ok: boolean }>(response)),
   pushUnsubscribe: (endpoint: string) => post('/api/aidev/push/unsubscribe', { endpoint }).then((response) => readJson<{ removed: number }>(response)),
   pushTest: () => post('/api/aidev/push/test', {}).then((response) => readJson<{ subscriptions: number; delivered: number }>(response)),
+  /** D-04: queued and proposed domains for background creation. */
+  createQueue: () => authenticatedFetch('/api/aidev/create-queue').then((response) => readJson<{ entries: CreateQueueEntry[] }>(response)),
+  /** D-04: never offer this domain again. */
+  dismissCreate: (id: number) => post(`/api/aidev/create-queue/${id}`, { status: 'dismissed' }, 'PATCH').then((response) => readJson<{ changed: number }>(response)),
   /** C-06: sessions with news not looked at yet (notify.level ≥ 1), newest first. */
   notifyUnread: () => authenticatedFetch('/api/aidev/notify/unread').then((response) => readJson<{ sessions: UnreadSession[] }>(response)),
   /** C-06: the session was looked at (no id: everything). */

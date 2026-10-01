@@ -56,7 +56,7 @@
 | B 판정·선택·실행 | 1 / 13 / 4 | 구현 완료, 서버 검증 대기. 최종 agent 판정은 LLM judge(서버 22/22, 2~4초), 기준선 B-16 | B-13·B-14·B-15 서버 검증, B-17 배포·롤백 리허설·백업 확인 (B-11은 D-03으로 이동) |
 | C 두 개의 UI | 0 / 13 / 1 | 모바일·작업대 두 앱, 푸시, Claude 앱 내 로그인, `ui.focus`/`ui.artifact` 구현 | 구현: C-06 `notify.level`·Lighthouse. 결정: C-07a provider 선택기 처리. 검증: C-11 실기기 |
 | F 원격 PC | 5 / 8 / 1 | F-02~F-05·F-11 서버 확인(F-11 재확인 `6b99680f`), 러너 0.11.0, agent 전체 권한(`full`), OS별 빌드·설치 스크립트 | F-12 e2e, Windows·macOS 실기(디버거·스크립트), F-08 다중 PC 대상 선택 |
-| D 생성 | 0 / 3 / 3 | 판정→생성→재전송 로컬 e2e 확인 | 구현: D-04 `create_queue`·반복 시 백그라운드 생성 제안, D-05 Codex 전용 생성. 검증: D-06 |
+| D 생성 | 0 / 4 / 2 | 판정→생성→재전송 로컬 e2e 확인 | 구현: D-05 Codex 전용 생성. 검증: D-06 |
 | E 축적·학습 | 1 / 5 / 3 | E-01 서버 확인, 교훈 게이트·escalate/handoff·지식 갱신·tier_policy·engine_weights 구현 | 구현: E-07 Laya kind별 보정, E-08 fine-tune(≥300건). 검증: E-09 |
 
 진행 방식(§4): 구현 + 기본 검증 후 다음 단계로 넘어가고, 실사용 검증은 전체 구현 후 최종 테스트에서 한꺼번에 한다. 저장소 `main` 최신: `530df00f`.
@@ -447,7 +447,8 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 - [~] 확정(hint 필드 포함), 로컬 e2e에서 Claude가 3개 출처 지식과 함께 설계 블록 출력 — D-01 `agent-architect` 프롬프트·출력 스키마 확정(3.7), 시드에 포함
 - [~] 구현(작업대·모바일 공용 useAgentCreation + AgentCreateCard), 로컬 e2e 확인 — D-02 프런트 watcher: `<aidev-agent>` 파싱 → `AgentCreateCard`
 - [~] 승인→생성(knowledge sourced)→원래 명령 재전송(forceAgent)까지 로컬 e2e 확인(runtime 로그 agent=unity-shader-graphics, knowledge 950ch); 자가 검증은 카드의 버튼으로 선택 실행(verified 플래그), 실 Laya 판정은 서버 확인 대기 — D-03 승인 → `POST /agents`(knowledge sourced 포함) → 자가 검증 턴 → Laya `selfcheck.pass` → 활성화 → 원래 명령 자동 재전송
-- [ ] D-04 D0~1 `create_queue` + 동일 분야 3회 반복 시 백그라운드 생성 제안(알림)
+- [~] D-04 D0~1 `create_queue` + 동일 분야 3회 반복 시 백그라운드 생성 제안(알림)
+  - 구현(2026-10-01): 판정이 "전문가 없음 + 새 분야 제안"인데 최종 깊이 D0~1이면 `create_background` — generalist로 바로 실행하고 분야를 `create_queue`에 적립(판정의 이름이 매번 달라 이름·분야·기술 토큰 cosine ≥0.5로 같은 분야 판정, 최근 명령 5개 보관). 3회째(`CREATE_PROPOSE_AT`)에 한 번만 `proposed` + `notify.level`(agent.proposal, 푸시 시 `/m/?proposal=id`); "그만"(dismissed)한 분야는 계속 세지만 다시 제안 안 함. D2+는 기존처럼 생성 후 실행. 수락: 모바일 대화 목록·작업대 카탈로그의 제안 카드 "만들기" → `oneShotCreate` → 다음 전송이 `createProposal`로 agent-architect에 그 분야를 넘김(모바일은 새 대화를 열어 전송, 프로젝트 없으면 선택부터; 작업대는 `aidev:compose`로 열린 채팅에서 전송) → 생성 승인 시 `queue_id`로 완료 처리, 원래 명령은 이미 실행됐으므로 다시 보내지 않음. API `GET /create-queue`, `PATCH /create-queue/:id`. 테스트: 게이트웨이 `create-queue-test.mjs`(적립·이름이 다른 같은 분야·3회째 1번만 제안·D2+ 생성·다른 분야 분리·그만 후 재제안 없음·수락 시 architect), smoke 219 PASS(판정 연동 항목은 D0~1이면 create_background 허용), 클라이언트 `createQueueFlow` 3건·전체 478 PASS
 - [ ] D-05 Codex 전용 계정에서 생성 전 과정이 Codex로 동작
 - [ ] D-06 서버 검증: 카탈로그에 없는 분야(예: "Unity 셰이더") 명령 → 생성 → 검증 → 실행 e2e
 

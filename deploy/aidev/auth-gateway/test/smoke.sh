@@ -36,20 +36,27 @@ r=$(post "$A" /api/aidev/route '{"text":"이 로그 파일 5만 줄을 읽고 �
 r=$(post "$B" /api/aidev/route '{"text":"React 컴포넌트에 다크모드 토글 훅을 추가해줘"}'); check "$r" 'j.plan.engine==="codex" && j.engines.claude.score===null' "codex-only account never gets claude (B-14)"
 r=$(post "$A" /api/aidev/route '{"text":"Unity 셰이더로 물 표면 굴절 효과를 구현해줘","sessionEngine":"claude"}'); check "$r" 'j.decision==="create" && j.plan.engine==="claude" && j.plan.engine_locked' "unknown domain → create; session engine locked"
 # specialist judge: only a true specialist is used; otherwise create (with a proposal) — the ranker's pick does not win by default
-r=$(post "$A" /api/aidev/route '{"text":"Verilog로 UART 송신기 모듈을 작성해줘"}'); check "$r" 'j.decision==="create" && j.create && j.create.proposal && j.create.proposal.name==="fpga-verilog" && j.judge.source==="llm"' "no specialist → create with the judge's proposal (fpga-verilog)"
-r=$(post "$A" /api/aidev/route '{"text":"SwiftUI로 iOS 위젯 만들어줘"}'); check "$r" 'j.decision==="create" && j.agent.name!=="frontend-react"' "near miss (SwiftUI ≠ React) is not used"
-r=$(post "$A" /api/aidev/route '{"text":"Verilog로 UART 송신기 모듈을 작성해줘"}'); check "$r" 'j.judge.source==="cache" && j.decision==="create"' "same command → cached verdict (no second LLM turn)"
+# (D-04: the mock scores these commands D0–1, so they run on the generalist and queue the domain — create_background)
+r=$(post "$A" /api/aidev/route '{"text":"Verilog로 UART 송신기 모듈을 작성해줘"}'); check "$r" '/^create/.test(j.decision) && j.create && j.create.proposal && j.create.proposal.name==="fpga-verilog" && j.judge.source==="llm"' "no specialist → create with the judge's proposal (fpga-verilog)"
+r=$(post "$A" /api/aidev/route '{"text":"SwiftUI로 iOS 위젯 만들어줘"}'); check "$r" '/^create/.test(j.decision) && j.agent.name!=="frontend-react"' "near miss (SwiftUI ≠ React) is not used"
+r=$(post "$A" /api/aidev/route '{"text":"Verilog로 UART 송신기 모듈을 작성해줘"}'); check "$r" 'j.judge.source==="cache" && /^create/.test(j.decision)' "same command → cached verdict (no second LLM turn)"
 # typing-time pre-judge: the send joins the running judge call (one LLM turn), a repeat is served from the cache
 r=$(post "$A" /api/aidev/route/prejudge '{"text":"Blender 애드온 만들어줘 slow-judge-800"}'); check "$r" 'j.status==="started"' "prejudge starts the judge while typing"
 r=$(post "$A" /api/aidev/route/prejudge '{"text":"Blender 애드온 만들어줘 slow-judge-800"}'); check "$r" 'j.status==="running"' "a second pause joins the running judge"
-r=$(post "$A" /api/aidev/route '{"text":"Blender 애드온 만들어줘 slow-judge-800"}'); check "$r" 'j.judge && j.judge.source==="llm" && j.judge.prejudged===true && j.decision==="create" && j.create.proposal.name==="blender-addon"' "send joins the pre-judge (waited $(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).judge?.wait_ms')ms)"
+r=$(post "$A" /api/aidev/route '{"text":"Blender 애드온 만들어줘 slow-judge-800"}'); check "$r" 'j.judge && j.judge.source==="llm" && j.judge.prejudged===true && /^create/.test(j.decision) && j.create.proposal.name==="blender-addon"' "send joins the pre-judge (waited $(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).judge?.wait_ms')ms)"
 r=$(post "$A" /api/aidev/route/prejudge '{"text":"blender 애드온   만들어줘 slow-judge-800"}'); check "$r" 'j.status==="cached"' "prejudge of the same command (normalized) → cached"
 r=$(post "$A" /api/aidev/route/prejudge '{"text":"hi"}'); check "$r" 'j.status==="skipped"' "too short → skipped"
 # a judge slower than the send's wait: the send falls back, the verdict lands in the cache for the next send
 r=$(post "$A" /api/aidev/route '{"text":"Verilog 테스트벤치 작성 slow-judge-2500"}'); check "$r" '!j.judge && j.plan.reason.some(x=>/still running/.test(x))' "judge slower than AIDEV_JUDGE_WAIT_MS → fallback, not blocked"
 sleep 1.3
-r=$(post "$A" /api/aidev/route '{"text":"Verilog 테스트벤치 작성 slow-judge-2500"}'); check "$r" 'j.judge && j.judge.source==="cache" && j.decision==="create"' "late verdict was cached → next send uses it"
+r=$(post "$A" /api/aidev/route '{"text":"Verilog 테스트벤치 작성 slow-judge-2500"}'); check "$r" 'j.judge && j.judge.source==="cache" && /^create/.test(j.decision)' "late verdict was cached → next send uses it"
 r=$(post "$A" /api/aidev/route '{"text":"이 함수 이름을 더 명확하게 바꿔줘"}'); check "$r" 'j.decision==="generalist" && j.agent.name==="generalist"' "trivial request → generalist"
+# D-04 create queue: the quick unknown-domain commands above were queued; dismiss one; accept via createProposal
+r=$(get "$A" /api/aidev/create-queue); check "$r" 'j.entries.length>=1 && j.entries.every((e)=>e.count>=1 && Array.isArray(e.commands))' "create queue lists the queued domains ($(echo "$r" | grep -o '"name":"[^"]*"' | head -3 | tr '\n' ' '))"
+CQ=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).entries[0].id')
+r=$(post "$A" /api/aidev/route "{\"text\":\"[전문 agent 만들기]\",\"createProposal\":$CQ}"); check "$r" 'j.decision==="create" && j.create.from_queue===true && j.create.queue && j.create.proposal' "accepting a queued domain routes to the architect"
+r=$(post "$A" "/api/aidev/create-queue/$CQ" '{"status":"dismissed"}' PATCH); check "$r" 'j.changed===1' "a queued domain can be dismissed"
+r=$(get "$A" /api/aidev/create-queue); check "$r" "!j.entries.some((e)=>e.id===$CQ)" "a dismissed domain leaves the list"
 r=$(post "$A" /api/aidev/route '{"text":"프로덕션 DB 테이블을 drop 하고 마이그레이션을 다시 돌려"}'); check "$r" 'j.scope.risk>=1.5 && j.scope.depth>=2' "risk raises depth"
 r=$(post "$A" /api/aidev/decide/remote.approve '{"state":{"command":"rm -rf ~/projects/app/node_modules && npm ci"}}'); check "$r" 'typeof j.answer==="number" && j.decision_id>0' "decide remote.approve"
 r=$(post "$A" /api/aidev/decide/agent.pick '{"state":{"command":"pick the fix","question":"Which fix is safest?"},"options":{"a":"add null check","b":"rewrite module","c":"delete the feature"}}'); check "$r" 'j.answer && j.kind==="agent.pick"' "decide agent.pick"

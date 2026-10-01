@@ -94,7 +94,7 @@ export const alphaFor = (name: string) => (nb.count(name) >= MIN_EXAMPLES ? LAYA
  */
 type Store = ReturnType<typeof openStore>;
 export type EngineAvailability = Record<Engine, { allowed: boolean; authenticated: boolean; error?: string | null }>;
-export type RouteInput = { text: string; sessionId?: string | null; sessionEngine?: Engine | null; preferEngine?: Engine | null; targetId?: number | null; projectHint?: string | null; recentFiles?: string[] | null; model?: string | null; effort?: string | null; /** user override: use this agent regardless of Laya's pick */ forceAgent?: string | null;
+export type RouteInput = { text: string; sessionId?: string | null; sessionEngine?: Engine | null; preferEngine?: Engine | null; targetId?: number | null; projectHint?: string | null; recentFiles?: string[] | null; model?: string | null; effort?: string | null; /** user override: use this agent regardless of Laya's pick */ forceAgent?: string | null; /** D-04: create the specialist of this create-queue entry (the architect turn) */ createProposal?: number | null;
   /** this chat's own ceiling (a new chat sends it with its first message; later it is stored per session) */ effortCap?: Partial<Record<Engine, string>> | null };
 
 // Each engine's ladder ends on its strongest model: Codex gpt-6-astra, Claude 'best' (= Fable when the
@@ -254,6 +254,26 @@ function cosine(a: string[], b: string[]) {
   return na && nb ? dot / (na * nb) : 0;
 }
 const SIMILAR_JUDGED = 0.8;
+/** D-04: the same domain this many times → offer to create its specialist (§3.7 "동일 분야 3회"). */
+export const CREATE_PROPOSE_AT = 3;
+/** D-04: a judge proposal belongs to a queued domain at this token similarity (names vary: verilog-hdl / fpga-hardware). */
+const SAME_DOMAIN = 0.5;
+const domainTokens = (p: { name: string; domain: string; technologies: string[] }) => tokenize(`${p.name.replace(/-/g, ' ')} ${p.domain} ${p.technologies.join(' ')}`);
+/** Counts a quick command toward its domain in the create queue; the entry is proposed when it reaches CREATE_PROPOSE_AT. */
+export function enqueueCreate(store: Store, userId: number, p: { name: string; domain: string; description: string; technologies: string[] }, command: string) {
+  const tokens = domainTokens(p);
+  let best: { id: number; score: number } | null = null;
+  for (const row of store.createQueue(userId, ['queued', 'proposed', 'dismissed'])) {
+    const score = row.name === p.name ? 1 : cosine(tokens, domainTokens(row));
+    if (score >= SAME_DOMAIN && (!best || score > best.score)) best = { id: row.id, score };
+  }
+  const row = best ? store.bumpCreateQueue(userId, best.id, command) : store.createQueueEntry(userId, store.addCreateQueue(userId, p, command));
+  if (!row) return null;
+  // a dismissed domain keeps counting but is not offered again
+  const proposedNow = row.status === 'queued' && row.count >= CREATE_PROPOSE_AT;
+  if (proposedNow) store.setCreateQueueStatus(userId, row.id, 'proposed');
+  return { id: row.id, name: row.name, domain: row.domain, count: row.count, proposedNow };
+}
 /** Bumped whenever the runtime judge prompt changes meaning (specialist-judge.service.ts): cached verdicts of an older
  *  prompt are not reused. 2: `question` + "command execution is never a specialist" (2026-10-01). */
 const JUDGE_VERSION = 2;
@@ -448,6 +468,13 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     else { decision = 'create'; agentName = 'generalist'; reason.push(`ambiguous agent (${agentTop.probability.toFixed(2)}) and no specialist judge → create`); }
   } else reason.push(`agent ${agentName} ${(agentTop.probability * 100).toFixed(0)}% (specialist judge unavailable)`);
   if (input.forceAgent && store.agent(userId, input.forceAgent)) { agentName = input.forceAgent; decision = 'use'; reason.push(`user override → ${agentName}`); }
+  // D-04: the user accepted a queued proposal — this turn goes to the agent-architect with that domain
+  const fromQueue = input.createProposal ? store.createQueueEntry(userId, input.createProposal) : null;
+  if (fromQueue) {
+    agentName = 'generalist'; decision = 'create';
+    proposal = { name: fromQueue.name, domain: fromQueue.domain, description: fromQueue.description, technologies: fromQueue.technologies };
+    reason.push(`create queue #${fromQueue.id}: ${fromQueue.name} (${fromQueue.count} commands)`);
+  }
   const needsLlmAnalysis = !fallback && (agentTop.probability < 0.5 || depthRaw >= 2.5 || multiDomain > 0.6);
   // Clarify (§3.1): the judge decides when it ran — on the server Laya's clarify did not separate vague from specific
   // commands (0.36 "로그인 버튼 고쳐줘" vs 0.42 with the file and behavior named) while the judge got 3/3. Laya decides
@@ -462,6 +489,13 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   // the final depth: a kind floor (debug ≥ D2) says the work is not a quick one even when Laya scored it D1
   const askClarify = depth >= 2 && (judgeAsks ?? (!fallback && clarify > 0.7));
   if (depth > scoredDepth) reason.push(`depth D${scoredDepth} → D${depth} (${[kindFloor > scoredDepth ? `${taskKind} ≥ D${kindFloor}` : null, agentFloor > scoredDepth ? `${agent.name} ≥ D${agentFloor}` : null].filter(Boolean).join(', ')})`);
+  // D-04 (§3.7): no specialist but quick work (D0–1) runs on the generalist now; its domain goes to the create queue
+  if (decision === 'create' && depth <= 1 && !fromQueue) {
+    decision = 'create_background';
+    reason.push(`quick work (D${depth}) → generalist now${proposal ? `, ${proposal.name} queued for creation` : ''}`);
+  }
+  const queued = decision === 'create_background' && proposal ? enqueueCreate(store, userId, proposal, text) : null;
+  if (queued?.proposedNow) reason.push(`${queued.name}: ${queued.count} commands in this domain → offered for creation`);
 
   // ---- engine (§3.4) ------------------------------------------------------------------------
   const weights = store.engineWeights();
@@ -634,6 +668,9 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     catalog: all.map((a) => `${a.name}: ${routingHint(a)}`).join('\n'),
     background: decision === 'create_background',
     proposal,
+    /** D-04: the queue entry this command counted toward (background), or the one being created (from_queue) */
+    queue: queued ? { id: queued.id, name: queued.name, count: queued.count, proposed_now: queued.proposedNow } : fromQueue ? { id: fromQueue.id, name: fromQueue.name, count: fromQueue.count, proposed_now: false } : null,
+    from_queue: Boolean(fromQueue),
   } : null;
 
   return {

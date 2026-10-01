@@ -10,7 +10,7 @@ import type { openStore } from './store.js';
  * already on screen, so it stays a badge. Badges are kept per session until that session is opened.
  */
 type Store = ReturnType<typeof openStore>;
-export type NotifyEvent = { code: string; sessionId: string | null; sessionName: string | null; provider: string | null; detail: string | null };
+export type NotifyEvent = { code: string; sessionId: string | null; sessionName: string | null; provider: string | null; detail: string | null; /** where the push opens (default: the session) */ url?: string };
 
 const PROVIDER_LABEL: Record<string, string> = { claude: 'Claude', codex: 'Codex' };
 
@@ -23,6 +23,7 @@ export function describeEvent(e: NotifyEvent) {
     case 'run.background_completed': return `${who}: 백그라운드 작업이 끝났습니다`;
     case 'permission.required': return `${who}: 승인이 필요합니다${e.detail ? ` (${e.detail})` : ''}`;
     case 'agent.notification': return `${who}: ${e.detail ?? '새 알림'}`;
+    case 'agent.proposal': return e.detail ?? '새 전문 agent를 만들 수 있습니다';
     default: return `${who}: ${e.detail ?? e.code}`;
   }
 }
@@ -41,7 +42,7 @@ export function createNotifier(deps: { store: Store; laya: LayaClient; push: Pus
       if (level >= 1 && event.sessionId) deps.store.markUnread(userId, { sessionId: event.sessionId, level, code: event.code, title, body });
       let pushed = 0;
       if (level >= 2) {
-        const url = event.sessionId ? `/m/session/${encodeURIComponent(event.sessionId)}` : '/m/';
+        const url = event.url ?? (event.sessionId ? `/m/session/${encodeURIComponent(event.sessionId)}` : '/m/');
         pushed = (await deps.push.sendToUser(userId, { title, body, url, tag: `session-${event.sessionId ?? 'none'}` }).catch(() => ({ delivered: 0 }))).delivered ?? 0;
       }
       console.log(`[notify] user ${userId} ${event.code} → level ${level}${judged.fallback ? ' (fallback)' : ''}${online ? ' app open' : ''}${pushed ? ` pushed ${pushed}` : ''}`);

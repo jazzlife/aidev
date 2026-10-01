@@ -92,6 +92,9 @@ export function useAidevRouting() {
       // E-03: an escalated retry / handoff pins engine, model and effort for this one send.
       const oneShot = current.oneShotPlan;
       if (oneShot) routingStore.patch({ oneShotPlan: null });
+      // D-04: an accepted create-queue proposal
+      const createProposal = current.oneShotCreate;
+      if (createProposal) routingStore.patch({ oneShotCreate: null });
       const route = await aidevApi.route({
         text,
         sessionId: context.sessionId,
@@ -102,6 +105,7 @@ export function useAidevRouting() {
         model: oneShot?.model ?? overrides.model ?? null,
         effort: oneShot?.effort ?? overrides.effort ?? null,
         forceAgent,
+        createProposal,
         // the chat's own ceiling: stored server-side for known sessions, sent inline for a new chat
         effortCap: current.chatCap.sessionId === (context.isNewSession ? null : context.sessionId ?? null) ? current.chatCap.cap : null,
       });
@@ -136,7 +140,9 @@ export function useAidevRouting() {
       // No fitting specialist: this turn goes to the agent-architect (design only); the original
       // command is re-sent once the user approves the draft (§3.7). Shallow tasks just run.
       if (route.decision === 'create' && route.create && !route.create.background && !forceAgent && !current.pendingCreate) {
-        routingStore.patch({ pendingCreate: { stage: 'architect', originalText: text, sessionId: context.sessionId, decisionId: route.decision_id, draft: null, agentId: null, agentName: null, selfCheckResult: null, error: null } });
+        // a queued domain's commands already ran on the generalist: nothing to re-send once its agent exists
+        const fromQueue = route.create.from_queue ? route.create.queue?.id ?? null : null;
+        routingStore.patch({ pendingCreate: { stage: 'architect', originalText: fromQueue ? '' : text, queueId: fromQueue, sessionId: context.sessionId, decisionId: route.decision_id, draft: null, agentId: null, agentName: null, selfCheckResult: null, error: null } });
         const architect = route.create.architect;
         payload.agent = { name: architect.name, version: architect.version, description: architect.description, prompt: architect.prompt, tools: architect.tools, model: architect.model, maxTurns: architect.maxTurns, skills: null, mcpServers: null };
         payload.lessons = [];
@@ -149,7 +155,7 @@ export function useAidevRouting() {
         effort: applyPlan ? route.plan.effort : null,
         route,
         runId,
-        appResend: Boolean(current.oneShotAgent || oneShot),
+        appResend: Boolean(current.oneShotAgent || oneShot || createProposal),
       };
     } catch (error) {
       routingStore.patch({ busy: false, error: error instanceof Error ? error.message : 'routing failed' });

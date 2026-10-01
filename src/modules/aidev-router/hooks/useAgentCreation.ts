@@ -47,9 +47,11 @@ export function useAgentCreation({ getLastAssistantText, resend }: UseAgentCreat
     const current = routingStore.get().pendingCreate;
     if (!current) return;
     try {
-      const created = await aidevApi.createAgent({ name: draft.name, domain: draft.domain, hint: draft.hint, description: draft.description, prompt: draft.prompt, tools: draft.tools, examples: draft.examples, knowledge: draft.knowledge, source: 'generated' });
-      routingStore.patch({ pendingCreate: { ...current, stage: 'done', draft, agentId: created.agent.id, agentName: created.agent.name, error: null }, oneShotAgent: created.agent.name });
-      resend(current.originalText);
+      const created = await aidevApi.createAgent({ name: draft.name, domain: draft.domain, hint: draft.hint, description: draft.description, prompt: draft.prompt, tools: draft.tools, examples: draft.examples, knowledge: draft.knowledge, source: 'generated', ...(current.queueId ? { queue_id: current.queueId } : {}) });
+      // D-04: a queued domain has nothing to re-send — its commands already ran
+      const resendNow = Boolean(current.originalText);
+      routingStore.patch({ pendingCreate: { ...current, stage: 'done', draft, agentId: created.agent.id, agentName: created.agent.name, error: null }, oneShotAgent: resendNow ? created.agent.name : null });
+      if (resendNow) resend(current.originalText);
     } catch (error) {
       routingStore.patch({ pendingCreate: { ...current, error: error instanceof Error ? error.message : '생성 실패' } });
     }

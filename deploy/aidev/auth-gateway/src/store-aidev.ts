@@ -28,6 +28,7 @@ const validCap = (cap: Partial<Record<Engine, string>>) => {
 };
 export type TierPolicyRow = { domain: string; depth: number; engine: string; model: string | null; effort: string | null; success_n: number; fail_n: number; avg_ms: number | null; level: number | null; pinned: number; updated_at: number | null };
 export type LessonRow = { id: number; agent_id: number; engine: string | null; trigger: string; rule: string; evidence_run_id: number | null; status: string; hits: number; owner_id: number | null; promoted_to_prompt: number; fails: number; verified_by: string | null; promoted_version: number | null; created_at: number };
+export type CreateQueueRow = { id: number; user_id: number; name: string; domain: string; description: string; technologies: string; count: number; commands: string; status: string; created_at: number; updated_at: number };
 export type RunRow = { id: number; user_id: number; session_id: string | null; decision_id: number | null; agent_id: number | null; agent_version: number | null; engine: string | null; model: string | null; effort: string | null; depth: number | null; task_kind: string | null; risk: number | null; target_id: number | null; started_at: number; finished_at: number | null; exit_code: number | null; tool_errors: number; user_feedback: string | null; reverted: number; reasked: number; test_result: string | null; cost_tokens: number | null; escalated_from_run: number | null; outcome: string | null };
 export type RemoteRunRow = { id: number; run_id: number | null; target_id: number; user_id: number; kind: string; cmd: string | null; cwd: string | null; risk: number | null; approved_by: string | null; started_at: number; finished_at: number | null; exit_code: number | null; artifacts: string | null; target_name?: string | null };
 export type TargetRow = { id: number; user_id: number; name: string; platform: string | null; arch: string | null; tags: string | null; description: string; token_hash: string | null; pairing_code: string | null; pairing_expires: number | null; policy: string; allowed_roots: string | null; capabilities: string | null; status: string; last_seen: number | null; created_at: number; /** the account's default PC for remote work (F-08) */ is_default: number };
@@ -190,6 +191,12 @@ export function migrateAidev(db: Database.Database) {
   db.exec(`UPDATE engine_weights SET prior=weight WHERE prior IS NULL;
     CREATE TABLE IF NOT EXISTS engine_weight_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, task_kind TEXT NOT NULL, engine TEXT NOT NULL,
       from_weight REAL, to_weight REAL, success_n INTEGER, fail_n INTEGER, reason TEXT NOT NULL, actor TEXT NOT NULL);`);
+  // D-04 create queue: domains the judge found no specialist for while the work was quick (D0–1); offered for
+  // creation once the same domain has come up often enough (status queued → proposed → created | dismissed)
+  db.exec(`CREATE TABLE IF NOT EXISTS create_queue (id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL, name TEXT NOT NULL,
+    domain TEXT NOT NULL, description TEXT NOT NULL, technologies TEXT NOT NULL, count INTEGER NOT NULL DEFAULT 1, commands TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'queued', created_at INTEGER NOT NULL, updated_at INTEGER NOT NULL);
+    CREATE INDEX IF NOT EXISTS create_queue_user ON create_queue(user_id, status);`);
   // C-06 notify.level: sessions with news the user has not looked at yet (badge level ≥ 1), one row per session
   db.exec(`CREATE TABLE IF NOT EXISTS notify_unread (user_id INTEGER NOT NULL, session_id TEXT NOT NULL, level INTEGER NOT NULL,
     code TEXT NOT NULL, title TEXT, body TEXT, at INTEGER NOT NULL, PRIMARY KEY (user_id, session_id));`);
@@ -581,6 +588,30 @@ export function aidevMethods(db: Database.Database) {
       return (db.prepare('SELECT COUNT(*) AS n FROM runs WHERE user_id=? AND engine=? AND outcome=\'fail\' AND started_at>?').get(userId, engine, Date.now() - sinceMs) as { n: number }).n;
     },
     // ---- decisions (all kinds) ------------------------------------------------
+    // ---- D-04 create queue ----------------------------------------------------------------
+    createQueue(userId: number, statuses: string[] = ['queued', 'proposed', 'dismissed']) {
+      return (db.prepare(`SELECT * FROM create_queue WHERE user_id=? AND status IN (${statuses.map(() => '?').join(',')}) ORDER BY updated_at DESC LIMIT 100`).all(userId, ...statuses) as CreateQueueRow[])
+        .map((r) => ({ ...r, technologies: JSON.parse(r.technologies) as string[], commands: JSON.parse(r.commands) as string[] }));
+    },
+    createQueueEntry(userId: number, id: number) {
+      return this.createQueue(userId, ['queued', 'proposed', 'dismissed', 'created']).find((r) => r.id === id) ?? null;
+    },
+    addCreateQueue(userId: number, p: { name: string; domain: string; description: string; technologies: string[] }, command: string) {
+      const now = Date.now();
+      return Number(db.prepare('INSERT INTO create_queue(user_id,name,domain,description,technologies,commands,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?)')
+        .run(userId, p.name, p.domain, p.description, JSON.stringify(p.technologies), JSON.stringify([command.slice(0, 300)]), now, now).lastInsertRowid);
+    },
+    /** One more command in an existing domain (the newest five commands are kept as context for the architect). */
+    bumpCreateQueue(userId: number, id: number, command: string) {
+      const row = this.createQueueEntry(userId, id);
+      if (!row) return null;
+      const commands = [command.slice(0, 300), ...row.commands].slice(0, 5);
+      db.prepare('UPDATE create_queue SET count=count+1, commands=?, updated_at=? WHERE id=? AND user_id=?').run(JSON.stringify(commands), Date.now(), id, userId);
+      return this.createQueueEntry(userId, id);
+    },
+    setCreateQueueStatus(userId: number, id: number, status: 'queued' | 'proposed' | 'created' | 'dismissed') {
+      return db.prepare('UPDATE create_queue SET status=?, updated_at=? WHERE id=? AND user_id=?').run(status, Date.now(), id, userId).changes;
+    },
     /** C-06: a session has news (the newest event wins; the level never drops while it is unread). */
     markUnread(userId: number, u: { sessionId: string; level: number; code: string; title: string | null; body: string | null }) {
       db.prepare(`INSERT INTO notify_unread(user_id,session_id,level,code,title,body,at) VALUES(?,?,?,?,?,?,?)
