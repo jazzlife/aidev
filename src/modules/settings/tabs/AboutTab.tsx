@@ -69,6 +69,10 @@ export default function AboutTab() {
           <p className="mt-0.5 text-sm text-muted-foreground">
             {t('about.tagline')}
           </p>
+          {/* AGPL-3.0 §7(b) attribution notice of the upstream project (LICENSE, additional terms) */}
+          <a href="https://github.com/siteboon/claudecodeui" target="_blank" rel="noopener noreferrer" className="mt-0.5 block text-xs text-muted-foreground/80 hover:text-foreground">
+            Based on CloudCLI UI (https://github.com/siteboon/claudecodeui) · AGPL-3.0
+          </a>
         </div>
       </div>
 

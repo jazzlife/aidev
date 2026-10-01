@@ -12,6 +12,9 @@ type AuthScreenLayoutProps = {
 };
 
 /** Wraps the auth module's LoginForm and SetupForm so both full-screen auth pages share one card layout. */
+/** Required attribution of the upstream project (LICENSE additional terms §1); NadoVibe is a modified version. */
+const UPSTREAM_ATTRIBUTION = 'Based on CloudCLI UI (https://github.com/siteboon/claudecodeui) · AGPL-3.0';
+
 export default function AuthScreenLayout({
   title,
   description,
@@ -60,7 +63,8 @@ export default function AuthScreenLayout({
                 rel="noopener noreferrer"
                 className="text-xs text-muted-foreground/50 transition-colors hover:text-muted-foreground"
               >
-                {t('misc.openSource')}
+                {/* AGPL-3.0 §7(b) attribution notice of the upstream project (LICENSE, additional terms) */}
+                {UPSTREAM_ATTRIBUTION}
               </a>
             </div>
           )}
