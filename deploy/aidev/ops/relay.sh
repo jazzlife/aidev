@@ -39,7 +39,7 @@ key_help() {
   echo "  ssh-keygen -t ed25519 -f ~/.ssh/id_ed25519            # 이미 있으면 건너뛰기" >&2
   echo "  ssh-add --apple-use-keychain ~/.ssh/id_ed25519" >&2
   echo "  ssh-copy-id -i ~/.ssh/id_ed25519.pub $HOST           # 서버 비밀번호 1회" >&2
-  echo "  printf 'Host $h\\n  User $u\\n  IdentityFile ~/.ssh/id_ed25519\\n  UseKeychain yes\\n  AddKeysToAgent yes\\n' >> ~/.ssh/config" >&2
+  echo "  printf '\\nHost $h\\n  User $u\\n  IdentityFile ~/.ssh/id_ed25519\\n  UseKeychain yes\\n  AddKeysToAgent yes\\n' >> ~/.ssh/config" >&2
 }
 ensure_master() {
   ssh -S "$SOCK" -O check "$HOST" >/dev/null 2>&1 && return 0
