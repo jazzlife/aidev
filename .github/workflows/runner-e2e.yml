@@ -88,9 +88,10 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $bin = "$env:GITHUB_WORKSPACE\$env:RUNNER_DIR\target\release\aidev-runner.exe"
-          $env:AIDEV_RUNNER_HOME = "$env:RUNNER_TEMP\task-home"
-          New-Item -ItemType Directory -Force $env:AIDEV_RUNNER_HOME | Out-Null
-          Set-Content "$env:AIDEV_RUNNER_HOME\runner.toml" "gateway = `"http://127.0.0.1:9`"`ntoken = `"x`"`ntarget_id = 1`nname = `"ci`"`nallowed_roots = ['$env:RUNNER_TEMP']" -Encoding utf8
+          # the task runs without this step's environment: the config sits where a real install keeps it
+          $cfgDir = "$env:USERPROFILE\.aidev"
+          New-Item -ItemType Directory -Force $cfgDir | Out-Null
+          Set-Content "$cfgDir\runner.toml" "gateway = `"http://127.0.0.1:9`"`ntoken = `"x`"`ntarget_id = 1`nname = `"ci`"`nallowed_roots = ['$env:RUNNER_TEMP']" -Encoding utf8
           & $bin install-service --elevated --at-startup
           if ($LASTEXITCODE) { throw "install-service exit $LASTEXITCODE" }
           $t = Get-ScheduledTask -TaskName aidev-runner
@@ -100,8 +101,12 @@ jobs:
           if ($t.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger') { throw 'not a boot trigger' }
           "ExecutionTimeLimit=$($t.Settings.ExecutionTimeLimit)"
           if ($t.Settings.ExecutionTimeLimit -ne 'PT0S') { throw 'the task would stop after a time limit' }
-          Start-Sleep 3
+          for ($i = 0; $i -lt 30 -and -not (Get-Process aidev-runner -ErrorAction SilentlyContinue); $i++) { Start-Sleep 1 }
+          $info = Get-ScheduledTaskInfo -TaskName aidev-runner
+          "State=$((Get-ScheduledTask -TaskName aidev-runner).State) LastTaskResult=$($info.LastTaskResult)"
+          if (Test-Path "$cfgDir\runner.log") { Get-Content "$cfgDir\runner.log" -Tail 5 }
           if (-not (Get-Process aidev-runner -ErrorAction SilentlyContinue)) { throw 'the boot task did not start the runner' }
+          'the boot task started the runner'
           & $bin install-service
           $t = Get-ScheduledTask -TaskName aidev-runner
           "RunLevel=$($t.Principal.RunLevel) Trigger=$($t.Triggers[0].CimClass.CimClassName)"
