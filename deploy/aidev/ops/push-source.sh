@@ -16,6 +16,7 @@ GH_REPO=jazzlife/aidev
 bundle=${1:-$(ls -t "$OPS"/backups/aidev-ckpt_*.bundle | head -1)}
 case $bundle in /*) ;; *) [ -f "$bundle" ] || bundle="$OPS/$bundle" ;; esac
 [ -f "$bundle" ] || { echo "no bundle found: $bundle" >&2; exit 1; }
+bundle="$(cd "$(dirname "$bundle")" && pwd)/$(basename "$bundle")"   # absolute: we cd into the clone below
 [ -d "$REPO/.git" ] || { echo "no clone at $REPO (git clone <bundle> $REPO; git -C $REPO remote set-url origin https://github.com/$GH_REPO.git)" >&2; exit 1; }
 cd "$REPO"
 git diff --quiet && git diff --cached --quiet || { echo "$REPO has local changes; commit or stash them first" >&2; exit 1; }
