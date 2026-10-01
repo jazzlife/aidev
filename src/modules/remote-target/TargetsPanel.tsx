@@ -14,7 +14,7 @@ type Target = {
   description: string;
   platform: string | null;
   arch: string | null;
-  policy: 'auto' | 'ask' | 'deny';
+  policy: 'full' | 'auto' | 'ask' | 'deny';
   paired: boolean;
   online: boolean;
   status: string;
@@ -30,7 +30,8 @@ type Target = {
   } | null;
 };
 
-const POLICY_LABEL: Record<Target['policy'], string> = { ask: '변경 명령은 확인', auto: '위험 명령만 확인', deny: '실행 금지' };
+// full: agents never wait (the default) — every command is still recorded, pushed to the user and stoppable
+const POLICY_LABEL: Record<Target['policy'], string> = { full: '전체 권한 (확인 없음)', auto: '위험 명령만 확인', ask: '변경 명령은 확인', deny: '실행 금지' };
 const POLL_MS = 5000;
 
 function ago(at: number | null) {
@@ -190,7 +191,7 @@ export function TargetsPanel() {
         <Laptop size={12} />
         <span>{targets ? `${targets.length}대 · 연결 ${targets.filter((t) => t.online).length}` : '불러오는 중…'}</span>
         <button type="button" onClick={reload} aria-label="새로고침" className="ml-auto rounded p-1 hover:bg-accent"><RefreshCw size={12} /></button>
-        <button type="button" onClick={() => setForm(form ? null : { name: '', description: '', policy: 'ask' })} className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 text-foreground hover:bg-accent"><Plus size={11} /> 등록</button>
+        <button type="button" onClick={() => setForm(form ? null : { name: '', description: '', policy: 'full' })} className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 text-foreground hover:bg-accent"><Plus size={11} /> 등록</button>
       </div>
       {note ? <div className="border-b border-border px-3 py-1.5 text-muted-foreground">{note}</div> : null}
       {form ? (

@@ -15,6 +15,7 @@ import '../../load-env.js';
  *   remote_preview  — show a dev server running on a target in the workbench preview panel (F-06)
  *   remote_windows  — the program windows open on a target (id, app, title) (F-07c)
  *   remote_screenshot — look at one program window on a target (image content; needs the PC owner's consent) (F-07)
+ *   remote_input — click, type and press keys in one program window on a target (owner's control consent)
  *   remote_devices / remote_device_shot — phones, TVs, simulators attached to a target and their screen (F-10)
  *   remote_debug_start / _step / _eval / _breakpoints / _stop — debug a program on a target over DAP (F-09, F-09b: 14 adapters)
  *   remote_console_start / _send / _read / _stop — drive any command-line debugger or REPL on a target (F-09c)
@@ -187,6 +188,29 @@ const tools: ToolDefinition[] = [
     },
   },
   {
+    name: 'remote_input',
+    description: [
+      'Use the mouse and keyboard in one program window on one of the user\'s machines — click buttons, fill fields, press keys, scroll — e.g. to drive a desktop app, an emulator or a dialog while testing.',
+      'Take remote_screenshot of the window first; give x, y as pixel positions in that screenshot together with its width/height as imageWidth/imageHeight (or as fractions 0-1 of the window). Look again with remote_screenshot afterwards.',
+      'Needs the owner\'s remote-control consent on that PC (`aidev-runner consent control on`). Every call is recorded.',
+    ].join(' '),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        target: { type: 'string', description: 'Target name or id (optional when routed or only one is online).' },
+        window: { type: 'number', description: 'Window id from remote_windows / remote_screenshot.' },
+        imageWidth: { type: 'number', description: 'Width of the screenshot the x, y come from.' },
+        imageHeight: { type: 'number', description: 'Height of the screenshot the x, y come from.' },
+        actions: {
+          type: 'array',
+          description: 'In order (≤ 50): {type:"click", x, y, button?:"left"|"right"|"middle", double?:true} · {type:"move", x, y} · {type:"type", text} · {type:"key", key:"Enter"|"Tab"|"Escape"|"Backspace"|"ArrowUp"|"a"…, mods?:{ctrl,alt,shift,meta}} · {type:"scroll", dy (notches, + = down), x?, y?} · {type:"wait", ms ≤ 3000}',
+          items: { type: 'object' },
+        },
+      },
+      required: ['window', 'actions'],
+    },
+  },
+  {
     name: 'remote_devices',
     description: 'List the phones, TVs, watches and simulators attached to one of the user\'s machines: Android (adb), Tizen (sdb) and booted iOS simulators — tool, serial, state ("device" = usable; "unauthorized" = allow USB debugging on the phone), name. Pick one for remote_device_shot or remote_debug_start.',
     inputSchema: {
@@ -212,7 +236,7 @@ const tools: ToolDefinition[] = [
     description: [
       'Take a screenshot of one program window on one of the user\'s machines and look at it (returned as an image) — e.g. to check a desktop/mobile app window, an emulator, a dialog, or what a running program shows.',
       'Choose the window with `window` (id from remote_windows) or `query` (part of the app name or title, e.g. "Simulator"); without either, the focused window.',
-      'Works only when the owner allowed screen capture on that PC (`aidev-runner consent screen on`); every capture is recorded in the target\'s history. View only: you cannot click or type.',
+      'Works only when the owner allowed screen capture on that PC (`aidev-runner consent screen on`); every capture is recorded in the target\'s history. To click or type in the window use remote_input, then look again.',
     ].join(' '),
     inputSchema: {
       type: 'object',
@@ -436,6 +460,7 @@ async function callTool(name: string, args: Record<string, unknown>) {
     case 'remote_preview':
     case 'remote_windows':
     case 'remote_devices':
+    case 'remote_input':
     case 'remote_debug_start':
     case 'remote_debug_step':
     case 'remote_debug_eval':

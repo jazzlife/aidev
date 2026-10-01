@@ -511,6 +511,7 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 - 미리보기 URL: 경로 방식 `/p/<target>/<port>/`로 시작 → **채택**. SPA 절대 경로 문제가 실제로 잦으면 서브도메인 `preview-<t>-<p>.nado.work`(와일드카드 인증서 `*.nado.work` 적용 가능, NPM에 host 자동 등록 필요 → 원칙 3 예외 승인 필요)
 - 러너 언어: Rust → **채택**(사용자 선호, 단일 바이너리·저자원). macOS 빌드는 Mac에서.
 - 동기화 방향: 런타임 → 원격 PC 단방향 + 결과물 회수 → **채택**. 원격 PC에서의 편집 반영(역방향)은 F 이후 별도 단계.
+- agent 권한: **전체 권한**(2026-10-01 사용자 결정) — 새 정책 `full`(새 PC 기본값, 기존 ask/auto PC는 1회 전환): agent 명령은 파괴적인 것도 승인 없이 실행하되 평가·기록(remote run)·푸시 알림("확인 생략")·중지 버튼은 유지, 사용자는 PC별로 auto/ask/deny로 낮출 수 있음. 허용 폴더: 새 페어링은 `~/aidev-work`(기본 작업 위치) + 홈 전체, `roots add ~` 허용(`/`만 거부). agent도 원격 제어 가능: `remote_input{window, actions}`(클릭·이동·입력·키·스크롤, 스크린샷 픽셀 좌표) → 게이트웨이 `POST /targets/:id/input` → 러너 `input.event`; PC 소유자의 `consent control on`은 유지, 호출마다 control run 기록. 러너 0.11.0: 창을 지정한 입력은 그 창이 없으면 버림(클릭·입력·스크롤이 다른 프로그램으로 새지 않게).
 - 원격 화면: **원격 제어 포함**(2026-09-30 사용자 결정) — 고성능 영상 스트리밍 + 마우스·터치·키보드 제어, 스트리밍/정지는 사용자가 선택. 제어는 사람(작업대·앱)만, PC 소유자의 `consent control on` 필수, 세션마다 기록. agent는 보기(`remote_screenshot`)만.
 - 디버그 1차 어댑터: js-debug, debugpy, codelldb → **채택**
 - UI 분리: 반응형 단일 앱 대신 모바일·작업대 두 앱 → **채택**(성능·디자인 독립). 태블릿은 작업대 소속. 모바일 앱의 네이티브 래핑(Capacitor, 푸시·백그라운드)은 C 완료 후 검토

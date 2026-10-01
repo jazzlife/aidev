@@ -502,7 +502,7 @@ export function createAidevApi(deps: AidevDeps) {
         const b = await readJson(req);
         const code = crypto.randomBytes(4).toString('hex').toUpperCase();
         const id = store.addTarget({ userId: uid, name: str(b.name, 'name', 41), platform: optStr(b.platform, 20) ?? null, tags: Array.isArray(b.tags) ? (b.tags as unknown[]).map(String).slice(0, 20) : [], description: optStr(b.description, 600) ?? '', policy: optStr(b.policy, 10), pairingCode: code, pairingExpires: Date.now() + 10 * 60_000 });
-        return json(res, 201, { target: { id, pairing_code: code, expires_in: 600 } }), true;
+        return json(res, 201, { target: { id, pairing_code: code, expires_in: 600, policy: store.target(uid, id)?.policy } }), true;
       }
       // last N bytes of a run: the live ring while the gateway holds the stream, else the log file
       const readRunTail = async (r: { id: number; target_id: number }, want: number): Promise<Buffer> => {
@@ -580,6 +580,61 @@ export function createAidevApi(deps: AidevDeps) {
           if (error instanceof HttpError) throw error;
           throw new HttpError(status(error), error instanceof Error ? error.message : 'screen failed');
         }
+      }
+      // ---- input (2026-10-01): mouse and keyboard on one program window — agents too (full permissions) ------
+      //   POST input {window, actions:[{type:"click"|"move", x, y, button?, double?} | {type:"type", text} |
+      //   {type:"key", key, mods?} | {type:"scroll", dy, x?, y?} | {type:"wait", ms}], imageWidth?, imageHeight?}
+      //   x, y: pixels of a screenshot of that window (with its imageWidth/imageHeight) or fractions 0…1.
+      //   The PC owner's `consent control on` is still required (the runner checks it too); every call is a run.
+      const inputMatch = rest.match(/^\/targets\/(\d+)\/input$/);
+      if (inputMatch && m === 'POST') {
+        if (!deps.runners) throw new HttpError(503, 'runner hub unavailable');
+        const id = Number(inputMatch[1]);
+        const target = store.target(uid, id);
+        if (!target) throw new HttpError(404, 'Target not found');
+        if (target.policy === 'deny') throw new HttpError(403, '이 대상의 실행 정책이 "실행 금지"입니다');
+        if (!deps.runners.online(id)) throw new HttpError(409, 'target is offline');
+        const caps = (() => { try { return JSON.parse(target.capabilities ?? '{}') as { control?: boolean; features?: string[]; runner?: string }; } catch { return {}; } })();
+        if (!caps.features?.includes('input') || !caps.features?.includes('windows')) throw new HttpError(501, `이 PC의 러너(${caps.runner ?? '?'})는 창 제어를 지원하지 않습니다 — 0.7.0 이상으로 교체하세요`);
+        if (!caps.control) throw new HttpError(403, '이 PC는 원격 제어를 허용하지 않았습니다 — PC에서 `aidev-runner consent control on` 후 러너를 다시 시작하세요');
+        const b = await readJson(req);
+        const win = Number(b.window);
+        if (!Number.isInteger(win) || win <= 0) throw new HttpError(400, 'window (id from the window list) is required');
+        const actions = Array.isArray(b.actions) ? (b.actions as Array<Record<string, unknown>>).slice(0, 50) : [];
+        if (!actions.length) throw new HttpError(400, 'actions are required');
+        const iw = Number(b.imageWidth) || 0; const ih = Number(b.imageHeight) || 0;
+        const point = (a: Record<string, unknown>) => {
+          const x = Number(a.x); const y = Number(a.y);
+          if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+          const p = iw > 0 && ih > 0 ? { x: x / iw, y: y / ih } : x <= 1 && y <= 1 ? { x, y } : null;
+          if (!p) throw new HttpError(400, 'x, y are pixels of a screenshot (give imageWidth / imageHeight) or fractions 0…1');
+          return { x: Math.min(Math.max(p.x, 0), 1), y: Math.min(Math.max(p.y, 0), 1) };
+        };
+        const events: Array<Record<string, unknown> | number> = [];   // a number is a pause in ms
+        for (const a of actions) {
+          const p = point(a);
+          const button = a.button === 'right' || a.button === 'middle' ? a.button : 'left';
+          if (a.type === 'click' || a.type === 'move') {
+            if (!p) throw new HttpError(400, `${String(a.type)} needs x, y`);
+            events.push({ t: 'move', ...p });
+            if (a.type === 'click') for (let n = 0; n < (a.double ? 2 : 1); n += 1) events.push({ t: 'button', b: button, down: true, ...p }, 40, { t: 'button', b: button, down: false, ...p });
+          } else if (a.type === 'type' && typeof a.text === 'string') events.push({ t: 'text', text: a.text.slice(0, 1000) });
+          else if (a.type === 'key' && typeof a.key === 'string') events.push({ t: 'key', key: a.key.slice(0, 40), code: '', mods: a.mods && typeof a.mods === 'object' ? a.mods : {} });
+          else if (a.type === 'scroll') { if (p) events.push({ t: 'move', ...p }); events.push({ t: 'wheel', dx: (Number(a.dx) || 0) * 100, dy: (Number(a.dy) || 0) * 100 }); }
+          else if (a.type === 'wait') events.push(Math.min(Math.max(Number(a.ms) || 0, 0), 3000));
+          else throw new HttpError(400, `unknown action ${String(a.type)}`);
+          events.push(60);
+        }
+        const agentCall = session.sid.startsWith('runtime:');
+        const summary = actions.map((a) => (a.type === 'type' ? `type ${JSON.stringify(String(a.text).slice(0, 40))}` : a.type === 'key' ? `key ${String(a.key)}` : `${String(a.type)}${a.x !== undefined ? ` ${String(a.x)},${String(a.y)}` : ''}`)).join('; ');
+        const rr = store.addRemoteRun({ runId: typeof b.runId === 'number' && store.run(uid, b.runId) ? b.runId : null, targetId: id, userId: uid, kind: 'control', cmd: `input window #${win}: ${summary}`.slice(0, 500), cwd: null, risk: null, approvedBy: agentCall ? 'agent' : 'user' });
+        for (const ev of events) {
+          if (typeof ev === 'number') { await new Promise((r) => setTimeout(r, ev)); continue; }
+          if (!deps.runners.notifyRunner(id, 'input.event', { ...ev, win })) { store.finishRemoteRun(rr, { exitCode: 1, artifacts: { error: 'runner disconnected' } }); throw new HttpError(409, 'target went offline'); }
+        }
+        deps.runners.notifyRunner(id, 'input.end', {});
+        store.finishRemoteRun(rr, { exitCode: 0, artifacts: { events: events.filter((e) => typeof e !== 'number').length, window: { id: win } } });
+        return json(res, 200, { ok: true, window: win, events: events.filter((e) => typeof e !== 'number').length, remoteRunId: rr, hint: 'remote_screenshot{window} to see the result' }), true;
       }
       // ---- devices (F-10): phones, TVs and simulators attached to the target (adb / sdb / iOS simulator) ------
       //   GET devices · POST devices/shot {tool?, serial?, maxWidth?, quality?} · GET devices/shot.jpg?…

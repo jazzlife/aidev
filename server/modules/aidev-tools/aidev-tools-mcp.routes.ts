@@ -113,6 +113,20 @@ router.post('/tools/:toolName', async (req, res) => {
           maxWidth: typeof input.maxWidth === 'number' ? input.maxWidth : undefined,
         }, readTurn(input));
         break;
+      case 'remote_input': {
+        const windowId = typeof input.window === 'number' && Number.isInteger(input.window) ? input.window : null;
+        if (!windowId) throw new Error('window (id from remote_windows) is required.');
+        const actions = Array.isArray(input.actions) ? (input.actions as unknown[]).filter((a): a is Record<string, unknown> => Boolean(a) && typeof a === 'object').slice(0, 50) : [];
+        if (!actions.length) throw new Error('actions are required.');
+        result = await aidevToolsService.remoteInput({
+          target: typeof input.target === 'string' || typeof input.target === 'number' ? input.target : undefined,
+          window: windowId,
+          actions,
+          imageWidth: typeof input.imageWidth === 'number' ? input.imageWidth : undefined,
+          imageHeight: typeof input.imageHeight === 'number' ? input.imageHeight : undefined,
+        }, readTurn(input));
+        break;
+      }
       case 'remote_devices':
         result = await aidevToolsService.remoteDevices({
           target: typeof input.target === 'string' || typeof input.target === 'number' ? input.target : undefined,

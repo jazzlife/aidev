@@ -47,7 +47,14 @@ pub fn pair(code: &str, gateway: &str, name: Option<&str>) -> Result<config::Con
         Err(e) => return Err(format!("게이트웨이에 연결하지 못했습니다: {e}")),
     };
     let previous = config::load().ok();
-    let roots = previous.as_ref().map(|c| c.allowed_roots.clone()).filter(|r| !r.is_empty()).unwrap_or_else(|| vec![config::default_root()]);
+    // a new PC opens the user's home folder too (2026-10-01: agents work with full permissions); ~/aidev-work
+    // stays first — the default working folder and sync workspace. Re-pairing keeps what the owner set.
+    let roots: Vec<_> = previous.as_ref().map(|c| c.allowed_roots.clone()).filter(|r| !r.is_empty()).unwrap_or_else(|| {
+        [config::default_root(), config::home()].into_iter().map(|root| {
+            let _ = std::fs::create_dir_all(&root);
+            std::fs::canonicalize(&root).unwrap_or(root)   // stored as the real path (macOS /var → /private/var)
+        }).collect()
+    });
     for root in &roots {
         let _ = std::fs::create_dir_all(root);
     }

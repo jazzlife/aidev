@@ -35,6 +35,10 @@ export type TargetRow = { id: number; user_id: number; name: string; platform: s
 const agentName = /^[a-z0-9][a-z0-9-]{1,40}$/;
 const json = (v: unknown) => (v === undefined || v === null ? null : JSON.stringify(v));
 
+/** Remote run policies: full = agents never wait for approval (recorded, notified, stoppable); auto = ask for risky;
+ *  ask = only read/build/test run without asking; deny = agents cannot run anything. */
+export const POLICIES = ['full', 'auto', 'ask', 'deny'];
+
 function addColumn(db: Database.Database, table: string, column: string, definition: string) {
   const cols = db.prepare(`PRAGMA table_info(${table})`).all() as Array<{ name: string }>;
   if (!cols.some((c) => c.name === column)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${column} ${definition}`);
@@ -105,7 +109,7 @@ export function migrateAidev(db: Database.Database) {
     CREATE TABLE IF NOT EXISTS targets (
       id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES accounts(id), name TEXT NOT NULL,
       platform TEXT, arch TEXT, tags TEXT, description TEXT NOT NULL DEFAULT '', token_hash TEXT,
-      pairing_code TEXT, pairing_expires INTEGER, policy TEXT NOT NULL DEFAULT 'ask', allowed_roots TEXT,
+      pairing_code TEXT, pairing_expires INTEGER, policy TEXT NOT NULL DEFAULT 'full', allowed_roots TEXT,
       capabilities TEXT, status TEXT NOT NULL DEFAULT 'offline', last_seen INTEGER, created_at INTEGER NOT NULL,
       UNIQUE(user_id, name));
     CREATE TABLE IF NOT EXISTS judge_cache (
@@ -132,6 +136,14 @@ export function migrateAidev(db: Database.Database) {
       endpoint TEXT NOT NULL UNIQUE, keys TEXT NOT NULL, user_agent TEXT, created_at INTEGER NOT NULL, last_ok INTEGER, failures INTEGER NOT NULL DEFAULT 0);
     CREATE INDEX IF NOT EXISTS push_subscriptions_user ON push_subscriptions(user_id);
   `);
+  // 2026-10-01 (user decision): agents get full permissions — every PC registered so far moves to policy
+  // `full` once; new PCs start there (the user can still pick ask / auto / deny per PC).
+  if (!db.prepare("SELECT 1 FROM app_kv WHERE k='targets.policy-full'").get()) {
+    db.transaction(() => {
+      db.prepare("UPDATE targets SET policy='full' WHERE policy IN ('ask','auto')").run();
+      db.prepare("INSERT INTO app_kv(k,v) VALUES('targets.policy-full', ?)").run(String(Date.now()));
+    })();
+  }
   // Lesson verification loop (§3.8 / E-02): which lessons each routed command carried, and how
   // the runs that carried them ended.
   addColumn(db, 'runs', 'next_action', 'TEXT');   // E-03: what the gateway proposed after this run failed (JSON)
@@ -580,14 +592,14 @@ export function aidevMethods(db: Database.Database) {
     targetByPairingCode(code: string) { return db.prepare('SELECT * FROM targets WHERE pairing_code=? AND pairing_expires>?').get(code, Date.now()) as TargetRow | undefined; },
     addTarget(t: { userId: number; name: string; platform?: string | null; tags?: string[]; description?: string; policy?: string; pairingCode: string; pairingExpires: number }) {
       if (!/^[a-z0-9][a-z0-9-]{1,40}$/.test(t.name)) throw new Error('Target name: lowercase letters, digits and dashes, 2-41 chars');
-      if (t.policy && !['auto', 'ask', 'deny'].includes(t.policy)) throw new Error('policy must be auto|ask|deny');
+      if (t.policy && !POLICIES.includes(t.policy)) throw new Error('policy must be full|auto|ask|deny');
       const r = db.prepare('INSERT INTO targets(user_id,name,platform,tags,description,pairing_code,pairing_expires,policy,created_at) VALUES(?,?,?,?,?,?,?,?,?)')
-        .run(t.userId, t.name, t.platform ?? null, json(t.tags ?? []), (t.description ?? '').slice(0, 600), t.pairingCode, t.pairingExpires, t.policy ?? 'ask', Date.now());
+        .run(t.userId, t.name, t.platform ?? null, json(t.tags ?? []), (t.description ?? '').slice(0, 600), t.pairingCode, t.pairingExpires, t.policy ?? 'full', Date.now());
       return Number(r.lastInsertRowid);
     },
     updateTarget(userId: number, id: number, p: Partial<{ name: string; description: string; tags: string[]; policy: string; allowedRoots: string[] | null; pairingCode: string | null; pairingExpires: number | null; tokenHash: string | null; platform: string | null; arch: string | null; capabilities: unknown; status: string; lastSeen: number | null }>) {
       const cur = m.target(userId, id); if (!cur) throw new Error('Target not found');
-      if (p.policy && !['auto', 'ask', 'deny'].includes(p.policy)) throw new Error('policy must be auto|ask|deny');
+      if (p.policy && !POLICIES.includes(p.policy)) throw new Error('policy must be full|auto|ask|deny');
       db.prepare('UPDATE targets SET name=?,description=?,tags=?,policy=?,allowed_roots=?,pairing_code=?,pairing_expires=?,token_hash=?,platform=?,arch=?,capabilities=?,status=?,last_seen=? WHERE id=?')
         .run(p.name ?? cur.name, p.description === undefined ? cur.description : p.description.slice(0, 600), p.tags === undefined ? cur.tags : json(p.tags), p.policy ?? cur.policy,
           p.allowedRoots === undefined ? cur.allowed_roots : json(p.allowedRoots), p.pairingCode === undefined ? cur.pairing_code : p.pairingCode, p.pairingExpires === undefined ? cur.pairing_expires : p.pairingExpires,

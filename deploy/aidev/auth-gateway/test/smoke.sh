@@ -342,6 +342,16 @@ FAKE
   r=$(post "$A" "/api/aidev/targets/$TID/devices/shot" '{"serial":"fake-0002"}'); check "$r" '/fake-0002/.test(j.error)' "a device without USB-debugging consent is not captured"
   r=$(rpost "/targets/$TID/devices/shot" '{"serial":"fake-0001","maxWidth":320}'); check "$r" 'j.image && j.device.serial==="fake-0001"' "agent (runtime session) looks at the device screen"
   r=$(post "$B" "/api/aidev/targets/$TID/devices/shot" '{"serial":"fake-0001"}'); check "$r" 'j.error' "another user cannot see the device"
+  # mouse/keyboard on a window: the owner's control consent first, then agents too (full permissions)
+  r=$(rpost "/targets/$TID/input" '{"window":999999901,"actions":[{"type":"click","x":10,"y":10}]}'); check "$r" '/원격 제어를 허용하지 않았습니다/.test(j.error)' "input: no control consent on the PC → refused"
+  kill $RPID 2>/dev/null; wait $RPID 2>/dev/null || true; HOME="$RH" "$RUNNER_BIN" consent control on >/dev/null
+  HOME="$RH" AIDEV_ADB="$FADB" AIDEV_SCREEN_CMD="cp $SRC {out}" "$RUNNER_BIN" start > "$T/runner-input.log" 2>&1 & RPID=$!
+  for i in $(seq 1 40); do r=$(get "$A" /api/aidev/targets); echo "$r" | node -e "const j=JSON.parse(require('fs').readFileSync(0));const t=j.targets.find(t=>t.id===$TID);process.exit(t?.online && t.capabilities.control ? 0 : 1)" && break; sleep 0.25; done
+  r=$(rpost "/targets/$TID/input" '{"window":999999901,"imageWidth":640,"imageHeight":360,"actions":[{"type":"click","x":320,"y":180},{"type":"type","text":"hi"},{"type":"key","key":"Enter"}]}'); IRR=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).remoteRunId')
+  check "$r" 'j.ok && j.events===5 && j.remoteRunId>0' "agent: click, type and Enter sent to the window (5 events)"
+  r=$(get "$A" "/api/aidev/remote-runs/$IRR"); check "$r" 'j.run.kind==="control" && j.run.approved_by==="agent" && /type \"hi\"/.test(j.run.cmd) && j.run.exit_code===0' "…recorded as a control run by the agent"
+  r=$(rpost "/targets/$TID/input" '{"window":999999901,"actions":[{"type":"click","x":320,"y":180}]}'); check "$r" '/imageWidth/.test(j.error)' "pixel coordinates without the screenshot size → refused"
+  r=$(post "$B" "/api/aidev/targets/$TID/input" '{"window":999999901,"actions":[{"type":"key","key":"a"}]}'); check "$r" 'j.error' "another user cannot control the PC"
   # F-05: agent (runtime session) → gate: safe commands run, risky ones wait for the user, tests feed the chat run
   rpost() { curl -s -X POST "$G/internal/aidev$1" -H 'authorization: Bearer rtjwt-rt-alice' -H 'x-aidev-runtime: rt-alice' -H 'content-type: application/json' -d "$2"; }
   rget() { curl -s "$G/internal/aidev$1" -H 'authorization: Bearer rtjwt-rt-alice' -H 'x-aidev-runtime: rt-alice'; }
@@ -373,6 +383,14 @@ FAKE
   r=$(get "$A" /api/aidev/targets); check "$r" "j.targets.find(t=>t.id===$TID).policy==='auto'" "\"allow + auto\" switches the target to policy auto"
   r=$(rpost "/targets/$TID/exec" '{"cmd":"touch second.txt"}'); check "$r" 'j.status==="started" && j.stream.by==="auto"' "policy auto: moderate command runs without asking"
   r=$(rpost "/targets/$TID/exec" '{"cmd":"git push --force origin main"}'); check "$r" 'j.status==="pending"' "policy auto: destructive command still asks"
+  # full permissions (default since 2026-10-01): nothing waits, the command is recorded as the agent's
+  post "$A" "/api/aidev/approvals/$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).approval.id')" '{"allow":false}' >/dev/null
+  post "$A" "/api/aidev/targets/$TID" '{"policy":"full"}' PATCH >/dev/null
+  r=$(rpost "/targets/$TID/exec" '{"cmd":"rm -rf full-perm-tmp && echo gone","agent":"testing"}'); FRR=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).stream?.remoteRunId')
+  check "$r" 'j.status==="started" && j.stream.by==="auto" && j.assessment.destructive' "policy full: a destructive command runs without asking (still assessed: $(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).assessment?.reasons.join(", ")'))"
+  r=$(rget "/remote-runs/$FRR/wait?timeout=20"); check "$r" 'j.run.exit_code===0 && j.run.approved_by==="auto" && /gone/.test(j.output)' "…recorded as run #$FRR (approved_by auto)"
+  r=$(post "$A" /api/aidev/targets '{"name":"new-pc-full"}'); check "$r" 'j.target.policy==="full"' "a new PC starts with full permissions"; post "$A" "/api/aidev/targets/$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).target.id')" '' DELETE >/dev/null
+  post "$A" "/api/aidev/targets/$TID" '{"policy":"auto"}' PATCH >/dev/null
   post "$A" "/api/aidev/targets/$TID" '{"policy":"deny"}' PATCH >/dev/null; r=$(rpost "/targets/$TID/exec" '{"cmd":"ls"}'); check "$r" 'j.status==="denied" && /실행 금지/.test(j.reason)' "policy deny: agent refused"; post "$A" "/api/aidev/targets/$TID" '{"policy":"ask"}' PATCH >/dev/null
   # F-04: sync through the gateway RPC (runtime session): manifest → write → delete, report, policy
   r=$(rpost "/targets/$TID/rpc" '{"method":"sync.write","params":{"root":"~/aidev-work/proj","files":[{"path":"src/a.txt","b64":"aGVsbG8="},{"path":"b.txt","b64":"Yg=="}]}}'); check "$r" 'j.result.written===2' "sync.write through the gateway (~ root resolved)"

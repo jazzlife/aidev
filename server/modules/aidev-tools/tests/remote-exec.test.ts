@@ -168,6 +168,19 @@ test('remote_devices / remote_device_shot (F-10): attached devices, then one dev
   assert.equal(r.image, '/9j/CCCC');
 });
 
+test('remote_input: clicks and typing in a window go to the routed target with the chat run id', async () => {
+  let sent: Record<string, unknown> = {};
+  handler = (method, path, body) => {
+    if (path === '/targets') return targets;
+    if (method === 'POST' && path === '/targets/7/input') { sent = body; return { ok: true, window: 42, events: 3, remoteRunId: 50 }; }
+    throw new Error(`unexpected ${method} ${path}`);
+  };
+  const actions = [{ type: 'click', x: 200, y: 400 }, { type: 'type', text: 'hello' }, { type: 'key', key: 'Enter' }];
+  const r = await aidevToolsService.remoteInput({ window: 42, actions, imageWidth: 400, imageHeight: 860 }, { targetId: 7, runId: 12 }) as Record<string, unknown>;
+  assert.deepEqual(sent, { window: 42, actions, imageWidth: 400, imageHeight: 860, runId: 12 });
+  assert.equal(r.events, 3);
+});
+
 const pausedSnap = (id: string, line: number, locals: Array<Record<string, unknown>>) => ({
   id, state: 'paused', error: null, exitCode: null, program: '/w/app.py', cwd: '/w', version: '1.8.22',
   stopped: { reason: 'breakpoint', description: null },

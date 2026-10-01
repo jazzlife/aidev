@@ -189,6 +189,10 @@ impl Session {
         match t {
             "move" => self.at(ev),
             "button" => {
+                // aimed at a window that is gone: drop it — a press must never land in whatever has the focus now
+                if ev.get("win").is_some() && self.window(ev).is_none() {
+                    return;
+                }
                 let down = ev.get("down").and_then(Value::as_bool).unwrap_or(false);
                 if down {
                     // a click on a window behind another one: bring it forward first (like a local click)
@@ -205,6 +209,9 @@ impl Session {
                 if let Some(e) = self.enigo() { let _ = e.button(b, d); }
             }
             "wheel" => {
+                if ev.get("win").is_some() && self.window(ev).is_none() {
+                    return;
+                }
                 // browsers report pixels; one notch ≈ 100 px — keep the remainder for trackpads' small steps
                 self.wheel_y += ev.get("dy").and_then(Value::as_f64).unwrap_or(0.0) / 100.0;
                 self.wheel_x += ev.get("dx").and_then(Value::as_f64).unwrap_or(0.0) / 100.0;
@@ -217,8 +224,10 @@ impl Session {
                 }
             }
             "key" | "text" if ev.get("win").is_some() && self.activated.is_none() => {
-                // typing goes to the window being watched
-                let _ = self.window(ev);
+                // typing goes to the window being watched — and nowhere else when it is gone
+                if self.window(ev).is_none() {
+                    return;
+                }
                 let mut ev = ev.clone();
                 ev.as_object_mut().map(|o| o.remove("win"));
                 self.event(&ev);

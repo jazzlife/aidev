@@ -12,7 +12,10 @@ import type { ExecParams, RunnerHub, StreamInfo } from './runner-hub.js';
  * arrives here (runtime session); the user's own commands from the workbench do not.
  *
  *   risk   = rules first (destructive patterns → 2; read/build/test commands → ≤0.5) + Laya `remote.approve` (0…2)
- *   policy = deny → refused · destructive → always ask ·
+ *   policy = deny → refused ·
+ *            full → nothing waits, destructive commands too (default since 2026-10-01: the user gives agents full
+ *                   permissions) — still assessed, recorded and pushed to the user, who can stop the run ·
+ *            otherwise destructive → always ask ·
  *            ask  → only read/build/test commands run without asking ·
  *            auto → ask only when risk ≥ 1.5
  * A pending approval lives 10 minutes; the user answers from the chat card (workbench / mobile,
@@ -159,6 +162,7 @@ export function createRemoteGate(deps: { store: Store; laya: LayaClient; runners
   }
 
   function needsApproval(policy: string, a: Assessment) {
+    if (policy === 'full') return false;
     if (a.destructive) return true;
     if (policy === 'auto') return a.risk >= 1.5;
     return !a.safe;   // 'ask' (default): only read/build/test commands go straight through
@@ -195,6 +199,10 @@ export function createRemoteGate(deps: { store: Store; laya: LayaClient; runners
       if (!needsApproval(target.policy, assessment)) {
         a.status = 'allowed'; a.decidedAt = now; a.decidedBy = 'auto';
         const started = await start(a, 'auto');
+        // full permissions: a command that would have asked runs at once — the user hears about it and can stop it
+        if (target.policy === 'full' && (assessment.destructive || !assessment.safe)) {
+          void deps.push?.sendToUser(userId, { title: `원격 실행 (확인 생략) · ${target.name}`, body: `${a.agent ? `${a.agent}: ` : ''}${a.cmd.slice(0, 140)}${assessment.reasons.length ? ` — ${assessment.reasons.join(', ')}` : ''}`, url: a.remoteRunId ? `/m/?remoteRun=${a.remoteRunId}` : '/m/', tag: `remote-${a.remoteRunId ?? a.id}` }).catch(() => undefined);
+        }
         return { status: 'started', ...started, approval: null, assessment };
       }
       approvals.set(a.id, a);

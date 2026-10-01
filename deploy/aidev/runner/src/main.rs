@@ -137,8 +137,9 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 RootsCmd::Add { path } => {
                     std::fs::create_dir_all(&path).map_err(|e| format!("{}: {e}", path.display()))?;
                     let real = std::fs::canonicalize(&path).map_err(|e| e.to_string())?;
-                    if real.parent().is_none() || real == config::home() {
-                        return Err("루트(/)나 홈 폴더 전체는 허용할 수 없습니다 — 작업용 하위 폴더를 지정하세요".into());
+                    // the home folder is allowed (agents work with full permissions); the whole disk is not
+                    if real.parent().is_none() {
+                        return Err("루트(/) 전체는 허용할 수 없습니다 — 홈 폴더나 작업용 폴더를 지정하세요".into());
                     }
                     if !cfg.allowed_roots.contains(&real) { cfg.allowed_roots.push(real); }
                 }
