@@ -32,6 +32,8 @@ if [ -f "$tmp/adapter-SHA256SUMS" ]; then
   (cd "$tmp" && sed 's/  /  adapter-/' adapter-SHA256SUMS | sums -c --quiet) || { echo "어댑터 SHA-256 확인 실패"; exit 1; }
 fi
 mkdir -p "$out/adapters"
+# the dist mirrors this release: binaries of other versions (older local builds) are not served next to it
+rm -f "$out"/aidev-runner-*
 for f in "$tmp"/aidev-runner-*; do [ "$(basename "$f")" = aidev-runner-src.tar.gz ] && continue; cp "$f" "$out/"; chmod 755 "$out/$(basename "$f")"; done
 for f in "$tmp"/adapter-*; do n=$(basename "$f"); [ "$n" = adapter-SHA256SUMS ] && continue; cp "$f" "$out/adapters/${n#adapter-}"; done
 (cd "$out" && sums aidev-runner-* > SHA256SUMS)

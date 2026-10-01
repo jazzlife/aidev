@@ -31,5 +31,5 @@ cat > "$R/manifest.json" <<EOF
 { "release": "$sha", "created": "$(date -u +%FT%TZ)", "commit": "$(git rev-parse HEAD)",
   "deps": { "app": "$(h package-lock.json)", "gateway": "$(h deploy/aidev/auth-gateway/package-lock.json)", "runtime-manager": "$(h deploy/aidev/runtime-manager/package-lock.json)" } }
 EOF
-tar czf "$out/release-$sha.tgz" -C "$stage" "$sha"
+tar czf "$out/release-$sha.tgz" --exclude .DS_Store -C "$stage" "$sha"   # Finder metadata from a Mac checkout
 echo "$out/release-$sha.tgz ($(du -h "$out/release-$sha.tgz" | cut -f1))"
