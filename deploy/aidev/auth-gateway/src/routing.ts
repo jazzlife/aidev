@@ -254,6 +254,9 @@ function cosine(a: string[], b: string[]) {
   return na && nb ? dot / (na * nb) : 0;
 }
 const SIMILAR_JUDGED = 0.8;
+/** Bumped whenever the runtime judge prompt changes meaning (specialist-judge.service.ts): cached verdicts of an older
+ *  prompt are not reused. 2: `question` + "command execution is never a specialist" (2026-10-01). */
+const JUDGE_VERSION = 2;
 /** How long a send waits for the judge (env AIDEV_JUDGE_WAIT_MS). A slower verdict is still cached for the next send. */
 const JUDGE_WAIT_MS = Number(process.env.AIDEV_JUDGE_WAIT_MS ?? 20_000);
 const MAX_PREJUDGE_PER_USER = 3;
@@ -265,7 +268,7 @@ type JudgeContext = { specialists: ReturnType<Store['agents']>; catalogSig: stri
 /** What the judge would be asked, and a verdict that is already known (cache, or a judge-confirmed similar command). */
 function judgeContext(store: Store, userId: number, text: string, nbTop: { choice: string | null; probability: number }): JudgeContext {
   const specialists = store.agents(userId).filter((a) => a.domain !== 'meta' && a.name !== 'generalist');
-  const catalogSig = crypto.createHash('sha1').update(specialists.map((a) => `${a.name}@${a.version}`).sort().join(',')).digest('hex').slice(0, 16);
+  const catalogSig = crypto.createHash('sha1').update(`judge${JUDGE_VERSION}|${specialists.map((a) => `${a.name}@${a.version}`).sort().join(',')}`).digest('hex').slice(0, 16);
   const textNorm = normText(text);
   let known = store.judgeCached(userId, textNorm, catalogSig) as JudgeVerdict | null;
   if (known) known = { ...known, source: 'cache' };
