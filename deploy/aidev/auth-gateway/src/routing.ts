@@ -422,6 +422,11 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     } else if (verdict.agent === 'generalist') {
       agentName = 'generalist'; decision = 'generalist';
       reason.push(`specialist judge: general request → generalist${verdict.reason ? ` (${verdict.reason})` : ''}`);
+    } else if (!verdict.new && verdict.question) {
+      // no specialist and no domain to propose because the command itself is unclear ("그 버그 고쳐줘"):
+      // creating an agent would be a guess — the generalist runs it and the clarify prompt can ask first
+      agentName = 'generalist'; decision = 'generalist';
+      reason.push(`specialist judge: command unclear, no domain to create for → generalist (${verdict.question})`);
     } else {
       agentName = 'generalist'; decision = 'create'; proposal = verdict.new;
       reason.push(`specialist judge: no existing specialist${verdict.new ? ` → create ${verdict.new.name} (${verdict.new.domain})` : ''}${verdict.reason ? `: ${verdict.reason}` : ''}`);

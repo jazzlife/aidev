@@ -54,5 +54,12 @@ r = await go(laya({ depth: 2.5, clarify: 0.9 }), '로그인 버튼 고쳐줘', a
 assert.equal(r.judge.source, 'cache'); assert.equal(r.scope.clarify_question, '어느 화면의 로그인 버튼인가요?');
 console.log('PASS a cached verdict keeps its question');
 
+// an unclear command: the judge finds no specialist and nothing to create, only a question → no agent creation
+r = await go(laya({ depth: 2.5, clarify: 0.9 }), '그 버그 고쳐줘', async () => ({ agent: null, fit: 0, reason: 'unclear', new: null, question: '어느 버그인가요?' }));
+assert.equal(r.decision, 'generalist'); assert.equal(r.create, null); assert.equal(r.scope.clarify_question, '어느 버그인가요?');
+r = await go(laya({ depth: 2.5, clarify: 0.2 }), 'Verilog UART 모듈', async () => ({ agent: null, fit: 0, reason: 'no hdl agent', new: { name: 'verilog-hdl', domain: 'hdl', description: 'Verilog', technologies: ['Verilog'] }, question: null }));
+assert.equal(r.decision, 'create');
+console.log('PASS unclear command (no specialist, nothing to propose, a question) → generalist, not creation; a real new domain still creates');
+
 fs.rmSync(dir, { recursive: true, force: true });
 console.log('clarify question: all checks passed');
