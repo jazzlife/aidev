@@ -5,7 +5,7 @@
 //!     pwsh elsewhere), "pwsh", "cmd" (Windows), "bash" (Git Bash on Windows), "sh". PowerShell gets the command as
 //!     -EncodedCommand (no quoting layer at all) and exits with the last native exit code or 1 on an error.
 //! Windows: piped output reaches the gateway as UTF-8 — a job has no console (CREATE_NO_WINDOW), so cmd built-ins and
-//! legacy tools write the ANSI code page (cp949 …); such chunks are converted (`AnsiToUtf8`), UTF-8 passes as is, and
+//! legacy tools write the OEM code page (cp437, cp949 …); such chunks are converted (`AnsiToUtf8`), UTF-8 passes as is, and
 //! Python gets PYTHONIOENCODING. A stop ends the whole process tree (`taskkill /T /F`) — killing cmd.exe alone would
 //! leave `npm run dev`'s node running.
 //!   exec.write {streamId, data | b64}   exec.resize {streamId, cols, rows}   exec.signal {streamId, signal}
@@ -331,8 +331,8 @@ extern "system" {
 }
 
 /// Piped output → UTF-8 on Windows. UTF-8 passes through (an incomplete sequence at a chunk end waits for the next
-/// chunk); anything else is text in the ANSI code page (what a console-less cmd.exe and legacy tools write) and is
-/// converted. A no-op elsewhere.
+/// chunk); anything else is text in the OEM code page (what a console-less cmd.exe writes — CI: "café" arrived as
+/// cp437 0x82) and is converted. A no-op elsewhere.
 #[derive(Default)]
 pub struct AnsiToUtf8 {
     pending: Vec<u8>,
@@ -365,11 +365,11 @@ impl AnsiToUtf8 {
 fn ansi_to_utf8(bytes: &[u8]) -> Vec<u8> {
     #[cfg(windows)]
     unsafe {
-        const CP_ACP: u32 = 0;
-        let n = MultiByteToWideChar(CP_ACP, 0, bytes.as_ptr(), bytes.len() as i32, std::ptr::null_mut(), 0);
+        const CP_OEMCP: u32 = 1;
+        let n = MultiByteToWideChar(CP_OEMCP, 0, bytes.as_ptr(), bytes.len() as i32, std::ptr::null_mut(), 0);
         if n > 0 {
             let mut wide = vec![0u16; n as usize];
-            MultiByteToWideChar(CP_ACP, 0, bytes.as_ptr(), bytes.len() as i32, wide.as_mut_ptr(), n);
+            MultiByteToWideChar(CP_OEMCP, 0, bytes.as_ptr(), bytes.len() as i32, wide.as_mut_ptr(), n);
             return String::from_utf16_lossy(&wide).into_bytes();
         }
     }
@@ -1062,8 +1062,9 @@ mod win_tests {
         out.extend(t.push(&s[2..]));
         out.extend(t.finish());
         assert_eq!(out, s);
-        // not UTF-8 (cp1252 é) → converted
-        assert_eq!(AnsiToUtf8::default().push(b"caf\xe9"), "café".as_bytes());
+        // not UTF-8 (an OEM code page byte) → converted to valid UTF-8
+        let out = AnsiToUtf8::default().push(b"caf\x82");
+        assert!(std::str::from_utf8(&out).is_ok() && out.starts_with(b"caf") && out.len() > 4, "{out:?}");
     }
 
     #[tokio::test]

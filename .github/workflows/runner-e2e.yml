@@ -98,6 +98,10 @@ jobs:
           if ($t.Principal.RunLevel -ne 'Highest') { throw 'not elevated' }
           if ($t.Principal.LogonType -ne 'S4U') { throw 'not S4U (runs without a sign-in)' }
           if ($t.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger') { throw 'not a boot trigger' }
+          "ExecutionTimeLimit=$($t.Settings.ExecutionTimeLimit)"
+          if ($t.Settings.ExecutionTimeLimit -ne 'PT0S') { throw 'the task would stop after a time limit' }
+          Start-Sleep 3
+          if (-not (Get-Process aidev-runner -ErrorAction SilentlyContinue)) { throw 'the boot task did not start the runner' }
           & $bin install-service
           $t = Get-ScheduledTask -TaskName aidev-runner
           "RunLevel=$($t.Principal.RunLevel) Trigger=$($t.Triggers[0].CimClass.CimClassName)"

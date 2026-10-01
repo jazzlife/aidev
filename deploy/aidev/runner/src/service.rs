@@ -1,7 +1,8 @@
 //! `install-service` / `uninstall-service`: keep the runner running in the user's session.
 //!   Linux  — systemd user unit  ~/.config/systemd/user/aidev-runner.service
 //!   macOS  — LaunchAgent        ~/Library/LaunchAgents/work.nado.aidev-runner.plist
-//!   Windows — logon task        schtasks "aidev-runner" (runs `aidev-runner start` at sign-in)
+//!   Windows — logon task        "aidev-runner" (Register-ScheduledTask: `aidev-runner start --hidden` at sign-in,
+//!                               no time limit, restarted if it stops)
 //! Runs as the current user, never as root/SYSTEM: the runner only needs the user's own folders.
 //! Windows options (0.12, what WinRM gives an administrator): `--elevated` runs the task with the user's full
 //! administrator token (no UAC prompt per command), `--at-startup` starts it at boot without a sign-in (S4U: no
@@ -44,16 +45,24 @@ pub fn plist_text(exe: &str, log: &str) -> String {
     )
 }
 
-/// schtasks /Create arguments for the Windows task.
-pub fn schtasks_args(tr: &str, elevated: bool, at_startup: bool, user: &str) -> Vec<String> {
-    let mut a: Vec<String> = ["/Create", "/F", "/TN", "aidev-runner", "/TR", tr].iter().map(|s| s.to_string()).collect();
-    if at_startup {
-        a.extend(["/SC", "ONSTART", "/RU", user, "/NP"].iter().map(|s| s.to_string()));
+/// PowerShell that registers the Windows task. Register-ScheduledTask, not schtasks: schtasks /NP still asks for a
+/// password (CI, 2026-10-02), and its tasks stop after 72 hours by default — this one has no time limit.
+pub fn task_script(exe: &str, elevated: bool, at_startup: bool, user: &str) -> String {
+    let q = |s: &str| format!("'{}'", s.replace('\'', "''"));
+    let (trigger, logon) = if at_startup {
+        ("New-ScheduledTaskTrigger -AtStartup".to_string(), "S4U")
     } else {
-        a.extend(["/SC", "ONLOGON"].iter().map(|s| s.to_string()));
-    }
-    a.extend(["/RL", if elevated { "HIGHEST" } else { "LIMITED" }].iter().map(|s| s.to_string()));
-    a
+        (format!("New-ScheduledTaskTrigger -AtLogOn -User {}", q(user)), "Interactive")
+    };
+    format!(
+        "$a = New-ScheduledTaskAction -Execute {exe} -Argument 'start --hidden'\n\
+         $t = {trigger}\n\
+         $p = New-ScheduledTaskPrincipal -UserId {user} -LogonType {logon} -RunLevel {level}\n\
+         $s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1)\n\
+         Register-ScheduledTask -TaskName aidev-runner -Action $a -Trigger $t -Principal $p -Settings $s -Force | Out-Null\n\
+         Start-ScheduledTask -TaskName aidev-runner",
+        exe = q(exe), user = q(user), level = if elevated { "Highest" } else { "Limited" },
+    )
 }
 
 pub fn install(print_only: bool, elevated: bool, at_startup: bool) -> Result<String, String> {
@@ -91,13 +100,11 @@ pub fn install(print_only: bool, elevated: bool, at_startup: bool) -> Result<Str
         }
         "windows" => {
             // no console window at sign-in; output to ~/.aidev/runner.log
-            let tr = format!("\"{exe_s}\" start --hidden");
             let user = format!("{}\\{}", std::env::var("USERDOMAIN").unwrap_or_default(), std::env::var("USERNAME").unwrap_or_default());
-            let args = schtasks_args(&tr, elevated, at_startup, user.trim_start_matches('\\'));
-            if print_only { return Ok(format!("schtasks {}", args.join(" "))); }
-            let refs: Vec<&str> = args.iter().map(String::as_str).collect();
-            run("schtasks", &refs).map_err(|e| if elevated || at_startup { format!("{e} — 관리자 권한 PowerShell에서 다시 실행하세요") } else { e })?;
-            let _ = run("schtasks", &["/Run", "/TN", "aidev-runner"]);
+            let script = task_script(&exe_s, elevated, at_startup, user.trim_start_matches('\\'));
+            if print_only { return Ok(script); }
+            run("powershell.exe", &["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &crate::exec::powershell_encoded(&script)])
+                .map_err(|_| if elevated || at_startup { "작업 등록 실패 — 관리자 권한 PowerShell에서 다시 실행하세요".to_string() } else { "작업 등록 실패 (Register-ScheduledTask)".to_string() })?;
             Ok(format!("{} 작업 등록: aidev-runner ({}{})", if at_startup { "부팅" } else { "로그온" },
                 if at_startup { "로그인 없이 부팅 때 실행, 화면 없음" } else { "로그인할 때마다 실행" }, if elevated { ", 관리자 권한" } else { "" }))
         }
@@ -133,10 +140,11 @@ pub fn uninstall() -> Result<String, String> {
 mod tests {
     #[test]
     fn windows_task_options() {
-        let a = super::schtasks_args("\"C:\\a b\\aidev-runner.exe\" start --hidden", false, false, "PC\\me").join(" ");
-        assert!(a.contains("/SC ONLOGON") && a.contains("/RL LIMITED") && !a.contains("/RU"));
-        let a = super::schtasks_args("x", true, true, "PC\\me").join(" ");
-        assert!(a.contains("/SC ONSTART /RU PC\\me /NP") && a.contains("/RL HIGHEST"));
+        let s = super::task_script("C:\\it's\\aidev-runner.exe", false, false, "PC\\me");
+        assert!(s.contains("-Execute 'C:\\it''s\\aidev-runner.exe'") && s.contains("-AtLogOn -User 'PC\\me'"));
+        assert!(s.contains("-LogonType Interactive -RunLevel Limited") && s.contains("-ExecutionTimeLimit ([TimeSpan]::Zero)"));
+        let s = super::task_script("x", true, true, "PC\\me");
+        assert!(s.contains("New-ScheduledTaskTrigger -AtStartup") && s.contains("-LogonType S4U -RunLevel Highest"));
     }
 
     #[test]
