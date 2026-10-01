@@ -43,6 +43,9 @@ for (const [cmd, want] of cases) {
 assert.deepEqual(segments('a && b | c; d || e'), ['a', 'b', 'c', 'd', 'e']);
 assert.deepEqual(segments('echo "a; b" && ls'), ['echo ""', 'ls']);
 for (const t of ['npm test', 'npm run test -- --watch=false', 'pnpm test', 'npx vitest run', 'pytest -q', 'cargo test', 'go test ./...', './gradlew test', 'xcodebuild -scheme App test', 'flutter test']) assert.ok(isTestCommand(t), t);
+// F-12: the node / python / make / ctest test runners count as tests too
+for (const c of ['node --test src/*.test.js', 'python3 -m pytest -q', 'python -m unittest discover', 'make test', 'ctest']) assert.equal(isTestCommand(c), true, c);
+for (const c of ['node server.js', 'make build', 'node --version']) assert.equal(isTestCommand(c), false, c);
 for (const t of ['npm run build', 'ls', 'npm run dev']) assert.ok(!isTestCommand(t), t);
 console.log(`remote-gate rules: ${cases.length} commands classified, test detection ok`);
 const { normalizeCwd } = await import('../dist/aidev-api.js');

@@ -105,7 +105,9 @@ export function assessRules(cmd: string) {
   return { destructive: reasons.length > 0, safe, reasons };
 }
 
-const TEST_CMD = /\b(npm\s+(run\s+)?test|npm\s+t\b|pnpm\s+(run\s+)?test|yarn\s+test|bun\s+test|deno\s+test|npx\s+(vitest|jest|playwright\s+test|mocha)|vitest|jest|pytest|tox|cargo\s+test|go\s+test|(gradlew?|mvn|xcodebuild)\b[^;&|]*\btest\b|swift\s+test|dotnet\s+test|flutter\s+test|dart\s+test|rspec|phpunit)/i;
+// node --test / python -m pytest|unittest / make test / ctest added 2026-10-01 (F-12: the passing `node --test` re-run was not
+// recognised, so the earlier failing `npm test` stayed the run's result)
+const TEST_CMD = /\b(npm\s+(run\s+)?test|node\s+(--[\w=-]+\s+)*--test\b|python3?\s+-m\s+(pytest|unittest)\b|make\s+test\b|ctest\b|npm\s+t\b|pnpm\s+(run\s+)?test|yarn\s+test|bun\s+test|deno\s+test|npx\s+(vitest|jest|playwright\s+test|mocha)|vitest|jest|pytest|tox|cargo\s+test|go\s+test|(gradlew?|mvn|xcodebuild)\b[^;&|]*\btest\b|swift\s+test|dotnet\s+test|flutter\s+test|dart\s+test|rspec|phpunit)/i;
 export const isTestCommand = (cmd: string) => TEST_CMD.test(cmd);
 
 export function createRemoteGate(deps: { store: Store; laya: LayaClient; runners: RunnerHub; push?: Push }) {
