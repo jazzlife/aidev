@@ -336,6 +336,9 @@ FAKE
   r=$(get "$A" "/api/aidev/targets/$TID/devices"); check "$r" 'j.devices.some(d=>d.tool==="adb" && d.serial==="fake-0001" && d.name==="Pixel 7" && d.state==="device") && j.devices.some(d=>d.serial==="fake-0002" && d.state==="unauthorized")' "F-10: attached devices listed (adb, one waiting for USB-debugging consent)"
   r=$(post "$A" "/api/aidev/targets/$TID/devices/shot" '{"tool":"adb","serial":"fake-0001","maxWidth":320}'); check "$r" 'j.mime==="image/jpeg" && j.width===320 && j.height===180 && j.device.name==="Pixel 7" && j.remoteRunId>0' "device screen as a 320px JPEG, recorded as a run"
   r=$(get "$A" "/api/aidev/targets/$TID/runs?limit=3"); check "$r" 'j.runs.some(x=>x.kind==="screenshot" && /^device\.shot adb fake-0001/.test(x.cmd))' "the capture's trace names the device"
+  SRR=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).runs.find(x=>x.kind==="screenshot").id')
+  n=$(curl -s "$G/api/aidev/remote-runs/$SRR/image" -H "authorization: Bearer $A" | head -c 2 | od -An -tx1 | tr -d ' '); check "{\"magic\":\"$n\"}" 'j.magic==="ffd8"' "the capture's image is kept for result cards (JPEG)"
+  r=$(curl -s -o /dev/null -w '%{http_code}' "$G/api/aidev/remote-runs/$SRR/image" -H "authorization: Bearer $B"); check "{\"code\":$r}" 'j.code===404' "another user cannot fetch the image"
   r=$(post "$A" "/api/aidev/targets/$TID/devices/shot" '{"serial":"fake-0002"}'); check "$r" '/fake-0002/.test(j.error)' "a device without USB-debugging consent is not captured"
   r=$(rpost "/targets/$TID/devices/shot" '{"serial":"fake-0001","maxWidth":320}'); check "$r" 'j.image && j.device.serial==="fake-0001"' "agent (runtime session) looks at the device screen"
   r=$(post "$B" "/api/aidev/targets/$TID/devices/shot" '{"serial":"fake-0001"}'); check "$r" 'j.error' "another user cannot see the device"
@@ -348,6 +351,8 @@ FAKE
   check "$r" 'j.status==="started" && j.stream.by==="auto" && j.assessment.safe===true' "agent: test command runs without asking (policy ask, risk $(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).assessment?.risk'))"
   r=$(rget "/remote-runs/$RR3/wait?timeout=20"); check "$r" 'j.run.exit_code===0 && /3 passing/.test(j.output) && j.run.run_id>0' "agent: waits for the result (exit 0, output returned)"
   r=$(get "$A" "/api/aidev/runs?limit=5"); check "$r" "(j.runs||[]).some(x=>x.id===$RUN2 && x.test_result==='pass')" "remote test result recorded on the chat run (test_result=pass)"
+  r=$(get "$A" "/api/aidev/remote-runs?session=s-remote"); check "$r" "j.runs.length>=1 && j.runs.every(x=>x.run_id===$RUN2) && j.runs.some(x=>x.id===$RR3)" "the chat session's remote runs (mobile result cards)"
+  r=$(get "$B" "/api/aidev/remote-runs?session=s-remote"); check "$r" 'j.runs.length===0' "another user's session filter finds nothing"
   r=$(rpost "/targets/$TID/exec" '{"cmd":"pwd","cwd":"~/aidev-work"}'); RR5=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).stream?.remoteRunId')
   r=$(rget "/remote-runs/$RR5/wait?timeout=10"); check "$r" 'j.run.exit_code===0 && /aidev-work/.test(j.output)' "agent: cwd ~/aidev-work resolves on the target"
   r=$(rpost "/targets/$TID/exec" '{"cmd":"ls","cwd":"/definitely/not/here"}'); check "$r" 'j.status==="error" && /허용/.test(j.error) && Array.isArray(j.allowed_roots)' "agent: bad folder comes back as a result with the allowed roots"

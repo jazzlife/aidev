@@ -220,7 +220,9 @@ export type RemoteApproval = {
 export type RemoteRun = {
   id: number; target_id: number; target_name: string | null; kind: string; cmd: string | null; cwd: string | null; approved_by: string | null;
   started_at: number; finished_at: number | null; exit_code: number | null;
-  artifacts: { signal?: string | null; lost?: boolean; error?: string; bytes?: number; duration_ms?: number } | null;
+  artifacts: { signal?: string | null; lost?: boolean; error?: string; bytes?: number; duration_ms?: number; width?: number; height?: number; window?: { app?: string; title?: string }; device?: { name?: string; serial?: string } } | null;
+  /** a capture whose image the gateway still keeps (GET /remote-runs/:id/image) */
+  snapshot?: boolean;
   live: { streamId: number; running: boolean; code: number | null; signal: string | null; durationMs: number | null; pty: boolean } | null;
 };
 
@@ -262,6 +264,10 @@ export const aidevApi = {
    *  default the focused one; JPEG base64; the PC owner must have allowed capture). */
   screenshot: (targetId: number, opts: { window?: number | null; query?: string; display?: number; maxWidth?: number } = {}) => post(`/api/aidev/targets/${targetId}/screenshot`, opts).then((response) => readJson<{ image: string; mime: string; width: number; height: number; ms: number; display?: number; window?: { id: number; app: string; title: string } }>(response)),
   remoteRuns: (limit = 10) => authenticatedFetch(`/api/aidev/remote-runs?limit=${limit}`).then((response) => readJson<{ runs: RemoteRun[] }>(response)),
+  /** Remote runs started in one chat session (its routed runs) — newest first. */
+  sessionRemoteRuns: (sessionId: string, limit = 20) => authenticatedFetch(`/api/aidev/remote-runs?session=${encodeURIComponent(sessionId)}&limit=${limit}`).then((response) => readJson<{ runs: RemoteRun[] }>(response)),
+  /** A kept capture image as an object URL (the request carries the session; an <img src> would not). */
+  remoteRunImage: (id: number) => authenticatedFetch(`/api/aidev/remote-runs/${id}/image`).then(async (response) => { if (!response.ok) throw new Error(`image ${response.status}`); return URL.createObjectURL(await response.blob()); }),
   remoteRun: (id: number) => authenticatedFetch(`/api/aidev/remote-runs/${id}`).then((response) => readJson<{ run: RemoteRun }>(response)),
   /** Last output as plain text (ANSI codes stripped). */
   remoteRunLog: (id: number, bytes = 16384) => authenticatedFetch(`/api/aidev/remote-runs/${id}/log?plain=1&bytes=${bytes}`).then(async (response) => { if (!response.ok) throw new Error(`log ${response.status}`); return response.text(); }),

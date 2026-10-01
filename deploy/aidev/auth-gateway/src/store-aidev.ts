@@ -614,6 +614,10 @@ export function aidevMethods(db: Database.Database) {
     remoteRuns(userId: number, targetId?: number, limit = 50) {
       return db.prepare(`SELECT r.*, t.name AS target_name FROM remote_runs r LEFT JOIN targets t ON t.id=r.target_id WHERE r.user_id=? ${targetId ? 'AND r.target_id=?' : ''} ORDER BY r.id DESC LIMIT ?`).all(...(targetId ? [userId, targetId, limit] : [userId, limit])) as RemoteRunRow[];
     },
+    /** Remote runs started during one chat session (through its routed runs) — the mobile result cards. */
+    sessionRemoteRuns(userId: number, sessionId: string, limit = 30) {
+      return db.prepare('SELECT r.*, t.name AS target_name FROM remote_runs r LEFT JOIN targets t ON t.id=r.target_id JOIN runs u ON u.id=r.run_id WHERE r.user_id=? AND u.user_id=? AND u.session_id=? ORDER BY r.id DESC LIMIT ?').all(userId, userId, sessionId, limit) as RemoteRunRow[];
+    },
     remoteRunById(userId: number, id: number) {
       return db.prepare('SELECT r.*, t.name AS target_name FROM remote_runs r LEFT JOIN targets t ON t.id=r.target_id WHERE r.id=? AND r.user_id=?').get(id, userId) as RemoteRunRow | undefined;
     },

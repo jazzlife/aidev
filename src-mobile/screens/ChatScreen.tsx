@@ -9,6 +9,7 @@ import { PermissionSheet } from '@m/components/PermissionSheet';
 import { RouterChip } from '@m/components/RouterChip';
 import { RunFeedback } from '@m/components/RunFeedback';
 import { RemoteMenu } from '@m/components/RemoteMenu';
+import { SessionResults } from '@m/components/SessionResults';
 import { TopBar } from '@m/components/TopBar';
 import { usePreviewList } from '@/modules/remote-preview';
 import { useDebugSessions } from '@/modules/remote-debug';
@@ -208,7 +209,7 @@ export function ChatScreen() {
       ) : null}
       {loadError ? <div className="px-4 py-2 text-danger text-sm">{loadError}</div> : null}
       {!isConnected ? <div className="px-4 py-1 text-[12px] text-warn bg-warn/10">연결 중…</div> : null}
-      <MessageList messages={messages} loading={slot?.status === 'loading'} onMessageLongPress={(text) => { setCopied(false); setCopyText(text); }} />
+      <MessageList messages={messages} loading={slot?.status === 'loading'} onMessageLongPress={(text) => { setCopied(false); setCopyText(text); }} footer={sessionId ? <SessionResults sessionId={sessionId} refreshKey={lastRunFinished ?? 0} /> : null} />
       <BottomSheet open={copyText !== null} onClose={() => setCopyText(null)} title="메시지">
         <div className="text-[13px] text-muted line-clamp-4 whitespace-pre-wrap mb-3">{copyText}</div>
         <button type="button" className="w-full h-12 rounded-xl bg-accent text-accent-ink text-[15px] font-medium" onClick={() => { void copyMessage(); }}>{copied ? '복사했습니다' : '복사'}</button>

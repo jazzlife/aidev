@@ -84,6 +84,13 @@ export function createAidevApi(deps: AidevDeps) {
   const { store, laya, json } = deps;
   const ENGINE_CACHE_MS = 60_000;
   const CURATE_TIMEOUT_MS = 180_000;
+  // the latest captures (screen / device), by remote run id, for result cards; memory only, oldest dropped
+  const SNAPSHOTS_KEPT = 30;
+  const snapshots = new Map<number, Buffer>();
+  const keepSnapshot = (remoteRunId: number, b64: string) => {
+    snapshots.set(remoteRunId, Buffer.from(b64, 'base64'));
+    while (snapshots.size > SNAPSHOTS_KEPT) snapshots.delete(snapshots.keys().next().value as number);
+  };
 
   async function engineAvailability(session: Session, force = false): Promise<EngineAvailability> {
     const acct = store.accountEngines(session.user.id);
@@ -561,6 +568,7 @@ export function createAidevApi(deps: AidevDeps) {
           // every capture leaves a trace in the target's run history (who looked, which window, how big)
           const rr = store.addRemoteRun({ runId: typeof q.runId === 'number' && store.run(uid, q.runId) ? q.runId : null, targetId: id, userId: uid, kind: 'screenshot', cmd: `screen.shot ${what}`, cwd: null, risk: null, approvedBy: agentCall ? 'agent' : 'user' });
           store.finishRemoteRun(rr, { exitCode: 0, artifacts: { width: shot.width, height: shot.height, bytes: shot.bytes, ms: shot.ms, ...(w ? { window: { id: w.id, app: w.app, title: w.title } } : { display: o.display }) } });
+          keepSnapshot(rr, shot.b64);
           if (screenMatch[2] === 'screenshot.jpg') {
             const bytes = Buffer.from(shot.b64, 'base64');
             res.writeHead(200, { 'content-type': 'image/jpeg', 'content-length': String(bytes.length), 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
@@ -594,6 +602,7 @@ export function createAidevApi(deps: AidevDeps) {
           // every capture leaves a trace in the target's run history, like screen.shot
           const rr = store.addRemoteRun({ runId: typeof q.runId === 'number' && store.run(uid, q.runId) ? q.runId : null, targetId: id, userId: uid, kind: 'screenshot', cmd: `device.shot ${d.tool} ${d.serial} — ${String(d.name).slice(0, 120)}`, cwd: null, risk: null, approvedBy: agentCall ? 'agent' : 'user' });
           store.finishRemoteRun(rr, { exitCode: 0, artifacts: { width: shot.width, height: shot.height, bytes: shot.bytes, ms: shot.ms, device: d } });
+          keepSnapshot(rr, shot.b64);
           if (deviceMatch[2] === 'shot.jpg') {
             const bytes = Buffer.from(shot.b64, 'base64');
             res.writeHead(200, { 'content-type': 'image/jpeg', 'content-length': String(bytes.length), 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
@@ -862,7 +871,19 @@ export function createAidevApi(deps: AidevDeps) {
       }
       if (rest === '/remote-runs' && m === 'GET') {
         const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 30, 1), 200);
-        return json(res, 200, { runs: store.remoteRuns(uid, undefined, limit).map(remoteRunView) }), true;
+        const sessionId = url.searchParams.get('session');
+        const rows = sessionId ? store.sessionRemoteRuns(uid, sessionId.slice(0, 200), limit) : store.remoteRuns(uid, undefined, limit);
+        return json(res, 200, { runs: rows.map((r) => ({ ...remoteRunView(r), snapshot: snapshots.has(r.id) })) }), true;
+      }
+      // the image of a recent capture (screen / device) — kept in memory for the result cards (mobile)
+      const snapMatch = rest.match(/^\/remote-runs\/(\d+)\/image$/);
+      if (snapMatch && m === 'GET') {
+        const id = Number(snapMatch[1]);
+        const bytes = store.remoteRunById(uid, id) ? snapshots.get(id) : undefined;
+        if (!bytes) throw new HttpError(404, 'no image kept for this run');
+        res.writeHead(200, { 'content-type': 'image/jpeg', 'content-length': String(bytes.length), 'cache-control': 'private, max-age=3600', 'x-content-type-options': 'nosniff' });
+        res.end(bytes);
+        return true;
       }
       const remoteRunMatch = rest.match(/^\/remote-runs\/(\d+)(\/log|\/signal|\/wait)?$/);
       if (remoteRunMatch) {
