@@ -489,10 +489,12 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   // the final depth: a kind floor (debug ≥ D2) says the work is not a quick one even when Laya scored it D1
   const askClarify = depth >= 2 && (judgeAsks ?? (!fallback && clarify > 0.7));
   if (depth > scoredDepth) reason.push(`depth D${scoredDepth} → D${depth} (${[kindFloor > scoredDepth ? `${taskKind} ≥ D${kindFloor}` : null, agentFloor > scoredDepth ? `${agent.name} ≥ D${agentFloor}` : null].filter(Boolean).join(', ')})`);
-  // D-04 (§3.7): no specialist but quick work (D0–1) runs on the generalist now; its domain goes to the create queue
-  if (decision === 'create' && depth <= 1 && !fromQueue) {
+  // D-04 (§3.7): no specialist but quick work (D0–1) runs on the generalist now; its domain goes to the create queue.
+  // The size of the work is Laya's score: a kind floor (refactor ≥ D2 for a one-line rename) asks for a stronger
+  // model, it does not make the work big enough to design a specialist first (server: "Godot 노드 이름 하나 바꿔줘").
+  if (decision === 'create' && scoredDepth <= 1 && !fromQueue) {
     decision = 'create_background';
-    reason.push(`quick work (D${depth}) → generalist now${proposal ? `, ${proposal.name} queued for creation` : ''}`);
+    reason.push(`quick work (scored D${scoredDepth}) → generalist now${proposal ? `, ${proposal.name} queued for creation` : ''}`);
   }
   const queued = decision === 'create_background' && proposal ? enqueueCreate(store, userId, proposal, text) : null;
   if (queued?.proposedNow) reason.push(`${queued.name}: ${queued.count} commands in this domain → offered for creation`);

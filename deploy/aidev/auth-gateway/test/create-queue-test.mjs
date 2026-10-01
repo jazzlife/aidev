@@ -51,7 +51,10 @@ console.log('PASS quick work in an unknown domain runs on the generalist; the th
 
 r = await go('Verilog로 UART 송신 모듈 작성', newDomain('verilog-hdl', 'hardware description', ['Verilog', 'FPGA']), 2.5);
 assert.equal(r.decision, 'create'); assert.equal(r.create.queue, null);
-console.log('PASS deeper work (D2+) still creates the specialist first');
+const refactorLaya = { status: {}, predict: async (state, questions) => { const out = await laya(1.2).predict(state, questions); out.answers.task_kind = { choice: 'refactor', probabilities: { refactor: 0.9 }, confidence: 0.9 }; return out; } };
+r = await route(store, refactorLaya, uid, engines, { text: 'Godot 노드 이름 하나 바꿔줘' }, { judge: newDomain('godot-engine', 'Godot game engine', ['Godot', 'GDScript']) });
+assert.equal(r.scope.depth, 2, 'the refactor floor still picks the stronger model'); assert.equal(r.decision, 'create_background');
+console.log('PASS deeper work (D2+) still creates the specialist first; a kind floor (refactor ≥ D2) alone does not');
 
 r = await go('Solidity 함수 이름 바꿔줘', newDomain('solidity-contracts', 'smart contracts', ['Solidity', 'EVM']));
 assert.notEqual(r.create.queue.id, id, 'another domain is its own entry');
