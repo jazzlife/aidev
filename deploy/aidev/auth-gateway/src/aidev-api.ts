@@ -120,11 +120,16 @@ export function createAidevApi(deps: AidevDeps) {
     return out;
   }
 
+  /** D-05: engines the account may use and is signed in to — side turns (judge, curation) stay inside them. */
+  const usableEngines = (engines: EngineAvailability) => (['claude', 'codex'] as const).filter((e) => engines[e].allowed && engines[e].authenticated);
+
   /** The specialist judge runs in the user's runtime (their Claude/Codex login); off when no engine is usable. */
   function judgeFor(session: Session, engines: EngineAvailability): SpecialistJudge | undefined {
-    if (!((engines.claude.allowed && engines.claude.authenticated) || (engines.codex.allowed && engines.codex.authenticated))) return undefined;
+    const usable = usableEngines(engines);
+    if (!usable.length) return undefined;
     return async (payload) => {
-      const r = await deps.runtimeFetch(session, '/api/aidev-tools/specialist-judge', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(payload) }, JUDGE_TIMEOUT_MS);
+      // D-05: the judge turn runs only on engines this account may use (a Codex-only account never gets Claude)
+      const r = await deps.runtimeFetch(session, '/api/aidev-tools/specialist-judge', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ ...payload, engines: usable }) }, JUDGE_TIMEOUT_MS);
       const body = await r.json().catch(() => ({})) as { success?: boolean; data?: JudgeVerdict; error?: string };
       if (!r.ok || !body.data) { console.warn(`[aidev] specialist judge unavailable: ${body.error ?? r.status}`); return null; }
       return body.data;
@@ -146,7 +151,8 @@ export function createAidevApi(deps: AidevDeps) {
     if (!agent || agent.domain === 'meta' || !run.session_id) return;
     const decisionRow = run.decision_id ? store.db.prepare('SELECT command FROM decision_log WHERE id=?').get(run.decision_id) as { command: string } | undefined : undefined;
     const signals = { exit_code: run.exit_code, tool_errors: run.tool_errors, user_feedback: run.user_feedback, reverted: run.reverted, test_result: run.test_result };
-    const response = await deps.runtimeFetch(session, '/api/aidev-tools/curate', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ session_id: run.session_id, run_id: run.id, agent: agent.name, engine: run.engine, command: decisionRow?.command ?? null, signals }) }, CURATE_TIMEOUT_MS);   // a headless model turn: well beyond the 10 s status-probe budget
+    const engines = usableEngines(await engineAvailability(session));
+    const response = await deps.runtimeFetch(session, '/api/aidev-tools/curate', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ session_id: run.session_id, run_id: run.id, agent: agent.name, engine: run.engine, engines, command: decisionRow?.command ?? null, signals }) }, CURATE_TIMEOUT_MS);   // a headless model turn: well beyond the 10 s status-probe budget
     const body = await response.json() as { data?: { candidate?: { trigger: string; rule: string; engine: string | null; generalizable: boolean } | null } };
     const candidate = body.data?.candidate;
     if (!candidate) return;

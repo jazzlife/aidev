@@ -34,6 +34,9 @@ r=$(get "$B" /api/aidev/engines); check "$r" '!j.engines.claude.allowed && j.eng
 r=$(post "$A" /api/aidev/route '{"text":"React 컴포넌트에 다크모드 토글 훅을 추가해줘"}'); check "$r" 'j.agent.name==="frontend-react" && j.plan.engine && j.decision_id>0 && !j.fallback' "route react → frontend-react ($(echo "$r" | node -pe 'const j=JSON.parse(require("fs").readFileSync(0)); j.plan.engine+" "+j.plan.model+"/"+j.plan.effort+" D"+j.scope.depth'))"
 r=$(post "$A" /api/aidev/route '{"text":"이 로그 파일 5만 줄을 읽고 분석해서 오류 패턴을 요약해줘"}'); check "$r" 'j.scope.task_kind==="bulk_read" && j.plan.engine==="codex"' "bulk_read → codex (B-15)"
 r=$(post "$B" /api/aidev/route '{"text":"React 컴포넌트에 다크모드 토글 훅을 추가해줘"}'); check "$r" 'j.plan.engine==="codex" && j.engines.claude.score===null' "codex-only account never gets claude (B-14)"
+# D-05: a codex-only account creates on Codex — the architect turn's engine and the judge's allowed engines
+r=$(post "$B" /api/aidev/route '{"text":"Blender 애드온으로 메시 리토폴로지 도구를 처음부터 설계해서 만들어줘"}'); check "$r" '/^create/.test(j.decision) && j.create && j.plan.engine==="codex"' "codex-only: creation runs on codex (decision $(echo "$r" | sed -n 's/.*"decision":"\([^"]*\)".*/\1/p'))"
+r=$(curl -s http://127.0.0.1:18090/rt/rt-codexonly/_mock/judge-calls); check "$r" 'JSON.stringify(j.engines)===JSON.stringify(["codex"])' "codex-only: the judge may use codex only"
 r=$(post "$A" /api/aidev/route '{"text":"Unity 셰이더로 물 표면 굴절 효과를 구현해줘","sessionEngine":"claude"}'); check "$r" 'j.decision==="create" && j.plan.engine==="claude" && j.plan.engine_locked' "unknown domain → create; session engine locked"
 # specialist judge: only a true specialist is used; otherwise create (with a proposal) — the ranker's pick does not win by default
 # (D-04: the mock scores these commands D0–1, so they run on the generalist and queue the domain — create_background)

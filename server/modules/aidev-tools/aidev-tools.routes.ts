@@ -26,7 +26,8 @@ router.post('/specialist-judge', asyncHandler(async (req: Request, res: Response
     return;
   }
   try {
-    res.json(createApiSuccessResponse(await specialistJudgeService.judge({ command, candidates, project: typeof body.project === 'string' ? body.project : null })));
+    const engines = Array.isArray(body.engines) ? (body.engines as unknown[]).filter((e): e is 'claude' | 'codex' => e === 'claude' || e === 'codex') : undefined;
+    res.json(createApiSuccessResponse(await specialistJudgeService.judge({ command, candidates, project: typeof body.project === 'string' ? body.project : null, engines })));
   } catch (error) {
     res.status(502).json({ success: false, error: error instanceof Error ? error.message : 'judge failed' });
   }
@@ -60,6 +61,7 @@ router.post('/curate', asyncHandler(async (req: Request, res: Response) => {
     runId: typeof body.run_id === 'number' ? body.run_id : null,
     agent: typeof body.agent === 'string' ? body.agent : null,
     engine: body.engine === 'codex' ? 'codex' : body.engine === 'claude' ? 'claude' : null,
+    engines: Array.isArray(body.engines) ? (body.engines as unknown[]).filter((e): e is 'claude' | 'codex' => e === 'claude' || e === 'codex') : undefined,
     command: typeof body.command === 'string' ? body.command : null,
     signals: body.signals && typeof body.signals === 'object' ? body.signals as Record<string, unknown> : {},
   });

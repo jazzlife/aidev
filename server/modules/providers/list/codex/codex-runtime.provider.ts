@@ -339,6 +339,10 @@ async function queryCodex(
   try {
     codex = new Codex(buildCodexOptions(options.aidev));
 
+    // D-05: an agent whose definition lists web tools (agent-architect sources current docs, knowledge-refresher)
+    // gets Codex's live web search, as Claude gets WebSearch/WebFetch
+    const routedTools = sanitizeAidevOptions(options.aidev)?.agent.tools ?? [];
+    const wantsWeb = routedTools.some((tool) => tool === 'WebSearch' || tool === 'WebFetch');
     const threadOptions: ThreadOptions = {
       workingDirectory,
       skipGitRepoCheck: true,
@@ -346,6 +350,7 @@ async function queryCodex(
       approvalPolicy,
       model: resolvedModel,
       modelReasoningEffort: resolvedEffort,
+      ...(wantsWeb ? { webSearchMode: 'live' as const } : {}),
     };
 
     if (providerSessionId) {

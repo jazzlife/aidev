@@ -16,7 +16,9 @@ import os from 'node:os';
  * Claude haiku first, Codex mini when Claude is unavailable. Nothing is written into any conversation.
  */
 export type JudgeCandidate = { name: string; description: string };
-export type JudgeInput = { command: string; candidates: JudgeCandidate[]; project?: string | null };
+export type JudgeInput = { command: string; candidates: JudgeCandidate[]; project?: string | null;
+  /** the engines this account may use (D-05: a Codex-only account never gets a Claude turn); default both */
+  engines?: Array<'claude' | 'codex'> };
 export type JudgeResult = {
   agent: string | null;
   fit: number;
@@ -144,7 +146,7 @@ const inflight = new Map<string, Promise<JudgeResult>>();
 
 export const specialistJudgeService = {
   judge(input: JudgeInput): Promise<JudgeResult> {
-    const key = createHash('sha1').update(JSON.stringify([input.command.trim(), input.project ?? null, input.candidates.map((c) => [c.name, c.description])])).digest('hex');
+    const key = createHash('sha1').update(JSON.stringify([input.command.trim(), input.project ?? null, input.candidates.map((c) => [c.name, c.description]), input.engines ?? null])).digest('hex');
     const running = inflight.get(key);
     if (running) return running;
     const promise = this.judgeOnce(input).finally(() => inflight.delete(key));
@@ -165,12 +167,16 @@ export const specialistJudgeService = {
       'Existing agents (name: declared domain):',
       ...candidates.map((c) => `- ${c.name}: ${c.description.replace(/\s+/g, ' ').slice(0, 260)}`),
     ].filter((line) => line !== null).join('\n');
-    let engine = 'claude';
+    // Claude haiku first (fastest), Codex mini when Claude fails — only among the engines the account may use
+    const order = (['claude', 'codex'] as const).filter((e) => !input.engines?.length || input.engines.includes(e));
+    if (!order.length) throw new Error('no engine available for the judge');
+    let engine: string = order[0];
     let text = '';
     try {
-      text = await askClaude(prompt);
+      text = engine === 'claude' ? await askClaude(prompt) : await askCodex(prompt);
     } catch (error) {
-      engine = 'codex';
+      if (order.length < 2) throw error;
+      engine = order[1];
       try { text = await askCodex(prompt); } catch { throw error; }
     }
     const parsed = parseJudge(text, names);

@@ -15,6 +15,8 @@ export type CurateInput = {
   runId: number | null;
   agent: string | null;
   engine: 'claude' | 'codex' | null;
+  /** the engines this account may use (D-05); the fallback stays inside them. Default both. */
+  engines?: Array<'claude' | 'codex'>;
   command: string | null;
   signals: Record<string, unknown>;
 };
@@ -101,14 +103,15 @@ export const lessonCuratorService = {
     const cwd = session?.project_path || process.cwd();
     const summary = await buildSummary(input);
     const prompt = `다음 실패한 실행을 분석해 규칙 후보를 만들어라.\n\n${summary}`;
-    const preferCodex = input.engine === 'codex';
+    const preferCodex = input.engine === 'codex' || Boolean(input.engines?.length && !input.engines.includes('claude'));
     let text = '';
     let engine = preferCodex ? 'codex' : 'claude';
     try {
       text = preferCodex ? await askCodex(prompt, cwd) : await askClaude(prompt, cwd);
     } catch (error) {
-      // the session's engine is unavailable for a side turn: try the other one
+      // the session's engine is unavailable for a side turn: try the other one, if the account may use it
       engine = preferCodex ? 'claude' : 'codex';
+      if (input.engines?.length && !input.engines.includes(engine as 'claude' | 'codex')) throw error;
       try { text = preferCodex ? await askClaude(prompt, cwd) : await askCodex(prompt, cwd); }
       catch { throw error; }
     }

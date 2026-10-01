@@ -84,6 +84,8 @@ const laya = http.createServer(async (req, res) => {
 laya.listen(layaPort, () => console.log(`mock laya on ${layaPort}`));
 
 let judgeCalls = 0;
+// D-05: the engines each runtime's last judge call was allowed to use
+const judgeEngines = {};
 const manager = http.createServer(async (req, res) => {
   const v = req.url.match(/^\/v1\/runtimes\/([^/]+)\/verify$/);
   if (v) { const b = await read(req); return b.token === `rtjwt-${v[1]}` ? send(res, 200, { ok: true, runtime: v[1] }) : send(res, 401, { error: 'Invalid runtime token' }); }
@@ -95,7 +97,7 @@ const manager = http.createServer(async (req, res) => {
     if (path === '/api/auth/user') return send(res, 200, { user: { id: 1, username: name } });
     if (path === '/api/aidev-tools/specialist-judge') {
       // stands in for the runtime's haiku judge: keyword rules over the catalog it is given
-      const b = await read(req); judgeCalls++;
+      const b = await read(req); judgeCalls++; judgeEngines[name] = b.engines ?? null;
       const slow = /slow-judge-(\d+)/.exec(b.command); if (slow) await new Promise((r) => setTimeout(r, Number(slow[1])));
       const names = new Set(b.candidates.map((c) => c.name));
       const rules = [[/unity|셰이더/i, [...names].find((n) => n.includes('unity')) ?? null, { name: 'unity-shader', domain: 'unity-graphics', description: 'Unity shaders and URP', technologies: ['Unity', 'HLSL'] }],
@@ -107,7 +109,7 @@ const manager = http.createServer(async (req, res) => {
       for (const [re, agent, proposal] of rules) if (re.test(b.command)) return send(res, 200, { success: true, data: agent ? { agent, fit: 0.95, reason: 'mock rule', new: null, engine: 'mock', ms: 5 } : { agent: null, fit: 0, reason: 'mock: no specialist', new: proposal, engine: 'mock', ms: 5 } });
       return send(res, 200, { success: true, data: { agent: 'generalist', fit: 0.7, reason: 'mock: general request', new: null, engine: 'mock', ms: 5 } });
     }
-    if (path === '/_mock/judge-calls') return send(res, 200, { calls: judgeCalls });
+    if (path === '/_mock/judge-calls') return send(res, 200, { calls: judgeCalls, engines: judgeEngines[name] ?? null });
     if (path === '/api/aidev-tools/knowledge-check') {
       const b = await read(req);
       return /URP/.test(b.title || '')
