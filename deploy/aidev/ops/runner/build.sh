@@ -23,7 +23,7 @@ if [ -n "$need" ] && [ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | head -1)
 fi
 rustup target add aarch64-apple-darwin x86_64-apple-darwin >/dev/null
 cd "$SRC" && ./build.sh ${*:-mac win-x64 linux-arm64 linux-armv7}
-mkdir -p "$OPS/runner/dist" && cp dist/* "$OPS/runner/dist/"
+mkdir -p "$OPS/runner/dist" && cp -R dist/. "$OPS/runner/dist/"   # binaries and adapters/
 echo "==> $OPS/runner/dist"; ls -la "$OPS/runner/dist"
 # this Mac is also a runner host: put the new build in place right away (skip: AIDEV_NO_INSTALL=1)
 if [ "$(uname -s)" = Darwin ] && [ -z "${AIDEV_NO_INSTALL:-}" ] && ls "$OPS/runner/dist/" | grep -q -- "-mac-"; then
