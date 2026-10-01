@@ -1,7 +1,9 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { Codex } from '@openai/codex-sdk';
 import { createHash } from 'node:crypto';
+import fs from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
 
 /**
  * Specialist judge (IMPLEMENTATION-PLAN §3.1 / §3.7): the gateway asks, for every routed command,
@@ -137,11 +139,20 @@ async function askClaude(prompt: string): Promise<string> {
 /** Light Codex model for side turns: gpt-5.4-mini is refused for ChatGPT-account logins (server 2026-10-01); luna is the D0 tier. */
 const CODEX_SIDE_MODEL = 'gpt-5.6-luna';
 
+// Codex is an agent: left alone it searches the web or looks around the folder before answering (server bench:
+// median 13 s, up to 45 s). The judge is a lookup — no search, an empty folder, and an explicit "answer only".
+const CODEX_JUDGE_RULE = '\n\nAnswer directly from the text above. Do not run commands, read files or search the web.';
+
 async function askCodex(prompt: string): Promise<string> {
   const codex = new Codex({ config: { developer_instructions: JUDGE_PROMPT } as never });
-  const thread = codex.startThread({ workingDirectory: os.homedir(), skipGitRepoCheck: true, sandboxMode: 'read-only', approvalPolicy: 'never', model: CODEX_SIDE_MODEL, modelReasoningEffort: 'low' });
-  const turn = await thread.run(prompt, { signal: AbortSignal.timeout(HARD_TIMEOUT_MS) });
-  return turn.finalResponse ?? '';
+  const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'aidev-judge-'));
+  try {
+    const thread = codex.startThread({ workingDirectory: empty, skipGitRepoCheck: true, sandboxMode: 'read-only', approvalPolicy: 'never', model: CODEX_SIDE_MODEL, modelReasoningEffort: 'low', webSearchMode: 'disabled' });
+    const turn = await thread.run(`${prompt}${CODEX_JUDGE_RULE}`, { signal: AbortSignal.timeout(HARD_TIMEOUT_MS) });
+    return turn.finalResponse ?? '';
+  } finally {
+    fs.rmSync(empty, { recursive: true, force: true });
+  }
 }
 
 /** The same command against the same catalog is judged once at a time (the typing-time pre-judge and the send share it). */

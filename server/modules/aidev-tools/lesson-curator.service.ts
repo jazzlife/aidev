@@ -94,7 +94,8 @@ const CODEX_SIDE_MODEL = 'gpt-5.6-luna';
 
 async function askCodex(prompt: string, cwd: string): Promise<string> {
   const codex = new Codex({ config: { developer_instructions: CURATOR_PROMPT } as never });
-  const thread = codex.startThread({ workingDirectory: cwd, skipGitRepoCheck: true, sandboxMode: 'read-only', approvalPolicy: 'never', model: CODEX_SIDE_MODEL });
+  // a tool-less side turn (the summary is in the prompt): no web search, low effort — as the judge
+  const thread = codex.startThread({ workingDirectory: cwd, skipGitRepoCheck: true, sandboxMode: 'read-only', approvalPolicy: 'never', model: CODEX_SIDE_MODEL, modelReasoningEffort: 'low', webSearchMode: 'disabled' });
   const turn = await thread.run(prompt);
   return turn.finalResponse ?? '';
 }
