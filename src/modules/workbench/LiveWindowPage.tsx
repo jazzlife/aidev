@@ -10,7 +10,7 @@ import { DebugPane, PreviewPane, ScreenPane } from '@/modules/remote-target';
  */
 export function LiveWindowPage() {
   const { kind } = useParams();
-  useEffect(() => { document.title = `${kind === 'screen' ? '원격 화면' : kind === 'debug' ? '디버그' : '미리보기'} · Nado AI Dev`; }, [kind]);
+  useEffect(() => { document.title = `${kind === 'screen' ? '원격 화면' : kind === 'debug' ? '디버그' : '미리보기'} · NadoVibe`; }, [kind]);
   return (
     <div className="fixed inset-0 flex flex-col bg-background">
       {kind === 'screen' ? <ScreenPane isVisible /> : kind === 'debug' ? <DebugPane isVisible /> : <PreviewPane isVisible />}

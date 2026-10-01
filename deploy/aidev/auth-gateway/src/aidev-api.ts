@@ -301,7 +301,7 @@ export function createAidevApi(deps: AidevDeps) {
         return json(res, 200, { removed: store.removePushSubscription(uid, str(b.endpoint, 'endpoint', 2000)) }), true;
       }
       if (rest === '/push/test' && m === 'POST') {
-        return json(res, 200, await deps.push.sendToUser(uid, { title: 'Nado AI Dev 알림 테스트', body: '이 기기로 알림이 도착합니다.', url: '/m/settings', tag: 'test' })), true;
+        return json(res, 200, await deps.push.sendToUser(uid, { title: 'NadoVibe 알림 테스트', body: '이 기기로 알림이 도착합니다.', url: '/m/settings', tag: 'test' })), true;
       }
       // Reported by the user's runtime (runtime JWT via /internal/aidev) after an in-app Claude
       // login (expires_at) or when a turn was refused for authentication (failure_at).

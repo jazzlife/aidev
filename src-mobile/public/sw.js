@@ -17,7 +17,7 @@ self.addEventListener('fetch', (event) => {
 self.addEventListener('push', (event) => {
   let data = {};
   try { data = event.data ? event.data.json() : {}; } catch { data = { body: event.data && event.data.text() }; }
-  event.waitUntil(self.registration.showNotification(data.title || 'Nado AI Dev', { body: data.body || '', icon: '/icons/icon-192x192.png', badge: '/icons/icon-96x96.png', data: { url: data.url || '/m/' } }));
+  event.waitUntil(self.registration.showNotification(data.title || 'NadoVibe', { body: data.body || '', icon: '/icons/icon-192x192.png', badge: '/icons/icon-96x96.png', data: { url: data.url || '/m/' } }));
 });
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();

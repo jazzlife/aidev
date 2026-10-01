@@ -48,7 +48,7 @@ export function localAgentCommand(agent: LocalAgent, mode: LocalAgentMode, opts:
 export function localAgentPrompt(task: string, ctx: { machine: string; platform: string | null; cwd: string | null; mode: LocalAgentMode; resume: boolean }) {
   if (ctx.resume) return task;
   return [
-    `[Nado AI Dev → 이 PC의 로컬 agent 위임]`,
+    `[NadoVibe → 이 PC의 로컬 agent 위임]`,
     `너는 사용자의 PC "${ctx.machine}"(${ctx.platform ?? '알 수 없는 OS'})에서 실행 중이다. 클라우드 쪽 개발 agent가 이 PC에서만 할 수 있는 일을 맡겼다 — 이 PC의 IDE·SDK·디버거·시뮬레이터/에뮬레이터·연결된 기기와 보드를 직접 써라.`,
     ctx.mode === 'full'
       ? '추측하지 말고 실행·빌드·디버거(중단점, 변수, 스택)로 확인하고, 필요하면 코드를 고친 뒤 다시 실행해 검증하라. 이 폴더 밖의 파일·시스템 설정은 바꾸지 마라.'

@@ -29,7 +29,8 @@ export function LoginScreen() {
     <div className="m-app justify-center px-6 pb-safe-b">
       <div className="mx-auto w-full max-w-sm">
         <div className="mb-8">
-          <div className="text-2xl font-semibold tracking-tight">Nado AI Dev</div>
+          <img src="/logo-128.png" alt="" className="mb-4 h-16 w-16 rounded-full" />
+          <div className="text-2xl font-semibold tracking-tight">NadoVibe</div>
           <div className="text-muted text-sm mt-1">모바일 채팅으로 명령하고, 전문 agent가 실행합니다.</div>
         </div>
         <form onSubmit={submit} className="space-y-3">

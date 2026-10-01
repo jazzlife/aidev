@@ -38,7 +38,7 @@ export function createNotifier(deps: { store: Store; laya: LayaClient; push: Pus
       let level = Math.max(0, Math.min(2, Math.round(Number(judged.answer) || 0)));
       if (event.code === 'permission.required') level = 2;   // the run waits until someone answers
       if (online) level = Math.min(level, 1);                 // an open app already shows it
-      const title = event.sessionName || 'Nado AI Dev';
+      const title = event.sessionName || 'NadoVibe';
       if (level >= 1 && event.sessionId) deps.store.markUnread(userId, { sessionId: event.sessionId, level, code: event.code, title, body });
       let pushed = 0;
       if (level >= 2) {

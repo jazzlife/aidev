@@ -194,7 +194,7 @@ export const playChatCompletionSound = (options = {}): Promise<void> => playNoti
 //----------------- DOCUMENT TITLE ------------
 
 /** Browser tab title shown when no project or session is selected. Private to the title helpers. */
-const DEFAULT_PAGE_TITLE = 'CloudCLI UI';
+const DEFAULT_PAGE_TITLE = 'NadoVibe';
 
 /**
  * Resolves the human-readable label for a session, accounting for Cursor sessions that

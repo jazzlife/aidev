@@ -243,7 +243,7 @@ export default function McpServers({ selectedProvider, currentProjects }: McpSer
                     {managed && (
                       <div className="text-xs text-muted-foreground">
                         {t('mcpServers.managed.hint', {
-                          defaultValue: 'Managed by CloudCLI.',
+                          defaultValue: 'Managed by NadoVibe.',
                         })}
                       </div>
                     )}

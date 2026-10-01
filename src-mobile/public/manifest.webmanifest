@@ -1,7 +1,7 @@
 {
-  "name": "Nado AI Dev",
-  "short_name": "Nado Dev",
-  "description": "Nado AI Dev — mobile chat",
+  "name": "NadoVibe",
+  "short_name": "NadoVibe",
+  "description": "NadoVibe — 모바일 채팅",
   "start_url": "/m/",
   "scope": "/m/",
   "display": "standalone",
@@ -9,7 +9,29 @@
   "theme_color": "#faf9f6",
   "orientation": "portrait",
   "icons": [
-    { "src": "/icons/icon-192x192.png", "sizes": "192x192", "type": "image/png", "purpose": "maskable any" },
-    { "src": "/icons/icon-512x512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable any" }
+    {
+      "src": "/icons/icon-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
+    },
+    {
+      "src": "/icons/icon-maskable-192x192.png",
+      "sizes": "192x192",
+      "type": "image/png",
+      "purpose": "maskable"
+    },
+    {
+      "src": "/icons/icon-maskable-512x512.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "maskable"
+    }
   ]
 }

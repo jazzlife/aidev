@@ -478,7 +478,7 @@ export function createDebugHub(deps: { store: Store; runners: DebugRunners }) {
     const c: Conn = { dap, name, child, configured: false, caps: {}, bpIds: new Map(), ready };
     s.conns.push(c);
     wire(s, c);
-    c.caps = await c.dap.request('initialize', { clientID: 'aidev', clientName: 'Nado AI Dev', adapterID: s.adapter, pathFormat: 'path', linesStartAt1: true, columnsStartAt1: true, supportsVariableType: true, supportsStartDebuggingRequest: true, supportsRunInTerminalRequest: false, locale: 'ko' }, 60_000);
+    c.caps = await c.dap.request('initialize', { clientID: 'aidev', clientName: 'NadoVibe', adapterID: s.adapter, pathFormat: 'path', linesStartAt1: true, columnsStartAt1: true, supportsVariableType: true, supportsStartDebuggingRequest: true, supportsRunInTerminalRequest: false, locale: 'ko' }, 60_000);
     return c;
   }
 

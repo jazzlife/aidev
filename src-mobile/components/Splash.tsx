@@ -2,7 +2,8 @@
 export function Splash() {
   return (
     <div className="m-app items-center justify-center">
-      <div className="text-muted text-sm m-pulse">Nado AI Dev</div>
+      <img src="/logo-128.png" alt="" className="h-14 w-14 rounded-full m-pulse" />
+      <div className="mt-3 text-muted text-sm">NadoVibe</div>
     </div>
   );
 }
