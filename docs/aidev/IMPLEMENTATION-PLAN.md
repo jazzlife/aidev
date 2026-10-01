@@ -53,7 +53,7 @@
 
 | 단계 | [x] / [~] / [ ] | 상태 | 남은 것 |
 |---|---|---|---|
-| B 판정·선택·실행 | 1 / 13 / 4 | 구현 완료, 서버 검증 대기. 최종 agent 판정은 LLM judge(서버 22/22, 2~4초), 기준선 B-16 | B-13·B-14·B-15 서버 검증, B-17 배포·롤백 리허설·백업 확인 (B-11은 D-03으로 이동) |
+| B 판정·선택·실행 | 3 / 13 / 2 | 구현 완료, 서버 검증 대기. 최종 agent 판정은 LLM judge(서버 22/22, 2~4초), 기준선 B-16 | B-13·B-14·B-15 서버 검증, B-17 배포·롤백 리허설·백업 확인 (B-11은 D-03으로 이동) |
 | C 두 개의 UI | 0 / 13 / 1 | 모바일·작업대 두 앱, 푸시, Claude 앱 내 로그인, `ui.focus`/`ui.artifact` 구현 | 구현: C-06 `notify.level`·Lighthouse. 결정: C-07a provider 선택기 처리. 검증: C-11 실기기 |
 | F 원격 PC | 5 / 8 / 1 | F-02~F-05·F-11 서버 확인(F-11 재확인 `6b99680f`), 러너 0.11.0, agent 전체 권한(`full`), OS별 빌드·설치 스크립트 | F-12 e2e, Windows·macOS 실기(디버거·스크립트), F-08 다중 PC 대상 선택 |
 | D 생성 | 0 / 5 / 1 | 판정→생성→재전송 로컬 e2e 확인 | 구현 완료(D-04 대기열·제안, D-05 Codex 전용). 검증: D-06 |
@@ -330,13 +330,16 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 - [ ] (D-03으로 이동: 지식 팩 SKILL.md 볼륨은 agent 생성 단계에서 함께 구현; 현재는 knowledge_digest 프롬프트 주입으로 대체) B-11 `runtime/entrypoint.mjs`: `aidev_agents` 볼륨 → `~/.claude/skills`, `~/.agents/skills` 링크; runtime-manager가 볼륨 마운트(ro)
 - [~] 구현·typecheck/lint 통과, 서버 확인 대기 — B-12 프런트 `aidev-router/` api.ts, store.ts, useAidevRouting.ts(beforeSend, clarify), useAidevDecide.ts + `useChatComposerState.ts` 훅 연결 (bar 없이도 동작)
 - [~] B-13 서버 검증(2026-09-24, 639d88db): "react로 간단한 todo 앱 만들어봐" → 라우팅 로그는 찍혔으나 (1) 런타임 Claude OAuth 만료로 Codex plan이 나왔는데 워크벤치가 세션을 UI provider(Claude)로 먼저 만들어 Codex 모델을 Claude 세션에 적용 → 실패, (2) 어휘 prior가 generalist 예시에 잠식돼 create 경로(agent-architect)로 빠짐. 수정: 라우팅→세션 생성 순서(plan.engine으로 생성), generalist 예시 제외+저신뢰 규칙, create는 어휘 확신 <0.6일 때만, `plan.engine_error` 표시, `relay.sh claude-token`(setup-token 장기 토큰 설치). 재검증 대기
-- [ ] B-13 서버 검증: 한국어 React 명령 → `/route` → Claude 세션에서 `frontend-react` agent로 실행됨을 런타임 로그(`agents` 옵션)로 확인; Codex 세션에서 `developer_instructions` 적용 확인; agent가 `aidev_decide`를 호출한 로그 확인
+- [~] B-13 서버 검증: 한국어 React 명령 → `/route` → Claude 세션에서 `frontend-react` agent로 실행됨을 런타임 로그(`agents` 옵션)로 확인; Codex 세션에서 `developer_instructions` 적용 확인; agent가 `aidev_decide`를 호출한 로그 확인
+  - 서버(de89086f, 2026-10-01): 클라이언트와 같은 절차(/route → POST /runs → /ws chat.send{aidev}) — Claude 세션: route frontend-react·sonnet/high → 런타임 `[Claude SDK] aidev routing: agent=frontend-react v1 model=sonnet … run=19`, 5.3초 완료; Codex 세션(test 프로젝트 새 세션): frontend-react·gpt-5.6-terra/high → `[Codex SDK] aidev routing: agent=frontend-react v1 … run=20`, 23.9초. 남음: agent가 `aidev_decide`를 호출한 로그(이번 명령은 도구가 필요 없었음 — 최종 실사용에서)
 - [ ] B-14 Codex 전용 계정 시나리오: 테스트 계정 `engines=codex` → route가 Claude를 제외하는지, 실패 상향이 Codex 내부에 머무는지
-- [~] B-15 `bulk_read` 명령("이 로그 5만 줄 분석해줘")이 두-엔진 계정에서 Codex로 가는지
+- [x] B-15 (de89086f) `bulk_read` 명령("이 로그 5만 줄 분석해줘")이 두-엔진 계정에서 Codex로 가는지
+  - 서버: "이 로그 파일 5만 줄…", "logs 폴더 전체…", "Read every file under src…" → task_kind bulk_read, engine codex (claude 0.30 / codex 0.70), gpt-5.6-terra. 확인 중 수정: 판정이 이 셋에 log-analysis·codebase-analyzer 생성을 제안 → "기술 분야 없는 작업은 크기와 무관하게 generalist", 판정 캐시 버전 3 → 판정 벤치 20/20·질문 3/3·중앙값 2.4초
   - 서버(500d39e3, 실제 Laya): task_kind=debug(0.38)로 오판 → task_kind에도 어휘 prior 도입(`agent_examples.task_kind` 라벨 916건, NB, `LAYA_KIND_WEIGHT` 0.35 융합; 벤치 어휘 단독 0.62, bulk_read 재현율 4/4). 다음 verify에서 `kind.*` 수치 확인
 - [x] B-16 벤치마크 세트(§3.9, decide kind 포함) + `bench.py` 작성, 기준선 측정 결과 기록
   - 기준선(서버 실제 Laya, 2026-09-23, 126 held-out): agent Laya 단독 0.429 / 어휘 NB 0.778 / 융합 0.833 (ko 0.859, en 0.806); α sweep 0→0.778, 0.2→0.833, 0.35→0.833, 0.5→0.802, 0.65→0.786, 0.8→0.651, 1→0.429 → `LAYA_WEIGHT` 기본 0.3(plateau 중앙)
-- [ ] B-17 릴리스 배포(`relay.sh deploy`) 후 `release.sh status` 정상, 롤백 1회 리허설, DB 백업 파일 확인
+- [x] B-17 (de89086f) 릴리스 배포(`relay.sh deploy`) 후 `release.sh status` 정상, 롤백 1회 리허설, DB 백업 파일 확인
+  - 서버(2026-10-01): status 정상. DB 백업 — 9/23 이후 없었음(호스트 cron 미설치) → 게이트웨이가 하루 1회 직접 백업(7일 보관, `AIDEV_DB_BACKUP=off`로 끔): `auth-20261001-144535.db` 1.2MB 생성·오래된 2개 정리. 롤백 리허설 — 처음엔 `release.sh rollback`이 링크만 바꾸고 재시작이 사용법 오류로 실패(기본 옵션 `"${@:---drain --batch 6}"`이 한 인자로 전달 → 프로세스는 새 코드 유지) → 배열로 수정·laya 재시작 추가·실패를 "frontend-only"로 잘못 보고하던 것 수정, `relay.sh scripts`로 동기화 후 재리허설: de89086f → 0735b5a4(게이트웨이·런타임 재시작, 공개 200) → de89086f 복귀 정상. 부수: relay scripts 동기화가 macOS `._*` 파일을 서버로 보내던 것 제외
 
 **B 완료 기준**: B-13~B-16 서버 로그로 확인, 기준선 수치 기록, 롤백 성공.
 
@@ -471,7 +474,8 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 - [~] E-07 Laya: `/export/decisions?kind=` → kind별 온도 보정 스크립트(서버 GPU) → `aidev_models`에 보정 파라미터 원자 교체 → 벤치마크 재측정
   - 구현·측정(2026-10-01, ba44f741): `bench/calibrate.py`(Laya 컨테이너, 서버 GPU 19초) — 게이트웨이와 같은 route 질문(문구는 `ROUTE_INSTRUCTIONS` 하나, pack.sh가 `questions.json`으로 내보냄)으로 정답 세트(commands 126, remote-actions 93)에 대해 종류별 온도 T(p∝p^(1/T))를 NLL로 맞추고 2분할 교차 검증. 결과: Laya는 과신 — agent T=1.9(교차 검증 ECE 0.281→0.104, NLL 2.07→1.76), task_kind T=1.75(0.212→0.135), remote_action T=1.4(0.161→0.121), 정확도 불변. `--write`로 held-out이 좋아진 종류만 `/models/calibration.json`에 원자 교체(임시 파일+rename) 저장 완료. 결정: 게이트웨이에는 아직 연결하지 않음 — route는 Laya와 어휘 확률을 로그 선형(α·log p)으로 융합해 T는 α 재조정과 수학적으로 같으므로 판정이 바뀌지 않음(벤치로 맞춘 α가 이미 흡수). 보정이 판정에 영향을 주는 곳은 Laya 확률만 쓰는 결정(needs_new·clarify fallback·decide 종류 임계값)인데 실사용 정답 데이터가 없음(decision_log: route 144건 중 정답 71건, 대부분 verify 반복; decide 종류는 정답 없음). 그 데이터가 쌓이면(E-08과 같은 조건) 같은 스크립트로 그 종류의 T를 구해 연결
 - [ ] E-08 Laya fine-tune 파이프라인(공식 노트북 기반, 서버 iGPU, ≥300건부터) → 가중치 원자 교체 → 벤치마크 비교
-- [ ] E-09 서버 검증: 같은 실패를 2회 유도 → 2회째에 교훈이 주입되어 회피되는 것을 로그로 확인; fallback 비율(`decision_log.fallback`)이 5% 미만
+- [~] E-09 서버 검증: 같은 실패를 2회 유도 → 2회째에 교훈이 주입되어 회피되는 것을 로그로 확인; fallback 비율(`decision_log.fallback`)이 5% 미만
+  - fallback 비율(2026-10-01): decision_log 297건 중 5건 1.7% (<5% 충족) — 5건은 모두 9/29 판정 실험의 agent.pick(Laya 확신 0.30~0.35 → 설계대로 결정적 fallback). 남음: 같은 실패 2회 유도 → 교훈 주입 회피(👎·실패 유도가 필요해 최종 실사용에서)
 
 **E 완료 기준**: E-09 확인, 벤치마크 보정 전후 비교표.
 

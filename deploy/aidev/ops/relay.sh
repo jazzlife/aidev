@@ -164,7 +164,8 @@ do_scripts() {
   local dir="${1:-$OPS/scripts}"; [ -d "$dir" ] || { echo "$dir 없음"; exit 1; }
   ensure_master
   echo "==> $dir/*.sh → 서버 $REMOTE_DEPLOY/release/"
-  logto "scripts-$(stamp)" bash -c "tar cz -C '$dir' . | ssh -S '$SOCK' '$HOST' 'set -e; tar xz -C $REMOTE_DEPLOY/release/; chmod +x $REMOTE_DEPLOY/release/*.sh; ls -la $REMOTE_DEPLOY/release/'"
+  # COPYFILE_DISABLE: no macOS ._* metadata files on the server
+  logto "scripts-$(stamp)" bash -c "COPYFILE_DISABLE=1 tar cz --exclude='._*' --exclude='.DS_Store' -C '$dir' . | ssh -S '$SOCK' '$HOST' 'set -e; tar xz -C $REMOTE_DEPLOY/release/; chmod +x $REMOTE_DEPLOY/release/*.sh; ls -la $REMOTE_DEPLOY/release/'"
 }
 do_sh() {
   local script="${1:?local script}"; shift || true; [ -f "$script" ] || { echo "$script 없음"; exit 1; }

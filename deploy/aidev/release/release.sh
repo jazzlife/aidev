@@ -160,8 +160,12 @@ cmd_rollback() { # rollback [sha] [restart opts]: activate an older release and 
   local set=""
   case " $changed " in *" runtime-manager "*) set="$set runtime-manager";; esac
   case " $changed " in *" gateway "*)         set="$set gateway";; esac
+  case " $changed " in *" laya "*)            set="$set laya";; esac
   case " $changed " in *" server "*)          set="$set runtimes";; esac
-  [ -n "$set" ] && cmd_restart "${@:---drain --batch 6}" $set || ok "frontend-only rollback: nothing restarted"
+  # default restart options as separate words ("${@:-...}" passed them as ONE argument and every rollback's
+  # restart failed with the usage message — B-17 rehearsal 2026-10-01: processes kept the newer code)
+  local opts=("$@"); [ ${#opts[@]} -gt 0 ] || opts=(--drain --batch 6)
+  if [ -n "$set" ]; then cmd_restart "${opts[@]}" $set; else ok "frontend-only rollback: nothing restarted"; fi
 }
 cmd_list() { vol 'ls -1 releases; echo "deps: $(ls -1 deps | tr "\n" " ")"; echo "current -> $(readlink current 2>/dev/null)"; echo "previous: $(cat previous 2>/dev/null)"'; }
 cmd_status() {
