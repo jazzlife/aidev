@@ -14,6 +14,7 @@ import { createConsoleHub } from './console-hub.js';
 import { createRunnerHub, screenOpts, type RunnerHub } from './runner-hub.js';
 import { createPreview } from './preview.js';
 import { startTierPolicySchedule } from './tier-policy.js';
+import { startBackupSchedule } from './db-backup.js';
 import { seedAgents } from './seed-agents.js';
 
 const port = Number(process.env.PORT ?? 8080);
@@ -189,6 +190,7 @@ const aidev = createAidevApi({
 });
 aidev.knowledgeRefresher.startSchedule();
 startTierPolicySchedule(store);
+startBackupSchedule(store);   // B-17: daily DB backup, 7 days kept
 // The SPA is served by the gateway for every user, signed in or not, from STATIC_ROOT.
 // STATIC_ROOT is a shared volume whose `current` entry is swapped atomically by the
 // release tooling, so a frontend release never rebuilds or restarts any container.
