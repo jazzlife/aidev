@@ -144,11 +144,15 @@ const CODEX_SIDE_MODEL = 'gpt-5.6-luna';
 // median 13 s, up to 45 s). The judge is a lookup — no search, an empty folder, and an explicit "answer only".
 const CODEX_JUDGE_RULE = '\n\nAnswer directly from the text above. Do not run commands, read files or search the web.';
 
+/** Codex writes every exec as a rollout the runtime lists as a conversation; side turns are marked subagent so the
+ *  session indexer skips them (they appeared as "aidev-judge-…" chats with JSON titles — 2026-10-01). */
+const SIDE_TURN_SOURCE = 'subagent';
+
 async function askCodex(prompt: string): Promise<string> {
   const codex = new Codex({ config: { developer_instructions: JUDGE_PROMPT } as never });
   const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'aidev-judge-'));
   try {
-    const thread = codex.startThread({ workingDirectory: empty, skipGitRepoCheck: true, sandboxMode: 'read-only', approvalPolicy: 'never', model: CODEX_SIDE_MODEL, modelReasoningEffort: 'low', webSearchMode: 'disabled' });
+    const thread = codex.startThread({ threadSource: SIDE_TURN_SOURCE, workingDirectory: empty, skipGitRepoCheck: true, sandboxMode: 'read-only', approvalPolicy: 'never', model: CODEX_SIDE_MODEL, modelReasoningEffort: 'low', webSearchMode: 'disabled' });
     const turn = await thread.run(`${prompt}${CODEX_JUDGE_RULE}`, { signal: AbortSignal.timeout(HARD_TIMEOUT_MS) });
     return turn.finalResponse ?? '';
   } finally {

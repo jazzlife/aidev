@@ -101,9 +101,13 @@ async function askClaude(system: string, prompt: string, model: string | null): 
   return output;
 }
 
+/** Codex writes every exec as a rollout the runtime lists as a conversation; side turns are marked subagent so the
+ *  session indexer skips them (they appeared as "aidev-judge-…" chats with JSON titles — 2026-10-01). */
+const SIDE_TURN_SOURCE = 'subagent';
+
 async function askCodex(system: string, prompt: string, model: string | null): Promise<string> {
   const codex = new Codex({ config: { developer_instructions: system } as never });
-  const thread = codex.startThread({ workingDirectory: os.homedir(), skipGitRepoCheck: true, sandboxMode: 'read-only', approvalPolicy: 'never', webSearchMode: 'live', ...(model ? { model } : {}) });
+  const thread = codex.startThread({ threadSource: SIDE_TURN_SOURCE, workingDirectory: os.homedir(), skipGitRepoCheck: true, sandboxMode: 'read-only', approvalPolicy: 'never', webSearchMode: 'live', ...(model ? { model } : {}) });
   const turn = await thread.run(prompt);
   return turn.finalResponse ?? '';
 }

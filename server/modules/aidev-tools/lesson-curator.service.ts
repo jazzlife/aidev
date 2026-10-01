@@ -92,10 +92,14 @@ async function askClaude(prompt: string, cwd: string): Promise<string> {
 /** Light Codex model for side turns: gpt-5.4-mini is refused for ChatGPT-account logins (server 2026-10-01); luna is the D0 tier. */
 const CODEX_SIDE_MODEL = 'gpt-5.6-luna';
 
+/** Codex writes every exec as a rollout the runtime lists as a conversation; side turns are marked subagent so the
+ *  session indexer skips them (they appeared as "aidev-judge-…" chats with JSON titles — 2026-10-01). */
+const SIDE_TURN_SOURCE = 'subagent';
+
 async function askCodex(prompt: string, cwd: string): Promise<string> {
   const codex = new Codex({ config: { developer_instructions: CURATOR_PROMPT } as never });
   // a tool-less side turn (the summary is in the prompt): no web search, low effort — as the judge
-  const thread = codex.startThread({ workingDirectory: cwd, skipGitRepoCheck: true, sandboxMode: 'read-only', approvalPolicy: 'never', model: CODEX_SIDE_MODEL, modelReasoningEffort: 'low', webSearchMode: 'disabled' });
+  const thread = codex.startThread({ threadSource: SIDE_TURN_SOURCE, workingDirectory: cwd, skipGitRepoCheck: true, sandboxMode: 'read-only', approvalPolicy: 'never', model: CODEX_SIDE_MODEL, modelReasoningEffort: 'low', webSearchMode: 'disabled' });
   const turn = await thread.run(prompt);
   return turn.finalResponse ?? '';
 }
