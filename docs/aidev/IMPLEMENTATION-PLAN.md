@@ -47,17 +47,19 @@
 
 ---
 
-## 1. 현재 상태 (2026-09-23)
+## 1. 현재 상태 (2026-10-01)
 
-| 항목 | 상태 | 근거 |
-|---|---|---|
-| 서버 릴리스 볼륨 모델 | 완료 | 활성 릴리스 `1da6063f7c55`(게이트웨이 Laya 프록시 포함) |
-| Laya 서비스 | 완료, GPU | `aidev-laya`, `device: cuda`, 라우팅 3/3 정답, `/route` p50 ≈150ms |
-| 게이트웨이 DB `agents`, `decision_log` | 스키마만 | 커밋 41aee367 (미배포) |
-| 게이트웨이 `/api/aidev/route|decide|laya/health` | 배포됨 | Laya 직접 프록시(카탈로그 미연동) |
-| provider 훅, 프런트, 생성, 학습, 작업대, 러너 | 미착수 | |
+> §4 체크리스트 기준 요약. §4 항목 상태를 바꾸면 이 표도 함께 고친다.
 
-클라우드 저장소 `main` 최신: `a943cce4`(v1 계획) + 이 문서. 다음 릴리스부터 B 단계 반영.
+| 단계 | [x] / [~] / [ ] | 상태 | 남은 것 |
+|---|---|---|---|
+| B 판정·선택·실행 | 1 / 13 / 4 | 구현 완료, 서버 검증 대기. 최종 agent 판정은 LLM judge(서버 22/22, 2~4초), 기준선 B-16 | B-13·B-14·B-15 서버 검증, B-17 배포·롤백 리허설·백업 확인 (B-11은 D-03으로 이동) |
+| C 두 개의 UI | 0 / 12 / 2 | 모바일·작업대 두 앱, 푸시, Claude 앱 내 로그인, `ui.focus`/`ui.artifact` 구현 | 구현: C-05 모바일 Clarify·FilePeek·DiffPeek·Catalog, C-09 `ClarifyPrompt`·`AgentCatalog`, C-06 `notify.level`·Lighthouse. 결정: C-07a provider 선택기 처리. 검증: C-11 실기기 |
+| F 원격 PC | 5 / 8 / 1 | F-02~F-05·F-11 서버 확인(F-11 재확인 `6b99680f`), 러너 0.11.0, agent 전체 권한(`full`), OS별 빌드·설치 스크립트 | F-12 e2e, Windows·macOS 실기(디버거·스크립트), F-08 다중 PC 대상 선택 |
+| D 생성 | 0 / 3 / 3 | 판정→생성→재전송 로컬 e2e 확인 | 구현: D-04 `create_queue`·반복 시 백그라운드 생성 제안, D-05 Codex 전용 생성. 검증: D-06 |
+| E 축적·학습 | 1 / 5 / 3 | E-01 서버 확인, 교훈 게이트·escalate/handoff·지식 갱신·tier_policy·engine_weights 구현 | 구현: E-07 Laya kind별 보정, E-08 fine-tune(≥300건). 검증: E-09 |
+
+진행 방식(§4): 구현 + 기본 검증 후 다음 단계로 넘어가고, 실사용 검증은 전체 구현 후 최종 테스트에서 한꺼번에 한다. 저장소 `main` 최신: `530df00f`.
 
 ---
 
