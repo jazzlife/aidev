@@ -11,6 +11,8 @@ export {
   notifyRunStopped,
   // Used by provider runtimes to report background work that finished after its turn ended.
   notifyBackgroundWorkCompleted,
+  // Used by the server entrypoint to relay every event to the Nado AI Dev gateway (aidev-tools, notify.level).
+  onNotificationEvent,
 } from '@/modules/notifications/services/notification-orchestrator.service.js';
 export {
   registerDesktopNotificationClient,

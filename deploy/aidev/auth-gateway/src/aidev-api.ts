@@ -4,6 +4,7 @@ import type { openStore } from './store.js';
 import { EFFORT_LADDER, ENGINES, type Engine } from './store-aidev.js';
 import type { LayaClient } from './laya.js';
 import type { Push } from './push.js';
+import { createNotifier } from './notify.js';
 import { RpcError, screenOpts, type RunnerHub } from './runner-hub.js';
 import type { RemoteGate } from './remote-gate.js';
 import { applyLessonOutcome, promote } from './lesson-loop.js';
@@ -41,6 +42,8 @@ export type AidevDeps = {
   preview?: Preview;
   /** Remote debugging sessions (F-09). */
   debug?: DebugHub;
+  /** C-06: whether the user has one of the apps open right now (a live chat connection). */
+  isOnline?: (userId: number) => boolean;
   /** Debugger consoles (F-09c): any CLI debugger/REPL in a pty, driven line by line. */
   console?: ConsoleHub;
   /** https://<host> the browser uses (preview URLs). */
@@ -82,6 +85,7 @@ async function readJson(req: IncomingMessage, limit = 256 * 1024): Promise<Recor
 
 export function createAidevApi(deps: AidevDeps) {
   const { store, laya, json } = deps;
+  const notifier = createNotifier({ store, laya, push: deps.push, isOnline: deps.isOnline ?? (() => false) });
   const ENGINE_CACHE_MS = 60_000;
   const CURATE_TIMEOUT_MS = 180_000;
   // the latest captures (screen / device), by remote run id, for result cards; memory only, oldest dropped
@@ -286,6 +290,16 @@ export function createAidevApi(deps: AidevDeps) {
       }
       // Reported by the user's runtime (runtime JWT via /internal/aidev) after an in-app Claude
       // login (expires_at) or when a turn was refused for authentication (failure_at).
+      // C-06: a runtime notification event (runtime JWT): Laya notify.level → session badge and/or push
+      if (rest === '/notify-event' && m === 'POST') {
+        const b = await readJson(req);
+        return json(res, 200, await notifier.handle(uid, { code: str(b.code, 'code', 60), sessionId: optStr(b.session_id, 200) ?? null, sessionName: optStr(b.session_name, 200) ?? null, provider: optStr(b.provider, 20) ?? null, detail: optStr(b.detail, 300) ?? null })), true;
+      }
+      if (rest === '/notify/unread' && m === 'GET') return json(res, 200, { sessions: store.unread(uid) }), true;
+      if (rest === '/notify/seen' && m === 'POST') {
+        const b = await readJson(req);
+        return json(res, 200, { cleared: store.markSeen(uid, optStr(b.session_id, 200) ?? null) }), true;
+      }
       if (rest === '/claude-auth' && m === 'POST') {
         const b = await readJson(req);
         const report: { expiresAt?: number | null; failureAt?: number | null } = {};

@@ -3,7 +3,7 @@ import { useNavigate, useParams } from 'react-router-dom';
 import { Search } from 'lucide-react';
 
 import { api, useChatRealtimeHandlers, useSessionStore, useWebSocket, type LLMProvider, type NormalizedMessage, type PendingPermissionRequest, type ProjectSession } from '@/modules/chat-core';
-import { AgentCreateCard, shouldAskClarify, useAgentCreation, useAidevRouting, useEscalation, usePrejudge, type AidevSendDecoration, type Engine } from '@/modules/aidev-router';
+import { AgentCreateCard, aidevApi, shouldAskClarify, useAgentCreation, useAidevRouting, useEscalation, usePrejudge, type AidevSendDecoration, type Engine } from '@/modules/aidev-router';
 import { Composer } from '@m/components/Composer';
 import { MessageList } from '@m/components/MessageList';
 import { PermissionSheet } from '@m/components/PermissionSheet';
@@ -105,6 +105,19 @@ export function ChatScreen() {
     sessionStore.setActiveSession(sessionId);
     void sessionStore.fetchFromServer(sessionId);
   }, [sessionId, sessionStore]);
+  // C-06: an open conversation has no unread news — on open, when leaving, and shortly after a run here ends
+  // (the runtime's event reaches the gateway around the same time as the chat's `complete`)
+  useEffect(() => {
+    if (!sessionId) return undefined;
+    const seen = () => { void aidevApi.notifySeen(sessionId).catch(() => undefined); };
+    seen();
+    return seen;
+  }, [sessionId]);
+  useEffect(() => {
+    if (!sessionId || !lastRunFinished) return undefined;
+    const timer = setTimeout(() => { void aidevApi.notifySeen(sessionId).catch(() => undefined); }, 3000);
+    return () => clearTimeout(timer);
+  }, [sessionId, lastRunFinished]);
   useEffect(() => {
     if (!sessionId || !ws || !isConnected) return;
     statusCheckSentAtRef.current.set(sessionId, Date.now());

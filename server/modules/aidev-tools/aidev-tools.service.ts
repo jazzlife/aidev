@@ -682,6 +682,27 @@ export const aidevToolsService = {
     }
   },
 
+  /**
+   * C-06: relays a runtime notification event (run finished / failed / needs approval …) to the gateway, which
+   * decides with Laya `notify.level` whether the phone stays quiet, shows a badge or gets a push. Best effort.
+   */
+  async reportNotification(event: { code?: string; sessionId?: string | null; provider?: string | null; meta?: Record<string, unknown> }, sessionName: string | null) {
+    if (!runtimeName || !event.code) return;
+    const meta = event.meta ?? {};
+    const text = (value: unknown) => (typeof value === 'string' && value.trim() ? value.trim().slice(0, 300) : null);
+    try {
+      await callGateway('POST', '/notify-event', {
+        code: event.code,
+        session_id: event.sessionId ?? null,
+        session_name: sessionName,
+        provider: event.provider ?? null,
+        detail: text(meta.error) ?? text(meta.toolName) ?? text(meta.message) ?? text(meta.stopReason),
+      });
+    } catch (error) {
+      console.warn('[aidev-tools] notification report failed:', error instanceof Error ? error.message : error);
+    }
+  },
+
   async runOutcome(runId: number, outcome: Record<string, unknown>) {
     return callGateway('PATCH', `/runs/${runId}/outcome`, outcome);
   },

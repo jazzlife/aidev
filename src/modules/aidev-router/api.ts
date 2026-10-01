@@ -199,6 +199,9 @@ export type NextAction = {
 /** A stored knowledge item as the catalog shows it (E-04 adds the re-check fields). */
 export type KnowledgeItem = { id: number; agent_id: number; title: string; body: string; source_url: string | null; source_date: string | null; status: string; expires_at: number | null; checked_at: number | null; check_fails: number; check_note: string | null; replaces: number | null; owner_id: number | null };
 
+/** A session with news the user has not looked at (C-06 notify.level ≥ 1: 1 badge, 2 also pushed). */
+export type UnreadSession = { session_id: string; level: number; code: string; title: string | null; body: string | null; at: number };
+
 /** One agent with what the catalog shows about it (`GET /agents/:id`): knowledge, lessons, run statistics, versions. */
 export type AgentDetail = {
   agent: CatalogAgent;
@@ -293,6 +296,10 @@ export const aidevApi = {
   pushSubscribe: (subscription: PushSubscriptionJSON) => post('/api/aidev/push/subscribe', { subscription }).then((response) => readJson<{ ok: boolean }>(response)),
   pushUnsubscribe: (endpoint: string) => post('/api/aidev/push/unsubscribe', { endpoint }).then((response) => readJson<{ removed: number }>(response)),
   pushTest: () => post('/api/aidev/push/test', {}).then((response) => readJson<{ subscriptions: number; delivered: number }>(response)),
+  /** C-06: sessions with news not looked at yet (notify.level ≥ 1), newest first. */
+  notifyUnread: () => authenticatedFetch('/api/aidev/notify/unread').then((response) => readJson<{ sessions: UnreadSession[] }>(response)),
+  /** C-06: the session was looked at (no id: everything). */
+  notifySeen: (sessionId?: string | null) => post('/api/aidev/notify/seen', { session_id: sessionId ?? null }).then((response) => readJson<{ cleared: number }>(response)),
   // E-04 knowledge refresh: start (one item or the caller's due items), progress, review proposals
   knowledgeRefresh: (id?: number) => post('/api/aidev/knowledge/refresh', id === undefined ? {} : { id }).then((response) => readJson<{ job: KnowledgeRefreshJob }>(response)),
   knowledgeRefreshStatus: () => authenticatedFetch('/api/aidev/knowledge/refresh').then((response) => readJson<{ job: KnowledgeRefreshJob | null }>(response)),

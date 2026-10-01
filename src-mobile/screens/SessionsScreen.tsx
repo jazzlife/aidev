@@ -3,6 +3,7 @@ import { Archive, ArrowLeft, EyeOff, MoreHorizontal, Plus, RotateCcw, Settings, 
 import { Link, useNavigate } from 'react-router-dom';
 
 import { api } from '@/modules/chat-core';
+import { aidevApi, type UnreadSession } from '@/modules/aidev-router';
 import { BottomSheet } from '@m/components/BottomSheet';
 import { RemoteMenu } from '@m/components/RemoteMenu';
 import { TopBar } from '@m/components/TopBar';
@@ -20,17 +21,18 @@ async function readList(response: Response, key: 'conversations' | 'sessions') {
 }
 
 /** One row: tap opens the conversation; long-press or ⋯ opens its actions. */
-function ConversationRow({ item, onOpen, onActions }: { item: Conversation; onOpen: () => void; onActions: () => void }) {
+function ConversationRow({ item, unread, onOpen, onActions }: { item: Conversation; /** C-06: news not looked at yet */ unread?: UnreadSession; onOpen: () => void; onActions: () => void }) {
   const press = useLongPress(onActions);
   return (
     <li className="border-b border-line flex items-stretch">
       <button type="button" className="flex-1 min-w-0 text-left pl-4 pr-1 py-3 active:bg-elevated" onClick={onOpen} {...press}>
         <div className="flex items-baseline gap-2">
-          <span className="flex-1 min-w-0 truncate text-[15px]">{item.sessionTitle || '(제목 없음)'}</span>
+          {unread ? <span aria-label="새 소식" className={`w-2 h-2 shrink-0 rounded-full self-center ${unread.code === 'run.failed' || unread.code === 'permission.required' ? 'bg-danger' : 'bg-accent'}`} /> : null}
+          <span className={`flex-1 min-w-0 truncate text-[15px] ${unread ? 'font-semibold' : ''}`}>{item.sessionTitle || '(제목 없음)'}</span>
           <span className="text-[11px] text-muted shrink-0">{relativeTime(item.lastActivity)}</span>
         </div>
         <div className="text-[12px] text-muted truncate mt-0.5">
-          <span className="uppercase tracking-wide">{item.provider ?? ''}</span>{item.projectDisplayName ? ` · ${item.projectDisplayName}` : ''}
+          {unread?.body ? <span className="text-ink">{unread.body}</span> : <><span className="uppercase tracking-wide">{item.provider ?? ''}</span>{item.projectDisplayName ? ` · ${item.projectDisplayName}` : ''}</>}
         </div>
       </button>
       <button type="button" aria-label="대화 메뉴" onClick={onActions} className="m-touch shrink-0 flex items-center justify-center px-2 text-muted active:bg-elevated"><MoreHorizontal size={18} /></button>
@@ -53,6 +55,8 @@ export function SessionsScreen() {
   const [busy, setBusy] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
   const toastTimer = useRef<number | null>(null);
+  // C-06: sessions with news (run finished / failed / waiting for approval) since they were last opened
+  const [unread, setUnread] = useState<Map<string, UnreadSession>>(new Map());
 
   const load = useCallback((which: View) => {
     setItems(null); setError(null);
@@ -60,6 +64,15 @@ export function SessionsScreen() {
     request.then(setItems).catch((err: Error) => setError(err.message));
   }, []);
   useEffect(() => { load(view); }, [load, view]);
+  useEffect(() => {
+    if (view !== 'active') return;
+    aidevApi.notifyUnread().then((r) => {
+      setUnread(new Map(r.sessions.map((s) => [s.session_id, s])));
+      // the home-screen icon shows how many conversations have news (installed app, where supported)
+      const nav = navigator as Navigator & { setAppBadge?: (n: number) => Promise<void>; clearAppBadge?: () => Promise<void> };
+      void (r.sessions.length ? nav.setAppBadge?.(r.sessions.length) : nav.clearAppBadge?.())?.catch(() => undefined);
+    }).catch(() => undefined);
+  }, [view]);
 
   const showToast = (next: Toast) => {
     if (toastTimer.current) window.clearTimeout(toastTimer.current);
@@ -114,7 +127,7 @@ export function SessionsScreen() {
         {items && items.length > 0 && !hidden ? <div className="px-4 pt-2 pb-1 text-[11px] text-muted">길게 누르면 숨기기·삭제</div> : null}
         <ul>
           {items?.map((item) => (
-            <ConversationRow key={item.sessionId} item={item} onOpen={() => navigate(`/session/${encodeURIComponent(item.sessionId)}`)} onActions={() => { setConfirmDelete(false); setTarget(item); }} />
+            <ConversationRow key={item.sessionId} item={item} unread={hidden ? undefined : unread.get(item.sessionId)} onOpen={() => navigate(`/session/${encodeURIComponent(item.sessionId)}`)} onActions={() => { setConfirmDelete(false); setTarget(item); }} />
           ))}
         </ul>
       </main>

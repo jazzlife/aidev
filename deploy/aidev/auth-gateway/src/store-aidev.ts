@@ -190,6 +190,9 @@ export function migrateAidev(db: Database.Database) {
   db.exec(`UPDATE engine_weights SET prior=weight WHERE prior IS NULL;
     CREATE TABLE IF NOT EXISTS engine_weight_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, task_kind TEXT NOT NULL, engine TEXT NOT NULL,
       from_weight REAL, to_weight REAL, success_n INTEGER, fail_n INTEGER, reason TEXT NOT NULL, actor TEXT NOT NULL);`);
+  // C-06 notify.level: sessions with news the user has not looked at yet (badge level ≥ 1), one row per session
+  db.exec(`CREATE TABLE IF NOT EXISTS notify_unread (user_id INTEGER NOT NULL, session_id TEXT NOT NULL, level INTEGER NOT NULL,
+    code TEXT NOT NULL, title TEXT, body TEXT, at INTEGER NOT NULL, PRIMARY KEY (user_id, session_id));`);
   // 2026-10-01: `uses` counted every routing pick (verify scripts, test routes, sends held for clarify) — the
   // catalog showed frontend-react "used 29×" with no run. It now counts runs; recount once from the runs table.
   if (!db.prepare("SELECT 1 FROM app_kv WHERE k='agents.uses-from-runs'").get()) {
@@ -578,6 +581,19 @@ export function aidevMethods(db: Database.Database) {
       return (db.prepare('SELECT COUNT(*) AS n FROM runs WHERE user_id=? AND engine=? AND outcome=\'fail\' AND started_at>?').get(userId, engine, Date.now() - sinceMs) as { n: number }).n;
     },
     // ---- decisions (all kinds) ------------------------------------------------
+    /** C-06: a session has news (the newest event wins; the level never drops while it is unread). */
+    markUnread(userId: number, u: { sessionId: string; level: number; code: string; title: string | null; body: string | null }) {
+      db.prepare(`INSERT INTO notify_unread(user_id,session_id,level,code,title,body,at) VALUES(?,?,?,?,?,?,?)
+        ON CONFLICT(user_id, session_id) DO UPDATE SET level=MAX(level, excluded.level), code=excluded.code, title=excluded.title, body=excluded.body, at=excluded.at`)
+        .run(userId, u.sessionId, u.level, u.code, u.title, u.body, Date.now());
+    },
+    unread(userId: number) {
+      return db.prepare('SELECT session_id, level, code, title, body, at FROM notify_unread WHERE user_id=? ORDER BY at DESC LIMIT 200').all(userId) as Array<{ session_id: string; level: number; code: string; title: string | null; body: string | null; at: number }>;
+    },
+    /** Seen: one session, or everything when `sessionId` is null. */
+    markSeen(userId: number, sessionId: string | null) {
+      return (sessionId ? db.prepare('DELETE FROM notify_unread WHERE user_id=? AND session_id=?').run(userId, sessionId) : db.prepare('DELETE FROM notify_unread WHERE user_id=?').run(userId)).changes;
+    },
     logKindDecision(d: { userId: number; kind: string; command: string; answer: unknown; confidence?: number | null; probabilities?: unknown; latencyMs?: number | null; device?: string | null; fallback: boolean; state?: unknown }) {
       const r = db.prepare('INSERT INTO decision_log(user_id,kind,command,answer,confidence,probabilities,latency_ms,device,fallback,state,created_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)')
         .run(d.userId, d.kind, d.command.slice(0, 4000), json(d.answer), d.confidence ?? null, json(d.probabilities), d.latencyMs ?? null, d.device ?? null, d.fallback ? 1 : 0, d.state === undefined ? null : JSON.stringify(d.state).slice(0, 8000), Date.now());

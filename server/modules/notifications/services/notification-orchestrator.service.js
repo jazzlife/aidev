@@ -222,17 +222,33 @@ const notificationChannels = [
   }
 ];
 
+// Nado AI Dev: platform listeners (aidev-tools → gateway notify.level) see every event, whatever this
+// runtime's own channel preferences say — the phone's notifications are decided by the gateway.
+const eventListeners = new Set();
+
+function onNotificationEvent(listener) {
+  eventListeners.add(listener);
+  return () => eventListeners.delete(listener);
+}
+
 function notifyUserIfEnabled({ userId, event }) {
   if (!userId || !event) {
     return;
   }
 
   const normalizedEvent = normalizeNotificationSession(event);
-  const preferences = notificationPreferencesDb.getPreferences(userId);
-  if (!isNotificationEventEnabled(preferences, normalizedEvent)) {
+  if (isDuplicate(normalizedEvent)) {
     return;
   }
-  if (isDuplicate(normalizedEvent)) {
+  for (const listener of eventListeners) {
+    try {
+      listener({ userId, event: normalizedEvent, sessionName: resolveSessionName(normalizedEvent) });
+    } catch (err) {
+      console.error('Notification listener error:', err);
+    }
+  }
+  const preferences = notificationPreferencesDb.getPreferences(userId);
+  if (!isNotificationEventEnabled(preferences, normalizedEvent)) {
     return;
   }
 
@@ -304,6 +320,7 @@ export {
   buildNotificationPayload,
   createNotificationEvent,
   notifyUserIfEnabled,
+  onNotificationEvent,
   notifyRunStopped,
   notifyRunFailed,
   notifyBackgroundWorkCompleted

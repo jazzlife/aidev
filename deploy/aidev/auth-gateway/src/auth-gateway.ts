@@ -176,8 +176,11 @@ const preview = createPreview({ store, runners, secret });
 // Remote debugging (F-09): the gateway speaks DAP to adapters the runner starts on the PC.
 const debug = createDebugHub({ store, runners });
 const consoles = createConsoleHub({ runners });
+// C-06: open chat connections (/ws) per user — while an app is open its news is on screen, so no push
+const openChats = new Map<number, number>();
 const aidev = createAidevApi({
   runners, gate, preview, debug, console: consoles, publicOrigin: origin,
+  isOnline: (userId) => (openChats.get(userId) ?? 0) > 0,
   store, laya, json, push,
   async runtimeFetch(session, path, init, timeoutMs = 10_000) {
     const runtime = await ready(session.user.runtime);
@@ -451,6 +454,9 @@ server.on('upgrade', async (req, socket, head) => {
     remote.once('open', () => {
       if (socket.destroyed || !store.session(session.sid)) return remote.terminate();
       wsServer.handleUpgrade(req, socket, head, (client) => {
+        const chat = pathname === '/ws';
+        if (chat) openChats.set(session.user.id, (openChats.get(session.user.id) ?? 0) + 1);
+        client.once('close', () => { if (chat) openChats.set(session.user.id, Math.max(0, (openChats.get(session.user.id) ?? 1) - 1)); });
         const timer = setInterval(() => {
           if (!store.session(session.sid)) { client.close(1008, 'Session expired'); remote.terminate(); }
           else client.ping();
