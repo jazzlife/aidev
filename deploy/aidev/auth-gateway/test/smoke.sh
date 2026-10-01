@@ -9,7 +9,7 @@ mkdir -p "$T/secrets"; head -c 48 /dev/urandom | base64 > "$T/secrets/jwt"; head
 MOCK_CODEX_ONLY=rt-codexonly node test/mock-services.mjs >"$T/mock.log" 2>&1 &
 sleep 0.5
 export DATABASE_PATH="$T/auth.db" JWT_SECRET_FILE="$T/secrets/jwt" RUNTIME_MANAGER_TOKEN_FILE="$T/secrets/rt" \
-  RUNTIME_MANAGER_URL=http://127.0.0.1:18090 LAYA_URL=http://127.0.0.1:18095 PUBLIC_ORIGIN=http://127.0.0.1:18080 PORT=18080 STATIC_ROOT="$T/dist" LAYA_RETRY_MS=1500 AIDEV_JUDGE_WAIT_MS=1500
+  RUNTIME_MANAGER_URL=http://127.0.0.1:18090 LAYA_URL=http://127.0.0.1:18095 PUBLIC_ORIGIN=http://127.0.0.1:18080 PORT=18080 STATIC_ROOT="$T/dist" LAYA_RETRY_MS=1500 AIDEV_JUDGE_WAIT_MS=1500 AIDEV_CODEX_JUDGE_WAIT_MS=600
 # what the release serves under /_runner/: binaries, adapters, per-OS scripts, runner source (runner/scripts/stage-dist.sh)
 "$(cd .. && pwd)/runner/scripts/stage-dist.sh" "$T/runner"; export RUNNER_DIST_DIR="$T/runner"
 mkdir -p "$T/dist" "$T/dist-mobile"; echo '<html>workbench</html>' > "$T/dist/index.html"; echo '<html>mobile</html>' > "$T/dist-mobile/index.html"
@@ -37,6 +37,9 @@ r=$(post "$B" /api/aidev/route '{"text":"React 컴포넌트에 다크모드 토�
 # D-05: a codex-only account creates on Codex — the architect turn's engine and the judge's allowed engines
 r=$(post "$B" /api/aidev/route '{"text":"Blender 애드온으로 메시 리토폴로지 도구를 처음부터 설계해서 만들어줘"}'); check "$r" '/^create/.test(j.decision) && j.create && j.plan.engine==="codex"' "codex-only: creation runs on codex (decision $(echo "$r" | sed -n 's/.*"decision":"\([^"]*\)".*/\1/p'))"
 r=$(curl -s http://127.0.0.1:18090/rt/rt-codexonly/_mock/judge-calls); check "$r" 'JSON.stringify(j.engines)===JSON.stringify(["codex"])' "codex-only: the judge may use codex only"
+r=$(post "$B" /api/aidev/route '{"text":"Verilog 카운터 모듈 slow-judge-1000"}'); check "$r" 'j.judge===null && j.plan.reason.some((x)=>/still running/.test(x))' "codex-only: the send waits briefly for a slow judge (Laya + prior go on)"
+sleep 0.6
+r=$(post "$B" /api/aidev/route '{"text":"Verilog 카운터 모듈 slow-judge-1000"}'); check "$r" 'j.judge && j.judge.source==="cache"' "codex-only: the late verdict is used next time"
 r=$(post "$A" /api/aidev/route '{"text":"Unity 셰이더로 물 표면 굴절 효과를 구현해줘","sessionEngine":"claude"}'); check "$r" 'j.decision==="create" && j.plan.engine==="claude" && j.plan.engine_locked' "unknown domain → create; session engine locked"
 # specialist judge: only a true specialist is used; otherwise create (with a proposal) — the ranker's pick does not win by default
 # (D-04: the mock scores these commands D0–1, so they run on the generalist and queue the domain — create_background)

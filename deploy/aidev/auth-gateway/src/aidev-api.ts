@@ -17,7 +17,7 @@ import fs from 'node:fs';
 import type { Preview } from './preview.js';
 import { launchCommand, validateLaunch, type DebugHub } from './debug-hub.js';
 import type { ConsoleHub } from './console-hub.js';
-import { evaluateRouting, prejudge, route, TIER_TABLE, type EngineAvailability, type JudgeVerdict, type RouteInput, type SpecialistJudge } from './routing.js';
+import { CODEX_JUDGE_WAIT_MS, evaluateRouting, prejudge, route, TIER_TABLE, type EngineAvailability, type JudgeVerdict, type RouteInput, type SpecialistJudge } from './routing.js';
 /** Hard limit of one judge call in the runtime; a send waits less (routing.ts AIDEV_JUDGE_WAIT_MS) and the rest is cached. */
 const JUDGE_TIMEOUT_MS = Number(process.env.AIDEV_JUDGE_TIMEOUT_MS ?? 60_000);
 
@@ -203,7 +203,9 @@ export function createAidevApi(deps: AidevDeps) {
           effortCap: b.effortCap && typeof b.effortCap === 'object' ? { claude: optStr((b.effortCap as Record<string, unknown>).claude, 20), codex: optStr((b.effortCap as Record<string, unknown>).codex, 20) } as Partial<Record<Engine, string>> : null };
         const engines = await engineAvailability(session);
         const judge = judgeFor(session, engines);
-        const result = await route(store, laya, uid, engines, input, { judge });
+        // D-05: Codex-only judging is slow (12–28 s) — the send waits briefly, the verdict is cached for next time
+        const judgeWaitMs = usableEngines(engines).includes('claude') ? undefined : CODEX_JUDGE_WAIT_MS;
+        const result = await route(store, laya, uid, engines, input, { judge, judgeWaitMs });
         // D-04: the same quick domain came up often enough — offer its specialist (Laya notify.level decides how loudly)
         const queued = result.create?.queue;
         if (queued?.proposed_now && result.create?.proposal) {

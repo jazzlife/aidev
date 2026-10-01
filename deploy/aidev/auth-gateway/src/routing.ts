@@ -280,6 +280,10 @@ const JUDGE_VERSION = 2;
 /** How long a send waits for the judge (env AIDEV_JUDGE_WAIT_MS). A slower verdict is still cached for the next send. */
 const JUDGE_WAIT_MS = Number(process.env.AIDEV_JUDGE_WAIT_MS ?? 20_000);
 const MAX_PREJUDGE_PER_USER = 3;
+/** D-05: a send judged by Codex alone waits this long (env AIDEV_CODEX_JUDGE_WAIT_MS). Codex answers in 12–28 s on the
+ *  server even for "reply OK" — past the "10 s is abnormal" line of the routing principle — so the send goes on with
+ *  Laya + the lexical prior and the late verdict is cached for the next time (typing-time pre-judge still runs). */
+export const CODEX_JUDGE_WAIT_MS = Number(process.env.AIDEV_CODEX_JUDGE_WAIT_MS ?? 5_000);
 
 /** Running judge calls, keyed by user + catalog + command: the typing-time pre-judge and the send share one call. */
 const judging = new Map<string, Promise<JudgeVerdict | null>>();
@@ -341,7 +345,7 @@ export function prejudge(store: Store, userId: number, input: { text: string; pr
   return { status: 'started' as const };
 }
 
-export async function route(store: Store, laya: LayaClient, userId: number, engines: EngineAvailability, input: RouteInput, opts: { judge?: SpecialistJudge } = {}) {
+export async function route(store: Store, laya: LayaClient, userId: number, engines: EngineAvailability, input: RouteInput, opts: { judge?: SpecialistJudge; /** how long this send waits for the judge (default JUDGE_WAIT_MS) */ judgeWaitMs?: number } = {}) {
   const t0 = Date.now();
   const reason: string[] = [];
   const text = input.text.trim();
@@ -393,7 +397,7 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   const joined = !verdict && !input.forceAgent && judging.has(jctx.key);
   const judgePromise: Promise<JudgeVerdict | null> = verdict || input.forceAgent || !opts.judge || !jctx.specialists.length
     ? Promise.resolve(verdict)
-    : waitAtMost(startJudge(store, userId, jctx, text, input.projectHint ?? null, opts.judge), JUDGE_WAIT_MS, null, () => { judgeTimedOut = true; });
+    : waitAtMost(startJudge(store, userId, jctx, text, input.projectHint ?? null, opts.judge), opts.judgeWaitMs ?? JUDGE_WAIT_MS, null, () => { judgeTimedOut = true; });
   try {
     const r = await laya.predict(state, questions);
     latency = r.latency_ms ?? null; device = r.device ?? null;
