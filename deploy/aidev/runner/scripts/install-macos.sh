@@ -125,7 +125,7 @@ if [ -n "$others" ]; then
 fi
 connected=""
 for i in $(seq 1 20); do
-  connected=$(tail -c +$((since + 1)) "$logf" 2>/dev/null | grep '연결됨' | tail -1)
+  connected=$(tail -c +$((since + 1)) "$logf" 2>/dev/null | grep '연결됨' | tail -1 || true)   # no match yet: keep waiting (set -e)
   [ -n "$connected" ] && break; sleep 1
 done
 if [ -n "$connected" ]; then echo " ✓ $connected"; else echo " ✗ 20초 안에 게이트웨이에 연결되지 않았습니다 — 로그: tail -30 ~/.aidev/runner.log"; ok=0; fi
