@@ -84,16 +84,16 @@ try {
   # quick self-check: the adapter answers initialize (it runs on this Windows PC)
   $exe = Join-Path $pkg 'aidev-clrdbg.exe'
   $req = '{"seq":1,"type":"request","command":"initialize","arguments":{"adapterID":"clr","linesStartAt1":true,"pathFormat":"path"}}'
-  $psi = New-Object Diagnostics.ProcessStartInfo $exe
-  $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.UseShellExecute = $false
-  $proc = [Diagnostics.Process]::Start($psi)
-  # raw bytes on the base stream: the StreamWriter would start with a UTF-8 BOM (Windows PowerShell 5.1), which
-  # shifts the body for the adapter's header parser (character index used as byte offset) and truncates the JSON
-  $bytes = [Text.Encoding]::UTF8.GetBytes("Content-Length: $([Text.Encoding]::UTF8.GetByteCount($req))`r`n`r`n$req")
-  $proc.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $proc.StandardInput.BaseStream.Flush()
-  $task = $proc.StandardOutput.ReadLineAsync()
-  $answered = $task.Wait(15000) -and $task.Result -match 'Content-Length'
-  if (-not $proc.HasExited) { $proc.Kill() }
+  # stdin from a file of exact bytes: Process.StandardInput (Windows PowerShell 5.1) is an AutoFlush StreamWriter
+  # that sends a UTF-8 BOM when it is created; mono-debug's header parser then cuts the body two bytes early
+  # (character index used as byte offset) and fails on the truncated JSON. The runner itself sends no BOM.
+  $body = [Text.Encoding]::UTF8.GetBytes($req)
+  $reqFile = Join-Path $work 'initialize.dap'; $outFile = Join-Path $work 'initialize.out'
+  [IO.File]::WriteAllBytes($reqFile, [byte[]]([Text.Encoding]::ASCII.GetBytes("Content-Length: $($body.Length)`r`n`r`n") + $body))
+  $proc = Start-Process -FilePath $exe -RedirectStandardInput $reqFile -RedirectStandardOutput $outFile -RedirectStandardError (Join-Path $work 'initialize.err') -NoNewWindow -PassThru
+  if (-not $proc.WaitForExit(15000)) { $proc.Kill() }
+  $answered = [bool]((Get-Content $outFile -Raw -ErrorAction SilentlyContinue) -match 'Content-Length')
+  if (-not $answered) { Get-Content (Join-Path $work 'initialize.err') -ErrorAction SilentlyContinue | Write-Host }
   if (-not $answered) { throw 'aidev-clrdbg가 DAP initialize에 응답하지 않습니다' }
   Write-Host ' ✓ aidev-clrdbg가 DAP initialize에 응답합니다'
 } finally {
