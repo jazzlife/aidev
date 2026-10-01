@@ -13,7 +13,7 @@ import os from 'node:os';
  *   null    — no specialist exists → the platform creates one (`new` is the proposed domain)
  * It also writes the one question to ask when the command lacks something essential (`question`); the gateway
  * shows it only when Laya's `clarify` says to ask (§3.1), so Laya decides and the model only words it.
- * Claude haiku first, Codex mini when Claude is unavailable. Nothing is written into any conversation.
+ * Claude haiku first, Codex luna when Claude is unavailable or not allowed. Nothing is written into any conversation.
  */
 export type JudgeCandidate = { name: string; description: string };
 export type JudgeInput = { command: string; candidates: JudgeCandidate[]; project?: string | null;
@@ -134,9 +134,12 @@ async function askClaude(prompt: string): Promise<string> {
   }
 }
 
+/** Light Codex model for side turns: gpt-5.4-mini is refused for ChatGPT-account logins (server 2026-10-01); luna is the D0 tier. */
+const CODEX_SIDE_MODEL = 'gpt-5.6-luna';
+
 async function askCodex(prompt: string): Promise<string> {
   const codex = new Codex({ config: { developer_instructions: JUDGE_PROMPT } as never });
-  const thread = codex.startThread({ workingDirectory: os.homedir(), skipGitRepoCheck: true, sandboxMode: 'read-only', approvalPolicy: 'never', model: 'gpt-5.4-mini', modelReasoningEffort: 'low' });
+  const thread = codex.startThread({ workingDirectory: os.homedir(), skipGitRepoCheck: true, sandboxMode: 'read-only', approvalPolicy: 'never', model: CODEX_SIDE_MODEL, modelReasoningEffort: 'low' });
   const turn = await thread.run(prompt, { signal: AbortSignal.timeout(HARD_TIMEOUT_MS) });
   return turn.finalResponse ?? '';
 }
@@ -167,7 +170,7 @@ export const specialistJudgeService = {
       'Existing agents (name: declared domain):',
       ...candidates.map((c) => `- ${c.name}: ${c.description.replace(/\s+/g, ' ').slice(0, 260)}`),
     ].filter((line) => line !== null).join('\n');
-    // Claude haiku first (fastest), Codex mini when Claude fails — only among the engines the account may use
+    // Claude haiku first (fastest), Codex luna when Claude fails — only among the engines the account may use
     const order = (['claude', 'codex'] as const).filter((e) => !input.engines?.length || input.engines.includes(e));
     if (!order.length) throw new Error('no engine available for the judge');
     let engine: string = order[0];

@@ -89,9 +89,12 @@ async function askClaude(prompt: string, cwd: string): Promise<string> {
   return output;
 }
 
+/** Light Codex model for side turns: gpt-5.4-mini is refused for ChatGPT-account logins (server 2026-10-01); luna is the D0 tier. */
+const CODEX_SIDE_MODEL = 'gpt-5.6-luna';
+
 async function askCodex(prompt: string, cwd: string): Promise<string> {
   const codex = new Codex({ config: { developer_instructions: CURATOR_PROMPT } as never });
-  const thread = codex.startThread({ workingDirectory: cwd, skipGitRepoCheck: true, sandboxMode: 'read-only', approvalPolicy: 'never', model: 'gpt-5.4-mini' });
+  const thread = codex.startThread({ workingDirectory: cwd, skipGitRepoCheck: true, sandboxMode: 'read-only', approvalPolicy: 'never', model: CODEX_SIDE_MODEL });
   const turn = await thread.run(prompt);
   return turn.finalResponse ?? '';
 }
