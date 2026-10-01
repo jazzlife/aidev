@@ -1,8 +1,7 @@
 #!/usr/bin/env bash
 # Stage B server verification (IMPLEMENTATION-PLAN B-13 … B-17). Runs ON the AI-PC:
 #   verify-b.sh USERNAME [--bench] [--backup] [--experiments] [--security]
-#     --security (F-11): allowed_roots escapes on the online PC, an agent rm -rf waits for approval (denied here),
-#     and a throw-away runner (in a container on the proxy network) without screen consent, deleted at the end
+#     --security (F-11): allowed_roots escapes on the online PC and a throw-away runner (in a container on the proxy network) without screen consent, deleted at the end
 #     no password: a 10-minute gateway session is minted inside the gateway container
 #     (manage-users session) and revoked at the end — nothing is typed or leaves the AI-PC.
 #   AIDEV_PASS=… verify-b.sh USERNAME …   (or USERNAME PASSWORD …, legacy) logs in like the browser
@@ -100,27 +99,20 @@ if [ $security -eq 1 ]; then
     r=$(jpost "/api/aidev/targets/$OTID/exec" '{"cmd":"ls","cwd":"~/aidev-work/.aidev-sec-link"}'); check "$r" '/허용된 폴더 밖/.test(j.error)' "F-11 symlink to /etc inside the allowed folder refused"
     r=$(jget "/api/aidev/targets/$OTID/file?path=$(printf %s '~/aidev-work/.aidev-sec-link/passwd')"); check "$r" 'j.error' "F-11 file view through the symlink refused"
     r=$(jpost "/api/aidev/targets/$OTID/exec" '{"cmd":"rm -f .aidev-sec-link","cwd":"~/aidev-work","timeoutSec":20}')
-    # 2. an agent's destructive command waits for the user — sent from the user's runtime like a real tool call
-    RTN=$($MU list 2>/dev/null | node -e "const a=JSON.parse(require('fs').readFileSync(0)); console.log((a.find(x=>x.username===process.argv[1])||{}).runtime||'')" "$user" 2>/dev/null)
-    RTC="aidev-cloudcli-$RTN"
-    if [ -n "$RTN" ] && docker ps --format '{{.Names}}' | grep -qx "$RTC"; then
-      r=$(docker exec "$RTC" node --input-type=module -e "const m=await import('/srv/app/current/dist-server/server/modules/aidev-tools/aidev-tools.service.js'); console.log(JSON.stringify(await m.callGateway('POST','/targets/$OTID/exec',{cmd:'rm -rf ~/aidev-work/.aidev-sec-probe',agent:'security-check'})))" 2>&1 | tail -1)
-      AP=$(jeval "$r" 'j.approval?.id||""')
-      check "$r" 'j.status==="pending" && j.approval && j.approval.destructive' "F-11 agent rm -rf waits for approval (risk $(jeval "$r" 'j.approval?.risk'))"
-      if [ -n "$AP" ]; then
-        r=$(jpost "/api/aidev/approvals/$AP" '{"allow":false}'); check "$r" 'j.approval.status==="denied"' "F-11 denied by the user → not run"
-      fi
-    else echo "SKIP F-11 agent approval (no running runtime for $user)"; fi
+    # 2. an agent's rm -rf waiting for the user is checked by the smoke test and in a real chat (F-12):
+    #    an agent call needs the runtime's own credentials, which this script does not use
   fi
   # 3. a throw-away runner: no screen consent → screen/device refused; deleting the target cuts it off at once
   SEC=$(mktemp -d /tmp/aidev-sec-XXXXXX); chmod 755 "$SEC"
   BIN=$(jeval "$($CURL "$GW/_runner/download")" '(j.files.find(f=>f.platform==="linux-x64")||{}).name||""')
   r=$(jpost /api/aidev/targets "{\"name\":\"sec-check-$$\",\"description\":\"F-11 throw-away runner\",\"policy\":\"ask\"}"); STID=$(jeval "$r" 'j.target?.id||""'); SCODE=$(jeval "$r" 'j.target?.pairing_code||""')
   if [ -n "$BIN" ] && [ -n "$STID" ]; then
-    $CURL "$GW/_runner/download/$BIN" > "$SEC/aidev-runner"; chmod 755 "$SEC/aidev-runner"
+    $CURL "$GW/_runner/download/$BIN" > "$SEC/aidev-runner" < /dev/null; chmod 755 "$SEC/aidev-runner"
+    # the runner only talks https (loopback excepted): it connects the way a user's PC does, through the public address
+    PUB=${AIDEV_PUBLIC_URL:-https://dev.nado.work}
     RUN="docker run --rm --network $NET -v $SEC:/r -e AIDEV_RUNNER_HOME=/r/home node:22-bookworm-slim"
-    $RUN /r/aidev-runner pair "$SCODE" --gateway "$GW" >/dev/null 2>&1
-    docker run -d --name "aidev-sec-$$" --network "$NET" -v "$SEC:/r" -e AIDEV_RUNNER_HOME=/r/home node:22-bookworm-slim /r/aidev-runner start >/dev/null
+    $RUN /r/aidev-runner pair "$SCODE" --gateway "$PUB" < /dev/null >/dev/null 2>&1
+    docker run -d --name "aidev-sec-$$" --network "$NET" -v "$SEC:/r" -e AIDEV_RUNNER_HOME=/r/home node:22-bookworm-slim /r/aidev-runner start < /dev/null >/dev/null
     for i in $(seq 1 40); do [ "$(jeval "$(jget /api/aidev/targets)" "(j.targets.find(t=>t.id===$STID)||{}).online===true")" = true ] && break; sleep 0.5; done
     r=$(jget /api/aidev/targets); check "$r" "(j.targets.find(t=>t.id===$STID)||{}).online===true" "F-11 throw-away runner $BIN online"
     r=$(jpost "/api/aidev/targets/$STID/screenshot" '{}'); check "$r" '/허용하지 않았습니다/.test(j.error)' "F-11 no screen consent → screen.shot refused"
@@ -129,7 +121,7 @@ if [ $security -eq 1 ]; then
     t0=$(date +%s%N); jpost "/api/aidev/targets/$STID" '' DELETE >/dev/null
     code=$(timeout 15 docker wait "aidev-sec-$$" 2>/dev/null || echo timeout); ms=$(( ($(date +%s%N) - t0) / 1000000 ))
     check "{\"code\":\"$code\",\"ms\":$ms}" 'j.code==="3" && j.ms<10000' "F-11 deleted target: its runner is cut off and exits 3 (${ms}ms)"
-    $RUN /r/aidev-runner start >/dev/null 2>&1 & SP=$!; sleep 6; if kill -0 $SP 2>/dev/null; then kill $SP; code=running; else wait $SP; code=$?; fi
+    $RUN /r/aidev-runner start < /dev/null >/dev/null 2>&1 & SP=$!; sleep 6; if kill -0 $SP 2>/dev/null; then kill $SP; code=running; else wait $SP; code=$?; fi
     check "{\"code\":\"$code\"}" 'j.code==="3"' "F-11 revoked token no longer connects (exit $code)"
   else echo "FAIL F-11 throw-away runner (binary ${BIN:-none}, target ${STID:-none})"; fail=1; fi
   docker rm -f "aidev-sec-$$" >/dev/null 2>&1; [ -n "$STID" ] && jpost "/api/aidev/targets/$STID" '' DELETE >/dev/null 2>&1
