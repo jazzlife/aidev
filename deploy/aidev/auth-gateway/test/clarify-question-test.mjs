@@ -56,6 +56,12 @@ r = await go(laya({ depth: 2.5, clarify: 0.1 }), '로그인 버튼 고쳐줘', a
 assert.equal(r.judge.source, 'cache'); assert.equal(r.scope.ask_clarify, true); assert.equal(r.scope.clarify_question, '어느 화면의 로그인 버튼인가요?');
 console.log('PASS a cached verdict keeps its question');
 
+// Laya scores "그 버그 고쳐줘" D1, the debug floor raises it to D2: the floored depth decides (server, 42e969da)
+const debugLaya = { status: {}, predict: async (state, questions) => { const out = await laya({ depth: 1.1, clarify: 0.4 }).predict(state, questions); out.answers.task_kind = { choice: 'debug', probabilities: { debug: 0.92 }, confidence: 0.92 }; return out; } };
+r = await go(debugLaya, '저 에러 고쳐줘', judge('어떤 에러인가요?'));
+assert.equal(r.scope.depth, 2); assert.equal(r.scope.ask_clarify, true); assert.equal(r.scope.clarify_question, '어떤 에러인가요?');
+console.log('PASS a debug command floored to D2 asks even when Laya scored it D1');
+
 // an unclear command: the judge finds no specialist and nothing to create, only a question → no agent creation
 r = await go(laya({ depth: 2.5, clarify: 0.9 }), '그 버그 고쳐줘', async () => ({ agent: null, fit: 0, reason: 'unclear', new: null, question: '어느 버그인가요?' }));
 assert.equal(r.decision, 'generalist'); assert.equal(r.create, null); assert.equal(r.scope.clarify_question, '어느 버그인가요?');

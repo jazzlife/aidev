@@ -450,13 +450,14 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   // commands (0.36 "로그인 버튼 고쳐줘" vs 0.42 with the file and behavior named) while the judge got 3/3. Laya decides
   // only without a verdict that carries the field (judge down, a 'similar' shortcut, a cache entry from before it).
   const judgeAsks = verdict && verdict.question !== undefined ? Boolean(verdict.question) : null;
-  const askClarify = scoredDepth >= 2 && (judgeAsks ?? (!fallback && clarify > 0.7));
   const agent = store.agent(userId, agentName) ?? store.agent(userId, 'generalist') ?? all[0];
   if (!agent) throw new Error('Agent catalog is empty');
   // floors: the kind of work and the specialist itself set a minimum depth (model tier, lessons, knowledge)
   const kindFloor = KIND_MIN_DEPTH[taskKind] ?? 0;
   const agentFloor = agent.name === 'generalist' ? 0 : (agent.min_tier ?? 0);
   const depth = Math.max(scoredDepth, kindFloor, agentFloor);
+  // the final depth: a kind floor (debug ≥ D2) says the work is not a quick one even when Laya scored it D1
+  const askClarify = depth >= 2 && (judgeAsks ?? (!fallback && clarify > 0.7));
   if (depth > scoredDepth) reason.push(`depth D${scoredDepth} → D${depth} (${[kindFloor > scoredDepth ? `${taskKind} ≥ D${kindFloor}` : null, agentFloor > scoredDepth ? `${agent.name} ≥ D${agentFloor}` : null].filter(Boolean).join(', ')})`);
 
   // ---- engine (§3.4) ------------------------------------------------------------------------
