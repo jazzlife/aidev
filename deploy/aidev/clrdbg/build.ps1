@@ -87,8 +87,10 @@ try {
   $psi = New-Object Diagnostics.ProcessStartInfo $exe
   $psi.RedirectStandardInput = $true; $psi.RedirectStandardOutput = $true; $psi.UseShellExecute = $false
   $proc = [Diagnostics.Process]::Start($psi)
-  $bytes = [Text.Encoding]::UTF8.GetBytes($req)
-  $proc.StandardInput.Write("Content-Length: $($bytes.Length)`r`n`r`n$req"); $proc.StandardInput.Flush()
+  # raw bytes on the base stream: the StreamWriter would start with a UTF-8 BOM (Windows PowerShell 5.1), which
+  # shifts the body for the adapter's header parser (character index used as byte offset) and truncates the JSON
+  $bytes = [Text.Encoding]::UTF8.GetBytes("Content-Length: $([Text.Encoding]::UTF8.GetByteCount($req))`r`n`r`n$req")
+  $proc.StandardInput.BaseStream.Write($bytes, 0, $bytes.Length); $proc.StandardInput.BaseStream.Flush()
   $task = $proc.StandardOutput.ReadLineAsync()
   $answered = $task.Wait(15000) -and $task.Result -match 'Content-Length'
   if (-not $proc.HasExited) { $proc.Kill() }
