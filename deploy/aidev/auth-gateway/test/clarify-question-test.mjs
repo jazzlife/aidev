@@ -1,5 +1,5 @@
-// Clarify (§3.1, C-05): Laya decides whether to ask (clarify > 0.7 and depth ≥ 2); the specialist judge words the
-// question. The question reaches the route only when Laya asks, and a cached verdict keeps it.
+// Clarify (§3.1, C-05): at depth ≥ 2 the specialist judge decides and words the question; without a judge verdict
+// Laya's clarify (> 0.7) decides. A cached verdict keeps its question.
 import assert from 'node:assert/strict';
 import fs from 'node:fs';
 import os from 'node:os';
@@ -36,22 +36,24 @@ const laya = ({ depth, clarify }) => ({
 const judge = (question) => async () => ({ agent: 'frontend-react', fit: 0.9, reason: 'react', new: null, question });
 const go = (l, text, j) => route(store, l, uid, engines, { text }, { judge: j });
 
-let r = await go(laya({ depth: 2.5, clarify: 0.9 }), '로그인 버튼 고쳐줘', judge('어느 화면의 로그인 버튼인가요?'));
+let r = await go(laya({ depth: 2.5, clarify: 0.1 }), '로그인 버튼 고쳐줘', judge('어느 화면의 로그인 버튼인가요?'));
 assert.equal(r.scope.ask_clarify, true); assert.equal(r.scope.clarify_question, '어느 화면의 로그인 버튼인가요?');
-console.log('PASS Laya asks → the judge\'s question is on the route');
+console.log('PASS the judge has a question → ask with it (Laya\'s low clarify does not veto)');
 
-r = await go(laya({ depth: 2.5, clarify: 0.2 }), 'web/Login.tsx의 버튼 색 바꿔줘', judge('어떤 색인가요?'));
+r = await go(laya({ depth: 2.5, clarify: 0.9 }), 'web/Login.tsx의 버튼 색 바꿔줘', judge(null));
 assert.equal(r.scope.ask_clarify, false); assert.equal(r.scope.clarify_question, null);
 r = await go(laya({ depth: 0.5, clarify: 0.9 }), '버튼 색 바꿔줘', judge('어떤 버튼인가요?'));
 assert.equal(r.scope.ask_clarify, false); assert.equal(r.scope.clarify_question, null);
-console.log('PASS no question when Laya does not ask (low clarify, or a shallow command)');
+console.log('PASS no ask when the judge has no question (whatever Laya says), or for a shallow command');
 
-r = await go(laya({ depth: 2.5, clarify: 0.9 }), '대시보드 만들어줘', judge(null));
+r = await go(laya({ depth: 2.5, clarify: 0.9 }), '대시보드 만들어줘', undefined);
 assert.equal(r.scope.ask_clarify, true); assert.equal(r.scope.clarify_question, null);
-console.log('PASS Laya asks but the judge has no question → null (the app shows its generic ask)');
+r = await go(laya({ depth: 2.5, clarify: 0.3 }), '차트 만들어줘', undefined);
+assert.equal(r.scope.ask_clarify, false);
+console.log('PASS without the judge Laya decides (clarify > 0.7); no question → the app\'s generic ask');
 
-r = await go(laya({ depth: 2.5, clarify: 0.9 }), '로그인 버튼 고쳐줘', async () => { throw new Error('judge must not run'); });
-assert.equal(r.judge.source, 'cache'); assert.equal(r.scope.clarify_question, '어느 화면의 로그인 버튼인가요?');
+r = await go(laya({ depth: 2.5, clarify: 0.1 }), '로그인 버튼 고쳐줘', async () => { throw new Error('judge must not run'); });
+assert.equal(r.judge.source, 'cache'); assert.equal(r.scope.ask_clarify, true); assert.equal(r.scope.clarify_question, '어느 화면의 로그인 버튼인가요?');
 console.log('PASS a cached verdict keeps its question');
 
 // an unclear command: the judge finds no specialist and nothing to create, only a question → no agent creation

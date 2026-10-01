@@ -446,7 +446,11 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   } else reason.push(`agent ${agentName} ${(agentTop.probability * 100).toFixed(0)}% (specialist judge unavailable)`);
   if (input.forceAgent && store.agent(userId, input.forceAgent)) { agentName = input.forceAgent; decision = 'use'; reason.push(`user override → ${agentName}`); }
   const needsLlmAnalysis = !fallback && (agentTop.probability < 0.5 || depthRaw >= 2.5 || multiDomain > 0.6);
-  const askClarify = !fallback && clarify > 0.7 && scoredDepth >= 2;
+  // Clarify (§3.1): the judge decides when it ran — on the server Laya's clarify did not separate vague from specific
+  // commands (0.36 "로그인 버튼 고쳐줘" vs 0.42 with the file and behavior named) while the judge got 3/3. Laya decides
+  // only without a verdict that carries the field (judge down, a 'similar' shortcut, a cache entry from before it).
+  const judgeAsks = verdict && verdict.question !== undefined ? Boolean(verdict.question) : null;
+  const askClarify = scoredDepth >= 2 && (judgeAsks ?? (!fallback && clarify > 0.7));
   const agent = store.agent(userId, agentName) ?? store.agent(userId, 'generalist') ?? all[0];
   if (!agent) throw new Error('Agent catalog is empty');
   // floors: the kind of work and the specialist itself set a minimum depth (model tier, lessons, knowledge)
