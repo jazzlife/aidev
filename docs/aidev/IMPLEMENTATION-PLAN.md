@@ -53,10 +53,10 @@
 
 | 단계 | [x] / [~] / [ ] | 상태 | 남은 것 |
 |---|---|---|---|
-| B 판정·선택·실행 | 3 / 13 / 2 | 구현 완료, 서버 검증 대기. 최종 agent 판정은 LLM judge(서버 22/22, 2~4초), 기준선 B-16 | B-13·B-14·B-15 서버 검증, B-17 배포·롤백 리허설·백업 확인 (B-11은 D-03으로 이동) |
+| B 판정·선택·실행 | 4 / 13 / 1 | 구현 완료, 서버 검증 대기. 최종 agent 판정은 LLM judge(서버 22/22, 2~4초), 기준선 B-16 | B-13·B-14·B-15 서버 검증, B-17 배포·롤백 리허설·백업 확인 (B-11은 D-03으로 이동) |
 | C 두 개의 UI | 0 / 13 / 1 | 모바일·작업대 두 앱, 푸시, Claude 앱 내 로그인, `ui.focus`/`ui.artifact` 구현 | 구현: C-06 `notify.level`·Lighthouse. 결정: C-07a provider 선택기 처리. 검증: C-11 실기기 |
-| F 원격 PC | 5 / 8 / 1 | F-02~F-05·F-11 서버 확인(F-11 재확인 `6b99680f`), 러너 0.11.0, agent 전체 권한(`full`), OS별 빌드·설치 스크립트 | F-12 e2e, Windows·macOS 실기(디버거·스크립트), F-08 다중 PC 대상 선택 |
-| D 생성 | 0 / 5 / 1 | 판정→생성→재전송 로컬 e2e 확인 | 구현 완료(D-04 대기열·제안, D-05 Codex 전용). 검증: D-06 |
+| F 원격 PC | 5 / 9 / 0 | F-02~F-05·F-11 서버 확인(F-11 재확인 `6b99680f`), 러너 0.11.0, agent 전체 권한(`full`), OS별 빌드·설치 스크립트 | F-12 e2e, Windows·macOS 실기(디버거·스크립트), F-08 다중 PC 대상 선택 |
+| D 생성 | 1 / 5 / 0 | 판정→생성→재전송 로컬 e2e 확인 | 구현 완료(D-04 대기열·제안, D-05 Codex 전용). 검증: D-06 |
 | E 축적·학습 | 1 / 6 / 2 | E-01 서버 확인, 교훈 게이트·escalate/handoff·지식 갱신·tier_policy·engine_weights 구현 | E-07 측정·저장 완료(연결은 Laya 전용 결정의 정답 데이터가 쌓인 뒤). 데이터 대기: E-08 fine-tune(정답 ≥300건, 현재 route 정답 71건). 검증: E-09 |
 
 진행 방식(§4): 구현 + 기본 검증 후 다음 단계로 넘어가고, 실사용 검증은 전체 구현 후 최종 테스트에서 한꺼번에 한다. 저장소 `main` 최신: `530df00f`.
@@ -332,7 +332,8 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 - [~] B-13 서버 검증(2026-09-24, 639d88db): "react로 간단한 todo 앱 만들어봐" → 라우팅 로그는 찍혔으나 (1) 런타임 Claude OAuth 만료로 Codex plan이 나왔는데 워크벤치가 세션을 UI provider(Claude)로 먼저 만들어 Codex 모델을 Claude 세션에 적용 → 실패, (2) 어휘 prior가 generalist 예시에 잠식돼 create 경로(agent-architect)로 빠짐. 수정: 라우팅→세션 생성 순서(plan.engine으로 생성), generalist 예시 제외+저신뢰 규칙, create는 어휘 확신 <0.6일 때만, `plan.engine_error` 표시, `relay.sh claude-token`(setup-token 장기 토큰 설치). 재검증 대기
 - [~] B-13 서버 검증: 한국어 React 명령 → `/route` → Claude 세션에서 `frontend-react` agent로 실행됨을 런타임 로그(`agents` 옵션)로 확인; Codex 세션에서 `developer_instructions` 적용 확인; agent가 `aidev_decide`를 호출한 로그 확인
   - 서버(de89086f, 2026-10-01): 클라이언트와 같은 절차(/route → POST /runs → /ws chat.send{aidev}) — Claude 세션: route frontend-react·sonnet/high → 런타임 `[Claude SDK] aidev routing: agent=frontend-react v1 model=sonnet … run=19`, 5.3초 완료; Codex 세션(test 프로젝트 새 세션): frontend-react·gpt-5.6-terra/high → `[Codex SDK] aidev routing: agent=frontend-react v1 … run=20`, 23.9초. 남음: agent가 `aidev_decide`를 호출한 로그(이번 명령은 도구가 필요 없었음 — 최종 실사용에서)
-- [ ] B-14 Codex 전용 계정 시나리오: 테스트 계정 `engines=codex` → route가 Claude를 제외하는지, 실패 상향이 Codex 내부에 머무는지
+- [x] B-14 (b4b8050b) Codex 전용 계정 시나리오: 테스트 계정 `engines=codex` → route가 Claude를 제외하는지, 실패 상향이 Codex 내부에 머무는지
+  - 서버(2026-10-02): 마스터 계정을 잠시 `engines=codex`로 바꿔 확인 후 claude,codex로 복원(종료 시 자동 복원, 목록으로 재확인). engines claude.allowed=false; route → codex·gpt-5.6-terra·claude 점수 없음; 판정은 Codex로만(llm/codex 4.9초, 다른 하나는 5초 대기 초과 → 다음 같은 명령에서 cache/codex); 실패 2회 → 다음 행동 escalate_tier codex sol → astra(Claude로 전환 없음). 새 unity-graphics가 Unity 명령에 선택됨
 - [x] B-15 (de89086f) `bulk_read` 명령("이 로그 5만 줄 분석해줘")이 두-엔진 계정에서 Codex로 가는지
   - 서버: "이 로그 파일 5만 줄…", "logs 폴더 전체…", "Read every file under src…" → task_kind bulk_read, engine codex (claude 0.30 / codex 0.70), gpt-5.6-terra. 확인 중 수정: 판정이 이 셋에 log-analysis·codebase-analyzer 생성을 제안 → "기술 분야 없는 작업은 크기와 무관하게 generalist", 판정 캐시 버전 3 → 판정 벤치 20/20·질문 3/3·중앙값 2.4초
   - 서버(500d39e3, 실제 Laya): task_kind=debug(0.38)로 오판 → task_kind에도 어휘 prior 도입(`agent_examples.task_kind` 라벨 916건, NB, `LAYA_KIND_WEIGHT` 0.35 융합; 벤치 어휘 단독 0.62, bulk_read 재현율 4/4). 다음 verify에서 `kind.*` 수치 확인
@@ -442,7 +443,8 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
   - 테스트: 러너 `devices::tests`(adb/sdb/simctl 출력 파싱, 동의·인자 거부), 실기 `real_device_shots`(ignored, 이 Mac: Android 에뮬레이터 1080x606 0.6초, iPhone 17 시뮬레이터 1080x2348 1.3초), smoke F-10 6건(대역 adb: 목록·unauthorized·320px JPEG·기록·agent·다른 사용자 거부; 총 201 PASS — 이 Mac에서), 런타임 도구 1건. 미검증: Tizen 실기/에뮬레이터(sdb 덤프 명령), 실제 USB 휴대폰.
 - [x] F-11 (서버 확인 c6ff486a, 재확인 6b99680f — full 정책·러너 0.11.0에서도 ALL PASS) 보안 점검: allowed_roots 우회 시도 거부, 토큰 폐기 즉시 끊김, 파괴적 명령(`rm -rf`) 승인 요청 발생, 화면 캡처 동의 없는 대상에서 `screen.*` 거부
   - 운영 점검(2026-10-01): m4pro 러너 — cwd `/etc`·`~/aidev-work/../..`·허용 폴더 안의 `/etc` 심볼릭 링크(실행·파일 보기) 모두 거부. 임시 러너(릴리스의 linux-x64 0.10.0을 서버 도커에서 https://dev.nado.work로 페어링, 화면 동의 없음) — `screen.shot`·창 목록·`device.shot` 거부, 대상 삭제 → 482ms 안에 끊기고 exit 3, 같은 토큰 재접속 불가(exit 3). agent `rm -rf` 승인 대기는 smoke(승인 대기·agent 자기 승인 불가·거부 기록)와 F-12 실제 채팅으로 확인 — verify가 런타임 자격을 쓰지 않도록 운영 점검에서는 제외.
-- [ ] F-12 e2e(서버 로그·스크린샷): "이 React 앱을 내 Mac에서 실행해서 화면 보여줘" → route(remote_action=run, target=Mac) → sync → `npm run dev` → preview 패널 자동 표시(`ui.focus`) → "테스트 돌려" → exit code → outcome → 모바일에서 같은 세션 열면 결과 카드·스냅샷
+- [~] F-12 e2e(서버 로그·스크린샷): "이 React 앱을 내 Mac에서 실행해서 화면 보여줘" → route(remote_action=run, target=Mac) → sync → `npm run dev` → preview 패널 자동 표시(`ui.focus`) → "테스트 돌려" → exit code → outcome → 모바일에서 같은 세션 열면 결과 카드·스냅샷
+  - 서버(2026-10-02, test/react-demo Vite+React): "…react-demo React 앱을 내 Mac(m4pro)에서 실행해서 화면 보여줘" → route remote target m4pro → agent가 동기화·`npm run dev` → 미리보기 m4pro:5173(by agent) 생성(87초); "테스트 돌려" → Mac에서 테스트, 세션 원격 실행 기록(모바일 결과 카드). 확인 중 수정: 통과한 마지막 `node --test` 재실행이 테스트로 인식되지 않아 앞선 실패가 결과로 남음 → `node --test`·`python -m pytest|unittest`·`make test`·`ctest` 인식(ee71fdee), 재확인 test_result pass·outcome success. 남음: 작업대 미리보기 패널 자동 표시(ui.focus)·스냅샷 카드 화면 확인(C-11과 함께)
 
 **F 완료 기준**: F-12 e2e, F-11 점검 통과, 러너 3 OS 바이너리 존재(macOS는 Mac 빌드).
 
@@ -454,7 +456,8 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
   - 구현(2026-10-01): 판정이 "전문가 없음 + 새 분야 제안"인데 최종 깊이 D0~1이면 `create_background` — generalist로 바로 실행하고 분야를 `create_queue`에 적립(판정의 이름이 매번 달라 이름·분야·기술 토큰 cosine ≥0.5로 같은 분야 판정, 최근 명령 5개 보관). 3회째(`CREATE_PROPOSE_AT`)에 한 번만 `proposed` + `notify.level`(agent.proposal, 푸시 시 `/m/?proposal=id`); "그만"(dismissed)한 분야는 계속 세지만 다시 제안 안 함. D2+는 기존처럼 생성 후 실행. 수락: 모바일 대화 목록·작업대 카탈로그의 제안 카드 "만들기" → `oneShotCreate` → 다음 전송이 `createProposal`로 agent-architect에 그 분야를 넘김(모바일은 새 대화를 열어 전송, 프로젝트 없으면 선택부터; 작업대는 `aidev:compose`로 열린 채팅에서 전송) → 생성 승인 시 `queue_id`로 완료 처리, 원래 명령은 이미 실행됐으므로 다시 보내지 않음. API `GET /create-queue`, `PATCH /create-queue/:id`. 테스트: 게이트웨이 `create-queue-test.mjs`(적립·이름이 다른 같은 분야·3회째 1번만 제안·D2+ 생성·다른 분야 분리·그만 후 재제안 없음·수락 시 architect), smoke 219 PASS(판정 연동 항목은 D0~1이면 create_background 허용), 클라이언트 `createQueueFlow` 3건·전체 478 PASS. 서버(8c98d06c): Godot 가벼운 명령 4개 → godot-engine 적립 1·2·3·4, 3회째에 1번 제안 → `[notify] agent.proposal → level 1`(배지·앱 안 카드). 확인 중 수정: 이름 바꾸기가 refactor 최소 깊이(D2)로 올라 생성 흐름에 들어가던 것 → 생성/적립은 Laya가 매긴 작업 크기로 판단(모델 등급은 그대로 상향). 마스터 계정에 테스트로 생긴 godot-engine 제안 1건 남음
 - [~] D-05 Codex 전용 계정에서 생성 전 과정이 Codex로 동작
   - 점검·수정(2026-10-01): 생성 턴·자가 검증·재전송은 route의 엔진(Codex 전용이면 codex)으로 이미 동작. 고친 것 ① 전문 agent 판정이 항상 Claude haiku를 먼저 시도(런타임에 Claude 로그인이 남아 있으면 Codex 전용 계정도 Claude로 판정) → 게이트웨이가 계정이 쓸 수 있는 엔진(`allowed && authenticated`)을 넘기고 런타임은 그 안에서만 시도 ② 교훈 큐레이션의 실패 시 다른 엔진 재시도도 그 안에서만, 엔진 미상이면 허용 엔진 우선 ③ Codex 채팅 턴에 웹 검색이 없어 agent-architect가 최신 공식 문서를 확인할 수 없었음 → 라우팅된 agent의 도구에 WebSearch/WebFetch가 있으면 Codex `webSearchMode: 'live'`. 지식 재확인은 이미 엔진 하나·live 검색. smoke 223 PASS(+4: Codex 전용 계정의 생성이 codex, 판정 허용 엔진 [codex], 느린 판정은 짧게만 대기·다음엔 캐시), 런타임 228(227 PASS·1 skip). 서버 Codex 전용 판정 벤치에서 추가로 발견·수정: ④ 판정·큐레이션의 Codex 모델 `gpt-5.4-mini`가 ChatGPT 계정 Codex에서 400 거부 — Codex 경로가 처음부터 동작하지 않았음(Claude가 먼저 성공해 가려짐) → `gpt-5.6-luna`(575fcfed): agent 16/17·질문 3/3 ⑤ 그러나 Codex는 "OK" 한 단어에도 12~28초(MCP 없음, Codex 자체 지연) → 판정 원칙(10초 초과 반복=비정상)대로 Codex로만 판정하는 계정은 전송 시 최대 5초(`AIDEV_CODEX_JUDGE_WAIT_MS`)만 기다리고 Laya+어휘로 진행, 늦은 판정은 캐시되어 다음에 사용(입력 중 사전 판정은 그대로). 판정 턴은 웹 검색 끔·빈 폴더·"답만" 지시(속도 변화는 없었음)
-- [ ] D-06 서버 검증: 카탈로그에 없는 분야(예: "Unity 셰이더") 명령 → 생성 → 검증 → 실행 e2e
+- [x] D-06 (b4b8050b) 서버 검증: 카탈로그에 없는 분야(예: "Unity 셰이더") 명령 → 생성 → 검증 → 실행 e2e
+  - 서버(2026-10-02): "Unity URP에서 물 표면 굴절 셰이더를 Shader Graph 없이 HLSL로…" → create(D2, proposal unity-graphics) → agent-architect(118초, Unity 공식 문서 2건 출처·날짜) → 설계 블록 → 생성 #17 → 원래 명령을 새 agent로 재실행(161초, HLSL 셰이더) → 자가 검증 턴 → Laya selfcheck.pass 0.985 → verified. 확인 중 수정: 설계 JSON 끝 `}` 누락으로 클라이언트가 설계 전체를 버림("설계 블록을 찾지 못했습니다") → 파서가 끝에 열린 괄호를 닫아 재시도(b4b8050b), 실제 블록으로 확인
 
 **D 완료 기준**: D-06 e2e 로그, 생성된 agent가 다음 명령에서 Laya에 의해 선택됨.
 
