@@ -190,6 +190,14 @@ export function migrateAidev(db: Database.Database) {
   db.exec(`UPDATE engine_weights SET prior=weight WHERE prior IS NULL;
     CREATE TABLE IF NOT EXISTS engine_weight_log (id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, task_kind TEXT NOT NULL, engine TEXT NOT NULL,
       from_weight REAL, to_weight REAL, success_n INTEGER, fail_n INTEGER, reason TEXT NOT NULL, actor TEXT NOT NULL);`);
+  // 2026-10-01: `uses` counted every routing pick (verify scripts, test routes, sends held for clarify) — the
+  // catalog showed frontend-react "used 29×" with no run. It now counts runs; recount once from the runs table.
+  if (!db.prepare("SELECT 1 FROM app_kv WHERE k='agents.uses-from-runs'").get()) {
+    db.transaction(() => {
+      db.prepare('UPDATE agents SET uses=(SELECT COUNT(*) FROM runs WHERE runs.agent_id=agents.id)').run();
+      db.prepare("INSERT INTO app_kv(k,v) VALUES('agents.uses-from-runs', ?)").run(String(Date.now()));
+    })();
+  }
 }
 
 export function aidevMethods(db: Database.Database) {
@@ -545,6 +553,8 @@ export function aidevMethods(db: Database.Database) {
     addRun(r: { userId: number; sessionId?: string | null; decisionId?: number | null; agentId?: number | null; agentVersion?: number | null; engine?: string | null; model?: string | null; effort?: string | null; depth?: number | null; taskKind?: string | null; risk?: number | null; targetId?: number | null; escalatedFromRun?: number | null }) {
       const res = db.prepare('INSERT INTO runs(user_id,session_id,decision_id,agent_id,agent_version,engine,model,effort,depth,task_kind,risk,target_id,started_at,escalated_from_run) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)')
         .run(r.userId, r.sessionId ?? null, r.decisionId ?? null, r.agentId ?? null, r.agentVersion ?? null, r.engine ?? null, r.model ?? null, r.effort ?? null, r.depth ?? null, r.taskKind ?? null, r.risk ?? null, r.targetId ?? null, Date.now(), r.escalatedFromRun ?? null);
+      // an agent is "used" when a run starts with it, not whenever the router picks it
+      if (r.agentId) db.prepare('UPDATE agents SET uses=uses+1 WHERE id=?').run(r.agentId);
       return Number(res.lastInsertRowid);
     },
     run(userId: number, id: number) { return db.prepare('SELECT * FROM runs WHERE id=? AND user_id=?').get(id, userId) as RunRow | undefined; },

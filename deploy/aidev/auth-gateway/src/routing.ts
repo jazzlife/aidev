@@ -517,6 +517,12 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     remoteAction = Object.entries(rp).filter(([k]) => k !== 'none').sort((a, b) => b[1] - a[1])[0]?.[0] ?? 'run';
     reason.push(`${named.name} named in the command → remote ${remoteAction}`);
   }
+  // an unclear command (the judge asks back) is not sent to a PC on Laya's guess — server: "그 버그 고쳐줘" got
+  // remote test 0.67 on the only PC. Naming a PC still counts; the answer to the question can bring it back.
+  if (judgeAsks && !named && remoteAction !== 'none') {
+    reason.push(`remote ${remoteAction} dropped: the command is unclear (asking back first)`);
+    remoteAction = 'none';
+  }
   let target: typeof targets[number] | null = null;
   let targetSource: 'input' | 'mention' | 'session' | 'default' | 'single' | 'laya' | null = null;
   let targetDecision: (Awaited<ReturnType<typeof decide>> & { decision_id: number }) | null = null;
@@ -616,7 +622,6 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   const decisionId = store.logDecision({ userId, command: text, agent: agentName, probability: agentTop.probability, confidence: agentTop.confidence, needsNew, risk, decision, probabilities, latencyMs: latency ?? undefined, device: device ?? undefined });
   store.db.prepare('UPDATE decision_log SET kind=?, fallback=?, answer=?, state=? WHERE id=?').run('route', fallback ? 1 : 0,
     JSON.stringify({ agent: agentName, engine, model: tier.model, effort: tier.effort, depth, task_kind: taskKind, remote_action: remoteAction, target: target?.name ?? null, target_source: targetSource, device: targetDevice?.serial ?? null }), JSON.stringify(state).slice(0, 8000), decisionId);
-  if (decision === 'use') store.bumpAgentUse(userId, agentName);
   store.recordInjectedLessons(decisionId, lessons.map((l) => ({ id: l.id, trial: l === trial })));
 
   // Creation flow (§3.7): the client sends the same command to the agent-architect meta agent first.

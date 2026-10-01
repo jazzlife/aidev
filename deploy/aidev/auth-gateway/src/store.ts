@@ -75,7 +75,6 @@ export function openStore(filename: string) {
         .run(next.domain, next.description, next.prompt, next.tools, next.model, next.max_turns, next.active, next.hint, Date.now(), id);
       aidev.bumpExamplesVersion();
     },
-    bumpAgentUse(userId: number, name: string) { db.prepare('UPDATE agents SET uses=uses+1 WHERE name=? AND (owner_id=? OR owner_id IS NULL)').run(name, userId); },
     /** Seed routing examples for global agents (idempotent: (agent,text) unique). Returns rows added. */
     seedExamples(rows: Array<{ agent: string; text: string; lang?: string | null; task_kind?: string | null }>) {
       let added = 0;
