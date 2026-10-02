@@ -1,7 +1,9 @@
 //! `install` / `uninstall`: keep the runner running, from boot and with administrator rights by default
 //! (`--limited`: the user's normal rights, `--logon-only`: only while signed in).
-//!   Linux  — systemd user unit ~/.config/systemd/user/aidev-runner.service + linger (runs from boot without a login;
-//!            the same instance shows the status icon once a desktop comes up)
+//!   Linux  — systemd user unit ~/.config/systemd/user/aidev-runner.service (`start --boot`; from boot without a login
+//!            by linger) + XDG autostart ~/.config/autostart/aidev-runner.desktop: a desktop login starts the session's
+//!            runner (DISPLAY / WAYLAND_DISPLAY / D-Bus: screen, input, status icon), which takes the connection over;
+//!            when the session ends the unit's runner takes it back — as on macOS and Windows
 //!   macOS  — LaunchAgent ~/Library/LaunchAgents/work.nado.aidev-runner.plist (the session: screen, icon) + LaunchDaemon
 //!            /Library/LaunchDaemons/work.nado.aidev-runner-boot.plist (as the user, from boot, `start --boot`: hands over
 //!            to the session's runner like the Windows boot task)
@@ -35,6 +37,17 @@ fn run(cmd: &str, args: &[&str]) -> Result<(), String> {
 /// The same, quietly (expected failures such as "not loaded").
 fn quiet(cmd: &str, args: &[&str]) -> bool {
     Command::new(cmd).args(args).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success())
+}
+
+fn unsafe_uid() -> String {
+    #[cfg(unix)]
+    {
+        unsafe { libc::getuid() }.to_string()
+    }
+    #[cfg(not(unix))]
+    {
+        String::new()
+    }
 }
 
 /// `systemctl --user …` that also works without a login session's environment (SSH, a fresh linger): the user
@@ -133,7 +146,14 @@ pub fn boot_plist_text(exe: &str, user: &str, home: &str, log: &str) -> String {
 
 pub fn unit_text(exe: &str) -> String {
     format!(
-        "[Unit]\nDescription=NadoVibe runner\nAfter=network-online.target\n\n[Service]\nExecStart=\"{exe}\" start --service\nRestart=on-failure\nRestartSec=5\nRestartPreventExitStatus=3\n\n[Install]\nWantedBy=default.target\n"
+        "[Unit]\nDescription=NadoVibe runner\nAfter=network-online.target\n\n[Service]\nExecStart=\"{exe}\" start --service --boot\nRestart=on-failure\nRestartSec=5\nRestartPreventExitStatus=3\n\n[Install]\nWantedBy=default.target\n"
+    )
+}
+
+/// XDG autostart entry: the desktop session's runner (it has the session's display and bus; SSH logins do not run it).
+pub fn autostart_text(exe: &str, log: &str) -> String {
+    format!(
+        "[Desktop Entry]\nType=Application\nName=NadoVibe runner\nComment=NadoVibe 원격 실행 러너 (화면·상태 아이콘)\nExec=\"{exe}\" start --service --log \"{log}\"\nIcon=utilities-terminal\nTerminal=false\nNoDisplay=true\nX-GNOME-Autostart-enabled=true\nX-GNOME-Autostart-Delay=3\n"
     )
 }
 
@@ -206,7 +226,9 @@ pub fn install(print_only: bool, limited: bool, logon_only: bool, for_user: Opti
             let dir = home.join(".config/systemd/user");
             let unit = dir.join("aidev-runner.service");
             let text = unit_text(&exe_s);
-            if print_only { return Ok(format!("# {}\n{text}", unit.display())); }
+            let autostart = home.join(".config/autostart/aidev-runner.desktop");
+            let desktop = autostart_text(&exe_s, &config::dir().join("runner.log").display().to_string());
+            if print_only { return Ok(format!("# {}\n{text}\n# {}\n{desktop}", unit.display(), autostart.display())); }
             let user = user_name();
             let mut notes = Vec::new();
             if !logon_only {
@@ -220,7 +242,23 @@ pub fn install(print_only: bool, limited: bool, logon_only: bool, for_user: Opti
             systemctl_user(&["daemon-reload"])?;
             systemctl_user(&["enable", "aidev-runner.service"])?;
             systemctl_user(&["restart", "aidev-runner.service"])?;
-            notes.insert(0, format!("systemd 사용자 서비스 등록: {} (로그: journalctl --user -u aidev-runner -f)", unit.display()));
+            notes.insert(0, format!("systemd 사용자 서비스 등록: {} (로그: ~/.aidev/runner.log)", unit.display()));
+            if let Some(dir) = autostart.parent() { std::fs::create_dir_all(dir).map_err(|e| e.to_string())?; }
+            std::fs::write(&autostart, desktop).map_err(|e| e.to_string())?;
+            notes.push(format!("데스크탑 로그인 때 세션 러너 시작: {} — 화면·원격 제어·상태 아이콘", autostart.display()));
+            // installed from inside a desktop session: its runner now, not at the next login
+            if std::env::var_os("DISPLAY").is_some() || std::env::var_os("WAYLAND_DISPLAY").is_some() {
+                let log = config::dir().join("runner.log");
+                if let Ok(f) = std::fs::OpenOptions::new().create(true).append(true).open(&log) {
+                    let mut cmd = Command::new(&exe_s);
+                    cmd.args(["start", "--service"]).stdin(std::process::Stdio::null())
+                        .stdout(f.try_clone().map(std::process::Stdio::from).unwrap_or(std::process::Stdio::null())).stderr(std::process::Stdio::from(f));
+                    // its own process group: closing the terminal `install` ran in does not take it down
+                    #[cfg(unix)]
+                    std::os::unix::process::CommandExt::process_group(&mut cmd, 0);
+                    let _ = cmd.spawn();
+                }
+            }
             notes.push(admin_rights(limited, &user));
             Ok(notes.join("\n"))
         }
@@ -318,7 +356,10 @@ pub fn uninstall() -> Result<String, String> {
         "linux" => {
             let _ = systemctl_user(&["disable", "--now", "aidev-runner.service"]);
             let _ = std::fs::remove_file(home.join(".config/systemd/user/aidev-runner.service"));
+            let _ = std::fs::remove_file(home.join(".config/autostart/aidev-runner.desktop"));
             let _ = systemctl_user(&["daemon-reload"]);
+            // the desktop session's runner (autostart) is not the unit's: stop it too
+            quiet("pkill", &["-u", &unsafe_uid(), "-f", &format!("{} start", exe()?.display())]);
             let sudo_note = revoke_sudo().err().map(|e| format!("\n! 관리자 권한 설정({SUDOERS})을 지우지 못했습니다: {e}")).unwrap_or_default();
             Ok(format!("systemd 사용자 서비스를 제거했습니다{sudo_note}"))
         }
@@ -374,7 +415,9 @@ mod tests {
     #[test]
     fn service_files_quote_the_path() {
         let unit = super::unit_text("/opt/a b/aidev-runner");
-        assert!(unit.contains("ExecStart=\"/opt/a b/aidev-runner\" start --service") && unit.contains("Restart=on-failure") && unit.contains("RestartPreventExitStatus=3"));
+        assert!(unit.contains("ExecStart=\"/opt/a b/aidev-runner\" start --service --boot") && unit.contains("Restart=on-failure") && unit.contains("RestartPreventExitStatus=3"));
+        let auto = super::autostart_text("/opt/a b/aidev-runner", "/home/x/.aidev/runner.log");
+        assert!(auto.contains("Exec=\"/opt/a b/aidev-runner\" start --service --log \"/home/x/.aidev/runner.log\"") && auto.starts_with("[Desktop Entry]"));
         let plist = super::plist_text("/Users/x/bin/aidev-runner", "/Users/x/.aidev/runner.log");
         assert!(plist.contains("<string>/Users/x/bin/aidev-runner</string><string>start</string><string>--service</string>"));
         assert!(plist.contains("<key>SuccessfulExit</key><false/>"), "종료 (exit 0) is not restarted");

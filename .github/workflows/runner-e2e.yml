@@ -100,8 +100,16 @@ jobs:
           if [ "$RUNNER_OS" = Linux ]; then
             export XDG_RUNTIME_DIR=/run/user/$(id -u)
             [ "$(loginctl show-user "$USER" -p Linger --value)" = yes ] && echo "ok: linger (runs from boot)"
-            grep -q 'start --service' ~/.config/systemd/user/aidev-runner.service && grep -q 'Restart=on-failure' ~/.config/systemd/user/aidev-runner.service
+            grep -q 'start --service --boot' ~/.config/systemd/user/aidev-runner.service && grep -q 'Restart=on-failure' ~/.config/systemd/user/aidev-runner.service
+            grep -q 'start --service --log' ~/.config/autostart/aidev-runner.desktop && echo "ok: autostart entry for desktop logins"
             waitfor 'the user service runs' 'systemctl --user is-active --quiet aidev-runner'
+            waitfor 'the boot runner (systemd) holds the connection' 'grep -q "부팅 러너: 연결을 맡습니다" "$log"'
+            # a desktop login: the autostart entry's runner (with the session's DISPLAY) takes over, and gives it back
+            DISPLAY=:99 "$bin" start --service --log "$RUNNER_TEMP/session.log" & session=$!
+            waitfor 'the session runner took the connection' 'grep -q "연결을 넘깁니다" "$log"'
+            sleep 2; kill -0 $session && echo "ok: the session runner holds the connection"
+            kill $session; wait $session 2>/dev/null || true
+            waitfor 'the boot runner takes over when the session ends' '[ "$(grep -c "부팅 러너: 연결을 맡습니다" "$log")" -ge 2 ]'
             # 정지 / 종료 semantics: exit 0 is not restarted
             touch ~/.aidev/paused; sleep 3
             systemctl --user is-active --quiet aidev-runner && echo "ok: paused, still running (the icon stays)"
