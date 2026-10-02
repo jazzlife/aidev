@@ -1,7 +1,9 @@
 //! The remote screen's capture on Windows 10 1903+ (F-18 stage 1, 2026-10-02): Windows Graphics Capture through the
 //! `windows-capture` crate, for a program window as for a whole display. The compositor hands over a new picture only
-//! when something changed (no timed screenshots, no pixel comparison), with the cursor, as RGBA — straight into the
-//! CPU path's SIMD scaling and colour conversion and the H.264 encoder. GDI (xcap) stays the fallback: older Windows,
+//! when something changed (no timed screenshots, no pixel comparison), with the cursor, as RGBA — scaled to the stream's
+//! width right here on the capture thread, straight out of the capture buffer (F-18: while the stream thread encodes
+//! one picture this one scales the next — about 28 ms of a 2306×1822 screen on a 4-core ARM64 VM), then colour
+//! conversion and the encoder. GDI (xcap) stays the fallback: older Windows,
 //! a VM without the capture API, any failure here.
 
 use crate::appwin::Frame;
@@ -17,10 +19,10 @@ use windows_capture::window::Window;
 type Error = Box<dyn std::error::Error + Send + Sync>;
 
 /// The newest picture, waiting for the stream loop.
-#[derive(Default)]
 struct Slot {
     frame: Mutex<Option<Frame>>,
     ready: Condvar,
+    max_width: u32,
 }
 
 struct Handler {
@@ -39,7 +41,7 @@ impl GraphicsCaptureApiHandler for Handler {
     fn on_frame_arrived(&mut self, frame: &mut WgcFrame, _control: InternalCaptureControl) -> Result<(), Self::Error> {
         let buffer = frame.buffer()?;
         let (width, height) = (buffer.width(), buffer.height());
-        let rgba = buffer.as_nopadding_buffer(&mut self.scratch).to_vec();
+        let (rgba, width, height) = crate::encoder::fit_slice(buffer.as_nopadding_buffer(&mut self.scratch), width, height, self.slot.max_width);
         *self.slot.frame.lock().unwrap() = Some(Frame { width, height, rgba });
         self.slot.ready.notify_one();
         Ok(())
@@ -90,9 +92,10 @@ pub struct Capture {
 }
 
 impl Capture {
-    /// `window` as screen.list gives it: a program window's HWND, or a display (appwin::DISPLAY_BASE + index).
-    pub fn open(window: u32, fps: f64) -> Result<Self, String> {
-        let slot = Arc::new(Slot::default());
+    /// `window` as screen.list gives it: a program window's HWND, or a display (appwin::DISPLAY_BASE + index);
+    /// pictures arrive at most `max_width` wide.
+    pub fn open(window: u32, fps: f64, max_width: u32) -> Result<Self, String> {
+        let slot = Arc::new(Slot { frame: Mutex::new(None), ready: Condvar::new(), max_width });
         let every = Duration::from_secs_f64(1.0 / fps.max(1.0));
         let start = |item: Item, border: DrawBorderSettings, paced: bool| -> Result<CaptureControl<Handler, Error>, String> {
             let interval = if paced { MinimumUpdateIntervalSettings::Custom(every) } else { MinimumUpdateIntervalSettings::Default };

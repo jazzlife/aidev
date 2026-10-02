@@ -129,21 +129,32 @@ pub fn vp9_wanted(viewer_decodes_vp9: bool) -> bool {
 
 /// Scale RGBA to at most `max_width` (keeping the aspect) and crop to even sizes for I420.
 pub fn fit(frame: crate::appwin::Frame, max_width: u32) -> (Vec<u8>, u32, u32) {
-    let (mut w, mut h, mut rgba) = (frame.width, frame.height, frame.rgba);
+    let (w, h, rgba) = (frame.width, frame.height, frame.rgba);
     if w > max_width {
-        use fast_image_resize as fir;
-        let nh = ((u64::from(h) * u64::from(max_width)) / u64::from(w)).max(2) as u32;
-        // SIMD (SSE4.1/AVX2/Neon); an area average (box) keeps small text readable — and the read of the full
-        // frame bounds it anyway (3440×1440 on an M4 Pro: box 7.1 ms, fixed-kernel bilinear 6.7 ms but aliased)
-        let src = fir::images::Image::from_vec_u8(w, h, rgba, fir::PixelType::U8x4).expect("frame size");
-        let mut dst = fir::images::Image::new(max_width, nh, fir::PixelType::U8x4);
-        fir::Resizer::new()
-            .resize(&src, &mut dst, &fir::ResizeOptions::new().resize_alg(fir::ResizeAlg::Convolution(fir::FilterType::Box)))
-            .expect("resize");
-        w = max_width;
-        h = nh;
-        rgba = dst.into_vec();
+        return fit_slice(&rgba, w, h, max_width);
     }
+    even(rgba, w, h)
+}
+
+/// The same from a borrowed picture (a capture API's own buffer): scaled straight out of it, no copy first.
+pub fn fit_slice(rgba: &[u8], w: u32, h: u32, max_width: u32) -> (Vec<u8>, u32, u32) {
+    if w <= max_width {
+        return even(rgba.to_vec(), w, h);
+    }
+    use fast_image_resize as fir;
+    let nh = ((u64::from(h) * u64::from(max_width)) / u64::from(w)).max(2) as u32;
+    // SIMD (SSE4.1/AVX2/Neon) on every core (rayon); an area average (box) keeps small text readable — and the read
+    // of the full frame bounds it anyway (3440×1440 on an M4 Pro: box 7.1 ms on one core, 3.5 ms on all)
+    let src = fir::images::ImageRef::new(w, h, rgba, fir::PixelType::U8x4).expect("frame size");
+    let mut dst = fir::images::Image::new(max_width, nh, fir::PixelType::U8x4);
+    fir::Resizer::new()
+        .resize(&src, &mut dst, &fir::ResizeOptions::new().resize_alg(fir::ResizeAlg::Convolution(fir::FilterType::Box)))
+        .expect("resize");
+    even(dst.into_vec(), max_width, nh)
+}
+
+/// Cropped to even width and height (I420 halves both).
+fn even(mut rgba: Vec<u8>, w: u32, h: u32) -> (Vec<u8>, u32, u32) {
     let (ew, eh) = (w & !1, h & !1);
     if ew != w || eh != h {
         let mut out = Vec::with_capacity((ew * eh * 4) as usize);

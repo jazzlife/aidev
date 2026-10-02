@@ -305,18 +305,18 @@ enum Source {
 }
 
 impl Source {
-    fn open(window: u32, fps: f64) -> Result<Self, String> {
+    fn open(window: u32, fps: f64, max_width: u32) -> Result<Self, String> {
         if let Ok(cmd) = std::env::var("AIDEV_SCREEN_CMD") {
             return Ok(Source::Fake(cmd));
         }
         #[cfg(windows)]
         if std::env::var_os("AIDEV_SCREEN_CPU").is_none() {
-            match crate::win_screen::Capture::open(window, fps) {
+            match crate::win_screen::Capture::open(window, fps, max_width) {
                 Ok(c) => return Ok(Source::Wgc(Box::new(c))),
                 Err(e) => eprintln!("[aidev-runner] Windows Graphics Capture를 쓰지 못해 GDI 캡처로 합니다 (#{window}): {e}"),
             }
         }
-        let _ = fps;
+        let _ = (fps, max_width);
         appwin::Capturer::open(window).map(|c| Source::Window(Box::new(c)))
     }
 
@@ -385,7 +385,7 @@ fn run(id: u32, o: StreamOpts, stop: Arc<AtomicBool>, want_key: Arc<AtomicBool>,
             Err(e) => eprintln!("[aidev-runner] ScreenCaptureKit을 쓰지 못해 CPU 캡처로 합니다: {e}"),
         }
     }
-    match Source::open(o.window, o.fps) {
+    match Source::open(o.window, o.fps, o.max_width) {
         Ok(source) => stream(id, o, source, stop, want_key, acked),
         Err(e) => note("screen.error", json!({ "streamId": id, "error": e })),
     }
@@ -674,7 +674,7 @@ pub fn bench_native(window: Option<u32>, frames: u32, max_width: u32) -> Result<
 pub fn bench_wgc(window: Option<u32>, max_width: u32) -> Result<String, String> {
     let id = window.unwrap_or(appwin::DISPLAY_BASE);
     let t = Instant::now();
-    let cap = crate::win_screen::Capture::open(id, 60.0)?;
+    let cap = crate::win_screen::Capture::open(id, 60.0, max_width)?;
     let first = cap.next(Duration::from_secs(3)).ok_or("3초 안에 첫 화면이 오지 않았습니다")?;
     let first_ms = t.elapsed().as_secs_f64() * 1000.0;
     let (w0, h0) = (first.width, first.height);
@@ -700,7 +700,7 @@ pub fn bench_wgc(window: Option<u32>, max_width: u32) -> Result<String, String> 
         }
     }
     Ok(format!(
-        "Windows Graphics Capture ({w0}×{h0}): 첫 화면 {first_ms:.0} ms, 2초 동안 변화 {} 개\n축소 평균 {:.1} ms, 인코딩 평균 {:.1} ms (CPU, {})",
+        "Windows Graphics Capture ({w0}×{h0}): 첫 화면 {first_ms:.0} ms, 2초 동안 변화 {} 개\n스트림 스레드: 축소 평균 {:.1} ms(캡처 스레드에서 미리 축소), 인코딩 평균 {:.1} ms (CPU, {})",
         frames - 1, scale.as_secs_f64() * 1000.0 / f64::from(frames), encode.as_secs_f64() * 1000.0 / f64::from(frames), enc.as_ref().map_or("-", encoder::Video::codec),
     ))
 }
