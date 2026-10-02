@@ -6,6 +6,10 @@
  * (hardware where available; Annex B H.264 needs no `description`); without WebCodecs the session asks
  * for JPEG frames instead. Remote control: `setControl(true)` then `input(ev)` (mouse/keyboard events in
  * the runner's vocabulary, see runner input.rs).
+ * Latency (F-07d, 2026-10-02): the page asks for numbered frames (`v=2`: flags bit 1, a u32 after the flags) and
+ * acks each one once it is on the canvas — the runner paces itself by those acks, so the picture never sits in a
+ * queue. Once a second the runner's numbers (capture, scale, encode, the send → shown → ack loop) arrive as
+ * `stats`; with this page's decode time they make `state.stats` and its latency estimate.
  */
 import { getStoredAuthToken } from '@/shared/authToken';
 
@@ -17,6 +21,10 @@ export type InputEvent =
   | { t: 'wheel'; dx: number; dy: number }
   | { t: 'key'; key: string; code: string; mods: { shift?: boolean; ctrl?: boolean; alt?: boolean; meta?: boolean } }
   | { t: 'text'; text: string };
+/** One second of the stream's numbers (runner and this page), in milliseconds; latencyMs is the estimate of
+ *  capture → on screen: capture + scale + encode + half of (loop + decode) — the loop runs to the ack and back. */
+export type ScreenStats = { captureMs: number; scaleMs: number; encodeMs: number; loopMs: number | null; decodeMs: number | null; latencyMs: number | null; skipped: number; bitrate: number };
+
 export type ScreenState = {
   status: 'connecting' | 'live' | 'closed' | 'error';
   codec: string | null;
@@ -28,6 +36,7 @@ export type ScreenState = {
   height: number;
   fps: number;
   kbps: number;
+  stats: ScreenStats | null;
 };
 
 const KIND_H264 = 1;
@@ -52,7 +61,7 @@ export function avcCodecFromAnnexB(au: Uint8Array): string | null {
 export function screenSocketUrl(targetId: number, o: ScreenOptions) {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const token = getStoredAuthToken();
-  const q = new URLSearchParams({ mode: o.mode, ...(o.window !== null ? { window: String(o.window) } : {}), display: String(o.display), fps: String(o.fps), maxWidth: String(o.maxWidth), bitrate: String(o.bitrate), codec: o.codec ?? 'h264', ...(token ? { token } : {}) });
+  const q = new URLSearchParams({ v: '2', mode: o.mode, ...(o.window !== null ? { window: String(o.window) } : {}), display: String(o.display), fps: String(o.fps), maxWidth: String(o.maxWidth), bitrate: String(o.bitrate), codec: o.codec ?? 'h264', ...(token ? { token } : {}) });
   return `${protocol}//${window.location.host}/api/aidev/targets/${targetId}/screen?${q}`;
 }
 
@@ -69,7 +78,11 @@ export class RemoteScreenSession {
   private windowStart = performance.now();
   private jpegBusy = false;
   private closed = false;
-  state: ScreenState = { status: 'connecting', codec: null, note: null, error: null, controlAvailable: false, control: false, width: 0, height: 0, fps: 0, kbps: 0 };
+  /** chunk timestamp → frame number and when it went to the decoder */
+  private pending = new Map<number, { seq: number; at: number }>();
+  private decodeTotal = 0;
+  private decodeCount = 0;
+  state: ScreenState = { status: 'connecting', codec: null, note: null, error: null, controlAvailable: false, control: false, width: 0, height: 0, fps: 0, kbps: 0, stats: null };
 
   constructor(private url: (opts: ScreenOptions) => string, private canvas: HTMLCanvasElement, private opts: ScreenOptions, private onState: (s: ScreenState) => void) {
     if (opts.mode === 'video' && !webCodecsAvailable()) this.opts = { ...opts, mode: 'jpeg', fps: 5 };
@@ -91,13 +104,29 @@ export class RemoteScreenSession {
   }
 
   private onText(raw: string) {
-    let m: { type: string; message?: string; codec?: string; reason?: string | null; control?: boolean; on?: boolean };
+    let m: { type: string; message?: string; codec?: string; reason?: string | null; control?: boolean; on?: boolean } & Record<string, unknown>;
     try { m = JSON.parse(raw); } catch { return; }
+    if (m.type === 'stats') return this.onStats(m);
     if (m.type === 'started') this.patch({ status: 'live', error: null, controlAvailable: Boolean(m.control) });
     else if (m.type === 'format') { this.patch({ codec: m.codec ?? null, note: m.reason ?? null }); this.resetDecoder(); }
     else if (m.type === 'control') this.patch({ control: Boolean(m.on), error: null });
     else if (m.type === 'error') this.patch({ error: m.message ?? '오류' });
     else if (m.type === 'offline') this.patch({ status: 'closed', error: '원격 PC가 오프라인입니다', control: false });
+  }
+
+  private onStats(m: Record<string, unknown>) {
+    const num = (v: unknown) => (typeof v === 'number' && Number.isFinite(v) ? v : 0);
+    const loopMs = typeof m.loopMs === 'number' ? m.loopMs : null;
+    const decodeMs = this.decodeCount ? Math.round((this.decodeTotal / this.decodeCount) * 10) / 10 : null;
+    this.decodeTotal = 0; this.decodeCount = 0;
+    const [captureMs, scaleMs, encodeMs] = [num(m.captureMs), num(m.scaleMs), num(m.encodeMs)];
+    const latencyMs = loopMs === null ? null : Math.round(captureMs + scaleMs + encodeMs + (loopMs + (decodeMs ?? 0)) / 2);
+    this.patch({ stats: { captureMs, scaleMs, encodeMs, loopMs, decodeMs, latencyMs, skipped: num(m.skipped), bitrate: num(m.bitrate) } });
+  }
+
+  /** The frame is on the canvas: tell the runner (it sends the next ones only as fast as they are shown). */
+  private shown(seq: number) {
+    if (seq > 0) this.send({ op: 'ack', seq });
   }
 
   private tick(n: number) {
@@ -117,14 +146,22 @@ export class RemoteScreenSession {
 
   private resetDecoder() {
     try { this.decoder?.close(); } catch { /* already closed */ }
-    this.decoder = null; this.decoderCodec = null; this.waitKey = true;
+    this.decoder = null; this.decoderCodec = null; this.waitKey = true; this.pending.clear();
   }
 
   private ensureDecoder(codec: string) {
     if (this.decoder && this.decoderCodec === codec && this.decoder.state === 'configured') return true;
     this.resetDecoder();
     const decoder = new VideoDecoder({
-      output: (frame) => { this.draw(frame, frame.displayWidth, frame.displayHeight); frame.close(); },
+      output: (frame) => {
+        this.draw(frame, frame.displayWidth, frame.displayHeight);
+        const sent = this.pending.get(frame.timestamp);
+        frame.close();
+        if (!sent) return;
+        this.pending.delete(frame.timestamp);
+        this.decodeTotal += performance.now() - sent.at; this.decodeCount++;
+        this.shown(sent.seq);
+      },
       error: (e) => { this.patch({ error: `영상 디코딩 오류: ${e.message}` }); this.resetDecoder(); },
     });
     try { decoder.configure({ codec, optimizeForLatency: true }); }
@@ -135,13 +172,17 @@ export class RemoteScreenSession {
 
   private onFrame(buf: Uint8Array) {
     if (buf.length < 3) return;
-    const kind = buf[0]; const key = (buf[1] & 1) === 1; const data = buf.subarray(2);
+    const kind = buf[0]; const key = (buf[1] & 1) === 1;
+    // numbered frames (0.15+ runners): `[kind][flags][seq u32 BE][data]`
+    const numbered = (buf[1] & 2) === 2 && buf.length >= 6;
+    const seq = numbered ? ((buf[2] << 24) >>> 0) + (buf[3] << 16) + (buf[4] << 8) + buf[5] : 0;
+    const data = buf.subarray(numbered ? 6 : 2);
     this.tick(buf.length);
     if (kind === KIND_JPEG) {
       if (this.jpegBusy) return;   // drop while the previous picture is still decoding
       this.jpegBusy = true;
       createImageBitmap(new Blob([data as BlobPart], { type: 'image/jpeg' }))
-        .then((bmp) => { this.draw(bmp, bmp.width, bmp.height); bmp.close(); })
+        .then((bmp) => { this.draw(bmp, bmp.width, bmp.height); bmp.close(); this.shown(seq); })
         .catch(() => {})
         .finally(() => { this.jpegBusy = false; });
       return;
@@ -150,10 +191,14 @@ export class RemoteScreenSession {
     if (this.waitKey && !key) return;
     const codec = kind === KIND_VP8 ? 'vp8' : kind === KIND_H264 ? (key ? avcCodecFromAnnexB(data) ?? this.decoderCodec : this.decoderCodec) : null;
     if (!codec || !this.ensureDecoder(codec) || !this.decoder) return;
-    // keep latency low: a decoder that falls behind skips to the next keyframe
-    if (this.decoder.decodeQueueSize > 8 && !key) { this.waitKey = true; return; }
+    // keep latency low: a decoder that falls behind skips to the next keyframe (a queue is latency)
+    if (this.decoder.decodeQueueSize > 2 && !key) { this.waitKey = true; this.pending.clear(); return; }
     this.waitKey = false;
     this.ts += 33_333;
+    if (seq) {
+      this.pending.set(this.ts, { seq, at: performance.now() });
+      if (this.pending.size > 120) this.pending.delete(this.pending.keys().next().value as number);
+    }
     try { this.decoder.decode(new EncodedVideoChunk({ type: key ? 'key' : 'delta', timestamp: this.ts, data })); }
     catch { this.resetDecoder(); }
   }

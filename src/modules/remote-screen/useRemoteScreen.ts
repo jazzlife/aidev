@@ -3,7 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { bindRemoteInput, type StickyMods } from '@/modules/remote-screen/input';
 import { RemoteScreenSession, type InputEvent, type ScreenOptions, type ScreenState } from '@/modules/remote-screen/session';
 
-const IDLE: ScreenState = { status: 'closed', codec: null, note: null, error: null, controlAvailable: false, control: false, width: 0, height: 0, fps: 0, kbps: 0 };
+const IDLE: ScreenState = { status: 'closed', codec: null, note: null, error: null, controlAvailable: false, control: false, width: 0, height: 0, fps: 0, kbps: 0, stats: null };
 
 /**
  * Used by the workbench ScreenPane and the mobile remote screen: streams a PC's screen into `canvasRef`

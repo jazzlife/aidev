@@ -105,6 +105,17 @@ enum Cmd {
     UninstallService,
     /// 이 PC의 토큰을 지움 (작업대에서도 대상을 삭제하세요)
     Unpair,
+    /// 원격 화면 단계별 시간 측정 (캡처·축소·변화 확인·인코딩)
+    #[command(hide = true)]
+    Bench {
+        /// 창 id (screen.list) — 없으면 주 화면
+        #[arg(long)]
+        window: Option<u32>,
+        #[arg(long, default_value_t = 60)]
+        frames: u32,
+        #[arg(long, default_value_t = 1440)]
+        max_width: u32,
+    },
     /// 업데이트: 받을 수 있는 버전(최신·이전)을 보여 주고 고른 버전으로 교체 — 서비스·권한·설정은 그대로
     Update {
         /// 이 버전으로 바로 (`latest`: 최신) — 없으면 목록에서 고름
@@ -359,6 +370,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
         }
         Cmd::InstallService { print, limited, logon_only, user, .. } => println!("{}", service::install(print, limited, logon_only, user)?),
         Cmd::UninstallService => println!("{}", service::uninstall()?),
+        Cmd::Bench { window, frames, max_width } => println!("{}", screen::bench(window, frames.max(1), max_width)?),
         Cmd::Update { version, gateway } => println!("{}", update_console(version, gateway)?),
         Cmd::Unpair => {
             let p = config::path();

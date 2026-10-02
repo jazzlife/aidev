@@ -121,9 +121,43 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
   const attempts = new Map<string, { count: number; until: number }>();
   const streams = new Map<string, Stream>();               // `${targetId}:${streamId}`
   const tunnels = new Map<string, RunnerTunnel>();         // `${targetId}:${streamId}` (F-06)
-  type ScreenStream = { targetId: number; streamId: number; config: string; window: number | null; viewers: Map<WebSocket, { needKey: boolean }>; gop: Buffer[]; gopBytes: number; format: { codec: string; width?: number; height?: number; reason?: string | null } | null; lastAt: number; frames: number; bytes: number; stopTimer: NodeJS.Timeout | null; keyAskedAt: number };
+  /** A viewer of a screen stream. v2 viewers (session.ts with `v=2`) take numbered frames and ack each one they
+   *  have shown; older pages get the frames without the number and are acked for when sent. */
+  type ScreenViewer = { needKey: boolean; v2: boolean; inFlight: Array<[number, number]> };
+  type ScreenStream = { targetId: number; streamId: number; config: string; window: number | null; viewers: Map<WebSocket, ScreenViewer>; gop: Buffer[]; gopBytes: number; format: { codec: string; width?: number; height?: number; reason?: string | null } | null; lastAt: number; frames: number; bytes: number; stopTimer: NodeJS.Timeout | null; keyAskedAt: number; acked: number };
   const screens = new Map<string, ScreenStream>();          // `${targetId}:${streamId}` (F-07)
-  const SCREEN_VIEWER_BUFFER = 3 * 1024 * 1024;
+  // F-07d (2026-10-02): a viewer more than a second behind (or with 2 MB unsent) skips to the next keyframe — the
+  // runner paces itself to the quickest viewer's acks, so one slow page never holds up the others
+  const SCREEN_VIEWER_BUFFER = 2 * 1024 * 1024;
+  const SCREEN_VIEWER_LAG_MS = 1000;
+  /** A frame as an older page reads it: `[kind][flags][data]`, without the number. */
+  const unnumbered = (frame: Buffer) => ((frame[1] & 2) === 2 ? Buffer.concat([Buffer.from([frame[0], frame[1] & ~2]), frame.subarray(6)]) : frame);
+  const frameSeq = (frame: Buffer) => ((frame[1] & 2) === 2 && frame.length >= 6 ? frame.readUInt32BE(2) : 0);
+  /** The newest frame some viewer has shown → the runner (it paces itself by it). */
+  function ackRunner(sc: ScreenStream, seq: number) {
+    if (seq <= sc.acked) return;
+    sc.acked = seq;
+    hub.notifyRunner(sc.targetId, 'screen.ack', { streamId: sc.streamId, seq });
+  }
+  /** One frame to one viewer, or skip it (behind: wait for the next keyframe). */
+  function sendFrame(sc: ScreenStream, v: WebSocket, state: ScreenViewer, frame: Buffer, legacy: () => Buffer) {
+    const isKey = (frame[1] & 1) === 1;
+    const seq = frameSeq(frame);
+    if (state.needKey && !isKey) return;
+    const lag = state.inFlight.length ? Date.now() - state.inFlight[0][1] : 0;
+    if (v.bufferedAmount > SCREEN_VIEWER_BUFFER || lag > SCREEN_VIEWER_LAG_MS) {
+      state.needKey = true; state.inFlight = []; askKey(sc);
+      return;
+    }
+    state.needKey = false;
+    if (state.v2) {
+      v.send(frame, { binary: true });
+      if (seq) { state.inFlight.push([seq, Date.now()]); if (state.inFlight.length > 600) state.inFlight.shift(); }
+    } else {
+      v.send(legacy(), { binary: true });
+      if (seq && v.bufferedAmount < 256 * 1024) ackRunner(sc, seq);   // an older page cannot ack: sent with room to spare counts
+    }
+  }
   const GOP_MAX = 12 * 1024 * 1024;
   const controllers = new Map<number, Set<WebSocket>>();     // targetId → viewers with control on (input errors go to them)
   function stopScreen(sc: ScreenStream, notifyRunner: boolean) {
@@ -340,12 +374,9 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
               // frames since the last keyframe, for viewers that join mid-stream
               if (isKey) { sc.gop = [frame]; sc.gopBytes = frame.length; }
               else if (sc.gop.length) { sc.gop.push(frame); sc.gopBytes += frame.length; if (sc.gopBytes > GOP_MAX) { sc.gop = []; sc.gopBytes = 0; } }
+              let legacy: Buffer | null = null;
               for (const [v, state] of sc.viewers) {
-                if (v.readyState !== WebSocket.OPEN) continue;
-                if (state.needKey && !isKey) continue;
-                if (v.bufferedAmount > SCREEN_VIEWER_BUFFER) { state.needKey = true; askKey(sc); continue; }   // behind: skip to the next keyframe
-                state.needKey = false;
-                v.send(frame, { binary: true });
+                if (v.readyState === WebSocket.OPEN) sendFrame(sc, v, state, frame, () => (legacy ??= unnumbered(frame)));
               }
               return;
             }
@@ -369,6 +400,14 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
             });
             emit(conn.targetId, { type: 'online' });
             if (Array.isArray(caps.features) && caps.features.includes('exec')) void reconcile(conn.targetId);
+            return;
+          }
+          if (msg.method === 'screen.stats' && msg.params && typeof msg.params === 'object') {
+            const p = msg.params as { streamId?: number } & Record<string, unknown>;
+            const sc = typeof p.streamId === 'number' ? screens.get(key(conn.targetId, p.streamId)) : undefined;
+            if (!sc) return;
+            const out = JSON.stringify({ type: 'stats', ...p });
+            for (const [v, state] of sc.viewers) if (state.v2 && v.readyState === WebSocket.OPEN) v.send(out);
             return;
           }
           if ((msg.method === 'screen.error' || msg.method === 'screen.format') && msg.params && typeof msg.params === 'object') {
@@ -538,7 +577,7 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
     /** Browser side of `/api/aidev/targets/:id/screen` (session and ownership checked by the caller).
      *  client → {op:"config", mode, window, display, fps, maxWidth, bitrate, codec} | {op:"control", on} | {op:"input", ev}
      *  server → {type:"started"|"format"|"control"|"error"|"offline"} + binary frames `[kind][flags][data]` */
-    attachScreen(req: IncomingMessage, socket: Duplex, head: Buffer, targetId: number, userId: number, alive: () => boolean, initial: ScreenOpts) {
+    attachScreen(req: IncomingMessage, socket: Duplex, head: Buffer, targetId: number, userId: number, alive: () => boolean, initial: ScreenOpts, proto = 1) {
       wss.handleUpgrade(req, socket, head, (ws) => {
         let current: ScreenStream | null = null;
         let control: { remoteRunId: number; events: number; startedAt: number; perWindow: boolean } | null = null;
@@ -572,10 +611,12 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
             let sc = [...screens.values()].find((s) => s.targetId === targetId && s.config === config);
             if (!sc) {
               nextStream = nextStream >= 0x3fff_fff0 ? 1 : nextStream + 1;
-              sc = { targetId, streamId: nextStream, config, window: win, viewers: new Map(), gop: [], gopBytes: 0, format: null, lastAt: 0, frames: 0, bytes: 0, stopTimer: null, keyAskedAt: 0 };
+              sc = { targetId, streamId: nextStream, config, window: win, viewers: new Map(), gop: [], gopBytes: 0, format: null, lastAt: 0, frames: 0, bytes: 0, stopTimer: null, keyAskedAt: 0, acked: 0 };
               screens.set(key(targetId, sc.streamId), sc);
+              // 0.15+ runners number their frames and pace themselves by the acks (F-07d)
+              const acks = Boolean(caps.features?.includes('acks'));
               const params = perWindow
-                ? { streamId: sc.streamId, mode, window: win, fps: o.fps, maxWidth: o.maxWidth, bitrate: o.bitrate }
+                ? { streamId: sc.streamId, mode, window: win, fps: o.fps, maxWidth: o.maxWidth, bitrate: o.bitrate, acks }
                 : { streamId: sc.streamId, mode, display: o.display, fps: o.fps, maxWidth: o.maxWidth, bitrate: o.bitrate, codec };
               try { await hub.call(targetId, 'screen.start', params, 10_000); }
               catch (error) { screens.delete(key(targetId, sc.streamId)); throw error; }
@@ -584,8 +625,9 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
             if (ws.readyState !== WebSocket.OPEN) return;
             send({ type: 'started', ...o, window: win, mode, codec, perWindow, control: Boolean(caps.control && caps.features?.includes('input')) });
             if (sc.format) send({ type: 'format', ...sc.format });
-            for (const f of sc.gop) ws.send(f, { binary: true });
-            sc.viewers.set(ws, { needKey: sc.gop.length === 0 });
+            const v2 = proto >= 2;
+            for (const f of sc.gop) ws.send(v2 ? f : unnumbered(f), { binary: true });
+            sc.viewers.set(ws, { needKey: sc.gop.length === 0, v2, inFlight: [] });
             if (sc.gop.length === 0 && sc.format) askKey(sc);   // a running stream of an unchanged window sends nothing on its own
             current = sc;
           } catch (error) {
@@ -599,6 +641,13 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
           let msg: { op?: string; on?: boolean; ev?: Record<string, unknown> } & Record<string, unknown>;
           try { msg = JSON.parse(String(data)); } catch { return; }
           if (msg.op === 'config') return void join(screenOpts(msg as Parameters<typeof screenOpts>[0]));
+          if (msg.op === 'ack') {
+            const sc = current; const state = sc?.viewers.get(ws);
+            const seq = Number(msg.seq);
+            if (!sc || !state || !Number.isInteger(seq) || seq <= 0) return;
+            while (state.inFlight.length && state.inFlight[0][0] <= seq) state.inFlight.shift();
+            return ackRunner(sc, seq);
+          }
           if (msg.op === 'control') {
             if (!msg.on) { controlOff(); return send({ type: 'control', on: false }); }
             const caps = screenCaps(targetId);

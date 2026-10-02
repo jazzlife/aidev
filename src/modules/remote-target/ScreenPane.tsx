@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AppWindow, Camera, MousePointer2, Pause, Play, RefreshCw } from 'lucide-react';
 
-import { isWholeScreen, RemoteConsole, screenSocketUrl, useRemoteScreen, useScreenSources, type ScreenOptions } from '@/modules/remote-screen';
+import { isWholeScreen, RemoteConsole, screenSocketUrl, streamStatsDetail, streamStatusLine, useRemoteScreen, useScreenSources, type ScreenOptions } from '@/modules/remote-screen';
 import { SCREEN_REQUEST_EVENT, takeScreenRequest } from '@/modules/remote-target/utils/screenRequest';
 import { api, readApiJson } from '@/shared/api';
 import type { RemoteConsoleSource, RemoteScreenSource, RemoteWindow } from '@/shared/types';
@@ -129,7 +129,7 @@ export function ScreenPane({ isVisible = true }: { isVisible?: boolean }) {
             <button type="button" title={controlTitle} aria-pressed={state.control} disabled={!canControl} onClick={() => setControl(!state.control)}
               className={`flex h-7 items-center gap-1 rounded px-2 disabled:opacity-40 ${state.control ? 'bg-rose-600 text-white' : 'border border-border hover:bg-muted'}`}><MousePointer2 size={13} />{state.control ? '제어 중' : '제어'}</button>
             <button type="button" title="현재 화면 저장" aria-label="현재 화면 저장" onClick={save} className="rounded p-1 text-muted-foreground hover:bg-muted"><Camera size={14} /></button>
-            <span className="ml-auto text-muted-foreground">{streaming ? `${state.codec ?? '…'} · ${state.fps}fps · ${(state.kbps / 1000).toFixed(1)}Mbps${state.width ? ` · ${state.width}×${state.height}` : ''}` : '정지됨 — 마지막 화면'}</span>
+            <span className="ml-auto text-muted-foreground" title={streaming ? streamStatsDetail(state) : undefined}>{streaming ? `${streamStatusLine(state)}${state.width ? ` · ${state.width}×${state.height}` : ''}` : '정지됨 — 마지막 화면'}</span>
           </>
         ) : null}
       </div>

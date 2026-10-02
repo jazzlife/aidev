@@ -251,7 +251,12 @@ pub async fn handle(cfg: &Config, hub: &ExecHub, text: &str) -> Option<Value> {
     let method = msg.get("method").and_then(Value::as_str)?;
     // notifications (no id) are not answered; remote-control input arrives as notifications
     if id.is_none() {
-        crate::input::notify(cfg, method, msg.get("params").unwrap_or(&Value::Null));
+        let params = msg.get("params").unwrap_or(&Value::Null);
+        if method == "screen.ack" {
+            crate::screen::ack(params);
+        } else {
+            crate::input::notify(cfg, method, params);
+        }
         return None;
     }
     let id = id?;

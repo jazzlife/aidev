@@ -8,5 +8,6 @@ export { isWholeScreen, useScreenSources } from '@/modules/remote-screen/useScre
 export { RemoteConsole } from '@/modules/remote-screen/RemoteConsole';
 export { RemoteScreenSession, avcCodecFromAnnexB, screenSocketUrl, webCodecsAvailable } from '@/modules/remote-screen/session';
 export type { InputEvent, ScreenMode, ScreenOptions, ScreenState } from '@/modules/remote-screen/session';
+export { streamStatsDetail, streamStatusLine } from '@/modules/remote-screen/utils/streamStats';
 export { bindRemoteInput } from '@/modules/remote-screen/input';
 export type { StickyMods } from '@/modules/remote-screen/input';

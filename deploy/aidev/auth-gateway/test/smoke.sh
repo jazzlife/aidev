@@ -298,6 +298,8 @@ if [ -x "$RUNNER_BIN" ]; then
   curl -s "$G/api/aidev/targets/$TID/screenshot.jpg?maxWidth=400" -H "authorization: Bearer $A" -o "$T/shot.jpg"; n=$(head -c 2 "$T/shot.jpg" | od -An -tx1 | tr -d ' '); check "{\"magic\":\"$n\"}" 'j.magic==="ffd8"' "screenshot.jpg serves image bytes (for <img>)"
   r=$(get "$A" "/api/aidev/remote-runs/$(post "$A" "/api/aidev/targets/$TID/screenshot" '{}' | node -pe 'JSON.parse(require("fs").readFileSync(0)).remoteRunId')"); check "$r" 'j.run.kind==="screenshot" && j.run.approved_by==="user" && j.run.artifacts.width>0' "screen captures leave a trace (kind screenshot, by user)"
   r=$(node test/screen-client.mjs "$G" "$A" "$TID" "$SRC" || true); check "$r" 'j.started && j.frames1>=2 && j.lateViewerGotLastFrame && j.changedFrame && !j.error' "live screen: shared stream, last frame for a late viewer, new frame on change ($(echo "$r" | cut -c1-120))"
+  node test/make-png.mjs "$SRC" 10
+  r=$(node test/screen-acks.mjs "$G" "$A" "$TID" "$SRC" || true); check "$r" 'j.numbered && j.heldBack && j.afterAck && j.stats && !j.error' "live screen latency control: numbered frames, none while one is unshown, the ack lets the next through, stats ($(echo "$r" | cut -c1-120))"
   r=$(curl -s -o /dev/null -w '%{http_code}' -H 'connection: upgrade' -H 'upgrade: websocket' -H 'sec-websocket-version: 13' -H 'sec-websocket-key: dGhlIHNhbXBsZSBub25jZQ==' -H "origin: http://evil.example" "$G/api/aidev/targets/$TID/screen?token=$A"); check "{\"code\":$r}" 'j.code===401' "screen socket from another origin refused"
   # F-07b/F-07c: a real program window on an X display (Xvfb) — the runner lists and captures it itself (x11rb),
   # encodes H.264 inside (OpenH264; nothing to install on the PC), and replays control relative to the window.

@@ -1,6 +1,8 @@
 //! H.264 inside the runner (F-07c): Cisco OpenH264, compiled into the binary from source (no ffmpeg or
-//! other program to install). Screen-content mode, constant bit rate, 2 s keyframe interval, baseline
-//! profile (every browser's WebCodecs decodes it). Each call gives one access unit in Annex B with SPS/PPS
+//! other program to install). Screen-content mode, bit-rate control the stream can change while it runs
+//! (`set_bitrate`, F-07d), baseline profile (every browser's WebCodecs decodes it). Keyframes come when a
+//! viewer needs one (`force_key`); the periodic one is only a safety net (10 s) — a keyframe is a burst that
+//! a slow link pays for in latency. Each call gives one access unit in Annex B with SPS/PPS
 //! in front of every IDR, ready for `VideoDecoder`.
 
 use openh264::encoder::{BitRate, Encoder, EncoderConfig, FrameRate, FrameType, IntraFramePeriod, Profile, RateControlMode, UsageType};
@@ -11,7 +13,17 @@ pub struct H264 {
     enc: Encoder,
     pub width: u32,
     pub height: u32,
+    pub bitrate_kbps: u32,
 }
+
+/// OpenH264's SBitrateInfo (ENCODER_OPTION_BITRATE).
+#[repr(C)]
+struct BitrateInfo {
+    layer: u32,
+    bitrate: i32,
+}
+const ENCODER_OPTION_BITRATE: u32 = 5;
+const SPATIAL_LAYER_ALL: u32 = 4;
 
 impl H264 {
     /// `width`/`height` must be even (I420).
@@ -22,10 +34,20 @@ impl H264 {
             .usage_type(UsageType::ScreenContentRealTime)
             .rate_control_mode(RateControlMode::Bitrate)
             .profile(Profile::Baseline)
-            .intra_frame_period(IntraFramePeriod::from_num_frames(fps.max(1) * 2))
+            .intra_frame_period(IntraFramePeriod::from_num_frames(fps.max(1) * 10))
             .skip_frames(false);
         let enc = Encoder::with_api_config(OpenH264API::from_source(), config).map_err(|e| format!("H.264 인코더를 만들지 못했습니다: {e}"))?;
-        Ok(H264 { enc, width, height })
+        Ok(H264 { enc, width, height, bitrate_kbps })
+    }
+
+    /// A new target bit rate from the next frame on (no keyframe, the stream goes on).
+    pub fn set_bitrate(&mut self, kbps: u32) {
+        let mut info = BitrateInfo { layer: SPATIAL_LAYER_ALL, bitrate: kbps.saturating_mul(1000).min(i32::MAX as u32) as i32 };
+        // SAFETY: the option and its struct are OpenH264's own (codec_api.h); the encoder is initialized
+        let ok = unsafe { self.enc.raw_api().set_option(ENCODER_OPTION_BITRATE as _, std::ptr::addr_of_mut!(info).cast()) } == 0;
+        if ok {
+            self.bitrate_kbps = kbps;
+        }
     }
 
     /// RGBA (width × height × 4) → (access unit, keyframe). An empty unit means the encoder skipped the frame.

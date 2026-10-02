@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 
 import { aidevApi } from '@/modules/aidev-router';
-import { isWholeScreen, RemoteConsole, screenSocketUrl, useRemoteScreen, useScreenSources, type ScreenOptions, type StickyMods } from '@/modules/remote-screen';
+import { isWholeScreen, RemoteConsole, screenSocketUrl, streamStatusLine, useRemoteScreen, useScreenSources, type ScreenOptions, type StickyMods } from '@/modules/remote-screen';
 import type { RemoteScreenSource } from '@/shared/types';
 import { TopBar } from '@m/components/TopBar';
 import { useOpener, useParent } from '@m/lib/nav';
@@ -78,7 +78,7 @@ export function RemoteScreenScreen() {
   const pressKey = (k: { key: string; code: string }) => { input({ t: 'key', key: k.key, code: k.code, mods: sticky }); setSticky({}); };
   const toggle = (m: keyof StickyMods) => setSticky((s) => ({ ...s, [m]: !s[m] }));
   const win = source?.kind === 'window' ? windows.find((w) => w.id === source.id) ?? null : null;
-  const subtitle = !watching ? (source?.kind === 'console' ? '콘솔' : '프로그램을 고르세요') : streaming ? `${state.codec ?? '…'} · ${state.fps}fps · ${(state.kbps / 1000).toFixed(1)}Mbps` : '정지됨 — 마지막 화면';
+  const subtitle = !watching ? (source?.kind === 'console' ? '콘솔' : '프로그램을 고르세요') : streaming ? streamStatusLine(state) : '정지됨 — 마지막 화면';
 
   return (
     <div className="flex h-[100dvh] flex-col bg-black">
