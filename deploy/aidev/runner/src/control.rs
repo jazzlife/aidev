@@ -142,8 +142,12 @@ pub fn restart_self() -> String {
         use crate::proc_util::NoWindow;
         let mut cmd = std::process::Command::new(exe);
         cmd.args(args);
+        // nothing of this process's own standard handles: a hidden runner gave its console up (FreeConsole) and the
+        // stale console handle cannot be handed on — "지원되지 않는 요청입니다 (os error 50)", the task's runner then kept
+        // running the old file. A hidden runner writes its own log again (start --hidden → runner.log).
+        cmd.stdin(std::process::Stdio::null());
         if args.iter().any(|a| a == "--hidden") {
-            cmd.no_window();
+            cmd.no_window().stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
         }
         match cmd.spawn() {
             Ok(_) => std::process::exit(0),

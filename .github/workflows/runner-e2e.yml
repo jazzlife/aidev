@@ -289,14 +289,22 @@ jobs:
           $http = Start-Process python -ArgumentList '-m','http.server','8765','--bind','127.0.0.1' -WorkingDirectory $srv -PassThru -WindowStyle Hidden
           Start-Sleep 3
           $restarts = { ([regex]::Matches((Get-Content $log -Encoding utf8 -Raw), '새 러너로 다시 시작합니다')).Count }
+          # a hidden runner of this session as well (as the sign-in task starts it: it gives its console up) — it too
+          # must start again from the new file (0.17.1 and older could not: "os error 50", the old file kept running)
+          $hidden = Start-Process $bin -ArgumentList 'start','--hidden' -PassThru -WindowStyle Hidden
+          WaitFor 'the hidden session runner takes the connection' { -not (BootHolds) }
           $before = & $restarts
           $list = (& $bin update --gateway http://127.0.0.1:8765 | Out-String); $list
           if ($list -notmatch [regex]::Escape("$ver (최신, 현재)")) { throw 'the version list' }
           & $bin update $ver --gateway http://127.0.0.1:8765
           if ($LASTEXITCODE) { throw "update exit $LASTEXITCODE" }
           if (-not (Test-Path "$cfgDir\bin\aidev-runner.prev.exe")) { throw 'the previous file was not kept' }
-          WaitFor 'the boot runner started again from the new file' { (& $restarts) -gt $before }
+          WaitFor 'both runners started again from the new file' { (& $restarts) -ge $before + 2 }
           Start-Sleep 5
+          if ((Get-Content $log -Encoding utf8 -Raw) -match '다시 시작하지 못했습니다') { Get-Content $log -Encoding utf8 -Tail 20; throw 'a runner could not start again from the new file' }
+          if (-not $hidden.HasExited) { throw 'the hidden runner kept running the old file' }
+          # the hidden runner's successor ends here: the boot runner takes the connection back
+          Get-CimInstance Win32_Process -Filter "Name='aidev-runner.exe'" | Where-Object { $_.CommandLine -match ' start --hidden$' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force }
           WaitFor 'the restarted runner holds the connection' { BootHolds }
           $running = @(Get-CimInstance Win32_Process -Filter "Name='aidev-runner.exe'" | Where-Object { $_.CommandLine -match ' start( |$)' })
           if ($running.Count -lt 1) { throw 'no runner after the update' }
