@@ -100,10 +100,15 @@ fn grant_sudo(user: &str) -> Result<(), String> {
 }
 
 fn revoke_sudo() -> Result<(), String> {
-    if !std::path::Path::new(SUDOERS).exists() {
+    // /etc/sudoers.d is root-only on Ubuntu, so the file cannot be seen from here (CI 2026-10-02: --limited left it in
+    // place). While our rule is there sudo needs no password; when sudo -n fails there is no rule of ours to remove.
+    if quiet("sudo", &["-n", "rm", "-f", SUDOERS]) {
         return Ok(());
     }
-    sudo(&["rm", "-f", SUDOERS])
+    if std::path::Path::new(SUDOERS).exists() {
+        return sudo(&["rm", "-f", SUDOERS]);
+    }
+    Ok(())
 }
 
 pub fn boot_plist_text(exe: &str, user: &str, home: &str, log: &str) -> String {
