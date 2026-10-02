@@ -21,15 +21,20 @@ $Triple = if ($Arch -eq 'arm64') { 'aarch64-pc-windows-msvc' } else { 'x86_64-pc
 $Out = Join-Path $Root "vendor\libvpx\$Triple"
 if ((Test-Path "$Out\lib\vpx.lib") -and ((Get-Content "$Out\VERSION" -ErrorAction SilentlyContinue) -eq $Version)) { Write-Host "libvpx $Version ($Triple): $Out"; exit 0 }
 
+# a native program's stderr (git's "tag is not a commit" note) would be an error record under Stop in Windows
+# PowerShell 5.1: native programs run through this, and only their exit code decides
+function Invoke-Native([string] $Exe, [string[]] $ArgList) {
+  $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+  try { & $Exe @ArgList 2>&1 | ForEach-Object { Write-Host $_.ToString() } } finally { $ErrorActionPreference = $prev }
+  return $LASTEXITCODE
+}
 $Src = Join-Path $Root "vendor\libvpx\src-$Version"
 if (-not (Test-Path $Src)) {
-  git clone -q --depth 1 --branch $Version https://chromium.googlesource.com/webm/libvpx $Src 2>&1 | Out-Null
-  if ($LASTEXITCODE) { throw "libvpx $Version 을(를) 받지 못했습니다 (git clone)" }
+  if (Invoke-Native git @('clone', '-q', '--depth', '1', '--branch', $Version, 'https://chromium.googlesource.com/webm/libvpx', $Src)) { throw "libvpx $Version 을(를) 받지 못했습니다 (git clone)" }
 }
 $Msys = 'C:\msys64'
 if (-not (Test-Path "$Msys\usr\bin\bash.exe")) { throw 'MSYS2가 필요합니다 (C:\msys64) — winget install -e --id MSYS2.MSYS2' }
-& "$Msys\usr\bin\pacman.exe" -S --noconfirm --needed make diffutils mingw-w64-x86_64-yasm 2>&1 | Out-Null
-if ($LASTEXITCODE) { throw 'MSYS2에 make / diffutils / yasm 을 설치하지 못했습니다 (pacman)' }
+if (Invoke-Native "$Msys\usr\bin\pacman.exe" @('-S', '--noconfirm', '--needed', 'make', 'diffutils', 'mingw-w64-x86_64-yasm')) { throw 'MSYS2에 make / diffutils / yasm 을 설치하지 못했습니다 (pacman)' }
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $msbuild = if (Test-Path $vswhere) { & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1 }
 if (-not $msbuild) { throw 'Visual Studio 2022 (MSBuild)가 필요합니다' }
@@ -46,9 +51,7 @@ $sh = "cd '$workU' && '$srcU/configure' --target=$target " +
   '--disable-examples --disable-tools --disable-docs --disable-unit-tests --disable-webm-io --disable-libyuv ' +
   '--disable-vp8 --enable-vp9 --disable-vp9-decoder --enable-vp9-encoder --enable-realtime-only --enable-runtime-cpu-detect ' +
   '> configure.log 2>&1 || { tail -30 configure.log; exit 1; }; make -j4 > make.log 2>&1 || { tail -60 make.log; exit 1; }'
-$prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
-& "$Msys\usr\bin\bash.exe" --noprofile --norc -c $sh 2>&1 | ForEach-Object { Write-Host $_.ToString() }
-$code = $LASTEXITCODE; $ErrorActionPreference = $prev
+$code = Invoke-Native "$Msys\usr\bin\bash.exe" @('--noprofile', '--norc', '-c', $sh)
 if ($code) { throw "libvpx 빌드 실패 ($code) — $work" }
 $lib = Get-ChildItem $work -Recurse -Filter 'vpxmd.lib' | Where-Object { $_.FullName -match '\\Release\\' } | Select-Object -First 1
 if (-not $lib) { throw "vpxmd.lib 이 만들어지지 않았습니다 — $work\make.log" }
