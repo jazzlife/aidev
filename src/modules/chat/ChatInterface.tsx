@@ -256,6 +256,7 @@ function ChatInterface({
     clarify,
     releaseClarify,
     dismissClarify,
+    sending,
   } = useChatComposerState({
     selectedProject,
     selectedSession,
@@ -651,6 +652,13 @@ function ChatInterface({
           isTextareaExpanded={isTextareaExpanded}
           sendByCtrlEnter={sendByCtrlEnter}
         />
+          {sending ? (
+            <div className="mx-3 mb-2 flex items-center gap-2 rounded-lg border border-primary/30 bg-primary/5 px-3 py-2 text-sm" role="status" data-testid="chat-sending">
+              <span className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-primary/30 border-t-primary" aria-hidden />
+              <span className="shrink-0 text-muted-foreground">보내는 중 · agent 고르는 중…</span>
+              <span className="min-w-0 flex-1 truncate">{sending}</span>
+            </div>
+          ) : null}
           {clarify ? <ClarifyPrompt key={clarify.decisionId} question={clarify.question} onAnswer={(answer) => releaseClarify(answer)} onProceed={() => releaseClarify(null)} onDismiss={dismissClarify} /> : null}
           {escalation.escalation ? <EscalationCard next={escalation.escalation.next} label={escalation.label} busy={escalation.busy} error={escalation.error} onRun={() => { void escalation.run(); }} onDismiss={escalation.dismiss} /> : null}
           {agentCreation.pending ? <AgentCreateCard pending={agentCreation.pending} onApprove={(draft) => { void agentCreation.approve(draft); }} onSelfCheck={agentCreation.runSelfCheck} onDismiss={agentCreation.dismiss} /> : null}

@@ -621,6 +621,11 @@ export function useChatComposerState({
   const [clarifyHold, setClarifyHold] = useState<{ sessionKey: string | null; text: string; decoration: AidevSendDecoration; uploadedAttachments: unknown[] } | null>(null);
   // the hold being released: the next submit reuses its routing and uploads instead of doing both again
   const clarifyResumeRef = useRef<{ decoration: AidevSendDecoration; uploadedAttachments: unknown[] } | null>(null);
+  // the command between Enter and its send (routing, uploads, a new session can take seconds): the composer clears at
+  // once and shows it as "보내는 중", and a second Enter meanwhile is not a second send (it was: the same command went
+  // out twice). The ref closes the gap before React re-renders.
+  const sendingRef = useRef(false);
+  const [sending, setSending] = useState<string | null>(null);
   // …and while the user is still typing, the specialist judge already looks at the draft
   usePrejudge(input, typeof selectedProject?.displayName === 'string' ? selectedProject.displayName : (typeof selectedProject?.name === 'string' ? selectedProject.name : null));
 
@@ -753,6 +758,14 @@ export function useChatComposerState({
         }
       }
 
+      if (sendingRef.current) return;
+      sendingRef.current = true;
+      setSending(currentInput);
+      setInput('');
+      inputValueRef.current = '';
+      // the text goes back into the composer when the send does not happen (error, or a clarify hold that edits it)
+      const restoreInput = () => { setInput(currentInput); inputValueRef.current = currentInput; };
+      try {
       const messageContent = currentInput;
       const resume = queuedSubmission ? null : clarifyResumeRef.current;
       clarifyResumeRef.current = null;
@@ -764,6 +777,7 @@ export function useChatComposerState({
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Unknown error';
           console.error('File upload failed:', error);
+          restoreInput();
           addMessage({
             type: 'error',
             content: `Failed to upload files: ${message}`,
@@ -795,6 +809,7 @@ export function useChatComposerState({
       setClarifyHold(null);
       if (!resume && !queuedSubmission && shouldAskClarify(aidevDecoration)) {
         setClarifyHold({ sessionKey, text: messageContent, decoration: aidevDecoration, uploadedAttachments });
+        restoreInput();
         return;
       }
       const plannedEngine = aidevDecoration?.route.plan.engine;
@@ -823,6 +838,7 @@ export function useChatComposerState({
         } catch (error) {
           const message = error instanceof Error ? error.message : 'Unknown error';
           console.error('Session creation failed:', error);
+          restoreInput();
           addMessage({
             type: 'error',
             content: `Failed to start a new session: ${message}`,
@@ -832,6 +848,7 @@ export function useChatComposerState({
         }
 
         if (!targetSessionId) {
+          restoreInput();
           addMessage({
             type: 'error',
             content: 'Failed to start a new session: no session id returned.',
@@ -905,8 +922,7 @@ export function useChatComposerState({
       // navigated to. Queued drafts were recorded when they were queued; the
       // consecutive-duplicate check keeps this second call a no-op.
       recordSentMessage(currentInput, targetSessionId);
-      setInput('');
-      inputValueRef.current = '';
+      // the composer was cleared at Enter; what was typed since stays
       resetCommandMenuState();
       setAttachedFiles([]);
       setFileErrors(new Map());
@@ -917,7 +933,11 @@ export function useChatComposerState({
       }
 
       if (draftScopeRef.current) {
-        writeDraftText(draftScopeRef.current, '');
+        writeDraftText(draftScopeRef.current, inputValueRef.current);
+      }
+      } finally {
+        sendingRef.current = false;
+        setSending(null);
       }
     },
     [
@@ -1330,5 +1350,7 @@ export function useChatComposerState({
     clarify: clarifyHold && clarifyHold.sessionKey === sessionKey ? { question: clarifyHold.decoration.route.scope.clarify_question ?? null, decisionId: clarifyHold.decoration.route.decision_id } : null,
     releaseClarify,
     dismissClarify,
+    /** the command being sent (routing / upload / new session) — shown under the composer until it goes out */
+    sending,
   };
 }

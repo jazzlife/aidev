@@ -1,15 +1,21 @@
-import { useRef, useState, type KeyboardEvent } from 'react';
+import { useEffect, useRef, useState, type KeyboardEvent } from 'react';
 import { ArrowUp, Square } from 'lucide-react';
 
-type ComposerProps = { disabled?: boolean; busy: boolean; onSend: (text: string) => void; onAbort: () => void; placeholder?: string; /** the draft as typed (ChatScreen pre-judges it) */ onDraftChange?: (text: string) => void };
+type ComposerProps = { disabled?: boolean; busy: boolean; /** false: not taken (a send is still on its way) — the text stays */ onSend: (text: string) => boolean | void; onAbort: () => void; placeholder?: string; /** the draft as typed (ChatScreen pre-judges it) */ onDraftChange?: (text: string) => void;
+  /** text put back after a send that did not happen (a new `n` each time) */ restore?: { text: string; n: number } | null };
 
 /** Used by ChatScreen: bottom-anchored input with auto-grow, send/stop button, safe-area padding. */
-export function Composer({ disabled, busy, onSend, onAbort, placeholder, onDraftChange }: ComposerProps) {
+export function Composer({ disabled, busy, onSend, onAbort, placeholder, onDraftChange, restore }: ComposerProps) {
   const [value, setValueState] = useState('');
   const setValue = (next: string) => { setValueState(next); onDraftChange?.(next); };
   const ref = useRef<HTMLTextAreaElement>(null);
   const grow = () => { const element = ref.current; if (!element) return; element.style.height = 'auto'; element.style.height = `${Math.min(element.scrollHeight, 160)}px`; };
-  const send = () => { const text = value.trim(); if (!text || disabled) return; onSend(text); setValue(''); requestAnimationFrame(grow); };
+  useEffect(() => {
+    if (!restore) return;
+    setValueState(restore.text);
+    requestAnimationFrame(() => { const element = ref.current; if (!element) return; element.style.height = 'auto'; element.style.height = `${Math.min(element.scrollHeight, 160)}px`; });
+  }, [restore]);
+  const send = () => { const text = value.trim(); if (!text || disabled) return; if (onSend(text) === false) return; setValue(''); requestAnimationFrame(grow); };
   const onKey = (event: KeyboardEvent<HTMLTextAreaElement>) => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); send(); } };
   return (
     <div className="border-t border-line bg-bg px-3 pt-2 pb-[calc(env(safe-area-inset-bottom)+8px)]">

@@ -49,6 +49,11 @@ export function ChatScreen() {
   const composeRef = useRef<string | null>(composeText);
   const [pickingProject, setPickingProject] = useState(() => Boolean(composeText) && !readLastProject());
   const [busy, setBusy] = useState(false);
+  // Enter → sent: the command shown as "보내는 중" while routing / a new session take their time; the ref blocks a repeat
+  const sendingRef = useRef(false);
+  const [sending, setSending] = useState<string | null>(null);
+  // a send that did not happen puts its text back in the composer
+  const [restore, setRestore] = useState<{ text: string; n: number } | null>(null);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [pendingPermissionRequests, setPendingPermissionRequests] = useState<PendingPermissionRequest[]>([]);
   const [, setTokenBudget] = useState<Record<string, unknown> | null>(null);
@@ -172,10 +177,10 @@ export function ChatScreen() {
         navigate(`/session/${encodeURIComponent(target.id)}`);
       } catch (error) {
         setLoadError(error instanceof Error ? error.message : '세션 생성 실패');
-        return;
+        return false;
       }
     }
-    if (!target) return;
+    if (!target) return false;
     const echo: NormalizedMessage = { id: `local_${Date.now()}`, sessionId: target.id, timestamp: new Date().toISOString(), provider: target.provider, kind: 'text', role: 'user', content: text };
     sessionStore.appendRealtime(target.id, echo);
     setBusy(true);
@@ -190,16 +195,25 @@ export function ChatScreen() {
         sessionSummary: text.slice(0, 80),
       },
     });
+    return true;
   }, [meta, navigate, project, provider, sendMessage, sessionStore]);
 
   const send = useCallback(async (text: string) => {
-    if (busy) return;
-    if (!meta && !project) { setPickingProject(true); return; }
+    // a send in flight (routing can take seconds): a repeated tap is not a second send
+    if (busy || sendingRef.current) return;
+    if (!meta && !project) { setPickingProject(true); setRestore({ text, n: Date.now() }); return; }
     setClarify(null);
-    const decoration = await beforeSend(text, { sessionId: meta?.id ?? null, provider, isNewSession: !meta, projectHint: (meta?.projectName || project?.displayName) ?? null, userPinnedModel: false });
-    // §3.1: essential detail missing from a deeper command → ask once (not for agent creation or the app's re-sends)
-    if (shouldAskClarify(decoration)) { setClarify({ text, decoration }); return; }
-    await dispatch(text, decoration);
+    sendingRef.current = true;
+    setSending(text);
+    try {
+      const decoration = await beforeSend(text, { sessionId: meta?.id ?? null, provider, isNewSession: !meta, projectHint: (meta?.projectName || project?.displayName) ?? null, userPinnedModel: false });
+      // §3.1: essential detail missing from a deeper command → ask once (not for agent creation or the app's re-sends)
+      if (shouldAskClarify(decoration)) { setClarify({ text, decoration }); return; }
+      if (!(await dispatch(text, decoration))) setRestore({ text, n: Date.now() });
+    } finally {
+      sendingRef.current = false;
+      setSending(null);
+    }
   }, [beforeSend, busy, dispatch, meta, project, provider, setClarify]);
 
   useEffect(() => { sendRef.current = (text) => { void send(text); }; }, [send]);
@@ -271,7 +285,14 @@ export function ChatScreen() {
       {lastRunFinished && !busy ? <RunFeedback key={lastRunFinished} onFeedback={(value) => { void reportOutcome({ user_feedback: value }); }} /> : null}
       {clarify ? <ClarifyPrompt key={clarify.decoration.route.decision_id} text={clarify.text} question={clarify.decoration.route.scope.clarify_question} onProceed={() => { setClarify(null); void dispatch(clarify.text, clarify.decoration); }} onAnswer={(answer) => { setClarify(null); void dispatch(`${clarify.text}\n\n(추가 정보) ${answer}`, clarify.decoration); }} /> : null}
       <RouterChip sessionId={sessionId} />
-      <Composer busy={busy} disabled={!isConnected} onDraftChange={setDraft} onSend={(text) => { void send(text); }} onAbort={abort} placeholder={meta ? undefined : '무엇을 만들까요?'} />
+      {sending ? (
+        <div className="mx-3 mb-1 flex items-center gap-2 rounded-xl border border-accent/30 bg-accent/5 px-3 py-2 text-[13px]" role="status" data-testid="chat-sending">
+          <span className="h-3.5 w-3.5 shrink-0 animate-spin rounded-full border-2 border-accent/30 border-t-accent" aria-hidden />
+          <span className="shrink-0 text-muted">보내는 중…</span>
+          <span className="min-w-0 flex-1 truncate">{sending}</span>
+        </div>
+      ) : null}
+      <Composer busy={busy} restore={restore} disabled={!isConnected} onDraftChange={setDraft} onSend={(text) => { if (busy || sendingRef.current) return false; void send(text); return true; }} onAbort={abort} placeholder={meta ? undefined : '무엇을 만들까요?'} />
       <PermissionSheet request={pendingPermissionRequests[0] ?? null} onDecide={decidePermission} />
       <FilePeek open={filePeek.open} onClose={() => setFilePeek({ open: false, file: null, fromSearch: false })} project={peekProject} file={filePeek.file} fromSearch={filePeek.fromSearch} onFile={(file) => setFilePeek({ open: true, file, fromSearch: file !== null })} />
       <DiffPeek edit={diffPeek} onClose={() => setDiffPeek(null)} onOpenFile={(path) => openFile({ path, line: null })} />

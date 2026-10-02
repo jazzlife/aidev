@@ -134,3 +134,30 @@ test('no hold when the router does not ask, for agent creation, or for the app\'
   }
   assert.deepEqual(sent.map((message) => message.content), ['web/src/Login.tsx 버튼 고쳐줘', '결제 기능 추가해줘', '[자가 검증] 셰이더 컴파일']);
 });
+
+test('Enter clears the composer at once and shows the command as sending; a repeated Enter is not a second send', async () => {
+  // routing that takes a while (the specialist judge): Enter used to leave the text in place with no sign of life,
+  // so people pressed it again — and the command went out twice
+  let finish: (value: unknown) => void = () => undefined;
+  let calls = 0;
+  routing.beforeSend = () => { calls++; return new Promise((resolve) => { finish = resolve; }); };
+  const sent: Array<Record<string, unknown>> = [];
+  const view = renderComposer(sent);
+
+  await act(async () => { view.result.current.setInput('테스트 돌려줘'); });
+  let first: Promise<void> = Promise.resolve();
+  await act(async () => { first = view.result.current.handleSubmit(submitEvent); });
+  assert.equal(view.result.current.input, '', 'the composer clears as soon as Enter is pressed');
+  assert.equal(view.result.current.sending, '테스트 돌려줘', 'the command shows as sending');
+
+  await act(async () => { view.result.current.setInput('테스트 돌려줘'); });
+  await act(async () => { await view.result.current.handleSubmit(submitEvent); });
+  assert.equal(calls, 1, 'the repeated Enter neither routes nor sends again');
+  assert.equal(view.result.current.input, '테스트 돌려줘', 'what was typed meanwhile stays');
+
+  await act(async () => { finish(decoration(false)); await first; });
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].content, '테스트 돌려줘');
+  assert.equal(view.result.current.sending, null);
+  assert.equal(view.result.current.input, '테스트 돌려줘', 'the send finishing does not wipe what was typed meanwhile');
+});
