@@ -70,19 +70,3 @@ export function RemoteRunCard({ run: initial, lines = 12 }: { run: RemoteRun; li
     </div>
   );
 }
-
-/** Settings → 원격 실행: the latest runs on the user's PCs as result cards. */
-export function RemoteRunsSection() {
-  const [runs, setRuns] = useState<RemoteRun[] | null>(null);
-  const [error, setError] = useState<string | null>(null);
-  const load = useCallback(() => { aidevApi.remoteRuns(5).then((r) => setRuns(r.runs)).catch((e: Error) => setError(e.message)); }, []);
-  useEffect(() => { load(); }, [load]);
-  return (
-    <section data-testid="remote-runs">
-      <div className="mb-2 flex items-center text-[12px] uppercase tracking-wide text-muted">원격 실행<button type="button" className="ml-auto normal-case tracking-normal text-accent" onClick={load}>새로고침</button></div>
-      {runs && runs.length === 0 ? <div className="rounded-xl2 border border-line bg-surface px-4 py-3 text-[14px] text-muted">아직 원격 PC에서 실행한 명령이 없습니다. 작업대의 “원격 실행” 패널이나 agent가 실행하면 여기에 결과가 나타납니다.</div> : null}
-      <div className="space-y-2">{(runs ?? []).map((run) => <RemoteRunCard key={run.id} run={run} lines={8} />)}</div>
-      {error ? <div className="mt-2 text-[12px] text-danger">{error}</div> : null}
-    </section>
-  );
-}

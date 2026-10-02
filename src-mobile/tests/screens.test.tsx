@@ -18,13 +18,20 @@ const api = {
 };
 vi.mock('@/modules/chat-core', async () => {
   const shared = await vi.importActual<typeof import('@/shared/api')>('@/shared/api');
-  return { api, readApiJson: shared.readApiJson };
+  return { api, readApiJson: shared.readApiJson, useAuth: () => ({ user: { username: 'jazzlife' } }) };
 });
+vi.mock('@/modules/aidev-router', () => ({
+  aidevApi: {
+    targets: () => Promise.resolve({ targets: [{ id: 4, name: 'm4pro', online: true }, { id: 5, name: 'old-pc', online: false }] }),
+    remoteRuns: () => Promise.resolve({ runs: [] }),
+  },
+}));
 
 const { ProjectsScreen } = await import('@m/screens/ProjectsScreen');
 const { ProjectScreen } = await import('@m/screens/ProjectScreen');
 const { TargetsScreen } = await import('@m/screens/TargetsScreen');
-vi.mock('@m/components/RemoteMenu', () => ({ RemoteMenu: () => null }));
+const { DrawerProvider } = await import('@m/components/AppDrawer');
+const { BackController } = await import('@m/lib/nav');
 vi.mock('@m/components/FilePeek', () => ({ FilePeek: () => null }));
 
 function Where() { const l = useLocation(); return <div data-testid="where">{l.pathname}</div>; }
@@ -32,6 +39,8 @@ const at = (path: string) => {
   window.history.replaceState(null, '', path);
   return render(
     <BrowserRouter>
+      <BackController />
+      <DrawerProvider>
       <Where />
       <Routes>
         <Route path="/projects" element={<ProjectsScreen />} />
@@ -39,6 +48,7 @@ const at = (path: string) => {
         <Route path="/pcs" element={<TargetsScreen />} />
         <Route path="*" element={null} />
       </Routes>
+      </DrawerProvider>
     </BrowserRouter>,
   );
 };
@@ -78,5 +88,36 @@ describe('mobile PC pairing', () => {
     expect(card.textContent).toContain('pair AB12CD');
     fireEvent.click(screen.getByText('macOS'));
     expect(screen.getByTestId('pairing-card').textContent).toContain('~/.aidev/bin/aidev-runner pair AB12CD');
+  });
+});
+
+describe('mobile common menu (drawer)', () => {
+  it('opens from ☰ on any screen and switches project or opens a remote tool directly', async () => {
+    at('/projects/p1');
+    await settle();
+    fireEvent.click(screen.getByLabelText('메뉴'));
+    await settle();
+    const drawer = screen.getByTestId('app-drawer');
+    expect(drawer.textContent).toContain('m4pro 화면·제어');
+    expect(drawer.textContent).not.toContain('old-pc 화면');   // offline PCs have no screen entry
+    fireEvent.click(screen.getAllByText('beta').at(-1)!);
+    await settle();
+    expect(screen.getByTestId('where').textContent).toBe('/projects/p2');
+    expect(screen.queryByTestId('app-drawer')).toBeNull();
+    fireEvent.click(screen.getByLabelText('메뉴'));
+    await settle();
+    fireEvent.click(screen.getByText('원격 실행'));
+    expect(screen.getByTestId('where').textContent).toBe('/runs');
+  });
+
+  it('the back button closes the drawer before anything else', async () => {
+    at('/projects');
+    await settle();
+    fireEvent.click(screen.getByLabelText('메뉴'));
+    await settle();
+    expect(screen.getByTestId('app-drawer')).toBeTruthy();
+    await act(async () => { window.history.back(); await new Promise((r) => setTimeout(r, 30)); });
+    expect(screen.queryByTestId('app-drawer')).toBeNull();
+    expect(screen.getByTestId('where').textContent).toBe('/projects');
   });
 });

@@ -6,7 +6,6 @@ import { aidevApi, claudeAuth, routingStore, useClaudeAuth, useRoutingState, typ
 import { EffortCapControl } from '@m/components/EffortCapControl';
 import { ClaudeLoginSheet } from '@m/components/ClaudeLoginSheet';
 import { KnowledgeSection } from '@m/components/KnowledgeSection';
-import { RemoteRunsSection } from '@m/components/RemoteRunCard';
 import { ScreenSnapshotSection } from '@m/components/ScreenSnapshotSection';
 import { disablePush, enablePush, pushState, type PushState } from '@m/lib/push';
 
@@ -113,7 +112,6 @@ export function SettingsScreen() {
           </button>
         </section>
         <KnowledgeSection />
-        <RemoteRunsSection />
         <ScreenSnapshotSection />
         <section>
           <div className="text-[12px] uppercase tracking-wide text-muted mb-2">화면</div>

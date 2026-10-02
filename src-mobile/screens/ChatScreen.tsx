@@ -9,7 +9,6 @@ import { MessageList } from '@m/components/MessageList';
 import { PermissionSheet } from '@m/components/PermissionSheet';
 import { RouterChip } from '@m/components/RouterChip';
 import { RunFeedback } from '@m/components/RunFeedback';
-import { RemoteMenu } from '@m/components/RemoteMenu';
 import { SessionResults } from '@m/components/SessionResults';
 import { TopBar } from '@m/components/TopBar';
 import { usePreviewList } from '@/modules/remote-preview';
@@ -258,7 +257,7 @@ export function ChatScreen() {
 
   return (
     <div className="m-app">
-      <TopBar title={title} subtitle={subtitle} back onSubtitle={projectPath ? () => navigate(projectPath) : undefined} right={<div className="flex items-center">{peekProject ? <button type="button" aria-label="파일 찾기" onClick={() => openFile(null)} className="m-touch flex items-center justify-center rounded-full text-muted"><Search size={19} /></button> : null}<RemoteMenu />{!meta ? <button type="button" className="text-[13px] text-accent px-3 m-touch" onClick={() => setPickingProject(true)}>프로젝트</button> : null}</div>} />
+      <TopBar title={title} subtitle={subtitle} back onSubtitle={projectPath ? () => navigate(projectPath) : undefined} right={<div className="flex items-center">{peekProject ? <button type="button" aria-label="파일 찾기" onClick={() => openFile(null)} className="m-touch flex items-center justify-center rounded-full text-muted"><Search size={19} /></button> : null}{!meta ? <button type="button" className="text-[13px] text-accent px-3 m-touch" onClick={() => setPickingProject(true)}>프로젝트</button> : null}</div>} />
       {agentPreview ? (
         <div className="flex items-center gap-2 border-b border-line bg-accent/10 px-4 py-2 text-[13px]">
           <span className="min-w-0 flex-1 truncate">미리보기가 열렸습니다 · {agentPreview.label ?? agentPreview.targetName}:{agentPreview.port}</span>

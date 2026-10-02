@@ -1,9 +1,8 @@
 import { useEffect, useState } from 'react';
-import { ChevronRight, FolderGit2, Settings, Star } from 'lucide-react';
+import { ChevronRight, FolderGit2, Star } from 'lucide-react';
 
 import { api } from '@/modules/chat-core';
 import { HomeTabs } from '@m/components/HomeTabs';
-import { RemoteMenu } from '@m/components/RemoteMenu';
 import { TopBar } from '@m/components/TopBar';
 import { relativeTime } from '@m/lib/format';
 import { useGo, useParent } from '@m/lib/nav';
@@ -32,7 +31,6 @@ export function ProjectsScreen() {
     <div className="m-app">
       <TopBar
         title={<HomeTabs active="projects" />}
-        right={<div className="flex items-center"><RemoteMenu /><button type="button" aria-label="설정" onClick={() => go('/settings')} className="m-touch flex items-center justify-center rounded-full text-muted"><Settings size={20} /></button></div>}
       />
       <main className="m-scroll flex-1 pb-8">
         {error ? <div className="p-4 text-danger text-sm">{error}</div> : null}

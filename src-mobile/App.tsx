@@ -7,6 +7,7 @@ import { SessionsScreen } from '@m/screens/SessionsScreen';
 import { Splash } from '@m/components/Splash';
 import { ApprovalSheet } from '@m/components/ApprovalSheet';
 import { BackController } from '@m/lib/nav';
+import { DrawerProvider } from '@m/components/AppDrawer';
 
 // C-06 (Lighthouse mobile 4G: LCP 2.7 s, 82% of the main chunk unused on the first screen): only the entry screens
 // (login, conversation list) ship in the main chunk; every other screen loads when it is opened.
@@ -17,6 +18,7 @@ const DebugScreen = lazy(() => import('@m/screens/DebugScreen').then((m) => ({ d
 const RemoteScreenScreen = lazy(() => import('@m/screens/RemoteScreenScreen').then((m) => ({ default: m.RemoteScreenScreen })));
 const ProjectsScreen = lazy(() => import('@m/screens/ProjectsScreen').then((m) => ({ default: m.ProjectsScreen })));
 const ProjectScreen = lazy(() => import('@m/screens/ProjectScreen').then((m) => ({ default: m.ProjectScreen })));
+const RunsScreen = lazy(() => import('@m/screens/RunsScreen').then((m) => ({ default: m.RunsScreen })));
 const TargetsScreen = lazy(() => import('@m/screens/TargetsScreen').then((m) => ({ default: m.TargetsScreen })));
 const CatalogScreen = lazy(() => import('@m/screens/CatalogScreen').then((m) => ({ default: m.CatalogScreen })));
 
@@ -30,7 +32,7 @@ function Gate({ children }: { children: React.ReactNode }) {
     return <Navigate to="/login" replace />;
   }
   // agent commands waiting for approval surface on every signed-in screen
-  return <WebSocketProvider><Suspense fallback={<Splash />}>{children}</Suspense><ApprovalSheet /></WebSocketProvider>;
+  return <WebSocketProvider><DrawerProvider><Suspense fallback={<Splash />}>{children}</Suspense><ApprovalSheet /></DrawerProvider></WebSocketProvider>;
 }
 
 export default function App() {
@@ -49,6 +51,7 @@ export default function App() {
           <Route path="/settings" element={<Gate><SettingsScreen /></Gate>} />
           <Route path="/screen/:targetId" element={<Gate><RemoteScreenScreen /></Gate>} />
           <Route path="/pcs" element={<Gate><TargetsScreen /></Gate>} />
+          <Route path="/runs" element={<Gate><RunsScreen /></Gate>} />
           <Route path="/preview" element={<Gate><PreviewScreen /></Gate>} />
           <Route path="/debug" element={<Gate><DebugScreen /></Gate>} />
           <Route path="/catalog" element={<Gate><CatalogScreen /></Gate>} />

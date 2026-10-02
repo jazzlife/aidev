@@ -1,11 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Archive, ArrowLeft, EyeOff, MoreHorizontal, Plus, RotateCcw, Settings, Sparkles, Trash2 } from 'lucide-react';
+import { Archive, ArrowLeft, EyeOff, MoreHorizontal, Plus, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
 
 import { api } from '@/modules/chat-core';
 import { aidevApi, useCreateProposals, type UnreadSession } from '@/modules/aidev-router';
 import { BottomSheet } from '@m/components/BottomSheet';
 import { HomeTabs } from '@m/components/HomeTabs';
-import { RemoteMenu } from '@m/components/RemoteMenu';
 import { TopBar } from '@m/components/TopBar';
 import { relativeTime } from '@m/lib/format';
 import { useLongPress } from '@m/lib/useLongPress';
@@ -119,11 +118,7 @@ export function SessionsScreen() {
         title={hidden ? '숨긴 대화' : <HomeTabs active="conversations" />}
         left={hidden ? <button type="button" aria-label="대화 목록" onClick={() => setView('active')} className="m-touch flex items-center justify-center rounded-full"><ArrowLeft size={20} /></button> : undefined}
         right={hidden ? null : (
-          <div className="flex items-center">
-            <RemoteMenu />
-            <button type="button" aria-label="숨긴 대화" onClick={() => setView('hidden')} className="m-touch flex items-center justify-center rounded-full text-muted"><Archive size={19} /></button>
-            <button type="button" onClick={() => navigate('/settings')} className="m-touch flex items-center justify-center rounded-full text-muted" aria-label="설정"><Settings size={20} /></button>
-          </div>
+          <button type="button" aria-label="숨긴 대화" onClick={() => setView('hidden')} className="m-touch flex items-center justify-center rounded-full text-muted"><Archive size={19} /></button>
         )}
       />
       <main className="m-scroll flex-1 pb-24">
