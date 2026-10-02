@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams } from 'react-router-dom';
 
 import { aidevApi } from '@/modules/aidev-router';
-import { RemoteConsole, screenSocketUrl, useRemoteScreen, useScreenSources, type ScreenOptions, type StickyMods } from '@/modules/remote-screen';
+import { isWholeScreen, RemoteConsole, screenSocketUrl, useRemoteScreen, useScreenSources, type ScreenOptions, type StickyMods } from '@/modules/remote-screen';
 import type { RemoteScreenSource } from '@/shared/types';
 import { TopBar } from '@m/components/TopBar';
 import { useOpener, useParent } from '@m/lib/nav';
@@ -77,7 +77,8 @@ export function RemoteScreenScreen() {
       <div className="flex items-center gap-2 border-b border-line bg-bg px-3 py-2 text-[13px]">
         <select aria-label="프로그램" value={sourceKey(source)} onChange={(e) => setChosen(parse(e.target.value))} className="min-w-0 flex-1 rounded-lg border border-line bg-surface px-2 py-1">
           {!source ? <option value="">{sources.loading ? '불러오는 중…' : '프로그램 없음'}</option> : null}
-          {windows.length ? <optgroup label="프로그램 창">{windows.map((w) => <option key={w.id} value={`w:${w.id}`}>{w.focused ? '● ' : ''}{w.app || '앱'}{w.title && w.title !== w.app ? ` — ${w.title}` : ''}</option>)}</optgroup> : null}
+          {windows.some((w) => isWholeScreen(w.id)) ? <optgroup label="전체 화면">{windows.filter((w) => isWholeScreen(w.id)).map((w) => <option key={w.id} value={`w:${w.id}`}>{w.title || '화면'} · {w.width}×{w.height}</option>)}</optgroup> : null}
+          {windows.some((w) => !isWholeScreen(w.id)) ? <optgroup label="프로그램 창">{windows.filter((w) => !isWholeScreen(w.id)).map((w) => <option key={w.id} value={`w:${w.id}`}>{w.focused ? '● ' : ''}{w.app || '앱'}{w.title && w.title !== w.app ? ` — ${w.title}` : ''}</option>)}</optgroup> : null}
           {consoles.length ? <optgroup label="콘솔">{consoles.map((c) => <option key={c.streamId} value={`c:${c.streamId}`}>{c.pty ? '⌨ ' : ''}{c.cmd}</option>)}</optgroup> : null}
           {!perWindow ? <optgroup label="디스플레이">{(displays.length ? displays : [{ id: 1 }]).map((d) => <option key={d.id} value={`d:${d.id}`}>디스플레이 {d.id}</option>)}</optgroup> : null}
         </select>

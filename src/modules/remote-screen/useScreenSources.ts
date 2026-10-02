@@ -5,6 +5,14 @@ import type { RemoteConsoleSource, RemoteScreenSource, RemoteWindow } from '@/sh
 
 type Display = { id: number; name?: string; resolution?: string };
 type RunRow = { id: number; cmd: string | null; live: { streamId: number; pty: boolean; running: boolean } | null };
+/** Runner ≥ 0.13.3 lists each whole screen (display) as a "window" with an id from this reserved range. */
+const WHOLE_SCREEN_BASE = 0xffff_ff00;
+
+/** Used by the workbench ScreenPane and the mobile screen view to put whole screens in their own group. */
+export function isWholeScreen(id: number) {
+  return id >= WHOLE_SCREEN_BASE;
+}
+
 type Sources = { windows: RemoteWindow[]; displays: Display[]; perWindow: boolean; consoles: RemoteConsoleSource[] };
 const EMPTY: Sources = { windows: [], displays: [], perWindow: true, consoles: [] };
 
@@ -44,12 +52,14 @@ export function useScreenSources(targetId: number | null, enabled: boolean, chos
 
   useEffect(() => { if (enabled) void refresh(); }, [enabled, refresh]);
 
+  // the default: the focused program window, not a whole screen (runner ≥ 0.13.3 lists those last)
   const source = useMemo<RemoteScreenSource | null>(() => {
     const { windows, consoles, displays, perWindow } = sources;
     if (chosen?.kind === 'window' && windows.some((w) => w.id === chosen.id)) return chosen;
     if (chosen?.kind === 'console' && consoles.some((c) => c.streamId === chosen.streamId)) return chosen;
     if (chosen?.kind === 'display' && !perWindow) return chosen;
-    if (windows[0]) return { kind: 'window', id: windows[0].id };
+    const first = windows.find((w) => !isWholeScreen(w.id)) ?? windows[0];
+    if (first) return { kind: 'window', id: first.id };
     if (consoles[0]) return { kind: 'console', streamId: consoles[0].streamId, remoteRunId: consoles[0].remoteRunId, pty: consoles[0].pty };
     return perWindow ? null : { kind: 'display', id: displays[0]?.id ?? 1 };
   }, [sources, chosen]);

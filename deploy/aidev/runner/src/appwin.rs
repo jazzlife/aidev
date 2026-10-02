@@ -5,6 +5,8 @@
 //!   Linux (X11): x11rb directly (_NET_CLIENT_LIST or the top-level tree, GetImage on the window)
 //! Coordinates (x, y, width, height) are in the OS's input space (points on macOS), so a normalized
 //! position on the streamed picture maps to `x + nx * width` for the mouse whatever the pixel density.
+//! Whole screens (2026-10-02, "전체화면도 볼 수 있도록"): each display is listed by `displays()` with an id from a reserved
+//! range (DISPLAY_BASE + index, never a window id), so streaming, screenshots and remote input treat it like a window.
 
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct WinInfo {
@@ -35,7 +37,23 @@ pub fn list() -> Result<Vec<WinInfo>, String> {
     Ok(all)
 }
 
+/// Ids from here on are displays (index = id - DISPLAY_BASE); OS window ids stay far below.
+pub const DISPLAY_BASE: u32 = 0xFFFF_FF00;
+
+pub fn is_display(id: u32) -> bool {
+    id >= DISPLAY_BASE
+}
+
+/// The screens of this PC (primary first), as "windows" with the display's bounds; `focused` so input never tries to
+/// bring them to the front.
+pub fn displays() -> Result<Vec<WinInfo>, String> {
+    imp::displays()
+}
+
 pub fn info(id: u32) -> Option<WinInfo> {
+    if is_display(id) {
+        return displays().ok()?.into_iter().find(|d| d.id == id);
+    }
     imp::list().ok()?.into_iter().find(|w| w.id == id)
 }
 
@@ -43,6 +61,9 @@ pub fn info(id: u32) -> Option<WinInfo> {
 pub fn find(id: Option<u32>, query: Option<&str>) -> Result<WinInfo, String> {
     let all = list()?;
     if let Some(id) = id {
+        if is_display(id) {
+            return info(id).ok_or_else(|| format!("화면 #{}이(가) 없습니다", id - DISPLAY_BASE + 1));
+        }
         return all.into_iter().find(|w| w.id == id).ok_or_else(|| format!("창 #{id}이(가) 없습니다 (닫혔거나 최소화됨)"));
     }
     if let Some(q) = query.map(str::to_lowercase).filter(|q| !q.is_empty()) {
@@ -56,6 +77,9 @@ pub struct Capturer(imp::Handle);
 
 impl Capturer {
     pub fn open(id: u32) -> Result<Self, String> {
+        if is_display(id) {
+            return imp::Handle::open_display(id - DISPLAY_BASE).map(Capturer);
+        }
         imp::Handle::open(id).map(Capturer)
     }
     pub fn capture(&mut self) -> Result<Frame, String> {
@@ -65,13 +89,31 @@ impl Capturer {
 
 /// Brings the window's app to the front (input goes where the user sees it).
 pub fn activate(w: &WinInfo) {
-    imp::activate(w)
+    if !is_display(w.id) {
+        imp::activate(w)
+    }
+}
+
+fn display_info(index: u32, name: String, x: i32, y: i32, width: u32, height: u32, primary: bool) -> WinInfo {
+    WinInfo { id: DISPLAY_BASE + index, pid: 0, app: "전체 화면".into(), title: if primary { format!("{name} (주 화면)") } else { name }, x, y, width, height, minimized: false, focused: true }
 }
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod imp {
-    use super::{Frame, WinInfo};
-    use xcap::Window;
+    use super::{display_info, Frame, WinInfo};
+    use xcap::{Monitor, Window};
+
+    fn monitors() -> Result<Vec<Monitor>, String> {
+        let mut all = Monitor::all().map_err(|e| format!("화면 목록을 읽지 못했습니다: {e}"))?;
+        // primary first: display #1 is the main screen
+        all.sort_by_key(|m| !m.is_primary().unwrap_or(false));
+        Ok(all)
+    }
+
+    pub fn displays() -> Result<Vec<WinInfo>, String> {
+        Ok(monitors()?.iter().enumerate().map(|(i, m)| display_info(i as u32, m.friendly_name().or_else(|_| m.name()).unwrap_or_else(|_| format!("화면 {}", i + 1)),
+            m.x().unwrap_or(0), m.y().unwrap_or(0), m.width().unwrap_or(0), m.height().unwrap_or(0), m.is_primary().unwrap_or(false))).collect())
+    }
 
     fn to_info(w: &Window) -> Option<WinInfo> {
         Some(WinInfo {
@@ -93,15 +135,22 @@ mod imp {
         Ok(all.iter().filter_map(to_info).collect())
     }
 
-    pub struct Handle(Window);
+    pub enum Handle {
+        Window(Window),
+        Display(Monitor),
+    }
 
     impl Handle {
         pub fn open(id: u32) -> Result<Self, String> {
             let all = Window::all().map_err(|e| format!("창 목록을 읽지 못했습니다: {e}"))?;
-            all.into_iter().find(|w| w.id().ok() == Some(id)).map(Handle).ok_or_else(|| format!("창 #{id}이(가) 없습니다"))
+            all.into_iter().find(|w| w.id().ok() == Some(id)).map(Handle::Window).ok_or_else(|| format!("창 #{id}이(가) 없습니다"))
+        }
+        pub fn open_display(index: u32) -> Result<Self, String> {
+            monitors()?.into_iter().nth(index as usize).map(Handle::Display).ok_or_else(|| format!("화면 #{}이(가) 없습니다", index + 1))
         }
         pub fn capture(&mut self) -> Result<Frame, String> {
-            let img = self.0.capture_image().map_err(|e| {
+            let shot = match self { Handle::Window(w) => w.capture_image(), Handle::Display(m) => m.capture_image() };
+            let img = shot.map_err(|e| {
                 let hint = if cfg!(target_os = "macos") { " — 시스템 설정 → 개인정보 보호 및 보안 → 화면 기록에서 러너를 허용하세요" } else { "" };
                 format!("창을 캡처하지 못했습니다: {e}{hint}")
             })?;
@@ -195,6 +244,13 @@ mod imp {
         })
     }
 
+    /// X11: the root window is the whole screen (all monitors side by side) — one display.
+    pub fn displays() -> Result<Vec<WinInfo>, String> {
+        let x = connect()?;
+        let geo = x.conn.get_geometry(x.root).map_err(|e| e.to_string())?.reply().map_err(|e| e.to_string())?;
+        Ok(vec![super::display_info(0, std::env::var("DISPLAY").map(|d| format!("화면 {d}")).unwrap_or_else(|_| "화면".into()), 0, 0, u32::from(geo.width), u32::from(geo.height), true)])
+    }
+
     pub fn list() -> Result<Vec<WinInfo>, String> {
         let x = connect()?;
         let active = prop(&x, x.root, atom(&x, "_NET_ACTIVE_WINDOW"), AtomEnum::WINDOW.into())
@@ -215,6 +271,14 @@ mod imp {
             let x = connect()?;
             x.conn.get_geometry(id).map_err(|e| e.to_string())?.reply().map_err(|_| format!("창 #{id}이(가) 없습니다"))?;
             Ok(Handle { x, win: id })
+        }
+        pub fn open_display(index: u32) -> Result<Self, String> {
+            if index != 0 {
+                return Err(format!("화면 #{}이(가) 없습니다", index + 1));
+            }
+            let x = connect()?;
+            let win = x.root;
+            Ok(Handle { x, win })
         }
 
         pub fn capture(&mut self) -> Result<Frame, String> {
@@ -270,10 +334,16 @@ mod imp {
     pub fn list() -> Result<Vec<WinInfo>, String> {
         Err("이 OS에서는 창 캡처를 지원하지 않습니다".into())
     }
+    pub fn displays() -> Result<Vec<WinInfo>, String> {
+        Ok(vec![])
+    }
     pub struct Handle;
     impl Handle {
         pub fn open(_id: u32) -> Result<Self, String> {
             Err("이 OS에서는 창 캡처를 지원하지 않습니다".into())
+        }
+        pub fn open_display(_index: u32) -> Result<Self, String> {
+            Err("이 OS에서는 화면 캡처를 지원하지 않습니다".into())
         }
         pub fn capture(&mut self) -> Result<Frame, String> {
             Err("지원하지 않음".into())

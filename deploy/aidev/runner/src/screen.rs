@@ -3,6 +3,8 @@
 //! `aidev-runner consent screen on` (control: `consent control on`, see input.rs). Nothing to install:
 //! window capture (appwin.rs) and the H.264 encoder (encoder.rs, OpenH264) are inside the runner.
 //!   screen.list → {windows:[{id, pid, app, title, x, y, width, height, focused}]}
+//!   screen.list → {windows}   (0.13.3: the whole screens come last, app "전체 화면", ids from appwin::DISPLAY_BASE — usable
+//!                               wherever a window id is: shot, start, input; the focused window stays the default)
 //!   screen.shot {window? | query?, maxWidth?, quality?} → {b64 (JPEG), width, height, window}
 //!   screen.start {streamId, window, mode: "video"|"jpeg", fps?, maxWidth?, bitrate?} → {streamId, window}
 //!   screen.key {streamId}  (next frame is a keyframe)      screen.stop {streamId}
@@ -265,7 +267,9 @@ pub async fn rpc(cfg: &Config, method: &str, params: &Value) -> Option<RpcResult
             if std::env::var("AIDEV_SCREEN_CMD").is_ok() {
                 return Ok(json!({ "windows": [{ "id": 1, "pid": 0, "app": "test", "title": "test window", "x": 0, "y": 0, "width": 640, "height": 360, "focused": true }] }));
             }
-            appwin::list().map(|w| json!({ "windows": w })).map_err(|e| (-32032, e))
+            // a display list that fails (no permission yet) must not hide the windows
+            let displays = appwin::displays().unwrap_or_default();
+            appwin::list().map(|mut w| { w.extend(displays); json!({ "windows": w }) }).map_err(|e| (-32032, e))
         }).await.unwrap_or_else(|e| Err((-32000, e.to_string()))),
         "screen.shot" => tokio::task::spawn_blocking(move || shot(&params)).await.unwrap_or_else(|e| Err((-32000, e.to_string()))),
         "screen.start" => start(&params),

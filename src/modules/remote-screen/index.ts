@@ -4,7 +4,7 @@
  * (remote screen): the window stream session and input, the list of sources, and the console view.
  */
 export { useRemoteScreen } from '@/modules/remote-screen/useRemoteScreen';
-export { useScreenSources } from '@/modules/remote-screen/useScreenSources';
+export { isWholeScreen, useScreenSources } from '@/modules/remote-screen/useScreenSources';
 export { RemoteConsole } from '@/modules/remote-screen/RemoteConsole';
 export { RemoteScreenSession, avcCodecFromAnnexB, screenSocketUrl, webCodecsAvailable } from '@/modules/remote-screen/session';
 export type { InputEvent, ScreenMode, ScreenOptions, ScreenState } from '@/modules/remote-screen/session';

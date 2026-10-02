@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AppWindow, Camera, MousePointer2, Pause, Play, RefreshCw } from 'lucide-react';
 
-import { RemoteConsole, screenSocketUrl, useRemoteScreen, useScreenSources, type ScreenOptions } from '@/modules/remote-screen';
+import { isWholeScreen, RemoteConsole, screenSocketUrl, useRemoteScreen, useScreenSources, type ScreenOptions } from '@/modules/remote-screen';
 import { api, readApiJson } from '@/shared/api';
 import type { RemoteConsoleSource, RemoteScreenSource, RemoteWindow } from '@/shared/types';
 
@@ -89,7 +89,8 @@ export function ScreenPane({ isVisible = true }: { isVisible?: boolean }) {
         </select>
         <select aria-label="프로그램" value={sourceKey(source)} onChange={(event) => setChosen({ targetId, source: parse(event.target.value) })} className="h-7 max-w-[22rem] rounded border border-border bg-background px-1">
           {!source ? <option value="">{sources.loading ? '불러오는 중…' : '프로그램 없음'}</option> : null}
-          {windows.length ? <optgroup label="프로그램 창">{windows.map((w) => <option key={w.id} value={`w:${w.id}`}>{windowLabel(w)}</option>)}</optgroup> : null}
+          {windows.some((w) => isWholeScreen(w.id)) ? <optgroup label="전체 화면">{windows.filter((w) => isWholeScreen(w.id)).map((w) => <option key={w.id} value={`w:${w.id}`}>{w.title || '화면'} · {w.width}×{w.height}</option>)}</optgroup> : null}
+          {windows.some((w) => !isWholeScreen(w.id)) ? <optgroup label="프로그램 창">{windows.filter((w) => !isWholeScreen(w.id)).map((w) => <option key={w.id} value={`w:${w.id}`}>{windowLabel(w)}</option>)}</optgroup> : null}
           {consoles.length ? <optgroup label="콘솔 (러너로 실행 중)">{consoles.map((c) => <option key={c.streamId} value={`c:${c.streamId}`}>{consoleLabel(c)}</option>)}</optgroup> : null}
           {!perWindow ? <optgroup label="디스플레이 (러너 0.7 미만)">{(displays.length ? displays : [{ id: 1, name: '주 화면' }]).map((d) => <option key={d.id} value={`d:${d.id}`}>{d.id}. {d.name ?? '디스플레이'}</option>)}</optgroup> : null}
         </select>
