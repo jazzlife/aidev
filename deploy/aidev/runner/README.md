@@ -40,7 +40,10 @@ aidev-runner unpair                       # 토큰 삭제
 - macOS 원격 화면(0.16.0, F-18 1단계): macOS 13 이상이면 ScreenCaptureKit(바뀔 때만, GPU에서 목표 크기·NV12로) → VideoToolbox 하드웨어
   H.264(실시간·저지연 레이트 컨트롤, 재정렬 없음, AVCC → Annex B). 창 크기가 바뀌면 캡처를 새 크기로 다시 엶. 실패하거나
   `AIDEV_SCREEN_CPU=1`이면 기존 CPU 경로(xcap + OpenH264). **러너의 macOS 최소 버전은 13**(Swift 브리지·런타임; `.cargo/config.toml`,
-  build.rs의 /usr/lib/swift rpath). `aidev-runner bench`가 두 경로를 나란히 잼.
+  build.rs의 /usr/lib/swift rpath). 빌드에는 Xcode 26(macOS 26 SDK)이 필요(apple-metal Swift 브리지). `aidev-runner bench`가 두 경로를 나란히 잼.
+- Windows 원격 화면(F-18): Windows 10 1903+면 Windows Graphics Capture(windows-capture 2 — 창·화면 전체, 바뀔 때만, 커서 포함, RGBA,
+  가능하면 테두리 없음) → SIMD 축소·I420 → OpenH264. 실패하거나 `AIDEV_SCREEN_CPU=1`이면 GDI(xcap). Linux X11은 MIT-SHM(공유 메모리)으로
+  읽고, 안 되면(원격 X) GetImage. 공통 CPU 경로는 fast_image_resize(box) + yuvutils-rs(BT.601 제한 범위).
 - 디버그 어댑터: 처음 쓸 때 `~/.aidev/adapters/<이름>/`에 받음 — `clrdbg`, `netcoredbg`, `js-debug`, `codelldb`, `debugpy`, `probe-rs`,
   `mono-debug`, `delve`, `aidev-jdi`. 담긴 버전(+SHA-256)은 폴더의 `.aidev-ok`에 적고, 버전이 바뀌면 같은 폴더를 새것으로 교체
   (Windows에서 실행 중이라 못 바꾸면 이번엔 있던 버전을 쓰고 다음에 교체) (0.14.1).

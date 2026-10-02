@@ -56,8 +56,8 @@ impl Capture {
     pub fn open(window: u32, fps: f64) -> Result<Self, String> {
         let slot = Arc::new(Slot::default());
         let every = Duration::from_secs_f64(1.0 / fps.max(1.0));
-        let interval = || MinimumUpdateIntervalSettings::Custom(every);
-        let start = |border: DrawBorderSettings| -> Result<CaptureControl<Handler, Error>, String> {
+        let start = |border: DrawBorderSettings, paced: bool| -> Result<CaptureControl<Handler, Error>, String> {
+            let interval = || if paced { MinimumUpdateIntervalSettings::Custom(every) } else { MinimumUpdateIntervalSettings::Default };
             if crate::appwin::is_display(window) {
                 let id = crate::appwin::display_os_id(window - crate::appwin::DISPLAY_BASE).ok_or("화면을 찾지 못했습니다")?;
                 let monitor = Monitor::from_raw_hmonitor(id as usize as *mut std::ffi::c_void);
@@ -69,8 +69,12 @@ impl Capture {
                 Handler::start_free_threaded(settings).map_err(|e| format!("{e:?}"))
             }
         };
-        // no yellow border around what is being watched — Windows 10 before 2104 cannot turn it off: then with it
-        let control = start(DrawBorderSettings::WithoutBorder).or_else(|_| start(DrawBorderSettings::Default))?;
+        // no yellow border around what is being watched, at most `fps` pictures a second — older Windows (10 before
+        // 2104, Server 2022) supports neither setting: then without them (the stream loop paces itself anyway)
+        let control = start(DrawBorderSettings::WithoutBorder, true)
+            .or_else(|_| start(DrawBorderSettings::Default, true))
+            .or_else(|_| start(DrawBorderSettings::WithoutBorder, false))
+            .or_else(|_| start(DrawBorderSettings::Default, false))?;
         Ok(Capture { slot, control: Some(control) })
     }
 

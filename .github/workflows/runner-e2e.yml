@@ -152,6 +152,8 @@ jobs:
             waitfor 'two runners: the session one and the boot one' '[ "$(pgrep -f "aidev-runner start" | wc -l | tr -d " ")" -ge 2 ]'
             waitfor 'the boot runner handed over to the session runner' 'grep -q "연결을 넘깁니다" "$log" || ! grep -q "부팅 러너: 연결을 맡습니다" "$log"'
           fi
+          # this Mac's stable signature (Screen Recording kept across updates): say why if it cannot be made here
+          if [ "$RUNNER_OS" = macOS ]; then cp "$bin" "$RUNNER_TEMP/sign-probe"; bash -x "$GITHUB_WORKSPACE/$RUNNER_DIR/scripts/sign-macos.sh" "$RUNNER_TEMP/sign-probe" 2>&1 | tail -15 || true; fi
           # on the PATH: the shell start files, and /usr/local/bin (passwordless sudo after the default install)
           # -q: a match is success even though some of these files do not exist
           grep -qsF 'export PATH="$HOME/.aidev/bin:$PATH"' ~/.zshrc ~/.bashrc ~/.bash_profile ~/.profile
@@ -164,7 +166,8 @@ jobs:
           srv="$RUNNER_TEMP/srv"; mkdir -p "$srv/_runner"; cp "$GITHUB_WORKSPACE/$RUNNER_DIR/target/release/aidev-runner" "$srv/runner-bin"
           sha=$( (sha256sum "$srv/runner-bin" 2>/dev/null || shasum -a 256 "$srv/runner-bin") | awk '{print $1}')
           printf '{"latest":"%s","versions":[{"version":"%s","url":"/runner-bin","sha256":"%s","date":null}]}' "$ver" "$ver" "$sha" > "$srv/_runner/versions"
-          (cd "$srv" && exec python3 -m http.server 8765 --bind 127.0.0.1 >/dev/null 2>&1) & http=$!
+          # a static server for the version list and the file (node: python3's http.server timed out on macos-15)
+          node -e "const h=require('http'),f=require('fs'),p=require('path');h.createServer((q,r)=>{const u=p.join(process.argv[1],decodeURIComponent(q.url.split('?')[0]));f.readFile(u,(e,d)=>{if(e){r.writeHead(404);return r.end()}r.end(d)})}).listen(8765,'127.0.0.1')" "$srv" & http=$!
           sleep 2
           if [ "$RUNNER_OS" = Linux ]; then pid_before=$(systemctl --user show -p MainPID --value aidev-runner); else pid_before=$(launchctl print "gui/$(id -u)/work.nado.aidev-runner" | awk '/^\tpid =/ {print $3}'); fi
           before=$(grep -c "새 러너로 다시 시작합니다" "$log" || true); holds=$(grep -c "부팅 러너: 연결을 맡습니다" "$log" || true)
