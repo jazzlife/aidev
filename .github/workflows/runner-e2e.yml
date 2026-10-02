@@ -130,7 +130,8 @@ jobs:
             waitfor 'the boot runner handed over to the session runner' 'grep -q "연결을 넘깁니다" "$log" || ! grep -q "부팅 러너: 연결을 맡습니다" "$log"'
           fi
           # on the PATH: the shell start files, and /usr/local/bin (passwordless sudo after the default install)
-          grep -l '.aidev/bin' ~/.zshrc ~/.bashrc ~/.bash_profile ~/.profile 2>/dev/null | grep -q . && echo "ok: PATH line in $(grep -l '.aidev/bin' ~/.zshrc ~/.bashrc ~/.bash_profile ~/.profile 2>/dev/null | xargs)"
+          cat ~/.zshrc ~/.bashrc ~/.bash_profile ~/.profile 2>/dev/null | grep -q 'export PATH="$HOME/.aidev/bin:$PATH"'
+          echo "ok: PATH line in the shell start files"
           [ "$(readlink /usr/local/bin/aidev-runner)" = "$HOME/.aidev/bin/aidev-runner" ] && echo "ok: /usr/local/bin/aidev-runner"
           env -i HOME="$HOME" PATH=/usr/bin:/bin:/usr/local/bin bash -c 'command -v aidev-runner' >/dev/null && echo "ok: aidev-runner from any shell"
           # update (`aidev-runner update`, the icon's 업데이트): the runners stop, the file is replaced, each starts again
