@@ -32,6 +32,9 @@ flate2 = "1"
 tar = "0.4"
 zip = { version = "2", default-features = false, features = ["deflate"] }
 lzma-rs = "0.3"
+# F-18: SIMD scaling and RGBA → I420 for the CPU path (xcap capture + OpenH264)
+fast_image_resize = "6"
+yuvutils-rs = "0.8"
 
 [profile.release]
 opt-level = "s"

@@ -6,7 +6,8 @@
 //! in front of every IDR, ready for `VideoDecoder`.
 
 use openh264::encoder::{BitRate, Encoder, EncoderConfig, FrameRate, FrameType, IntraFramePeriod, Profile, RateControlMode, UsageType};
-use openh264::formats::{RgbaSliceU8, YUVBuffer};
+use openh264::formats::YUVSlices;
+use yuvutils_rs::{rgba_to_yuv420, YuvChromaSubsampling, YuvConversionMode, YuvPlanarImageMut, YuvRange, YuvStandardMatrix};
 use openh264::OpenH264API;
 
 pub struct H264 {
@@ -14,6 +15,8 @@ pub struct H264 {
     pub width: u32,
     pub height: u32,
     pub bitrate_kbps: u32,
+    /// I420 planes, reused frame to frame
+    yuv: YuvPlanarImageMut<'static, u8>,
 }
 
 /// OpenH264's SBitrateInfo (ENCODER_OPTION_BITRATE).
@@ -37,7 +40,7 @@ impl H264 {
             .intra_frame_period(IntraFramePeriod::from_num_frames(fps.max(1) * 10))
             .skip_frames(false);
         let enc = Encoder::with_api_config(OpenH264API::from_source(), config).map_err(|e| format!("H.264 인코더를 만들지 못했습니다: {e}"))?;
-        Ok(H264 { enc, width, height, bitrate_kbps })
+        Ok(H264 { enc, width, height, bitrate_kbps, yuv: YuvPlanarImageMut::alloc(width, height, YuvChromaSubsampling::Yuv420) })
     }
 
     /// A new target bit rate from the next frame on (no keyframe, the stream goes on).
@@ -55,8 +58,12 @@ impl H264 {
         if force_key {
             self.enc.force_intra_frame();
         }
-        let yuv = YUVBuffer::from_rgba8_source(RgbaSliceU8::new(rgba, (self.width as usize, self.height as usize)));
-        let bits = self.enc.encode(&yuv).map_err(|e| format!("H.264 인코딩 실패: {e}"))?;
+        // SIMD RGBA → I420, limited-range BT.601 (what OpenH264's own conversion used: same colours as before)
+        rgba_to_yuv420(&mut self.yuv, rgba, self.width * 4, YuvRange::Limited, YuvStandardMatrix::Bt601, YuvConversionMode::Balanced)
+            .map_err(|e| format!("색 변환 실패: {e:?}"))?;
+        let (y, u, v) = (self.yuv.y_plane.borrow(), self.yuv.u_plane.borrow(), self.yuv.v_plane.borrow());
+        let planes = YUVSlices::new((y, u, v), (self.width as usize, self.height as usize), (self.yuv.y_stride as usize, self.yuv.u_stride as usize, self.yuv.v_stride as usize));
+        let bits = self.enc.encode(&planes).map_err(|e| format!("H.264 인코딩 실패: {e}"))?;
         let key = matches!(bits.frame_type(), FrameType::IDR | FrameType::I);
         Ok((bits.to_vec(), key))
     }
@@ -66,12 +73,18 @@ impl H264 {
 pub fn fit(frame: crate::appwin::Frame, max_width: u32) -> (Vec<u8>, u32, u32) {
     let (mut w, mut h, mut rgba) = (frame.width, frame.height, frame.rgba);
     if w > max_width {
-        let img = image::RgbaImage::from_raw(w, h, rgba).expect("frame size");
+        use fast_image_resize as fir;
         let nh = ((u64::from(h) * u64::from(max_width)) / u64::from(w)).max(2) as u32;
-        let scaled = image::imageops::thumbnail(&img, max_width, nh);
-        w = scaled.width();
-        h = scaled.height();
-        rgba = scaled.into_raw();
+        // SIMD (SSE4.1/AVX2/Neon); an area average (box) keeps small text readable — and the read of the full
+        // frame bounds it anyway (3440×1440 on an M4 Pro: box 7.1 ms, fixed-kernel bilinear 6.7 ms but aliased)
+        let src = fir::images::Image::from_vec_u8(w, h, rgba, fir::PixelType::U8x4).expect("frame size");
+        let mut dst = fir::images::Image::new(max_width, nh, fir::PixelType::U8x4);
+        fir::Resizer::new()
+            .resize(&src, &mut dst, &fir::ResizeOptions::new().resize_alg(fir::ResizeAlg::Convolution(fir::FilterType::Box)))
+            .expect("resize");
+        w = max_width;
+        h = nh;
+        rgba = dst.into_vec();
     }
     let (ew, eh) = (w & !1, h & !1);
     if ew != w || eh != h {
