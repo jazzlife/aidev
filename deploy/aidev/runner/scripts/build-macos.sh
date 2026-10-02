@@ -32,6 +32,11 @@ if [ -n "$need" ] && [ "$(printf '%s\n%s\n' "$need" "$have" | sort -V | head -1)
   echo "==> Rust $have < $need: rustup update stable"; [ $check = 1 ] || rustup update stable
 fi
 [ $check = 1 ] && { echo "도구 준비됨: $(rustc --version), $(clang --version | head -1)"; exit 0; }
+# 0.16+: the remote screen's ScreenCaptureKit/Metal Swift bridges need the macOS 26 SDK (Xcode 26) to compile
+sdk=$(xcrun --sdk macosx --show-sdk-version 2>/dev/null || echo 0)
+if [ "${sdk%%.*}" -lt 26 ]; then
+  echo "macOS SDK $sdk — Xcode 26 이상이 필요합니다 (App Store 또는 developer.apple.com에서 설치 후: sudo xcode-select -s /Applications/Xcode.app)"; exit 1
+fi
 rustup target add aarch64-apple-darwin x86_64-apple-darwin >/dev/null
 groups=(mac)
 if [ $cross = 1 ]; then

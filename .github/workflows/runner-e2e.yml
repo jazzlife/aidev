@@ -36,7 +36,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2022, ubuntu-24.04, macos-14]
+        os: [windows-2022, ubuntu-24.04, macos-15]
     steps:
       - uses: actions/checkout@v5
         with:
@@ -64,6 +64,24 @@ jobs:
         if: runner.os == 'Windows'
         working-directory: ${{ env.RUNNER_DIR }}
         run: cargo test --release --locked win_ -- --nocapture
+      # F-18: the remote screen's capture and encoders on this machine (Windows: Graphics Capture; macOS 13+:
+      # ScreenCaptureKit needs a Screen Recording grant CI does not have — the CPU path is timed there)
+      - name: remote screen bench
+        if: runner.os == 'Windows'
+        working-directory: ${{ env.RUNNER_DIR }}
+        shell: pwsh
+        run: |
+          $out = (& target\release\aidev-runner.exe bench --frames 30 2>&1 | Out-String); $out
+          if ($out -notmatch 'Windows Graphics Capture \(\d+') { throw 'Windows Graphics Capture gave no picture' }
+      - name: remote screen bench (Linux, X11 MIT-SHM)
+        if: runner.os == 'Linux'
+        working-directory: ${{ env.RUNNER_DIR }}
+        run: |
+          sudo apt-get install -y -q xvfb >/dev/null
+          Xvfb :99 -screen 0 1920x1080x24 >/dev/null 2>&1 & sleep 1
+          out=$(DISPLAY=:99 target/release/aidev-runner bench --frames 30 2>&1); echo "$out"
+          echo "$out" | grep -q '캡처 MIT-SHM' || { echo 'MIT-SHM was not used'; exit 1; }
+          kill %1
       - name: cargo test (all)
         if: runner.os != 'Windows'
         working-directory: ${{ env.RUNNER_DIR }}

@@ -144,7 +144,9 @@ jobs:
   macos:
     name: macOS (arm64 + x64 + universal)
     needs: version
-    runs-on: macos-14
+    # Xcode 26 (macOS 26 SDK): the ScreenCaptureKit/Metal Swift bridges compile only against it; the binaries still
+    # run on macOS 13+ (deployment target, .cargo/config.toml)
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v5
         with:
