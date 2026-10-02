@@ -1,4 +1,4 @@
-name: Runner e2e (Windows, Linux)
+name: Runner e2e (Windows, Linux, macOS)
 
 # The real runner on a real Windows and Linux machine, connected to a real runner-hub (deploy/aidev/auth-gateway):
 # shells (cmd / PowerShell / Git Bash / sh / bash) with UTF-8 and exit codes, a stop ending the whole process tree,
@@ -36,7 +36,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: [windows-2022, ubuntu-24.04]
+        os: [windows-2022, ubuntu-24.04, macos-14]
     steps:
       - uses: actions/checkout@v5
         with:
@@ -60,7 +60,7 @@ jobs:
         working-directory: ${{ env.RUNNER_DIR }}
         run: cargo test --release --locked win_ -- --nocapture
       - name: cargo test (all)
-        if: runner.os == 'Linux'
+        if: runner.os != 'Windows'
         working-directory: ${{ env.RUNNER_DIR }}
         run: cargo test --release --locked
 
@@ -81,6 +81,47 @@ jobs:
           [ "$RUNNER_OS" = Windows ] && bin="$bin.exe"
           RUNNER_BIN="$bin" node test/runner-parity-e2e-test.mjs
 
+      # install's default on Linux / macOS: from boot (linger / a LaunchDaemon) and passwordless sudo — GitHub's machines
+      # already have passwordless sudo, so the steps that ask for the password on a real PC run here unattended
+      - name: install / uninstall (Linux, macOS)
+        if: ${{ !cancelled() && runner.os != 'Windows' }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          bin="$GITHUB_WORKSPACE/$RUNNER_DIR/target/release/aidev-runner"
+          mkdir -p ~/.aidev "$RUNNER_TEMP/work"
+          printf 'gateway = "http://127.0.0.1:9"\ntoken = "x"\ntarget_id = 1\nname = "ci"\nallowed_roots = ["%s"]\n' "$RUNNER_TEMP/work" > ~/.aidev/runner.toml
+          log=~/.aidev/runner.log
+          waitfor() { for i in $(seq 1 40); do if eval "$2"; then echo "ok: $1"; return 0; fi; sleep 1; done; tail -20 "$log" 2>/dev/null || true; echo "timed out: $1"; exit 1; }
+          "$bin" install
+          test -f /etc/sudoers.d/aidev-runner && sudo grep -q "^$USER ALL=(ALL) NOPASSWD: ALL" /etc/sudoers.d/aidev-runner && echo "ok: passwordless sudo for $USER"
+          if [ "$RUNNER_OS" = Linux ]; then
+            export XDG_RUNTIME_DIR=/run/user/$(id -u)
+            [ "$(loginctl show-user "$USER" -p Linger --value)" = yes ] && echo "ok: linger (runs from boot)"
+            grep -q 'start --service' ~/.config/systemd/user/aidev-runner.service && grep -q 'Restart=on-failure' ~/.config/systemd/user/aidev-runner.service
+            waitfor 'the user service runs' 'systemctl --user is-active --quiet aidev-runner'
+            # 정지 / 종료 semantics: exit 0 is not restarted
+            touch ~/.aidev/paused; sleep 3
+            systemctl --user is-active --quiet aidev-runner && echo "ok: paused, still running (the icon stays)"
+            rm -f ~/.aidev/paused
+          else
+            launchctl print "gui/$(id -u)/work.nado.aidev-runner" >/dev/null && echo "ok: LaunchAgent"
+            sudo launchctl print system/work.nado.aidev-runner-boot >/dev/null && echo "ok: LaunchDaemon (from boot, as $USER)"
+            grep -q '<string>--boot</string>' /Library/LaunchDaemons/work.nado.aidev-runner-boot.plist
+            # the session's runner and the boot runner: one holds the connection, the other waits or has handed over
+            waitfor 'two runners: the session one and the boot one' '[ "$(pgrep -f "aidev-runner start" | wc -l | tr -d " ")" -ge 2 ]'
+            waitfor 'the boot runner handed over to the session runner' 'grep -q "연결을 넘깁니다" "$log" || ! grep -q "부팅 러너: 연결을 맡습니다" "$log"'
+          fi
+          "$bin" install --limited --logon-only
+          test ! -e /etc/sudoers.d/aidev-runner && echo "ok: --limited removed the sudo rule"
+          if [ "$RUNNER_OS" = macOS ]; then test ! -e /Library/LaunchDaemons/work.nado.aidev-runner-boot.plist && echo "ok: --logon-only removed the LaunchDaemon"; fi
+          "$bin" install
+          "$bin" uninstall
+          test ! -e /etc/sudoers.d/aidev-runner
+          if [ "$RUNNER_OS" = Linux ]; then ! systemctl --user is-active --quiet aidev-runner && test ! -e ~/.config/systemd/user/aidev-runner.service; fi
+          if [ "$RUNNER_OS" = macOS ]; then ! launchctl print "gui/$(id -u)/work.nado.aidev-runner" >/dev/null 2>&1 && test ! -e /Library/LaunchDaemons/work.nado.aidev-runner-boot.plist; fi
+          sleep 2; ! pgrep -f 'aidev-runner start' && echo "ok: uninstall removed everything and stopped the runners"
+
       # install's default (what WinRM gives an administrator): elevated, from boot — a boot task (S4U) holds the
       # connection before a sign-in and hands it to the sign-in's runner; --limited --logon-only restrict it
       - name: install / uninstall (Windows)
@@ -96,6 +137,8 @@ jobs:
           Set-Content "$cfgDir\runner.toml" "gateway = `"http://127.0.0.1:9`"`ntoken = `"x`"`ntarget_id = 1`nname = `"ci`"`nallowed_roots = ['$env:RUNNER_TEMP']" -Encoding utf8
           $log = "$cfgDir\runner.log"
           function LogHas($re) { (Test-Path $log) -and ((Get-Content $log -Encoding utf8 -Raw) -match $re) }
+          # the boot runner holds the connection when its last word was "맡습니다" (not "넘깁니다")
+          function BootHolds { if (-not (Test-Path $log)) { return $false }; $m = [regex]::Matches((Get-Content $log -Encoding utf8 -Raw), '연결을 (맡습니다|넘깁니다)'); $m.Count -gt 0 -and $m[$m.Count - 1].Groups[1].Value -eq '맡습니다' }
           function WaitFor($what, $test) { for ($i = 0; $i -lt 40 -and -not (& $test); $i++) { Start-Sleep 1 }; if (-not (& $test)) { if (Test-Path $log) { Get-Content $log -Encoding utf8 -Tail 15 }; throw "timed out: $what" }; "ok: $what" }
 
           # no command: the runner runs in the foreground (what a double-click does)
@@ -114,15 +157,18 @@ jobs:
           if ($boot.Principal.LogonType -ne 'S4U' -or $boot.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger') { throw 'no boot start by default' }
           if ($logon.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskLogonTrigger') { throw 'no sign-in task' }
           if ($logon.Settings.ExecutionTimeLimit -ne 'PT0S' -or $boot.Settings.ExecutionTimeLimit -ne 'PT0S') { throw 'a task would stop after a time limit' }
-          WaitFor 'the boot runner holds the connection' { LogHas '부팅 러너: 연결을 맡습니다' }
-          # a sign-in's runner (here: one started by hand) takes the connection; the boot runner waits and comes back
+          WaitFor 'the sign-in task took the connection from the boot runner' { LogHas '연결을 넘깁니다' }
+          # here the sign-in task runs in this very session: end it, and the boot runner takes the connection back
+          Stop-ScheduledTask -TaskName aidev-runner
+          WaitFor 'the boot runner takes over when the session runner ends' { BootHolds }
+          # a session runner started by hand takes it again, and gives it back when it ends
           $session = Start-Process $bin -ArgumentList 'start','--log',"$env:RUNNER_TEMP\session.log" -PassThru -WindowStyle Hidden
-          WaitFor 'the boot runner hands over' { LogHas '연결을 넘깁니다' }
+          WaitFor 'the boot runner hands over' { -not (BootHolds) }
           Start-Sleep 3
           if ($session.HasExited) { Get-Content "$env:RUNNER_TEMP\session.log" -Tail 5; throw 'the session runner did not get the connection' }
           'the session runner holds the connection'
           Stop-Process -Id $session.Id -Force
-          WaitFor 'the boot runner takes over again' { ([regex]::Matches((Get-Content $log -Encoding utf8 -Raw), '부팅 러너: 연결을 맡습니다')).Count -ge 2 }
+          WaitFor 'the boot runner takes over again' { BootHolds }
 
           & $bin uninstall
           if (Get-ScheduledTask -TaskName 'aidev-runner*' -ErrorAction SilentlyContinue) { throw 'uninstall left a task' }

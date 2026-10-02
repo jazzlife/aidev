@@ -23,6 +23,8 @@ pub enum Exit {
     Shutdown,
     /// Boot-time runner: a sign-in's runner asked to take over (config::handoff_path).
     Handoff,
+    /// 정지 from the status icon (control::paused_path): disconnected until 시작.
+    Paused,
 }
 
 fn ws_url(gateway: &str) -> String {
@@ -56,7 +58,9 @@ pub async fn run(cfg: Config, yields: bool) -> Exit {
     let exit = tokio::select! {
         exit = run_with(&cfg, &hub) => exit,
         _ = handoff_asked(), if yields => Exit::Handoff,
+        exit = stop_asked() => exit,
     };
+    crate::control::set_state(crate::control::State::Connecting);
     // nothing keeps running unattended once the runner itself stops
     if hub.running() > 0 {
         hub.kill_all();
@@ -74,6 +78,7 @@ async fn run_with(cfg: &Config, hub: &ExecHub) -> Exit {
             _ = shutdown_signal() => None,
         };
         hub.detach();
+        crate::control::set_state(crate::control::State::Connecting);
         match outcome {
             None => return Exit::Shutdown,
             Some(outcome) => match outcome {
@@ -98,6 +103,19 @@ async fn run_with(cfg: &Config, hub: &ExecHub) -> Exit {
             _ = shutdown_signal() => return Exit::Shutdown,
         }
         backoff = (backoff * 2).min(BACKOFF_MAX);
+    }
+}
+
+/// 정지 or 종료 from the status icon (or another runner's icon on this PC: the paused file is shared).
+async fn stop_asked() -> Exit {
+    loop {
+        if crate::control::quit_requested() {
+            return Exit::Shutdown;
+        }
+        if crate::control::is_paused() {
+            return Exit::Paused;
+        }
+        tokio::time::sleep(Duration::from_secs(1)).await;
     }
 }
 
@@ -130,6 +148,7 @@ async fn session(cfg: &Config, hub: &ExecHub) -> Result<(), SessionError> {
         Err(e) => return Err(SessionError::Other(e.to_string())),
     };
     log(&format!("연결됨: {url} (대상 #{} {})", cfg.target_id, cfg.name));
+    crate::control::set_state(crate::control::State::Connected);
     let (mut tx, mut rx) = ws.split();
 
     let hello = json!({ "jsonrpc": "2.0", "method": "runner.hello", "params": { "target_id": cfg.target_id, "capabilities": caps::collect(cfg).await } });
@@ -151,15 +170,29 @@ async fn session(cfg: &Config, hub: &ExecHub) -> Result<(), SessionError> {
     crate::screen::attach(out.clone());
     crate::input::attach(out.clone());
     crate::dap::attach(out.clone());
+    // also when this future is dropped mid-way (정지, a hand-over): otherwise the writer task and the modules' copies
+    // of `out` keep the socket open and the target stays online
+    let _guard = SessionGuard { hub: hub.clone(), writer };
     let result = read_loop(cfg, hub, &out, &mut rx).await;
-    hub.detach();
-    crate::tunnel::detach();
-    crate::screen::detach();
-    crate::input::detach();
-    crate::dap::detach();
     drop(out);
-    writer.abort();
     result
+}
+
+/// Detaches the modules from a session and stops its writer (closing the socket) however the session ends.
+struct SessionGuard {
+    hub: ExecHub,
+    writer: tokio::task::JoinHandle<()>,
+}
+
+impl Drop for SessionGuard {
+    fn drop(&mut self) {
+        self.hub.detach();
+        crate::tunnel::detach();
+        crate::screen::detach();
+        crate::input::detach();
+        crate::dap::detach();
+        self.writer.abort();
+    }
 }
 
 async fn read_loop<S>(cfg: &Config, hub: &ExecHub, out: &mpsc::Sender<Message>, rx: &mut S) -> Result<(), SessionError>

@@ -7,9 +7,11 @@
 ```
 aidev-runner pair <코드> [--gateway https://dev.nado.work] [--name 이름]   # 작업대 "원격 대상"에서 받은 10분짜리 코드
 aidev-runner                              # 포그라운드 실행 (Ctrl+C 종료; = start). 미등록이면 페어링 코드를 물어봄, Windows는 더블클릭으로도
-aidev-runner install [--print]            # 서비스 설치: 등록하고 바로 시작, 재부팅 후에도 자동 실행 (systemd 사용자 서비스+linger / LaunchAgent / 작업 스케줄러)
-                                          #   Windows 기본: 관리자 권한(UAC 한 번) + 부팅 직후부터 — 로그인 전엔 부팅 작업이, 로그인하면 사용자 세션 러너가 연결을 맡음
-aidev-runner install --limited --logon-only   # Windows 제한: 일반 사용자 권한 / 로그인한 동안만
+aidev-runner install [--print]            # 서비스 설치: 등록하고 바로 시작, 재부팅 후에도 자동 실행. 기본은 강한 설정:
+                                          #   부팅 직후부터 — Windows 부팅 작업(S4U)·macOS LaunchDaemon이 로그인 전 연결을 맡고, 로그인하면 사용자 세션의
+                                          #   러너(화면·GUI·상태 아이콘)가 넘겨받음; Linux는 linger로 같은 서비스가 부팅 때부터
+                                          #   관리자 권한 — Windows 관리자 토큰(UAC 한 번), Linux·macOS 비밀번호 없는 sudo(/etc/sudoers.d/aidev-runner, sudo 비밀번호 한 번)
+aidev-runner install --limited --logon-only   # 제한: 일반 사용자 권한 / 로그인한 동안만
 aidev-runner uninstall                    # 서비스 제거   (예전 이름 install-service / uninstall-service도 그대로 동작)
 aidev-runner status                       # 설정 표시 (토큰은 표시 안 함)
 aidev-runner caps                         # 보고할 capabilities(JSON)
@@ -18,6 +20,10 @@ aidev-runner consent screen on|off        # 화면 캡처 동의 (기본 꺼짐)
 aidev-runner unpair                       # 토큰 삭제
 ```
 
+- 상태 아이콘(화면이 있는 OS: Windows 알림 영역, macOS 메뉴 막대, Linux StatusNotifier — KDE·XFCE·GNOME+AppIndicator 확장):
+  NadoVibe 로고 + 점 (초록 연결됨 / 주황 연결 중 / 빨강 정지됨), 메뉴 **시작 · 정지 · 종료**. 정지는 `~/.aidev/paused`로 이 PC의 모든 러너
+  (부팅용 포함)가 따름, 종료는 정지 + 러너 끝냄(서비스가 다시 띄우지 않음). 직접 실행한 `aidev-runner`는 정지를 풀고 시작.
+  SSH·서버·부팅용 러너는 아이콘 없음, `AIDEV_NO_TRAY=1`로 끔.
 - 설정: `~/.aidev/runner.toml`(Unix 0600) — gateway, token, target_id, name, allowed_roots, screen_consent, inherit_env.
   `AIDEV_RUNNER_HOME`으로 위치 변경.
 - 연결: Bearer 토큰, 접속 즉시 `runner.hello{capabilities}`(OS·아키텍처·호스트·셸·도구 버전·adb/sdb 기기·allowed_roots·화면 동의),

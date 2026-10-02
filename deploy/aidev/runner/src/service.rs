@@ -1,6 +1,15 @@
-//! `install-service` / `uninstall-service`: keep the runner running in the user's session.
-//!   Linux  — systemd user unit  ~/.config/systemd/user/aidev-runner.service
-//!   macOS  — LaunchAgent        ~/Library/LaunchAgents/work.nado.aidev-runner.plist
+//! `install` / `uninstall`: keep the runner running, from boot and with administrator rights by default
+//! (`--limited`: the user's normal rights, `--logon-only`: only while signed in).
+//!   Linux  — systemd user unit ~/.config/systemd/user/aidev-runner.service + linger (runs from boot without a login;
+//!            the same instance shows the status icon once a desktop comes up)
+//!   macOS  — LaunchAgent ~/Library/LaunchAgents/work.nado.aidev-runner.plist (the session: screen, icon) + LaunchDaemon
+//!            /Library/LaunchDaemons/work.nado.aidev-runner-boot.plist (as the user, from boot, `start --boot`: hands over
+//!            to the session's runner like the Windows boot task)
+//!   Linux / macOS administrator rights: passwordless sudo for the user (/etc/sudoers.d/aidev-runner) — the closest to
+//!   Windows' elevated token without running the runner as root. Setting it up (and the LaunchDaemon) asks for the sudo
+//!   password once, as Windows asks UAC; without a terminal for that, the rest is still installed and it says so.
+//!   Services start `start --service` (a 정지 from the status icon stays) and are restarted only after a failure:
+//!   종료 (exit 0) ends the runner for good.
 //!   Windows — two tasks (Register-ScheduledTask, no time limit, restarted if they stop), by default with the
 //!             user's full administrator token (what WinRM gives: services, registry, firewall, installs):
 //!     "aidev-runner"       at sign-in, in the user's session (screen, input, GUI apps)
@@ -23,9 +32,103 @@ fn run(cmd: &str, args: &[&str]) -> Result<(), String> {
     if status.success() { Ok(()) } else { Err(format!("{cmd} {} 실패 ({status})", args.join(" "))) }
 }
 
+/// The same, quietly (expected failures such as "not loaded").
+fn quiet(cmd: &str, args: &[&str]) -> bool {
+    Command::new(cmd).args(args).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success())
+}
+
+/// `systemctl --user …` that also works without a login session's environment (SSH, a fresh linger): the user
+/// manager's runtime folder is /run/user/<uid>, and its bus may take a moment to come up after enable-linger.
+#[cfg(unix)]
+fn systemctl_user(args: &[&str]) -> Result<(), String> {
+    let dir = std::env::var("XDG_RUNTIME_DIR").unwrap_or_else(|_| format!("/run/user/{}", unsafe { libc::getuid() }));
+    for _ in 0..20 {
+        if std::path::Path::new(&dir).join("bus").exists() {
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(500));
+    }
+    let status = Command::new("systemctl").arg("--user").args(args).env("XDG_RUNTIME_DIR", &dir).status().map_err(|e| format!("systemctl: {e}"))?;
+    if status.success() { Ok(()) } else { Err(format!("systemctl --user {} 실패 ({status})", args.join(" "))) }
+}
+#[cfg(not(unix))]
+fn systemctl_user(_: &[&str]) -> Result<(), String> {
+    Err("systemd 없음".into())
+}
+
+const SUDOERS: &str = "/etc/sudoers.d/aidev-runner";
+const BOOT_LABEL: &str = "work.nado.aidev-runner-boot";
+const BOOT_PLIST: &str = "/Library/LaunchDaemons/work.nado.aidev-runner-boot.plist";
+
+fn user_name() -> String {
+    std::env::var("USER").or_else(|_| std::env::var("LOGNAME")).unwrap_or_default()
+}
+
+/// `sudo` for one administrative step; asks for the password on the terminal (once — sudo caches it).
+fn sudo(args: &[&str]) -> Result<(), String> {
+    run("sudo", args).map_err(|_| "sudo 실패 (비밀번호 입력이 필요합니다 — 터미널에서 `aidev-runner install`)".into())
+}
+
+/// A file written to a root-owned place through sudo (`install -m`), from a temporary copy.
+fn sudo_write(dest: &str, text: &str, mode: &str) -> Result<(), String> {
+    let tmp = std::env::temp_dir().join(format!("aidev-runner-{}.tmp", std::process::id()));
+    std::fs::write(&tmp, text).map_err(|e| e.to_string())?;
+    let owner = if cfg!(target_os = "macos") { "root:wheel" } else { "root:root" };
+    let (o, g) = owner.split_once(':').unwrap_or(("root", "root"));
+    let r = sudo(&["install", "-m", mode, "-o", o, "-g", g, &tmp.display().to_string(), dest]);
+    let _ = std::fs::remove_file(&tmp);
+    r
+}
+
+pub fn sudoers_text(user: &str) -> String {
+    format!("# NadoVibe runner (`aidev-runner install`; `install --limited` or `uninstall` removes it): agents run administrator\n# commands on this machine without a password, as on Windows with the runner's elevated token\n{user} ALL=(ALL) NOPASSWD: ALL\n")
+}
+
+/// Unix administrator rights: passwordless sudo for this user (checked with visudo before it is put in place).
+fn grant_sudo(user: &str) -> Result<(), String> {
+    if user.is_empty() || user == "root" {
+        return Ok(());
+    }
+    let tmp = std::env::temp_dir().join(format!("aidev-sudoers-{}", std::process::id()));
+    std::fs::write(&tmp, sudoers_text(user)).map_err(|e| e.to_string())?;
+    let ok = quiet("visudo", &["-cf", &tmp.display().to_string()]);
+    let _ = std::fs::remove_file(&tmp);
+    if !ok {
+        return Err("sudoers 문법 확인 실패".into());
+    }
+    sudo_write(SUDOERS, &sudoers_text(user), "0440")
+}
+
+fn revoke_sudo() -> Result<(), String> {
+    if !std::path::Path::new(SUDOERS).exists() {
+        return Ok(());
+    }
+    sudo(&["rm", "-f", SUDOERS])
+}
+
+pub fn boot_plist_text(exe: &str, user: &str, home: &str, log: &str) -> String {
+    format!(
+        r#"<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+  <key>Label</key><string>{BOOT_LABEL}</string>
+  <key>UserName</key><string>{user}</string>
+  <key>EnvironmentVariables</key><dict><key>HOME</key><string>{home}</string><key>USER</key><string>{user}</string></dict>
+  <key>ProgramArguments</key><array><string>{exe}</string><string>start</string><string>--boot</string></array>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
+  <key>StandardOutPath</key><string>{log}</string>
+  <key>StandardErrorPath</key><string>{log}</string>
+</dict>
+</plist>
+"#
+    )
+}
+
 pub fn unit_text(exe: &str) -> String {
     format!(
-        "[Unit]\nDescription=NadoVibe runner\nAfter=network-online.target\n\n[Service]\nExecStart=\"{exe}\" start\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n"
+        "[Unit]\nDescription=NadoVibe runner\nAfter=network-online.target\n\n[Service]\nExecStart=\"{exe}\" start --service\nRestart=on-failure\nRestartSec=5\nRestartPreventExitStatus=3\n\n[Install]\nWantedBy=default.target\n"
     )
 }
 
@@ -36,9 +139,9 @@ pub fn plist_text(exe: &str, log: &str) -> String {
 <plist version="1.0">
 <dict>
   <key>Label</key><string>work.nado.aidev-runner</string>
-  <key>ProgramArguments</key><array><string>{exe}</string><string>start</string></array>
+  <key>ProgramArguments</key><array><string>{exe}</string><string>start</string><string>--service</string></array>
   <key>RunAtLoad</key><true/>
-  <key>KeepAlive</key><true/>
+  <key>KeepAlive</key><dict><key>SuccessfulExit</key><false/></dict>
   <key>StandardOutPath</key><string>{log}</string>
   <key>StandardErrorPath</key><string>{log}</string>
 </dict>
@@ -99,11 +202,22 @@ pub fn install(print_only: bool, limited: bool, logon_only: bool, for_user: Opti
             let unit = dir.join("aidev-runner.service");
             let text = unit_text(&exe_s);
             if print_only { return Ok(format!("# {}\n{text}", unit.display())); }
+            let user = user_name();
+            let mut notes = Vec::new();
+            if !logon_only {
+                // from boot, without a login: the user's services keep running (linger) — first, as it also starts the
+                // user's service manager on a machine nobody is logged in to
+                let linger = quiet("loginctl", &["enable-linger", &user]) || sudo(&["loginctl", "enable-linger", &user]).is_ok();
+                notes.push(if linger { "부팅 직후부터 실행 (로그인하지 않아도: linger)".to_string() } else { "! 부팅 때 실행(linger)을 켜지 못했습니다 — sudo loginctl enable-linger $USER".to_string() });
+            }
             std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
             std::fs::write(&unit, text).map_err(|e| e.to_string())?;
-            run("systemctl", &["--user", "daemon-reload"])?;
-            run("systemctl", &["--user", "enable", "--now", "aidev-runner.service"])?;
-            Ok(format!("systemd 사용자 서비스 등록: {}\n로그: journalctl --user -u aidev-runner -f\n로그아웃 후에도 계속 돌리려면: loginctl enable-linger $USER", unit.display()))
+            systemctl_user(&["daemon-reload"])?;
+            systemctl_user(&["enable", "aidev-runner.service"])?;
+            systemctl_user(&["restart", "aidev-runner.service"])?;
+            notes.insert(0, format!("systemd 사용자 서비스 등록: {} (로그: journalctl --user -u aidev-runner -f)", unit.display()));
+            notes.push(admin_rights(limited, &user));
+            Ok(notes.join("\n"))
         }
         "macos" => {
             let dir = home.join("Library/LaunchAgents");
@@ -114,9 +228,37 @@ pub fn install(print_only: bool, limited: bool, logon_only: bool, for_user: Opti
             std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
             std::fs::write(&plist, text).map_err(|e| e.to_string())?;
             let uid = String::from_utf8_lossy(&Command::new("id").arg("-u").output().map_err(|e| e.to_string())?.stdout).trim().to_string();
-            let _ = Command::new("launchctl").args(["bootout", &format!("gui/{uid}"), &plist.display().to_string()]).status();
-            run("launchctl", &["bootstrap", &format!("gui/{uid}"), &plist.display().to_string()])?;
-            Ok(format!("LaunchAgent 등록: {}\n로그: {}", plist.display(), log.display()))
+            quiet("launchctl", &["bootout", &format!("gui/{uid}"), &plist.display().to_string()]);
+            // launchd sometimes refuses a bootstrap right after the bootout ("Bootstrap failed: 5"): retry a few times
+            let domain = format!("gui/{uid}");
+            if !(0..5).any(|i| {
+                if i > 0 { std::thread::sleep(std::time::Duration::from_secs(1)); }
+                quiet("launchctl", &["bootstrap", &domain, &plist.display().to_string()])
+            }) {
+                run("launchctl", &["bootstrap", &domain, &plist.display().to_string()])?;
+            }
+            let user = user_name();
+            let mut notes = vec![format!("LaunchAgent 등록: {} (로그: {})", plist.display(), log.display())];
+            if logon_only {
+                if std::path::Path::new(BOOT_PLIST).exists() {
+                    quiet("sudo", &["launchctl", "bootout", &format!("system/{BOOT_LABEL}")]);
+                    let _ = sudo(&["rm", "-f", BOOT_PLIST]);
+                }
+                notes.push("로그인한 동안만 실행".into());
+            } else {
+                // from boot, as this user, before anyone logs in; hands over to the LaunchAgent's runner at login
+                let daemon = boot_plist_text(&exe_s, &user, &home.display().to_string(), &log.display().to_string());
+                let r = sudo_write(BOOT_PLIST, &daemon, "0644").and_then(|_| {
+                    quiet("sudo", &["launchctl", "bootout", &format!("system/{BOOT_LABEL}")]);
+                    sudo(&["launchctl", "bootstrap", "system", BOOT_PLIST])
+                });
+                notes.push(match r {
+                    Ok(()) => "부팅 직후부터 실행 (로그인 전엔 LaunchDaemon, 로그인하면 사용자 세션의 러너 — 화면·아이콘 포함)".into(),
+                    Err(e) => format!("! 부팅 때 실행(LaunchDaemon)을 등록하지 못했습니다: {e}"),
+                });
+            }
+            notes.push(admin_rights(limited, &user));
+            Ok(notes.join("\n"))
         }
         "windows" => {
             // no console window at sign-in; output to ~/.aidev/runner.log
@@ -140,6 +282,21 @@ pub fn install(print_only: bool, limited: bool, logon_only: bool, for_user: Opti
     }
 }
 
+/// Linux / macOS: passwordless sudo by default, removed with --limited.
+fn admin_rights(limited: bool, user: &str) -> String {
+    if limited {
+        match revoke_sudo() {
+            Ok(()) => "일반 사용자 권한 (--limited)".into(),
+            Err(e) => format!("! 관리자 권한 설정을 지우지 못했습니다: {e}"),
+        }
+    } else {
+        match grant_sudo(user) {
+            Ok(()) => format!("관리자 권한: {user}의 sudo를 비밀번호 없이 ({SUDOERS})"),
+            Err(e) => format!("! 관리자 권한(비밀번호 없는 sudo)을 설정하지 못했습니다: {e}"),
+        }
+    }
+}
+
 /// What `install` set up on Windows, in one line.
 fn describe(limited: bool, logon_only: bool, via_uac: bool) -> String {
     format!(
@@ -154,17 +311,24 @@ pub fn uninstall() -> Result<String, String> {
     let home = config::home();
     match std::env::consts::OS {
         "linux" => {
-            let _ = run("systemctl", &["--user", "disable", "--now", "aidev-runner.service"]);
+            let _ = systemctl_user(&["disable", "--now", "aidev-runner.service"]);
             let _ = std::fs::remove_file(home.join(".config/systemd/user/aidev-runner.service"));
-            let _ = run("systemctl", &["--user", "daemon-reload"]);
-            Ok("systemd 사용자 서비스를 제거했습니다".into())
+            let _ = systemctl_user(&["daemon-reload"]);
+            let sudo_note = revoke_sudo().err().map(|e| format!("\n! 관리자 권한 설정({SUDOERS})을 지우지 못했습니다: {e}")).unwrap_or_default();
+            Ok(format!("systemd 사용자 서비스를 제거했습니다{sudo_note}"))
         }
         "macos" => {
             let plist = home.join("Library/LaunchAgents/work.nado.aidev-runner.plist");
             let uid = String::from_utf8_lossy(&Command::new("id").arg("-u").output().map_err(|e| e.to_string())?.stdout).trim().to_string();
-            let _ = Command::new("launchctl").args(["bootout", &format!("gui/{uid}"), &plist.display().to_string()]).status();
+            quiet("launchctl", &["bootout", &format!("gui/{uid}"), &plist.display().to_string()]);
             let _ = std::fs::remove_file(&plist);
-            Ok("LaunchAgent를 제거했습니다".into())
+            let mut note = String::new();
+            if std::path::Path::new(BOOT_PLIST).exists() {
+                quiet("sudo", &["launchctl", "bootout", &format!("system/{BOOT_LABEL}")]);
+                if let Err(e) = sudo(&["rm", "-f", BOOT_PLIST]) { note.push_str(&format!("\n! LaunchDaemon을 지우지 못했습니다: {e}")); }
+            }
+            if let Err(e) = revoke_sudo() { note.push_str(&format!("\n! 관리자 권한 설정({SUDOERS})을 지우지 못했습니다: {e}")); }
+            Ok(format!("LaunchAgent·LaunchDaemon을 제거하고 러너를 멈췄습니다{note}"))
         }
         "windows" => {
             // the tasks' runners stop with them (as systemctl disable --now / launchctl bootout do); tasks registered
@@ -204,8 +368,13 @@ mod tests {
 
     #[test]
     fn service_files_quote_the_path() {
-        assert!(super::unit_text("/opt/a b/aidev-runner").contains("ExecStart=\"/opt/a b/aidev-runner\" start"));
+        let unit = super::unit_text("/opt/a b/aidev-runner");
+        assert!(unit.contains("ExecStart=\"/opt/a b/aidev-runner\" start --service") && unit.contains("Restart=on-failure") && unit.contains("RestartPreventExitStatus=3"));
         let plist = super::plist_text("/Users/x/bin/aidev-runner", "/Users/x/.aidev/runner.log");
-        assert!(plist.contains("<string>/Users/x/bin/aidev-runner</string><string>start</string>"));
+        assert!(plist.contains("<string>/Users/x/bin/aidev-runner</string><string>start</string><string>--service</string>"));
+        assert!(plist.contains("<key>SuccessfulExit</key><false/>"), "종료 (exit 0) is not restarted");
+        let boot = super::boot_plist_text("/Users/x/bin/aidev-runner", "x", "/Users/x", "/Users/x/.aidev/runner.log");
+        assert!(boot.contains("<key>UserName</key><string>x</string>") && boot.contains("<string>--boot</string>") && boot.contains("<key>HOME</key><string>/Users/x</string>"));
+        assert_eq!(super::sudoers_text("dev").lines().last(), Some("dev ALL=(ALL) NOPASSWD: ALL"));
     }
 }

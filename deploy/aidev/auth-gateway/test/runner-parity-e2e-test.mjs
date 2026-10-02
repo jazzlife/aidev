@@ -152,6 +152,20 @@ await check('adb from the SDK folder works in a command', async () => {
   if (!WIN) assert.ok(r.out.includes('parity stand-in'), 'the SDK-folder adb, not one on PATH');
 });
 
+await check('정지 / 시작 (the status icon\'s commands: the shared paused file) — offline, then back', async () => {
+  const paused = path.join(home, 'paused');
+  fs.writeFileSync(paused, 'test\n');
+  for (let i = 0; i < 100 && runners.online(tid); i++) await new Promise((r) => setTimeout(r, 100));
+  assert.ok(!runners.online(tid), 'still online 10 s after 정지');
+  await new Promise((r) => setTimeout(r, 1500));
+  assert.ok(!runners.online(tid), 'reconnected while paused');
+  fs.unlinkSync(paused);
+  for (let i = 0; i < 150 && !runners.online(tid); i++) await new Promise((r) => setTimeout(r, 100));
+  assert.ok(runners.online(tid), 'not back 15 s after 시작');
+  const r = await run(WIN ? 'echo back' : 'echo back');
+  assert.ok(r.out.includes('back'), r.out);
+});
+
 runner.kill();
 server.close();
 fs.rmSync(WORK, { recursive: true, force: true });

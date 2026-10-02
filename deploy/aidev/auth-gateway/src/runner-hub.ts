@@ -70,7 +70,9 @@ export type TargetEvent =
   | { type: 'started'; stream: StreamInfo }
   | { type: 'exit'; stream: StreamInfo }
   | { type: 'online' } | { type: 'offline' };
-type Stream = StreamInfo & { userId: number; ring: Buffer[]; ringBytes: number; log: fs.WriteStream | null; logPath: string | null; logBytes: number; finishedAt: number | null };
+type Stream = StreamInfo & { userId: number; ring: Buffer[]; ringBytes: number; log: fs.WriteStream | null; logPath: string | null; logBytes: number; finishedAt: number | null;
+  /** the runner answered exec.start (or the stream was adopted from its exec.list): reconcile may judge it */
+  confirmed: boolean };
 export type ExecParams = { cmd: string; cwd?: string | null; pty?: boolean; cols?: number; rows?: number; env?: Record<string, string>; timeoutSec?: number;
   /** text written to the command's input, then closed (runner ≥ 0.9, feature "stdin"; no pty) */ stdin?: string | null;
   /** the shell that runs `cmd` (runner ≥ 0.12, feature "shell"): powershell | pwsh | cmd | bash | sh; default = the login shell / cmd.exe */
@@ -158,7 +160,7 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
   const info = (st: Stream): StreamInfo => ({ streamId: st.streamId, targetId: st.targetId, remoteRunId: st.remoteRunId, runId: st.runId, cmd: st.cmd, cwd: st.cwd, pty: st.pty, by: st.by, pid: st.pid, startedAt: st.startedAt, running: st.running, code: st.code, signal: st.signal, durationMs: st.durationMs, bytes: st.bytes, lastOutputAt: st.lastOutputAt });
 
   function newStream(p: { targetId: number; userId: number; streamId: number; remoteRunId: number; runId?: number | null; cmd: string; cwd: string | null; pty: boolean; by: string | null; startedAt?: number }): Stream {
-    const st: Stream = { ...p, runId: p.runId ?? null, lastOutputAt: null, pid: null, startedAt: p.startedAt ?? Date.now(), running: true, code: null, signal: null, durationMs: null, bytes: 0, ring: [], ringBytes: 0, log: null, logPath: null, logBytes: 0, finishedAt: null };
+    const st: Stream = { ...p, runId: p.runId ?? null, lastOutputAt: null, pid: null, startedAt: p.startedAt ?? Date.now(), running: true, code: null, signal: null, durationMs: null, bytes: 0, ring: [], ringBytes: 0, log: null, logPath: null, logBytes: 0, finishedAt: null, confirmed: true };
     streams.set(key(p.targetId, p.streamId), st);
     return st;
   }
@@ -214,7 +216,9 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
         st.bytes = Math.max(st.bytes, remote.bytes);
       } catch { /* best effort */ }
     };
-    for (const st of [...streams.values()].filter((s) => s.targetId === targetId && s.running)) {
+    // a command whose exec.start is still on its way is not in that list yet: not lost (CI 2026-10-02 — a command
+    // started right as the runner connected was marked lost and its output dropped)
+    for (const st of [...streams.values()].filter((s) => s.targetId === targetId && s.running && s.confirmed)) {
       const remote = byId.get(st.streamId);
       if (!remote) { finishStream(st, null, 'lost', null); continue; }
       await catchUp(st, remote);
@@ -446,11 +450,12 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
       const remoteRunId = store.addRemoteRun({ runId: meta.runId ?? null, targetId, userId, kind: 'exec', cmd, cwd: p.cwd ?? null, risk: meta.risk ?? null, approvedBy: meta.approvedBy });
       nextStream = nextStream >= 0x3fff_fff0 ? 1 : nextStream + 1;
       const st = newStream({ targetId, userId, streamId: nextStream, remoteRunId, runId: meta.runId ?? null, cmd, cwd: p.cwd ?? null, pty: Boolean(p.pty), by: meta.approvedBy });
+      st.confirmed = false;
       try {
         const r = await hub.call<{ streamId: number; pid: number | null; cwd: string }>(targetId, 'exec.start', {
           cmd, cwd: p.cwd || undefined, pty: Boolean(p.pty), cols: p.cols, rows: p.rows, env: p.env, timeoutSec: p.timeoutSec, stdin: p.stdin || undefined, shell: p.shell || undefined, streamId: st.streamId, tag: `rr:${remoteRunId}`,
         }, 20_000);
-        st.pid = r.pid ?? null; st.cwd = r.cwd ?? st.cwd;
+        st.pid = r.pid ?? null; st.cwd = r.cwd ?? st.cwd; st.confirmed = true;
       } catch (error) {
         streams.delete(key(targetId, st.streamId));
         store.finishRemoteRun(remoteRunId, { exitCode: null, artifacts: { error: error instanceof Error ? error.message : String(error) } });

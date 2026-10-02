@@ -7,11 +7,13 @@
 #   install-linux.sh --dist <dir>        # the newest linux-<arch> build in that folder
 #   install-linux.sh --no-service        # only put the binary in place
 #   install-linux.sh --uninstall         # stop and remove the service (the pairing is kept)
+#   install-linux.sh … --limited --logon-only   # restrict the default (administrator rights via passwordless sudo,
+#                                               # running from boot via linger); the default asks for the sudo password once
 # Without --file/--dist the binary comes from the gateway (/_runner/download) and its SHA-256 is checked.
 # Also served by the gateway: curl -fsSL <gateway>/_runner/scripts/install-linux.sh | bash -s -- --code <코드>
 set -euo pipefail
 DEST="$HOME/.aidev/bin/aidev-runner"
-file=""; dist=""; code=""; gateway=""; name=""; service=1; uninstall=0
+file=""; dist=""; code=""; gateway=""; name=""; service=1; uninstall=0; svc_flags=()
 while [ $# -gt 0 ]; do
   case $1 in
     --file) file=${2:?}; shift ;;
@@ -21,6 +23,7 @@ while [ $# -gt 0 ]; do
     --name) name=${2:?}; shift ;;
     --no-service) service=0 ;;
     --uninstall) uninstall=1 ;;
+    --limited|--logon-only) svc_flags+=("$1") ;;
     -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
     *) echo "unknown option $1"; exit 2 ;;
   esac
@@ -53,7 +56,7 @@ stop_running() {
 
 if [ $uninstall = 1 ]; then
   stop_running
-  [ -x "$DEST" ] && "$DEST" uninstall-service 2>/dev/null || true
+  [ -x "$DEST" ] && "$DEST" uninstall 2>/dev/null || true
   if command -v crontab >/dev/null; then (crontab -l 2>/dev/null | grep -v 'aidev-runner start' || true) | crontab - 2>/dev/null || true; fi
   echo "서비스를 멈추고 등록을 지웠습니다 (페어링은 ~/.aidev/runner.toml 에 남아 있습니다 — 지우려면 $DEST unpair)"; exit 0
 fi
@@ -109,11 +112,8 @@ fi
 logf="$HOME/.aidev/runner.log"
 since=$(date +%s)
 if has_systemd; then
-  "$DEST" install-service
-  # a headless machine (SBC, server): keep the user's services running without a login session
-  if [ "$(loginctl show-user "$USER" -p Linger --value 2>/dev/null || echo no)" != yes ]; then
-    loginctl enable-linger "$USER" 2>/dev/null && echo " ✓ 로그인하지 않아도 계속 실행 (linger)" || echo " ! 로그아웃하면 멈춥니다 — 계속 돌리려면: sudo loginctl enable-linger $USER"
-  fi
+  # the runner's own `install`: the user service, from boot (linger) and passwordless sudo unless restricted
+  "$DEST" install ${svc_flags[@]+"${svc_flags[@]}"}
 else
   echo "==> systemd 사용자 서비스를 쓸 수 없어 백그라운드로 실행하고 부팅 시 다시 시작하도록 등록합니다 (cron @reboot)"
   mkdir -p "$(dirname "$logf")"

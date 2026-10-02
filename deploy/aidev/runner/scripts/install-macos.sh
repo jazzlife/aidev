@@ -5,10 +5,12 @@
 #   install-macos.sh --file <binary>                   # one binary
 #   install-macos.sh --code <페어링 코드> [--gateway URL] [--name NAME]   # without --file/--dist: download from the gateway
 #   install-macos.sh --no-service | --uninstall
+#   install-macos.sh … --limited --logon-only   # restrict the default (administrator rights via passwordless sudo, from
+#                                                # boot via a LaunchDaemon); the default asks for the sudo password once
 # Pairing and consent settings (~/.aidev/runner.toml) are kept. ops/runner/install.sh calls this.
 set -euo pipefail
 DEST="$HOME/.aidev/bin/aidev-runner"
-file=""; dist=""; version=""; code=""; gateway=""; name=""; service=1; uninstall=0
+file=""; dist=""; version=""; code=""; gateway=""; name=""; service=1; uninstall=0; svc_flags=()
 while [ $# -gt 0 ]; do
   case $1 in
     --file) file=${2:?}; shift ;;
@@ -19,7 +21,8 @@ while [ $# -gt 0 ]; do
     --name) name=${2:?}; shift ;;
     --no-service) service=0 ;;
     --uninstall) uninstall=1 ;;
-    -h|--help) sed -n '2,8p' "$0"; exit 0 ;;
+    --limited|--logon-only) svc_flags+=("$1") ;;
+    -h|--help) sed -n '2,10p' "$0"; exit 0 ;;
     *) echo "unknown option $1"; exit 2 ;;
   esac
   shift
@@ -35,8 +38,9 @@ stop_running() {
   pkill -f 'aidev-runner[^ ]*( start|$)' 2>/dev/null && sleep 1 || true
 }
 if [ $uninstall = 1 ]; then
+  if [ -x "$DEST" ]; then "$DEST" uninstall || true; fi
   stop_running; rm -f "$plist"
-  echo "LaunchAgent를 멈추고 지웠습니다 (페어링은 유지 — 지우려면 $DEST unpair)"; exit 0
+  echo "서비스를 멈추고 지웠습니다 (페어링은 유지 — 지우려면 $DEST unpair)"; exit 0
 fi
 
 # ---- the binary ----------------------------------------------------------------------------------------
@@ -94,18 +98,9 @@ EOF
 fi
 [ $service = 1 ] || { echo "설치만 했습니다 (--no-service). 실행: $DEST   (서비스 설치: $DEST install)"; exit 0; }
 
-# ---- LaunchAgent ---------------------------------------------------------------------------------------
+# ---- the runner's own `install`: LaunchAgent, LaunchDaemon (from boot) and passwordless sudo unless restricted ----
 logf="$HOME/.aidev/runner.log"; since=$( [ -f "$logf" ] && wc -c < "$logf" | tr -d ' ' || echo 0)   # only lines written after this
-# written from the runner's own template and loaded here — `install-service` would first unload it again
-# (already stopped above), which launchd reports as "Boot-out failed: 5"
-mkdir -p "$(dirname "$plist")"
-"$DEST" install-service --print | tail -n +2 > "$plist"
-launchctl bootstrap "gui/$uid" "$plist" 2>/dev/null || true
-# launchd sometimes refuses a bootstrap right after the bootout ("Bootstrap failed: 5") — retry, then check
-for i in 1 2 3 4 5; do
-  launchctl print "$label" >/dev/null 2>&1 && break
-  sleep 1; launchctl bootstrap "gui/$uid" "$plist" 2>/dev/null || true
-done
+"$DEST" install ${svc_flags[@]+"${svc_flags[@]}"}
 
 # ---- verify: the service runs $DEST, no other runner is left, and it connected -----------------------------
 ok=1; pid=""; running=""
@@ -118,7 +113,8 @@ for i in $(seq 1 20); do
   sleep 1
 done
 if [ -n "$pid" ] && [ "${running%% *}" = "$DEST" ]; then echo " ✓ 서비스 실행 중: pid $pid ($DEST)"; else echo " ✗ 서비스가 $DEST 로 실행되지 않았습니다 (${running:-실행 안 됨})"; ok=0; fi
-others=$(ps -axo pid=,command= | grep -i 'aidev-runner' | grep -v grep | grep -v "^ *$pid " | grep -v "$0" || true)
+# (the LaunchDaemon's boot runner, `start --boot`, is meant to run beside it: it hands over to the session's runner)
+others=$(ps -axo pid=,command= | grep -i 'aidev-runner' | grep -v grep | grep -v -- '--boot' | grep -v "^ *$pid " | grep -v "$0" || true)
 if [ -n "$others" ]; then
   echo " ✗ 다른 러너가 아직 실행 중입니다 (같은 토큰이면 연결을 서로 빼앗습니다) — 종료합니다:"; echo "$others" | sed 's/^/     /'
   echo "$others" | awk '{print $1}' | xargs kill 2>/dev/null || true
