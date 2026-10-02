@@ -110,6 +110,12 @@ try {
   Stop-Runner
   New-Item -ItemType Directory -Force (Split-Path -Parent $Dest) | Out-Null
   Copy-Item -Force $File "$Dest.new"
+  # a runner that could not be stopped (elevated, started by hand) still runs the old file: a running .exe can be
+  # renamed, not overwritten — move it aside (as `aidev-runner update` does)
+  $prev = Join-Path (Split-Path -Parent $Dest) 'aidev-runner.prev.exe'
+  Remove-Item -Force $prev -ErrorAction SilentlyContinue
+  if (Test-Path $prev) { $prev = Join-Path (Split-Path -Parent $Dest) "aidev-runner.prev-$PID.exe" }
+  if (Test-Path $Dest) { Move-Item -Force $Dest $prev }
   Move-Item -Force "$Dest.new" $Dest
 } finally {
   Remove-Item -Recurse -Force $tmp -ErrorAction SilentlyContinue

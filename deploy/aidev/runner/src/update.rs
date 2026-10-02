@@ -184,7 +184,7 @@ fn prev_path(target: &Path) -> PathBuf {
 }
 
 /// The new file in place of the installed one; the installed one kept as aidev-runner.prev.
-fn swap(new: &Path, target: &Path) -> Result<(), String> {
+pub(crate) fn swap(new: &Path, target: &Path) -> Result<(), String> {
     let prev = prev_path(target);
     #[cfg(unix)]
     {

@@ -288,6 +288,19 @@ jobs:
           Stop-Process -Id $http.Id -Force
           'ok: update kept the tasks and restarted the runners'
 
+          # install again from a download while a runner started by hand (`aidev-runner`, no arguments) runs the
+          # installed file: it is stopped or renamed aside, never "access denied"
+          $hand = Start-Process $bin -PassThru -WindowStyle Hidden
+          Start-Sleep 3
+          if ($hand.HasExited) { throw 'the runner started by hand did not keep running' }
+          Copy-Item "$env:GITHUB_WORKSPACE\$env:RUNNER_DIR\target\release\aidev-runner.exe" "$dl\aidev-runner.exe"
+          & "$dl\aidev-runner.exe" install
+          if ($LASTEXITCODE) { throw "install over a running runner: exit $LASTEXITCODE" }
+          Remove-Item "$dl\aidev-runner.exe"
+          if (-not $hand.HasExited) { throw 'install did not stop the runner started by hand' }
+          WaitFor 'a runner holds the connection after the reinstall' { BootHolds }
+          'ok: install replaced the file a runner started by hand was running'
+
           & $bin uninstall
           if (Get-ScheduledTask -TaskName 'aidev-runner*' -ErrorAction SilentlyContinue) { throw 'uninstall left a task' }
           Start-Sleep 2

@@ -143,18 +143,22 @@ fn place_self() -> Result<(PathBuf, bool), String> {
             eprintln!("! 이 Mac의 고정 서명을 입히지 못했습니다 — macOS가 화면 기록 권한을 다시 물을 수 있습니다: {why}");
         }
     }
-    // Windows: the runner a task started holds its file open — stop those first (unix renames over a running file)
+    // Windows: every runner of the installed file — a task's, or one started by hand (`aidev-runner`, a double click)
+    // — holds it open: stop them and wait until they are gone. The swap renames the file aside anyway (a running .exe
+    // can be renamed, not overwritten), so one that does not stop does not block the install.
     #[cfg(windows)]
     {
         let script = format!(
             "foreach ($n in 'aidev-runner', '{BOOT_TASK}') {{ Stop-ScheduledTask -TaskName $n -ErrorAction SilentlyContinue }}\n\
-             Get-CimInstance Win32_Process -Filter \"Name='aidev-runner.exe'\" | Where-Object {{ $_.ExecutablePath -eq '{path}' -and $_.CommandLine -match ' start( |$)' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}\n\
-             Start-Sleep -Milliseconds 500",
+             $ids = @(Get-CimInstance Win32_Process -Filter \"Name='aidev-runner.exe'\" | Where-Object {{ $_.ExecutablePath -eq '{path}' -and $_.ProcessId -ne {me} }} | ForEach-Object {{ $_.ProcessId }})\n\
+             foreach ($i in $ids) {{ Stop-Process -Id $i -Force -ErrorAction SilentlyContinue }}\n\
+             if ($ids) {{ Wait-Process -Id $ids -Timeout 10 -ErrorAction SilentlyContinue }}",
             path = target.display().to_string().replace('\'', "''"),
+            me = std::process::id(),
         );
         let _ = powershell(&script, std::time::Duration::from_secs(30));
     }
-    std::fs::rename(&tmp, &target).map_err(|e| { let _ = std::fs::remove_file(&tmp); format!("{}: {e} — 실행 중인 러너를 멈춘 뒤 다시 하세요", target.display()) })?;
+    crate::update::swap(&tmp, &target).map_err(|e| { let _ = std::fs::remove_file(&tmp); format!("{e} — 실행 중인 러너를 멈춘 뒤 다시 하세요") })?;
     Ok((target, true))
 }
 
