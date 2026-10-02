@@ -463,6 +463,9 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
     - 함께 고친 버그: 세션이 중간에 끝나면(정지·넘겨주기) 쓰기 태스크가 소켓을 쥐고 있어 대상이 온라인으로 남음 → Drop 가드; 게이트웨이 재접속 대조가 시작 중인 명령을 lost로 처리해 출력 유실 → exec.start 응답 받은 스트림만 대조; Windows uninstall이 러너를 남김; Ubuntu에서 --limited·uninstall이 sudoers를 못 봐(root 전용 폴더) 지우지 않음 → `sudo -n rm`.
     - 검증: Mac에서 실제 마우스 클릭으로 메뉴 정지(빨강·끊김)·시작(재연결)·종료(아이콘 사라짐·정지 유지); CI(run 36952904507) Windows·Linux·macOS 모두 — e2e 8/8(정지·시작 포함), install 기본값·넘겨받기 양방향·제한 설치·제거.
 
+- [~] F-15 러너 권한·실행 단순화(2026-10-02, 러너 0.13.0~0.13.4): 명령 없이 `aidev-runner`=start(미등록이면 페어링 코드 질문), `install`/`uninstall`; install 기본은 부팅 직후 + 관리자 권한(Windows 작업 2개 Highest·S4U 부팅→로그인 세션 넘겨받기, macOS LaunchAgent+LaunchDaemon, Linux systemd linger + XDG autostart 세션 러너, Linux·macOS 비밀번호 없는 sudo), `--limited`·`--logon-only`로 제한; 상태 아이콘(초록·주황·빨강 점, 메뉴 시작·정지·종료); 첫 실행에서 화면·제어 허용(이후 묻지 않음, macOS는 화면 기록·손쉬운 사용을 그때 한 번 요청 + PC별 고정 서명으로 업데이트해도 유지); 전체 화면(모니터) 스트리밍·제어(창 목록의 "전체 화면" 그룹); `config.consent` RPC로 화면·제어 허용 실행 중 변경. 검증: CI Windows·Linux·macOS(설치 기본값·넘겨받기 양방향·제한 설치·제거·정지/시작 e2e), Mac 실제 메뉴 클릭, 운영 m4pro(전체 화면 640×414 캡처, 허용 끄기/켜기 즉시 반영). 남은 확인: 데스크탑 Linux 실기(트레이·세션 러너), 실제 Windows PC.
+- [~] F-16 agent의 NadoVibe 앱 제어(2026-10-02, 사용자 요구 "agent가 nadovibe 안의 기능을 제어하여 사용자에게 원격 화면을 보여주거나 설정을 도와주는"): MCP `nadovibe_show`(원격 화면 창·전체 화면, 미리보기, 디버그, PC 연결, 설정, 프로젝트, 카탈로그 + 안내 한 줄; viewers 0이면 아무도 안 봄) · `nadovibe_settings`(get/set — pc.policy·pc.default·pc.screen·pc.control·effort_cap·routing_mode, 확인 없이 바로 변경). 게이트웨이 사용자별 명령 대기열 `/api/aidev/ui/commands`(long-poll, 새로 연 페이지는 이전 명령 재생 안 함), `/targets/:id/consent`. 작업대 `useUiCommands`(라이브 창·측면 보기·태블릿 창·설정·프로젝트), 모바일 `UiCommandBridge`(화면 이동, 뒤로가기는 원래 화면). 검증: smoke 230(허용 즉시 변경·명령 전달·사용자 격리), runtime·모바일 시험, 운영(m4pro 허용 끄기/켜기, 대기 페이지가 명령 수신). 남은 확인: runtime 재시작 후(사용자 CLI 세션 때문에 보류) 실제 채팅에서 agent가 도구를 쓰는지.
+
 **F 완료 기준**: F-12 e2e, F-11 점검 통과, 러너 3 OS 바이너리 존재(macOS는 Mac 빌드).
 
 ### D. 생성 (목표: 없는 분야를 스스로 만들어 검증하고 쓴다)
