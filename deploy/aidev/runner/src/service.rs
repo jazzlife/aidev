@@ -70,11 +70,11 @@ fn place_self() -> Result<(PathBuf, bool), String> {
     {
         let script = format!(
             "foreach ($n in 'aidev-runner', '{BOOT_TASK}') {{ Stop-ScheduledTask -TaskName $n -ErrorAction SilentlyContinue }}\n\
-             Get-Process aidev-runner -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -eq '{path}' }} | Stop-Process -Force -ErrorAction SilentlyContinue\n\
+             Get-CimInstance Win32_Process -Filter \"Name='aidev-runner.exe'\" | Where-Object {{ $_.ExecutablePath -eq '{path}' -and $_.CommandLine -match ' start( |$)' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}\n\
              Start-Sleep -Milliseconds 500",
             path = target.display().to_string().replace('\'', "''"),
         );
-        quiet("powershell.exe", &["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &crate::exec::powershell_encoded(&script)]);
+        let _ = powershell(&script, std::time::Duration::from_secs(30));
     }
     std::fs::rename(&tmp, &target).map_err(|e| { let _ = std::fs::remove_file(&tmp); format!("{}: {e} — 실행 중인 러너를 멈춘 뒤 다시 하세요", target.display()) })?;
     Ok((target, true))
@@ -83,6 +83,32 @@ fn place_self() -> Result<(PathBuf, bool), String> {
 fn run(cmd: &str, args: &[&str]) -> Result<(), String> {
     let status = Command::new(cmd).args(args).status().map_err(|e| format!("{cmd}: {e}"))?;
     if status.success() { Ok(()) } else { Err(format!("{cmd} {} 실패 ({status})", args.join(" "))) }
+}
+
+/// PowerShell with a time limit (Windows): no stdin, so nothing can wait on it; killed after `limit`.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn powershell(script: &str, limit: std::time::Duration) -> Result<(), String> {
+    use crate::proc_util::NoWindow;
+    let mut child = Command::new("powershell.exe")
+        .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &crate::exec::powershell_encoded(script)])
+        .stdin(std::process::Stdio::null())
+        .no_window()
+        .spawn()
+        .map_err(|e| format!("powershell: {e}"))?;
+    let deadline = std::time::Instant::now() + limit;
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(status)) => return Err(format!("exit {}", status.code().unwrap_or(-1))),
+            Ok(None) if std::time::Instant::now() < deadline => std::thread::sleep(std::time::Duration::from_millis(200)),
+            Ok(None) => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Err("timeout".into());
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
 }
 
 /// The same, quietly (expected failures such as "not loaded").
@@ -259,12 +285,20 @@ pub fn task_script(exe: &str, limited: bool, logon_only: bool, user: &str) -> St
 /// Windows: re-run `aidev-runner <args>` with administrator rights (one UAC prompt) and wait for it.
 #[cfg(windows)]
 fn run_elevated(exe: &str, args: &str) -> Result<(), String> {
+    // the UAC prompt is on the secure desktop: a remote viewer or a VM window may not show it — say so, and give up
+    // after a while instead of waiting forever
+    println!("관리자 확인 창(UAC)이 떴습니다 — '예'를 누르세요 (2분 안에 응답이 없으면 취소합니다)");
     let script = format!(
-        "$p = Start-Process -FilePath '{}' -ArgumentList '{}' -Verb RunAs -WindowStyle Hidden -Wait -PassThru\nexit $p.ExitCode",
+        "$ErrorActionPreference = 'Stop'\n\
+         $p = Start-Process -FilePath '{}' -ArgumentList '{}' -Verb RunAs -WindowStyle Hidden -PassThru\n\
+         if (-not $p.WaitForExit(170000)) {{ exit 124 }}\n\
+         exit $p.ExitCode",
         exe.replace('\'', "''"), args.replace('\'', "''"),
     );
-    run("powershell.exe", &["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &crate::exec::powershell_encoded(&script)])
-        .map_err(|_| "관리자 권한 승인이 필요합니다 (UAC에서 '예') — 관리자 권한 없이 쓰려면 `aidev-runner install --limited --logon-only`".to_string())
+    powershell(&script, std::time::Duration::from_secs(180)).map_err(|e| {
+        if e == "timeout" { "관리자 확인 창(UAC)에 응답이 없어 취소했습니다 — 화면에 UAC 창이 보이는 곳(이 PC 앞)에서 다시 실행하세요".to_string() }
+        else { "관리자 권한 승인이 필요합니다 (UAC에서 '예') — 관리자 권한 없이 쓰려면 `aidev-runner install --limited --logon-only`".to_string() }
+    })
 }
 
 pub fn install(print_only: bool, limited: bool, logon_only: bool, for_user: Option<String>) -> Result<String, String> {
@@ -374,8 +408,9 @@ pub fn install(print_only: bool, limited: bool, logon_only: bool, for_user: Opti
                 run_elevated(&exe_s, &args.join(" "))?;
                 return Ok(describe(limited, logon_only, true));
             }
-            run("powershell.exe", &["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &crate::exec::powershell_encoded(&script)])
-                .map_err(|_| if needs_admin { "작업 등록 실패 — 관리자 권한이 필요합니다".to_string() } else { "작업 등록 실패 (Register-ScheduledTask)".to_string() })?;
+            println!("작업 스케줄러에 등록하는 중…");
+            powershell(&script, std::time::Duration::from_secs(90))
+                .map_err(|e| if e == "timeout" { "작업 스케줄러가 90초 안에 응답하지 않았습니다".to_string() } else if needs_admin { "작업 등록 실패 — 관리자 권한이 필요합니다".to_string() } else { "작업 등록 실패 (Register-ScheduledTask)".to_string() })?;
             return Ok(format!("{}{placed}", describe(limited, logon_only, false)));
         }
         other => Err(format!("{other}: 서비스 등록을 지원하지 않습니다 — `aidev-runner start`를 직접 실행하세요")),
@@ -434,24 +469,33 @@ pub fn uninstall() -> Result<String, String> {
             Ok(format!("LaunchAgent·LaunchDaemon을 제거하고 러너를 멈췄습니다{note}"))
         }
         "windows" => {
-            // the tasks' runners stop with them (as systemctl disable --now / launchctl bootout do); tasks registered
-            // with administrator rights can only be removed by an administrator — ask once (UAC) when needed
+            // the tasks' runners stop with them (as systemctl disable --now / launchctl bootout do). Tasks registered with
+            // administrator rights can only be removed by an administrator: a failure (access denied) must not pass as
+            // done — then ask once (UAC). Only service runners (`… start …`) are stopped, never this process or its parent.
             let script = format!(
-                "foreach ($n in 'aidev-runner', '{BOOT_TASK}') {{ if (Get-ScheduledTask -TaskName $n -ErrorAction SilentlyContinue) {{ Stop-ScheduledTask -TaskName $n -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName $n -Confirm:$false }} }}\n\
-                 Get-Process aidev-runner -ErrorAction SilentlyContinue | Where-Object {{ $_.Id -ne {pid} }} | Stop-Process -Force -ErrorAction SilentlyContinue",
-                pid = std::process::id(),
+                "$ErrorActionPreference = 'Stop'\n\
+                 foreach ($n in 'aidev-runner', '{BOOT_TASK}') {{\n\
+                   if (Get-ScheduledTask -TaskName $n -ErrorAction SilentlyContinue) {{ Stop-ScheduledTask -TaskName $n -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName $n -Confirm:$false }}\n\
+                 }}\n\
+                 Get-CimInstance Win32_Process -Filter \"Name='aidev-runner.exe'\" | Where-Object {{ $_.CommandLine -match ' start( |$)' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}"
             );
-            let ps = |s: &str| run("powershell.exe", &["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &crate::exec::powershell_encoded(s)]);
-            if ps(&script).is_err() {
-                #[cfg(windows)]
-                {
-                    run_elevated(&exe()?.display().to_string(), "uninstall")?;
-                    return Ok("서비스(작업 스케줄러 작업)를 제거하고 러너를 멈췄습니다 — 관리자 권한(UAC)으로".into());
+            println!("서비스(작업 스케줄러 작업)를 지우는 중…");
+            match powershell(&script, std::time::Duration::from_secs(60)) {
+                Ok(()) => Ok("서비스(작업 스케줄러 작업)를 제거하고 러너를 멈췄습니다".into()),
+                Err(e) if e == "timeout" => Err("작업 스케줄러가 60초 안에 응답하지 않았습니다 — 작업 스케줄러에서 aidev-runner 작업을 직접 지우세요".into()),
+                Err(_) => {
+                    #[cfg(windows)]
+                    {
+                        if crate::proc_util::is_elevated() {
+                            return Err("작업을 지우지 못했습니다 — 작업 스케줄러에서 aidev-runner, aidev-runner-boot 작업을 확인하세요".into());
+                        }
+                        run_elevated(&exe()?.display().to_string(), "uninstall")?;
+                        Ok("서비스(작업 스케줄러 작업)를 제거하고 러너를 멈췄습니다 — 관리자 권한(UAC)으로".into())
+                    }
+                    #[cfg(not(windows))]
+                    Err("작업 제거 실패".into())
                 }
-                #[cfg(not(windows))]
-                return Err("작업 제거 실패".into());
             }
-            Ok("서비스(작업 스케줄러 작업)를 제거하고 러너를 멈췄습니다".into())
         }
         other => Err(format!("{other}: 지원하지 않습니다")),
     }
