@@ -1,9 +1,9 @@
 name: Runner e2e (Windows, Linux, macOS)
 
-# The real runner on a real Windows and Linux machine, connected to a real runner-hub (deploy/aidev/auth-gateway):
+# The real runner on a real Windows, Linux and macOS machine, connected to a real runner-hub (deploy/aidev/auth-gateway):
 # shells (cmd / PowerShell / Git Bash / sh / bash) with UTF-8 and exit codes, a stop ending the whole process tree,
 # fs.pull, adb from the SDK folder, capabilities — test/runner-parity-e2e-test.mjs — plus the Windows-only cargo tests
-# (`win_`) and the elevated / at-startup logon task. macOS runs the same e2e on the Mac (ops).
+# (`win_`), and `install` / `uninstall` with their defaults (from boot, administrator rights) and restrictions.
 # Runs on pushes that touch the runner or its gateway side, and by hand (Actions → Run workflow).
 
 on:
@@ -94,7 +94,9 @@ jobs:
           log=~/.aidev/runner.log
           waitfor() { for i in $(seq 1 40); do if eval "$2"; then echo "ok: $1"; return 0; fi; sleep 1; done; tail -20 "$log" 2>/dev/null || true; echo "timed out: $1"; exit 1; }
           "$bin" install
-          test -f /etc/sudoers.d/aidev-runner && sudo grep -q "^$USER ALL=(ALL) NOPASSWD: ALL" /etc/sudoers.d/aidev-runner && echo "ok: passwordless sudo for $USER"
+          # /etc/sudoers.d is root-only on Ubuntu: look with sudo
+          sudo grep -q "^$USER ALL=(ALL) NOPASSWD: ALL" /etc/sudoers.d/aidev-runner
+          echo "ok: passwordless sudo for $USER"
           if [ "$RUNNER_OS" = Linux ]; then
             export XDG_RUNTIME_DIR=/run/user/$(id -u)
             [ "$(loginctl show-user "$USER" -p Linger --value)" = yes ] && echo "ok: linger (runs from boot)"
@@ -113,11 +115,12 @@ jobs:
             waitfor 'the boot runner handed over to the session runner' 'grep -q "연결을 넘깁니다" "$log" || ! grep -q "부팅 러너: 연결을 맡습니다" "$log"'
           fi
           "$bin" install --limited --logon-only
-          test ! -e /etc/sudoers.d/aidev-runner && echo "ok: --limited removed the sudo rule"
+          sudo test ! -e /etc/sudoers.d/aidev-runner
+          echo "ok: --limited removed the sudo rule"
           if [ "$RUNNER_OS" = macOS ]; then test ! -e /Library/LaunchDaemons/work.nado.aidev-runner-boot.plist && echo "ok: --logon-only removed the LaunchDaemon"; fi
           "$bin" install
           "$bin" uninstall
-          test ! -e /etc/sudoers.d/aidev-runner
+          sudo test ! -e /etc/sudoers.d/aidev-runner
           if [ "$RUNNER_OS" = Linux ]; then ! systemctl --user is-active --quiet aidev-runner && test ! -e ~/.config/systemd/user/aidev-runner.service; fi
           if [ "$RUNNER_OS" = macOS ]; then ! launchctl print "gui/$(id -u)/work.nado.aidev-runner" >/dev/null 2>&1 && test ! -e /Library/LaunchDaemons/work.nado.aidev-runner-boot.plist; fi
           sleep 2; ! pgrep -f 'aidev-runner start' && echo "ok: uninstall removed everything and stopped the runners"
