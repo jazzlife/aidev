@@ -96,7 +96,7 @@ sign_stable() {
     command -v openssl >/dev/null || return 1
     rm -f "$kc"; (umask 077; openssl rand -hex 24 > "$pass")
     tmp=$(mktemp -d)
-    printf '[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n[dn]\nCN=NadoVibe Runner (%s)\n[ext]\nbasicConstraints=critical,CA:false\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=critical,codeSigning\n' "$(hostname -s)" > "$tmp/cfg"
+    printf '[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n[dn]\nCN=NadoVibe Runner (%s)\n[ext]\nbasicConstraints=critical,CA:false\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=critical,codeSigning\n' "$(hostname -s | cut -c1-40)" > "$tmp/cfg"   # CN ≤ 64 characters (a long host name failed: "string too long")
     openssl req -x509 -newkey rsa:2048 -nodes -keyout "$tmp/key" -out "$tmp/cert" -days 7300 -config "$tmp/cfg" >/dev/null 2>&1 &&
       { openssl pkcs12 -export -legacy -inkey "$tmp/key" -in "$tmp/cert" -out "$tmp/id.p12" -passout pass:x >/dev/null 2>&1 ||
         openssl pkcs12 -export -inkey "$tmp/key" -in "$tmp/cert" -out "$tmp/id.p12" -passout pass:x >/dev/null 2>&1; } &&
