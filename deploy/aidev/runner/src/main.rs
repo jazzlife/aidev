@@ -23,6 +23,7 @@ mod win_screen;
 mod pair;
 mod proc_util;
 mod roots;
+mod rtc;
 mod screen;
 mod service;
 mod sync;

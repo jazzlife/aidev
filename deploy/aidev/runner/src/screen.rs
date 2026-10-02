@@ -11,6 +11,8 @@
 //!   notifications screen.format {streamId, codec, width, height}, screen.error {streamId, error},
 //!   screen.stats {streamId, fps, captureMs, scaleMs, encodeMs, loopMs, baseMs, skipped, kbps, bitrate} (every second)
 //!   from the gateway: notification screen.ack {streamId, seq} — the newest frame a viewer has shown
+//!   screen.rtc {streamId, offer} → {answer}: the stream straight to a browser as well (rtc.rs, F-18 P2P)
+//!   from the gateway: notification screen.relay {streamId, on} — off while every viewer gets the frames directly
 //! Frames: binary `[streamId u32 BE][kind u8][flags u8][seq u32 BE, when flags bit 1][data]`, kind 1 = H.264
 //! access unit (Annex B, SPS/PPS before every IDR), 3 = JPEG; flags bit 0 = keyframe, bit 1 = numbered. A
 //! frame is encoded only when the window's pixels changed (or a keyframe was asked for), at most `fps` per
@@ -50,6 +52,8 @@ struct Ctl {
     stop: Arc<AtomicBool>,
     key: Arc<AtomicBool>,
     acked: Acked,
+    /// frames go to the gateway (off: every viewer has them directly, rtc.rs)
+    relay: Arc<AtomicBool>,
 }
 
 /// `screen.ack` from the gateway (a notification).
@@ -60,6 +64,21 @@ pub fn ack(params: &Value) {
         if a.is_none_or(|(s, _)| seq as u32 > s) {
             *a = Some((seq as u32, Instant::now()));
         }
+    }
+}
+
+/// The next frame of the stream is a keyframe (a direct viewer starts or fell behind).
+pub fn key(id: u32) {
+    if let Some(c) = hub().lock().unwrap().streams.get(&id) {
+        c.key.store(true, Ordering::Relaxed);
+    }
+}
+
+/// `screen.relay` from the gateway (a notification).
+pub fn relay(params: &Value) {
+    let (Some(id), Some(on)) = (params.get("streamId").and_then(Value::as_u64), params.get("on").and_then(Value::as_bool)) else { return };
+    if let Some(c) = hub().lock().unwrap().streams.get(&(id as u32)) {
+        c.relay.store(on, Ordering::Relaxed);
     }
 }
 
@@ -252,6 +271,11 @@ impl Pace {
         })
     }
 
+    /// The number the next frame will have (screen.format says it: the page resets its decoder only before that frame).
+    fn next_seq(&self) -> Option<u32> {
+        self.flow.on.then(|| self.flow.seq.wrapping_add(1))
+    }
+
     /// Frames are queueing on the way to the viewers: make none now.
     fn hold(&mut self, now: Instant) -> bool {
         if self.flow.on && self.flow.congested(now) {
@@ -273,9 +297,11 @@ impl Pace {
     }
 }
 
-/// Into the connection; false when it is gone.
+/// To the direct viewers and into the connection; false when that is gone.
 fn send_frame(id: u32, payload: &[u8]) -> bool {
-    out().is_some_and(|out| out.blocking_send(Message::Binary(frame(id, payload))).is_ok())
+    crate::rtc::frame(id, payload);
+    let relay = hub().lock().unwrap().streams.get(&id).is_none_or(|c| c.relay.load(Ordering::Relaxed));
+    out().is_some_and(|out| !relay || out.blocking_send(Message::Binary(frame(id, payload))).is_ok())
 }
 
 fn temp_file() -> std::path::PathBuf {
@@ -380,6 +406,7 @@ fn run(id: u32, o: StreamOpts, stop: Arc<AtomicBool>, want_key: Arc<AtomicBool>,
             Ok(cap) => {
                 stream_mac(id, &o, cap, &stop, &want_key, acked);
                 hub().lock().unwrap().streams.remove(&id);
+                crate::rtc::close(id);
                 return;
             }
             Err(e) => eprintln!("[aidev-runner] ScreenCaptureKit을 쓰지 못해 CPU 캡처로 합니다: {e}"),
@@ -390,6 +417,7 @@ fn run(id: u32, o: StreamOpts, stop: Arc<AtomicBool>, want_key: Arc<AtomicBool>,
         Err(e) => note("screen.error", json!({ "streamId": id, "error": e })),
     }
     hub().lock().unwrap().streams.remove(&id);
+    crate::rtc::close(id);
 }
 
 fn stream(id: u32, o: StreamOpts, mut source: Source, stop: Arc<AtomicBool>, want_key: Arc<AtomicBool>, acked: Acked) {
@@ -429,7 +457,7 @@ fn stream(id: u32, o: StreamOpts, mut source: Source, stop: Arc<AtomicBool>, wan
                         if enc.as_ref().map(encoder::Video::size) != Some((w, h)) {
                             // first frame or the window was resized: a new encoder, starting with a keyframe
                             match encoder::Video::new(o.vp9, w, h, o.fps.round() as u32, pace.kbps) {
-                                Ok(e) => { note("screen.format", json!({ "streamId": id, "codec": e.codec(), "width": w, "height": h })); enc = Some(e); }
+                                Ok(e) => { note("screen.format", json!({ "streamId": id, "codec": e.codec(), "width": w, "height": h, "seq": pace.next_seq() })); enc = Some(e); }
                                 Err(e) => { note("screen.error", json!({ "streamId": id, "error": e })); break; }
                             }
                         }
@@ -510,7 +538,7 @@ fn stream_mac(id: u32, o: &StreamOpts, mut cap: crate::mac_screen::Capture, stop
         want_key.store(false, Ordering::Relaxed);
         if enc.as_ref().map(|e| (e.width, e.height)) != Some((cap.width, cap.height)) {
             match Encoder::new(cap.width, cap.height, o.fps, pace.kbps) {
-                Ok(e) => { enc = Some(e); note("screen.format", json!({ "streamId": id, "codec": "h264", "width": cap.width, "height": cap.height, "encoder": "videotoolbox" })); }
+                Ok(e) => { enc = Some(e); note("screen.format", json!({ "streamId": id, "codec": "h264", "width": cap.width, "height": cap.height, "encoder": "videotoolbox", "seq": pace.next_seq() })); }
                 Err(e) => { note("screen.error", json!({ "streamId": id, "error": e })); break; }
             }
         }
@@ -549,7 +577,7 @@ fn start(params: &Value) -> RpcResult {
     let stop = Arc::new(AtomicBool::new(false));
     let key = Arc::new(AtomicBool::new(false));
     let acked: Acked = Arc::new(Mutex::new(None));
-    g.streams.insert(id, Ctl { stop: stop.clone(), key: key.clone(), acked: acked.clone() });
+    g.streams.insert(id, Ctl { stop: stop.clone(), key: key.clone(), acked: acked.clone(), relay: Arc::new(AtomicBool::new(true)) });
     drop(g);
     let o = StreamOpts { window, video, fps, max_width, bitrate, acks, vp9 };
     std::thread::Builder::new().name(format!("aidev-screen-{id}")).spawn(move || run(id, o, stop, key, acked)).map_err(|e| (-32000, e.to_string()))?;
@@ -735,6 +763,14 @@ pub async fn rpc(cfg: &Config, method: &str, params: &Value) -> Option<RpcResult
         }).await.unwrap_or_else(|e| Err((-32000, e.to_string()))),
         "screen.shot" => tokio::task::spawn_blocking(move || shot(&params)).await.unwrap_or_else(|e| Err((-32000, e.to_string()))),
         "screen.start" => start(&params),
+        "screen.rtc" => {
+            let id = params.get("streamId").and_then(Value::as_u64).map(|v| v as u32).filter(|id| hub().lock().unwrap().streams.contains_key(id));
+            match (id, params.get("offer").and_then(Value::as_str)) {
+                (Some(id), Some(offer)) => crate::rtc::open(id, offer).await,
+                (None, _) => Err((-32602, "그 화면 스트림이 없습니다".into())),
+                _ => Err((-32602, "offer 필요".into())),
+            }
+        }
         "screen.key" | "screen.stop" => {
             let id = params.get("streamId").and_then(Value::as_u64).map(|v| v as u32).ok_or((-32602, "streamId 필요".to_string()));
             id.map(|id| {

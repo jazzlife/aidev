@@ -254,6 +254,8 @@ pub async fn handle(cfg: &Config, hub: &ExecHub, text: &str) -> Option<Value> {
         let params = msg.get("params").unwrap_or(&Value::Null);
         if method == "screen.ack" {
             crate::screen::ack(params);
+        } else if method == "screen.relay" {
+            crate::screen::relay(params);
         } else {
             crate::input::notify(cfg, method, params);
         }

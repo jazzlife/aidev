@@ -27,9 +27,36 @@ function numberedJpeg(seq: number) {
   return b.buffer;
 }
 
+/** The page's end of a direct connection, driven by the test. */
+class FakeChannel {
+  readyState = 'open';
+  binaryType = 'blob';
+  sent: string[] = [];
+  onmessage: ((e: { data: unknown }) => void) | null = null;
+  onclose: (() => void) | null = null;
+  send(data: string) { this.sent.push(data); }
+  push(data: Uint8Array) { this.onmessage?.({ data: data.slice().buffer }); }
+}
+class FakePeer {
+  static last: FakePeer | null = null;
+  channel = new FakeChannel();
+  iceGatheringState = 'complete';
+  connectionState = 'new';
+  localDescription: { sdp: string } | null = null;
+  remote: { type: string; sdp: string } | null = null;
+  onconnectionstatechange: (() => void) | null = null;
+  constructor() { FakePeer.last = this; }
+  createDataChannel() { return this.channel; }
+  async createOffer() { return { type: 'offer', sdp: 'v=0\r\na=candidate:1 1 udp 2122260223 4f1c-77.local 5000 typ host\r\na=candidate:2 1 udp 1686052607 203.0.113.9 6000 typ srflx raddr 0.0.0.0 rport 0\r\n' }; }
+  async setLocalDescription(d: { sdp: string }) { this.localDescription = d; }
+  async setRemoteDescription(d: { type: string; sdp: string }) { this.remote = d; }
+  addEventListener() { /* gathering is complete already */ }
+  close() { this.connectionState = 'closed'; }
+}
+
 describe('remote screen session (numbered frames, acks, latency)', () => {
   // jsdom has no 2D canvas: drawing is a no-op here
-  beforeEach(() => { vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null); });
+  beforeEach(() => { vi.spyOn(HTMLCanvasElement.prototype, 'getContext').mockReturnValue(null); FakeSocket.last = null; });
   afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks(); });
 
   it('acks a numbered frame once it is drawn, and reads the stream numbers', async () => {
@@ -60,6 +87,44 @@ describe('remote screen session (numbered frames, acks, latency)', () => {
     await vi.waitFor(() => expect(drawn).toHaveBeenCalled());
     await new Promise((r) => setTimeout(r, 10));
     expect(ws.sent.some((m) => m.includes('"ack"'))).toBe(false);
+    session.close();
+  });
+
+  it('takes frames over a direct connection once they come, each number once, and falls back when it breaks', async () => {
+    vi.stubGlobal('WebSocket', FakeSocket);
+    vi.stubGlobal('RTCPeerConnection', FakePeer);
+    const drawn = vi.fn(async () => ({ width: 64, height: 36, close: () => undefined }));
+    vi.stubGlobal('createImageBitmap', drawn);
+    let state: ScreenState | null = null;
+    const session = new RemoteScreenSession(() => 'ws://test/screen?v=2', document.createElement('canvas'), { mode: 'jpeg', window: 1, display: 0, fps: 5, maxWidth: 640, bitrate: 1000 }, (s) => { state = s; });
+    const ws = FakeSocket.last!;
+    ws.push(JSON.stringify({ type: 'started', streamId: 9, p2p: true }));
+    // the offer goes without the mDNS host candidate (the runner cannot resolve it)
+    await vi.waitFor(() => expect(ws.sent.some((m) => m.includes('"op":"rtc"'))).toBe(true));
+    const offer = JSON.parse(ws.sent.find((m) => m.includes('"op":"rtc"'))!) as { offer: string };
+    expect(offer.offer).toContain('203.0.113.9');
+    expect(offer.offer).not.toContain('.local');
+    ws.push(JSON.stringify({ type: 'rtc', streamId: 9, answer: 'v=0 answer' }));
+    await vi.waitFor(() => expect(FakePeer.last!.remote).toEqual({ type: 'answer', sdp: 'v=0 answer' }));
+
+    // frame 1 over the server, then frame 2 directly in two pieces
+    ws.push(numberedJpeg(1));
+    await vi.waitFor(() => expect(ws.sent).toContain(JSON.stringify({ op: 'ack', seq: 1 })));
+    const f2 = new Uint8Array(numberedJpeg(2));
+    const dc = FakePeer.last!.channel;
+    dc.push(new Uint8Array([0, ...f2.subarray(0, 4)]));
+    dc.push(new Uint8Array([1, ...f2.subarray(4)]));
+    await vi.waitFor(() => expect(dc.sent).toContain(JSON.stringify({ ack: 2 })));
+    expect(ws.sent).toContain(JSON.stringify({ op: 'p2p', on: true }));
+    expect(streamStatusLine(state!)).toContain('직접 연결');
+    // the same frame from the server (sent before it stopped) is not shown again
+    ws.push(numberedJpeg(2));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(drawn).toHaveBeenCalledTimes(2);
+
+    dc.onclose?.();
+    expect(ws.sent).toContain(JSON.stringify({ op: 'p2p', on: false }));
+    expect(state!.direct).toBe(false);
     session.close();
   });
 

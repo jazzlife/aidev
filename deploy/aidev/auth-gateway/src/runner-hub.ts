@@ -41,7 +41,11 @@ import type { TargetRow } from './store-aidev.js';
  * consent on that PC (`consent control on`) and a policy other than deny — then its {op:"input", ev} messages
  * go to the runner as `input.event` notifications (≤ 300/s) with the stream's window added by the gateway, so
  * positions are relative to that window. Every control session is a remote_runs row (kind "control").
- * screenshot() is one `screen.shot`. Screen needs runner ≥ 0.5 (video, input ≥ 0.6) and the owner's consent. */
+ * screenshot() is one `screen.shot`. Screen needs runner ≥ 0.5 (video, input ≥ 0.6) and the owner's consent.
+ * P2P (F-18, runner 0.18+, feature "p2p"): a viewer may also take the frames straight from the runner over WebRTC —
+ * its offer goes to the runner as `screen.rtc` ({op:"rtc"} → {type:"rtc", answer}); once frames arrive that way it
+ * says {op:"p2p", on:true} and gets no more frames here (on:false: back to this path from the next keyframe). While
+ * every viewer of a stream is direct, the runner sends its frames nowhere else (`screen.relay {on:false}`). */
 type Store = ReturnType<typeof openStore>;
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
 type Conn = { ws: WebSocket; targetId: number; userId: number; connectedAt: number; lastFrame: number; pending: Map<number, Pending>; nextId: number; hello: boolean; version: string };
@@ -126,8 +130,8 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
   const tunnels = new Map<string, RunnerTunnel>();         // `${targetId}:${streamId}` (F-06)
   /** A viewer of a screen stream. v2 viewers (session.ts with `v=2`) take numbered frames and ack each one they
    *  have shown; older pages get the frames without the number and are acked for when sent. */
-  type ScreenViewer = { needKey: boolean; v2: boolean; inFlight: Array<[number, number]> };
-  type ScreenStream = { targetId: number; streamId: number; config: string; window: number | null; viewers: Map<WebSocket, ScreenViewer>; gop: Buffer[]; gopBytes: number; format: { codec: string; width?: number; height?: number; reason?: string | null } | null; lastAt: number; frames: number; bytes: number; stopTimer: NodeJS.Timeout | null; keyAskedAt: number; acked: number };
+  type ScreenViewer = { needKey: boolean; v2: boolean; inFlight: Array<[number, number]>; p2p: boolean };
+  type ScreenStream = { targetId: number; streamId: number; config: string; window: number | null; viewers: Map<WebSocket, ScreenViewer>; gop: Buffer[]; gopBytes: number; format: { codec: string; width?: number; height?: number; reason?: string | null } | null; lastAt: number; frames: number; bytes: number; stopTimer: NodeJS.Timeout | null; keyAskedAt: number; acked: number; relay: boolean };
   const screens = new Map<string, ScreenStream>();          // `${targetId}:${streamId}` (F-07)
   // F-07d (2026-10-02): a viewer more than a second behind (or with 2 MB unsent) skips to the next keyframe — the
   // runner paces itself to the quickest viewer's acks, so one slow page never holds up the others
@@ -160,6 +164,15 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
       v.send(legacy(), { binary: true });
       if (seq && v.bufferedAmount < 256 * 1024) ackRunner(sc, seq);   // an older page cannot ack: sent with room to spare counts
     }
+  }
+  /** The runner sends frames here only while some viewer takes them from here (the others are direct). */
+  function relay(sc: ScreenStream) {
+    const on = !sc.viewers.size || [...sc.viewers.values()].some((v) => !v.p2p);
+    if (on === sc.relay) return;
+    sc.relay = on;
+    if (!on) { sc.gop = []; sc.gopBytes = 0; }   // frames stop arriving: what is kept would be stale
+    hub.notifyRunner(sc.targetId, 'screen.relay', { streamId: sc.streamId, on });
+    if (on) askKey(sc);
   }
   const GOP_MAX = 12 * 1024 * 1024;
   const controllers = new Map<number, Set<WebSocket>>();     // targetId → viewers with control on (input errors go to them)
@@ -379,7 +392,7 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
               else if (sc.gop.length) { sc.gop.push(frame); sc.gopBytes += frame.length; if (sc.gopBytes > GOP_MAX) { sc.gop = []; sc.gopBytes = 0; } }
               let legacy: Buffer | null = null;
               for (const [v, state] of sc.viewers) {
-                if (v.readyState === WebSocket.OPEN) sendFrame(sc, v, state, frame, () => (legacy ??= unnumbered(frame)));
+                if (v.readyState === WebSocket.OPEN && !state.p2p) sendFrame(sc, v, state, frame, () => (legacy ??= unnumbered(frame)));
               }
               return;
             }
@@ -414,11 +427,11 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
             return;
           }
           if ((msg.method === 'screen.error' || msg.method === 'screen.format') && msg.params && typeof msg.params === 'object') {
-            const p = msg.params as { streamId?: number; error?: string; codec?: string; width?: number; height?: number; reason?: string | null };
+            const p = msg.params as { streamId?: number; error?: string; codec?: string; width?: number; height?: number; reason?: string | null; seq?: number };
             const sc = typeof p.streamId === 'number' ? screens.get(key(conn.targetId, p.streamId)) : undefined;
             if (!sc) return;
             const out = msg.method === 'screen.format'
-              ? (sc.format = { codec: String(p.codec ?? 'jpeg'), ...(typeof p.width === 'number' && typeof p.height === 'number' ? { width: p.width, height: p.height } : {}), reason: p.reason ? String(p.reason).slice(0, 600) : null }, { type: 'format', ...sc.format })
+              ? (sc.format = { codec: String(p.codec ?? 'jpeg'), ...(typeof p.width === 'number' && typeof p.height === 'number' ? { width: p.width, height: p.height } : {}), reason: p.reason ? String(p.reason).slice(0, 600) : null }, { type: 'format', ...sc.format, ...(typeof p.seq === 'number' ? { seq: p.seq } : {}) })
               : { type: 'error', message: String(p.error ?? 'capture failed').slice(0, 500) };
             if (msg.method === 'screen.format') { sc.gop = []; sc.gopBytes = 0; }
             for (const v of sc.viewers.keys()) if (v.readyState === WebSocket.OPEN) v.send(JSON.stringify(out));
@@ -579,6 +592,7 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
     },
     /** Browser side of `/api/aidev/targets/:id/screen` (session and ownership checked by the caller).
      *  client → {op:"config", mode, window, display, fps, maxWidth, bitrate, codec, codecs} | {op:"control", on} | {op:"input", ev}
+     *           | {op:"ack", seq} | {op:"rtc", offer} | {op:"p2p", on}
      *  server → {type:"started"|"format"|"control"|"error"|"offline"} + binary frames `[kind][flags][data]` */
     attachScreen(req: IncomingMessage, socket: Duplex, head: Buffer, targetId: number, userId: number, alive: () => boolean, initial: ScreenOpts, proto = 1) {
       wss.handleUpgrade(req, socket, head, (ws) => {
@@ -590,6 +604,7 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
           const sc = current; current = null;
           if (!sc) return;
           sc.viewers.delete(ws);
+          relay(sc);
           if (!sc.viewers.size && !sc.stopTimer) sc.stopTimer = setTimeout(() => { if (!sc.viewers.size) stopScreen(sc, true); }, 8000);
         };
         const controlOff = () => {
@@ -615,7 +630,7 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
             let sc = [...screens.values()].find((s) => s.targetId === targetId && s.config === config);
             if (!sc) {
               nextStream = nextStream >= 0x3fff_fff0 ? 1 : nextStream + 1;
-              sc = { targetId, streamId: nextStream, config, window: win, viewers: new Map(), gop: [], gopBytes: 0, format: null, lastAt: 0, frames: 0, bytes: 0, stopTimer: null, keyAskedAt: 0, acked: 0 };
+              sc = { targetId, streamId: nextStream, config, window: win, viewers: new Map(), gop: [], gopBytes: 0, format: null, lastAt: 0, frames: 0, bytes: 0, stopTimer: null, keyAskedAt: 0, acked: 0, relay: true };
               screens.set(key(targetId, sc.streamId), sc);
               // 0.15+ runners number their frames and pace themselves by the acks (F-07d)
               const acks = Boolean(caps.features?.includes('acks'));
@@ -627,11 +642,14 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
             }
             if (sc.stopTimer) { clearTimeout(sc.stopTimer); sc.stopTimer = null; }
             if (ws.readyState !== WebSocket.OPEN) return;
-            send({ type: 'started', ...o, window: win, mode, codec, perWindow, control: Boolean(caps.control && caps.features?.includes('input')) });
+            // a direct path is worth trying for numbered video (the page acks over it)
+            const p2p = mode === 'video' && proto >= 2 && Boolean(caps.features?.includes('p2p') && caps.features.includes('acks'));
+            send({ type: 'started', ...o, window: win, mode, codec, perWindow, control: Boolean(caps.control && caps.features?.includes('input')), streamId: sc.streamId, p2p });
             if (sc.format) send({ type: 'format', ...sc.format });
             const v2 = proto >= 2;
             for (const f of sc.gop) ws.send(v2 ? f : unnumbered(f), { binary: true });
-            sc.viewers.set(ws, { needKey: sc.gop.length === 0, v2, inFlight: [] });
+            sc.viewers.set(ws, { needKey: sc.gop.length === 0, v2, inFlight: [], p2p: false });
+            relay(sc);
             if (sc.gop.length === 0 && sc.format) askKey(sc);   // a running stream of an unchanged window sends nothing on its own
             current = sc;
           } catch (error) {
@@ -651,6 +669,22 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
             if (!sc || !state || !Number.isInteger(seq) || seq <= 0) return;
             while (state.inFlight.length && state.inFlight[0][0] <= seq) state.inFlight.shift();
             return ackRunner(sc, seq);
+          }
+          if (msg.op === 'rtc') {
+            const sc = current;
+            if (!sc || typeof msg.offer !== 'string' || msg.offer.length > 20_000) return send({ type: 'rtc', error: '직접 연결을 시작할 수 없습니다' });
+            hub.call<{ answer?: string }>(targetId, 'screen.rtc', { streamId: sc.streamId, offer: msg.offer }, 10_000)
+              .then((r) => send({ type: 'rtc', streamId: sc.streamId, answer: r.answer }))
+              .catch((error) => send({ type: 'rtc', streamId: sc.streamId, error: error instanceof Error ? error.message : String(error) }));
+            return;
+          }
+          if (msg.op === 'p2p') {
+            const sc = current; const state = sc?.viewers.get(ws);
+            if (!sc || !state) return;
+            state.p2p = Boolean(msg.on);
+            // back on this path: from the next keyframe
+            if (!state.p2p) { state.needKey = true; state.inFlight = []; askKey(sc); }
+            return relay(sc);
           }
           if (msg.op === 'control') {
             if (!msg.on) { controlOff(); return send({ type: 'control', on: false }); }

@@ -146,6 +146,10 @@ pub async fn collect(cfg: &crate::config::Config) -> Value {
     if cfg!(feature = "vpx") {
         features.push("vp9");
     }
+    // the screen straight to the browser over WebRTC (rtc.rs, F-18)
+    if crate::rtc::available() {
+        features.push("p2p");
+    }
     json!({
         "runner": env!("CARGO_PKG_VERSION"),
         "os": platform(),

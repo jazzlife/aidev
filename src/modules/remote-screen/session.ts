@@ -12,6 +12,11 @@
  * `stats`; with this page's decode time they make `state.stats` and its latency estimate.
  * Codecs (F-18, 2026-10-03): the page says which it decodes (`codecs=vp9,h264`); runners with libvpx answer with VP9
  * (kind 4) from their CPU path — several times faster to encode than OpenH264 there — and H.264 otherwise.
+ * Direct (F-18 P2P, runner 0.18+): when `started` says `p2p`, the page also opens a WebRTC data channel to the runner
+ * (offer/answer over this socket, STUN only). The runner sends the same numbered frames there, in 16 KB pieces
+ * `[last u8][bytes]`; each frame number is taken once from whichever path brings it first, so the switch has no gap.
+ * Once frames come directly the page says `{op:"p2p", on:true}` (the gateway stops sending them) and acks on the
+ * channel; if the channel fails it says `on:false` and the gateway path resumes from the next keyframe.
  */
 import { getStoredAuthToken } from '@/shared/authToken';
 
@@ -39,6 +44,8 @@ export type ScreenState = {
   fps: number;
   kbps: number;
   stats: ScreenStats | null;
+  /** the frames come straight from the PC (WebRTC), not through the server */
+  direct: boolean;
 };
 
 const KIND_H264 = 1;
@@ -47,6 +54,26 @@ const KIND_JPEG = 3;
 const KIND_VP9 = 4;
 /** VP9 profile 0, 8-bit, level 5 (up to 4096×2176) — what the runner's libvpx sends. */
 const VP9_CODEC = 'vp09.00.50.08';
+/** The STUN server both ends ask for their public address (the runner's rtc.rs uses the same). */
+const STUN_URL = 'stun:stun.cloudflare.com:3478';
+/** How long the page gathers its candidates before it sends the offer anyway. */
+const GATHER_MS = 2000;
+
+/** The page's side of a direct connection: frames arrive in pieces on `channel`. */
+type DirectPeer = { pc: RTCPeerConnection; channel: RTCDataChannel; streamId: number; pieces: Uint8Array[]; live: boolean };
+
+/** The offer once the candidates are gathered (or GATHER_MS passed), without mDNS host names (the runner cannot resolve them). */
+async function gatheredOffer(pc: RTCPeerConnection) {
+  await pc.setLocalDescription(await pc.createOffer());
+  if (pc.iceGatheringState !== 'complete') {
+    await new Promise<void>((resolve) => {
+      const done = () => { if (pc.iceGatheringState === 'complete') resolve(); };
+      pc.addEventListener('icegatheringstatechange', done);
+      setTimeout(resolve, GATHER_MS);
+    });
+  }
+  return (pc.localDescription?.sdp ?? '').split('\r\n').filter((line) => !/^a=candidate:\S+ \d+ \S+ \d+ \S+\.local /.test(line)).join('\r\n');
+}
 
 let decodableCodecs: Promise<string[]> | null = null;
 /** The video codecs this browser decodes with WebCodecs, best first (checked once per page). */
@@ -98,7 +125,10 @@ export class RemoteScreenSession {
   private pending = new Map<number, { seq: number; at: number }>();
   private decodeTotal = 0;
   private decodeCount = 0;
-  state: ScreenState = { status: 'connecting', codec: null, note: null, error: null, controlAvailable: false, control: false, width: 0, height: 0, fps: 0, kbps: 0, stats: null };
+  /** the newest frame number taken (from either path) since the stream started */
+  private lastSeq = 0;
+  private peer: DirectPeer | null = null;
+  state: ScreenState = { status: 'connecting', codec: null, note: null, error: null, controlAvailable: false, control: false, width: 0, height: 0, fps: 0, kbps: 0, stats: null, direct: false };
 
   constructor(private url: (opts: ScreenOptions) => string, private canvas: HTMLCanvasElement, private opts: ScreenOptions, private onState: (s: ScreenState) => void) {
     if (opts.mode === 'video' && !webCodecsAvailable()) this.opts = { ...opts, mode: 'jpeg', fps: 5 };
@@ -122,11 +152,24 @@ export class RemoteScreenSession {
   }
 
   private onText(raw: string) {
-    let m: { type: string; message?: string; codec?: string; reason?: string | null; control?: boolean; on?: boolean } & Record<string, unknown>;
+    let m: { type: string; message?: string; codec?: string; reason?: string | null; control?: boolean; on?: boolean; seq?: number; streamId?: number; p2p?: boolean; answer?: string } & Record<string, unknown>;
     try { m = JSON.parse(raw); } catch { return; }
     if (m.type === 'stats') return this.onStats(m);
-    if (m.type === 'started') this.patch({ status: 'live', error: null, controlAvailable: Boolean(m.control) });
-    else if (m.type === 'format') { this.patch({ codec: m.codec ?? null, note: m.reason ?? null }); this.resetDecoder(); }
+    if (m.type === 'started') {
+      // a new stream: frame numbers start over, and a direct path is tried for it
+      this.lastSeq = 0;
+      this.closePeer();
+      this.patch({ status: 'live', error: null, controlAvailable: Boolean(m.control), direct: false });
+      if (m.p2p && typeof m.streamId === 'number' && typeof RTCPeerConnection !== 'undefined') void this.openPeer(m.streamId);
+    } else if (m.type === 'rtc') {
+      if (!this.peer || m.streamId !== this.peer.streamId) return;
+      if (typeof m.answer === 'string') this.peer.pc.setRemoteDescription({ type: 'answer', sdp: m.answer }).catch(() => this.closePeer());
+      else this.closePeer();   // the runner could not: the server path stays
+    } else if (m.type === 'format') {
+      this.patch({ codec: m.codec ?? null, note: m.reason ?? null });
+      // the note may come after its keyframe (it travels the other path): reset only before that frame
+      if (!(typeof m.seq === 'number' && this.lastSeq >= m.seq)) this.resetDecoder();
+    }
     else if (m.type === 'control') this.patch({ control: Boolean(m.on), error: null });
     else if (m.type === 'error') this.patch({ error: m.message ?? '오류' });
     else if (m.type === 'offline') this.patch({ status: 'closed', error: '원격 PC가 오프라인입니다', control: false });
@@ -144,7 +187,58 @@ export class RemoteScreenSession {
 
   /** The frame is on the canvas: tell the runner (it sends the next ones only as fast as they are shown). */
   private shown(seq: number) {
-    if (seq > 0) this.send({ op: 'ack', seq });
+    if (seq <= 0) return;
+    if (this.peer?.live && this.peer.channel.readyState === 'open') this.peer.channel.send(JSON.stringify({ ack: seq }));
+    else this.send({ op: 'ack', seq });
+  }
+
+  /** Offer the runner a direct connection for this stream; the server path carries on until frames come over it. */
+  private async openPeer(streamId: number) {
+    const pc = new RTCPeerConnection({ iceServers: [{ urls: STUN_URL }] });
+    const channel = pc.createDataChannel('screen');
+    channel.binaryType = 'arraybuffer';
+    const peer: DirectPeer = { pc, channel, streamId, pieces: [], live: false };
+    this.peer = peer;
+    channel.onmessage = (event) => { if (event.data instanceof ArrayBuffer) this.onPiece(peer, new Uint8Array(event.data)); };
+    channel.onclose = () => this.peerLost(peer);
+    pc.onconnectionstatechange = () => { if (pc.connectionState === 'failed' || pc.connectionState === 'closed') this.peerLost(peer); };
+    try {
+      const offer = await gatheredOffer(pc);
+      if (this.peer === peer) this.send({ op: 'rtc', offer });
+    } catch { this.peerLost(peer); }
+  }
+
+  private onPiece(peer: DirectPeer, piece: Uint8Array) {
+    if (this.peer !== peer || piece.length < 1) return;
+    peer.pieces.push(piece.subarray(1));
+    if ((piece[0] & 1) === 0) return;
+    const frame = peer.pieces.length === 1 ? peer.pieces[0] : new Uint8Array(peer.pieces.reduce((n, p) => n + p.length, 0));
+    if (peer.pieces.length > 1) { let at = 0; for (const p of peer.pieces) { frame.set(p, at); at += p.length; } }
+    peer.pieces = [];
+    if (!peer.live) {
+      // frames come directly now: the server stops sending them to this page
+      peer.live = true;
+      this.send({ op: 'p2p', on: true });
+      this.patch({ direct: true });
+    }
+    this.onFrame(frame);
+  }
+
+  /** The direct connection broke: the server path resumes (from its next keyframe). */
+  private peerLost(peer: DirectPeer) {
+    if (this.peer !== peer) return;
+    const wasLive = peer.live;
+    this.closePeer();
+    if (wasLive) { this.waitKey = true; this.send({ op: 'p2p', on: false }); }
+  }
+
+  private closePeer() {
+    const peer = this.peer;
+    if (!peer) return;
+    this.peer = null;
+    peer.channel.onclose = null; peer.pc.onconnectionstatechange = null;
+    try { peer.pc.close(); } catch { /* already closed */ }
+    if (this.state.direct) this.patch({ direct: false });
   }
 
   private tick(n: number) {
@@ -195,6 +289,8 @@ export class RemoteScreenSession {
     const numbered = (buf[1] & 2) === 2 && buf.length >= 6;
     const seq = numbered ? ((buf[2] << 24) >>> 0) + (buf[3] << 16) + (buf[4] << 8) + buf[5] : 0;
     const data = buf.subarray(numbered ? 6 : 2);
+    // both paths may bring the same frame (while switching): each number once
+    if (seq) { if (seq <= this.lastSeq) return; this.lastSeq = seq; }
     this.tick(buf.length);
     if (kind === KIND_JPEG) {
       if (this.jpegBusy) return;   // drop while the previous picture is still decoding
@@ -228,6 +324,7 @@ export class RemoteScreenSession {
     // the codecs this page decodes stay with the session (found when it connected)
     const next = { ...opts, codecs: this.opts.codecs };
     this.opts = next.mode === 'video' && !webCodecsAvailable() ? { ...next, mode: 'jpeg', fps: 5 } : next;
+    this.closePeer();   // the next `started` tries again for the new stream
     this.resetDecoder();
     this.send({ op: 'config', ...this.opts });
   }
@@ -240,6 +337,7 @@ export class RemoteScreenSession {
     this.closed = true;
     if (this.state.control) this.send({ op: 'control', on: false });
     this.ws?.close(1000);
+    this.closePeer();
     this.resetDecoder();
   }
 }

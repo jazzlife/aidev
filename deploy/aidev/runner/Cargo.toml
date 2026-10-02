@@ -1,6 +1,6 @@
 [package]
 name = "aidev-runner"
-version = "0.17.2"
+version = "0.18.0"
 edition = "2021"
 # wide 1.x (SIMD for the built-in H.264 encoder, via openh264 0.9.8) needs Rust 1.89; tray-icon 0.26 needs 1.90
 rust-version = "1.90"
@@ -40,6 +40,8 @@ lzma-rs = "0.3"
 # F-18: SIMD scaling and RGBA → I420 for the CPU path (xcap capture + OpenH264)
 fast_image_resize = { version = "6", features = ["rayon"] }
 yuvutils-rs = "0.8"
+str0m = { version = "0.24", default-features = false, features = ["rust-crypto"] }
+if-addrs = "0.15.0"
 
 [profile.release]
 opt-level = "s"
