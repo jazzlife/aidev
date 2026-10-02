@@ -98,16 +98,18 @@ describe('mobile common menu (drawer)', () => {
     fireEvent.click(screen.getByLabelText('메뉴'));
     await settle();
     const drawer = screen.getByTestId('app-drawer');
-    expect(drawer.textContent).toContain('m4pro 화면·제어');
-    expect(drawer.textContent).not.toContain('old-pc 화면');   // offline PCs have no screen entry
+    // fixed entries only: no list of PCs, no run history (that lives in its conversation)
+    expect(drawer.textContent).toContain('원격 제어');
+    expect(drawer.textContent).not.toContain('m4pro');
+    expect(drawer.textContent).not.toContain('원격 실행');
     fireEvent.click(screen.getAllByText('beta').at(-1)!);
     await settle();
     expect(screen.getByTestId('where').textContent).toBe('/projects/p2');
     expect(screen.queryByTestId('app-drawer')).toBeNull();
     fireEvent.click(screen.getByLabelText('메뉴'));
     await settle();
-    fireEvent.click(screen.getByText('원격 실행'));
-    expect(screen.getByTestId('where').textContent).toBe('/runs');
+    fireEvent.click(screen.getByText('원격 제어'));
+    expect(screen.getByTestId('where').textContent).toBe('/screen');
   });
 
   it('the back button closes the drawer before anything else', async () => {

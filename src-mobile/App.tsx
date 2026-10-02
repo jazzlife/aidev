@@ -18,7 +18,7 @@ const DebugScreen = lazy(() => import('@m/screens/DebugScreen').then((m) => ({ d
 const RemoteScreenScreen = lazy(() => import('@m/screens/RemoteScreenScreen').then((m) => ({ default: m.RemoteScreenScreen })));
 const ProjectsScreen = lazy(() => import('@m/screens/ProjectsScreen').then((m) => ({ default: m.ProjectsScreen })));
 const ProjectScreen = lazy(() => import('@m/screens/ProjectScreen').then((m) => ({ default: m.ProjectScreen })));
-const RunsScreen = lazy(() => import('@m/screens/RunsScreen').then((m) => ({ default: m.RunsScreen })));
+const ScreenPickScreen = lazy(() => import('@m/screens/ScreenPickScreen').then((m) => ({ default: m.ScreenPickScreen })));
 const TargetsScreen = lazy(() => import('@m/screens/TargetsScreen').then((m) => ({ default: m.TargetsScreen })));
 const CatalogScreen = lazy(() => import('@m/screens/CatalogScreen').then((m) => ({ default: m.CatalogScreen })));
 
@@ -49,9 +49,9 @@ export default function App() {
           <Route path="/session/:sessionId" element={<Gate><ChatScreen /></Gate>} />
           <Route path="/new" element={<Gate><ChatScreen /></Gate>} />
           <Route path="/settings" element={<Gate><SettingsScreen /></Gate>} />
+          <Route path="/screen" element={<Gate><ScreenPickScreen /></Gate>} />
           <Route path="/screen/:targetId" element={<Gate><RemoteScreenScreen /></Gate>} />
           <Route path="/pcs" element={<Gate><TargetsScreen /></Gate>} />
-          <Route path="/runs" element={<Gate><RunsScreen /></Gate>} />
           <Route path="/preview" element={<Gate><PreviewScreen /></Gate>} />
           <Route path="/debug" element={<Gate><DebugScreen /></Gate>} />
           <Route path="/catalog" element={<Gate><CatalogScreen /></Gate>} />

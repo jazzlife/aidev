@@ -28,7 +28,7 @@ const KEYS: Array<{ label: string; key: string; code: string }> = [
 ];
 const sourceKey = (s: RemoteScreenSource | null) => (!s ? '' : s.kind === 'window' ? `w:${s.id}` : s.kind === 'console' ? `c:${s.streamId}` : `d:${s.id}`);
 
-/** Route `/m/screen/:targetId` (from settings → 원격 PC 프로그램). */
+/** Route `/m/screen/:targetId` (from the drawer's 원격 제어 → a PC, or a result card's "지금 화면 보기"). */
 export function RemoteScreenScreen() {
   const { targetId: raw } = useParams();
   useParent(useOpener('/'));

@@ -1,17 +1,15 @@
 import { useEffect, useState } from 'react';
-import { Bot, ChevronRight, Link2 } from 'lucide-react';
 
 import { useAuth } from '@/modules/chat-core';
 import { aidevApi, claudeAuth, routingStore, useClaudeAuth, useRoutingState, type EnginesResult, type RoutingMode } from '@/modules/aidev-router';
 import { EffortCapControl } from '@m/components/EffortCapControl';
 import { ClaudeLoginSheet } from '@m/components/ClaudeLoginSheet';
 import { KnowledgeSection } from '@m/components/KnowledgeSection';
-import { ScreenSnapshotSection } from '@m/components/ScreenSnapshotSection';
 import { disablePush, enablePush, pushState, type PushState } from '@m/lib/push';
 
 const PUSH_LABEL: Record<PushState, string> = { on: '켜짐', off: '꺼짐', denied: '브라우저에서 차단됨 (설정에서 허용)', needs_install: '홈 화면에 추가한 앱에서 켤 수 있습니다', unsupported: '이 브라우저는 지원하지 않습니다' };
 import { TopBar } from '@m/components/TopBar';
-import { useGo, useParent } from '@m/lib/nav';
+import { useParent } from '@m/lib/nav';
 
 const MODES: Array<{ value: RoutingMode; label: string; hint: string }> = [
   { value: 'auto', label: '자동', hint: '명령마다 전문 agent·엔진·모델을 고르고 바로 적용' },
@@ -22,7 +20,6 @@ const MODES: Array<{ value: RoutingMode; label: string; hint: string }> = [
 /** Mobile settings: routing mode, engine status, UI switch, sign out. */
 export function SettingsScreen() {
   const { user, logout } = useAuth();
-  const go = useGo();
   useParent('/');
   const routing = useRoutingState();
   const [engines, setEngines] = useState<EnginesResult | null>(null);
@@ -95,24 +92,7 @@ export function SettingsScreen() {
           </div>
           {pushNote ? <div className="text-[12px] text-muted mt-2">{pushNote}</div> : null}
         </section>
-        <section>
-          <div className="text-[12px] uppercase tracking-wide text-muted mb-2">원격 PC</div>
-          <button type="button" onClick={() => go('/pcs')} className="w-full rounded-xl2 border border-line bg-surface px-4 py-3 text-left flex items-center gap-3">
-            <Link2 size={18} className="text-accent" />
-            <span className="flex-1"><div className="text-[15px]">PC 연결</div><div className="text-[12px] text-muted">PC 등록·페어링 코드·연결 상태</div></span>
-            <ChevronRight size={18} className="text-muted" />
-          </button>
-        </section>
-        <section>
-          <div className="text-[12px] uppercase tracking-wide text-muted mb-2">Agent</div>
-          <button type="button" onClick={() => go('/catalog')} className="w-full rounded-xl2 border border-line bg-surface px-4 py-3 text-left flex items-center gap-3">
-            <Bot size={18} className="text-accent" />
-            <span className="flex-1"><div className="text-[15px]">Agent 카탈로그</div><div className="text-[12px] text-muted">전문 agent의 성공률·교훈·지식 보기</div></span>
-            <ChevronRight size={18} className="text-muted" />
-          </button>
-        </section>
         <KnowledgeSection />
-        <ScreenSnapshotSection />
         <section>
           <div className="text-[12px] uppercase tracking-wide text-muted mb-2">화면</div>
           <button type="button" onClick={switchToWorkbench} className="w-full rounded-xl2 border border-line bg-surface px-4 py-3 text-left text-[15px]">데스크탑 작업대(IDE)로 전환</button>

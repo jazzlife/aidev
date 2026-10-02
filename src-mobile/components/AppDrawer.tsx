@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { AppWindow, Bot, Bug, FolderGit2, Link2, ListChecks, MessageSquare, Monitor, Plus, Settings, Star, X } from 'lucide-react';
+import { AppWindow, Bot, Bug, FolderGit2, Link2, MessageSquare, Monitor, Plus, Settings, Star, X } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 
 import { api, useAuth } from '@/modules/chat-core';
@@ -8,7 +8,8 @@ import { useBackOverlay, useGo } from '@m/lib/nav';
 
 /**
  * The app's common menu (2026-10-02, "공통 메뉴와 프로젝트 선택은 드로어에서 바로"): conversations, a project switch, the
- * remote tools (runs, each PC's screen, preview, debugger, PC pairing), the agent catalog and settings — reachable from
+ * remote tools (remote control, preview, debugger, PC pairing), the agent catalog and settings — fixed entries only
+ * (which PC is chosen on the screen it opens; run history lives in its conversation) — reachable from
  * every screen (☰ in the top bar, or a swipe from the left edge). Top bars keep only the page's own actions.
  */
 type DrawerApi = { open: () => void };
@@ -74,12 +75,7 @@ function Drawer({ onClose }: { onClose: () => void }) {
           <button type="button" className={`${row(pathname === '/projects')} text-accent`} onClick={() => open('/projects')}>모든 프로젝트{projects && projects.length > 8 ? ` (${projects.length})` : ''}</button>
 
           {section('원격 PC')}
-          <button type="button" className={row(pathname === '/runs')} onClick={() => open('/runs')}><ListChecks size={18} className="text-muted" /> 원격 실행</button>
-          {targets?.filter((t) => t.online).map((t) => (
-            <button key={t.id} type="button" className={row(pathname === `/screen/${t.id}`)} onClick={() => open(`/screen/${t.id}`)}>
-              <Monitor size={18} className="text-muted" /> <span className="flex-1 min-w-0 truncate">{t.name} 화면·제어</span>
-            </button>
-          ))}
+          <button type="button" className={row(pathname.startsWith('/screen'))} onClick={() => open('/screen')}><Monitor size={18} className="text-muted" /> 원격 제어</button>
           <button type="button" className={row(pathname === '/preview')} onClick={() => open('/preview')}><AppWindow size={18} className="text-muted" /> 미리보기</button>
           <button type="button" className={row(pathname === '/debug')} onClick={() => open('/debug')}><Bug size={18} className="text-muted" /> 디버그</button>
           <button type="button" className={row(pathname === '/pcs')} onClick={() => open('/pcs')}>
