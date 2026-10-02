@@ -164,9 +164,12 @@ function WorkspaceMain({
 
           {activeTab === 'shell' && (
             <div className="h-full w-full overflow-hidden">
+              {/* a plain login shell, as in the workbench: no Claude CLI started on its own for the selected chat */}
               <StandaloneShell
                 project={selectedProject}
-                session={selectedSession}
+                session={null}
+                command={'exec "${SHELL:-bash}" -l'}
+                isPlainShell
                 showHeader={false}
                 isActive={activeTab === 'shell'}
               />

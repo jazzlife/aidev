@@ -51,6 +51,8 @@ const LIVE_WINDOWS: LiveWindowSpec[] = [
   { id: 'preview', title: '미리보기', icon: AppWindow, render: (visible) => <PreviewPane isVisible={visible} />, popoutPath: '/live/preview' },
   { id: 'screen', title: '원격 화면', icon: Monitor, render: (visible) => <ScreenPane isVisible={visible} />, popoutPath: '/live/screen' },
 ];
+/** The workbench terminal: the user's login shell in the project folder. */
+const PLAIN_SHELL = 'exec "${SHELL:-bash}" -l';
 // '원격 대상' (register and pair PCs) is the desktop activity bar's view; tablets reach it here (it had no way in)
 const TABLET_PANES: Array<{ id: TabletPane; title: string }> = [
   { id: 'files', title: '파일' }, { id: 'terminal', title: '터미널' }, { id: 'git', title: 'Git' }, { id: 'remote', title: '원격 실행' }, { id: 'targets', title: '원격 대상' }, { id: 'catalog', title: 'Agent' }, { id: 'browser', title: '브라우저' },
@@ -270,7 +272,10 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
   );
   const explorer = <FileTree selectedProject={selectedProject} onFileOpen={handleFileOpen} revealDirectory={revealDirectory} showTitle={false} />;
   const git = <GitPanel selectedProject={selectedProject} isMobile={false} onFileOpen={handleFileOpen} onProjectSelect={onProjectSelect} onProjectsRefresh={onProjectsRefresh} />;
-  const terminal = (active: boolean) => <StandaloneShell project={selectedProject} session={selectedSession} showHeader={false} isActive={active} />;
+  // a plain login shell in the project folder: Claude runs in the chat only. The upstream terminal started
+  // `claude --resume <chat>` on its own whenever a chat was selected — a CLI nobody asked for, kept alive in the
+  // background (30 min after the pane closes) and writing the same session the chat writes
+  const terminal = (active: boolean) => <StandaloneShell project={selectedProject} session={null} command={PLAIN_SHELL} isPlainShell showHeader={false} isActive={active} />;
   const editorGroup = <EditorGroup tabs={editor.tabs} active={editor.active} onActivate={editor.setActive} onClose={editor.api.close} projectPath={selectedProject.path} />;
 
   if (isTablet) {
