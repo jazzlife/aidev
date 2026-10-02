@@ -456,6 +456,12 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
   - 게이트: Windows·PowerShell(Stop-Process·taskkill, 서비스, 레지스트리, 방화벽·netsh, 실행 정책, 디스크, Install-Module·msiexec, `irm|iex`)과 adb·fastboot(uninstall, pm clear, flash) 파괴적 분류, Get-/Test- cmdlet·dir/type·adb devices/logcat/dumpsys는 읽기 전용.
   - 테스트: 러너 cargo 40(+Windows 전용 5: cmd UTF-8, PowerShell 종료 코드·한글·CIM, 프로세스 트리, Git Bash, 청크 경계), 게이트 60건, runtime `remote-pull.test.ts`, 실제 러너 e2e `auth-gateway/test/runner-parity-e2e-test.mjs`(셸·UTF-8·트리 종료·fs.pull·SDK adb·capabilities), CI `runner-e2e.yml`(windows-2022·ubuntu-24.04 + Windows 작업 옵션 확인). smoke 223, server 497, client 483.
   - 검증: Mac 실제 러너 e2e 7/7; GitHub Actions Windows 7/7·Linux 7/7, Windows 전용 cargo 5/5, 작업 등록(Highest·S4U·부팅 트리거·PT0S); 운영(0fec65e2, m4pro 러너 0.12.0) agent 경로(runtime MCP → 게이트웨이 → 러너) 9/9 — pwsh 한글·종료 코드, bash, adb, 9MB `remote_pull` sha256 일치, 허용 폴더 밖 거부. 남은 확인: 한국어 Windows 실기(cp949 cmd 출력), 실제 Android 기기, Windows 러너 0.12.0 릴리스(runner-v0.12.0 태그) 배포.
+  - 러너 0.13.0(2026-10-02, 사용자 요구 "명령 없이 실행하면 포그라운드, install/uninstall로 서비스" · "install 기본은 강한 권한, 제한할 때 파라미터" · "UI가 있는 OS는 아이콘으로 동작 확인, 컨텍스트 메뉴로 시작·정지·종료"):
+    - CLI: `aidev-runner`(=start, 미등록이면 페어링 코드를 물음, Windows 더블클릭 시 오류면 창 유지), `install`, `uninstall`(예전 install-service/uninstall-service는 숨은 별칭).
+    - install 기본: 부팅 직후부터 + 관리자 권한. Windows 작업 2개(로그인 Interactive + 부팅 S4U, 둘 다 Highest, UAC 한 번), macOS LaunchAgent + LaunchDaemon(사용자 계정, `start --boot`), Linux linger; Linux·macOS 관리자 = 비밀번호 없는 sudo(/etc/sudoers.d/aidev-runner, visudo 확인, sudo 비밀번호 한 번). 부팅 러너는 로그인 세션 러너가 오면 넘기고(handoff 파일) 끝나면 다시 이어받음. `--limited`·`--logon-only`로 제한, uninstall은 모두 제거.
+    - 상태 아이콘(tray-icon: Windows 알림 영역·macOS 메뉴 막대·Linux StatusNotifier(KSNI, GTK 없음)): 로고 + 점(초록 연결됨·주황 연결 중·빨강 정지됨), 메뉴 시작·정지·종료. 정지 = `~/.aidev/paused`(부팅 러너 포함 모두 따름), 종료 = 정지 + 종료(서비스가 다시 띄우지 않게 Restart=on-failure / KeepAlive SuccessfulExit=false), 직접 실행은 정지 해제. SSH·서버·부팅 러너는 아이콘 없음.
+    - 함께 고친 버그: 세션이 중간에 끝나면(정지·넘겨주기) 쓰기 태스크가 소켓을 쥐고 있어 대상이 온라인으로 남음 → Drop 가드; 게이트웨이 재접속 대조가 시작 중인 명령을 lost로 처리해 출력 유실 → exec.start 응답 받은 스트림만 대조; Windows uninstall이 러너를 남김; Ubuntu에서 --limited·uninstall이 sudoers를 못 봐(root 전용 폴더) 지우지 않음 → `sudo -n rm`.
+    - 검증: Mac에서 실제 마우스 클릭으로 메뉴 정지(빨강·끊김)·시작(재연결)·종료(아이콘 사라짐·정지 유지); CI(run 36952904507) Windows·Linux·macOS 모두 — e2e 8/8(정지·시작 포함), install 기본값·넘겨받기 양방향·제한 설치·제거.
 
 **F 완료 기준**: F-12 e2e, F-11 점검 통과, 러너 3 OS 바이너리 존재(macOS는 Mac 빌드).
 
