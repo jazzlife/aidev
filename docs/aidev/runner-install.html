@@ -84,7 +84,7 @@
   </div>
 
   <nav class="os" aria-label="OS">
-    <a href="#windows">Windows</a><a href="#macos">macOS</a><a href="#linux">Linux · 라즈베리 파이</a><a href="#manage">업데이트 · 제거</a><a href="#commands">러너 명령</a>
+    <a href="#windows">Windows</a><a href="#macos">macOS</a><a href="#linux">Linux · 라즈베리 파이</a><a href="#reinstall">다시 설치</a><a href="#manage">업데이트 · 제거</a><a href="#commands">러너 명령</a>
   </nav>
 
   <section id="windows">
@@ -153,6 +153,37 @@
   <div class="note warn">
     <span><b>Android · iPhone</b>에는 러너를 설치하지 않습니다. 휴대폰이나 에뮬레이터를 연결한 PC의 러너가 adb·Xcode로 다룹니다.</span>
   </div>
+
+  <hr>
+
+  <section id="reinstall">
+    <h2>다시 설치 (서비스만 지운 뒤, 페어링은 그대로)</h2>
+    <p class="hint"><code>uninstall</code>이나 설치 스크립트의 <code>--uninstall</code>(Windows <code>-Uninstall</code>)은 서비스만 지웁니다. 러너 파일과 페어링은 남아 있으므로 코드 없이 다시 설치할 수 있습니다.</p>
+    <div class="step">
+      <h3>방법 1 · 남아 있는 러너로 바로 (가장 빠름)</h3>
+      <div class="shell">Windows · PowerShell</div>
+      <div class="cmd"><pre>&amp; "$HOME\.aidev\bin\aidev-runner.exe" install</pre><button type="button">복사</button></div>
+      <div class="shell">macOS · Linux · 터미널</div>
+      <div class="cmd"><pre>~/.aidev/bin/aidev-runner install</pre><button type="button">복사</button></div>
+      <p class="hint">처음 설치와 같이 부팅 직후부터, 관리자 권한으로 등록합니다(Windows UAC 한 번, macOS·Linux sudo 비밀번호 한 번). 제한하려면 뒤에 <code>--limited --logon-only</code>.</p>
+    </div>
+    <div class="step">
+      <h3>방법 2 · 설치 스크립트를 코드 없이 (최신 버전으로 바꾸면서)</h3>
+      <div class="shell">Windows · PowerShell</div>
+      <div class="cmd"><pre>&amp; ([scriptblock]::Create((irm https://dev.nado.work/_runner/scripts/install-windows.ps1)))</pre><button type="button">복사</button></div>
+      <div class="shell">macOS</div>
+      <div class="cmd"><pre>curl -fsSL https://dev.nado.work/_runner/scripts/install-macos.sh | bash</pre><button type="button">복사</button></div>
+      <div class="shell">Linux · 라즈베리 파이</div>
+      <div class="cmd"><pre>curl -fsSL https://dev.nado.work/_runner/scripts/install-linux.sh | bash</pre><button type="button">복사</button></div>
+    </div>
+    <div class="step">
+      <h3>페어링까지 처음부터 (다른 계정에 연결하거나 대상을 지웠을 때)</h3>
+      <p class="hint">PC에서 토큰을 지운 뒤, 작업대 원격 대상(또는 휴대폰 PC 연결)에서 새 코드를 받아 위 OS별 설치 줄을 <code>--code</code>(Windows <code>-Code</code>)와 함께 실행합니다.</p>
+      <div class="cmd"><pre>&amp; "$HOME\.aidev\bin\aidev-runner.exe" uninstall; &amp; "$HOME\.aidev\bin\aidev-runner.exe" unpair</pre><button type="button">복사</button></div>
+      <div class="cmd"><pre>~/.aidev/bin/aidev-runner uninstall; ~/.aidev/bin/aidev-runner unpair</pre><button type="button">복사</button></div>
+      <p class="hint">위는 Windows, 아래는 macOS·Linux. 작업대에서 예전 대상을 지우면 그 PC의 연결은 즉시 끊깁니다.</p>
+    </div>
+  </section>
 
   <hr>
 

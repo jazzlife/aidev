@@ -67,6 +67,54 @@ curl -fsSL https://dev.nado.work/_runner/scripts/install-linux.sh | bash -s -- -
 
 > **Android · iPhone**에는 러너를 설치하지 않습니다. 휴대폰이나 에뮬레이터를 연결한 PC의 러너가 adb·Xcode로 다룹니다.
 
+## 다시 설치 (서비스만 지운 뒤, 페어링은 그대로)
+
+`uninstall`이나 설치 스크립트의 `--uninstall`(Windows `-Uninstall`)은 서비스만 지웁니다. 러너 파일과 페어링은 남아 있으므로 코드 없이 다시 설치할 수 있습니다.
+
+**방법 1 · 남아 있는 러너로 바로 (가장 빠름)**
+
+```powershell
+# Windows (PowerShell)
+& "$HOME\.aidev\bin\aidev-runner.exe" install
+```
+
+```bash
+# macOS · Linux
+~/.aidev/bin/aidev-runner install
+```
+
+처음 설치와 같이 부팅 직후부터, 관리자 권한으로 등록합니다(Windows UAC 한 번, macOS·Linux sudo 비밀번호 한 번). 제한하려면 뒤에 `--limited --logon-only`.
+
+**방법 2 · 설치 스크립트를 코드 없이 (최신 버전으로 바꾸면서)**
+
+```powershell
+# Windows (PowerShell)
+& ([scriptblock]::Create((irm https://dev.nado.work/_runner/scripts/install-windows.ps1)))
+```
+
+```bash
+# macOS
+curl -fsSL https://dev.nado.work/_runner/scripts/install-macos.sh | bash
+# Linux · 라즈베리 파이
+curl -fsSL https://dev.nado.work/_runner/scripts/install-linux.sh | bash
+```
+
+**페어링까지 처음부터 (다른 계정에 연결하거나 대상을 지웠을 때)**
+
+PC에서 토큰을 지운 뒤, 작업대 원격 대상(또는 휴대폰 PC 연결)에서 새 코드를 받아 위 OS별 설치 줄을 `--code`(Windows `-Code`)와 함께 실행합니다.
+
+```powershell
+# Windows
+& "$HOME\.aidev\bin\aidev-runner.exe" uninstall; & "$HOME\.aidev\bin\aidev-runner.exe" unpair
+```
+
+```bash
+# macOS · Linux
+~/.aidev/bin/aidev-runner uninstall; ~/.aidev/bin/aidev-runner unpair
+```
+
+작업대에서 예전 대상을 지우면 그 PC의 연결은 즉시 끊깁니다.
+
 ## 업데이트
 
 이미 연결된 PC: 코드 없이 같은 줄. 페어링과 허용 설정은 그대로 유지됩니다.
