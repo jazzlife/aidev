@@ -33,6 +33,9 @@ aidev-runner unpair                       # 토큰 삭제
   교체: 받고 SHA-256·`--version` 확인(macOS는 이 Mac의 고정 서명) → `~/.aidev/updating`으로 이 PC의 러너가 모두 연결·명령을 멈춤(정지와 같음)
   → 연결 잠금이 풀리면 파일 교체(이전 파일 `aidev-runner.prev`) → 각 러너가 자기 인자 그대로 새 파일로 다시 시작(Unix exec: 같은 pid라
   서비스 관계·sudo·세션 유지, Windows: 같은 토큰으로 새 프로세스). 그 사이 대기 중이라 표시를 놓친 러너도 실행 파일이 바뀐 것을 보고 다시 시작.
+- 디버그 어댑터: 처음 쓸 때 `~/.aidev/adapters/<이름>/`에 받음 — `clrdbg`, `netcoredbg`, `js-debug`, `codelldb`, `debugpy`, `probe-rs`,
+  `mono-debug`, `delve`, `aidev-jdi`. 담긴 버전(+SHA-256)은 폴더의 `.aidev-ok`에 적고, 버전이 바뀌면 같은 폴더를 새것으로 교체
+  (Windows에서 실행 중이라 못 바꾸면 이번엔 있던 버전을 쓰고 다음에 교체) (0.14.1).
 - 설정: `~/.aidev/runner.toml`(Unix 0600) — gateway, token, target_id, name, allowed_roots, screen_consent, inherit_env.
   `AIDEV_RUNNER_HOME`으로 위치 변경.
 - 연결: Bearer 토큰, 접속 즉시 `runner.hello{capabilities}`(OS·아키텍처·호스트·셸·도구 버전·adb/sdb 기기·allowed_roots·화면 동의),

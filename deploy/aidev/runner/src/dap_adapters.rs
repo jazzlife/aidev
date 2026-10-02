@@ -2,7 +2,9 @@
 //! Every adapter speaks DAP; `Launch::stdio` says whether it serves a TCP port itself or talks over
 //! stdin/stdout (then dap.rs puts a one-client TCP port in front of it). Provisioning, in order of
 //! preference: already on the user's PATH / toolchain → fetched once at a pinned version with a pinned
-//! SHA-256 into <runner home>/adapters/ → installed privately with the language's own package tool.
+//! SHA-256 into <runner home>/adapters/<name>/ → installed privately with the language's own package tool.
+//! One folder per adapter, by name (adapters/clrdbg, adapters/netcoredbg …); the version it holds is written in
+//! its `.aidev-ok`, and another version replaces it in place.
 //! Nothing is installed system-wide. AIDEV_ADAPTER_MIRROR=<dir> takes every download from a folder.
 //!
 //!   js-debug    Node.js / TypeScript / browsers          download (GitHub)      needs node
@@ -174,22 +176,51 @@ pub fn fetch(url: &str, name: &str, sha256: &str, dest: &Path) -> Result<(), Str
     Ok(())
 }
 
-/// `dir` exists and is complete (marker written last), or `build` fills a temp dir that is then moved in.
-pub fn provision(dir: &Path, build: impl FnOnce(&Path) -> Result<(), String>) -> Result<(), String> {
-    if dir.join(".aidev-ok").is_file() {
-        return Ok(());
+/// `adapters/<name>` holds `version` (its `.aidev-ok`, written last, says so), or `build` fills a temp folder that then
+/// takes its place. A folder in use (Windows: a running adapter's files) cannot be swapped: the version already there
+/// is used this time and the swap is tried again next time.
+pub fn provision(name: &str, version: &str, build: impl FnOnce(&Path) -> Result<(), String>) -> Result<PathBuf, String> {
+    provision_in(&adapters_dir(), name, version, build)
+}
+
+fn provision_in(root: &Path, name: &str, version: &str, build: impl FnOnce(&Path) -> Result<(), String>) -> Result<PathBuf, String> {
+    let dir = root.join(name);
+    let marker = |d: &Path| std::fs::read_to_string(d.join(".aidev-ok")).ok().map(|s| s.trim().to_string());
+    let have = marker(&dir);
+    if have.as_deref() == Some(version) {
+        return Ok(dir);
     }
-    std::fs::create_dir_all(adapters_dir()).map_err(|e| e.to_string())?;
-    let tmp = dir.with_extension(format!("tmp{}", std::process::id()));
+    std::fs::create_dir_all(root).map_err(|e| e.to_string())?;
+    let tmp = root.join(format!("{name}.tmp{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&tmp);
     std::fs::create_dir_all(&tmp).map_err(|e| e.to_string())?;
     if let Err(e) = build(&tmp) {
         let _ = std::fs::remove_dir_all(&tmp);
         return Err(e);
     }
-    std::fs::write(tmp.join(".aidev-ok"), now_ms().to_string()).map_err(|e| e.to_string())?;
-    let _ = std::fs::remove_dir_all(dir);
-    std::fs::rename(&tmp, dir).map_err(|e| format!("{}: {e}", dir.display()))
+    std::fs::write(tmp.join(".aidev-ok"), version).map_err(|e| e.to_string())?;
+    if dir.exists() {
+        // moved aside whole (one rename) rather than deleted file by file: in use, it stays intact
+        let old = root.join(format!("{name}.old{}", std::process::id()));
+        if std::fs::rename(&dir, &old).is_err() {
+            let _ = std::fs::remove_dir_all(&tmp);
+            return match have {
+                Some(v) => {
+                    eprintln!("[aidev-runner] {name}: 사용 중이라 {v}를 그대로 씁니다 ({version}로는 다음에 바꿉니다)");
+                    Ok(dir)
+                }
+                None => Err(format!("{}: 사용 중이라 바꿀 수 없습니다 — 디버그 세션을 끝내고 다시 하세요", dir.display())),
+            };
+        }
+        std::fs::rename(&tmp, &dir).map_err(|e| {
+            let _ = std::fs::rename(&old, &dir);
+            format!("{}: {e}", dir.display())
+        })?;
+        let _ = std::fs::remove_dir_all(&old);
+        return Ok(dir);
+    }
+    std::fs::rename(&tmp, &dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    Ok(dir)
 }
 
 #[cfg(unix)]
@@ -237,16 +268,15 @@ pub fn unpack(archive: &Path, dest: &Path, keep: Option<&str>) -> Result<(), Str
     Ok(())
 }
 
-/// Download + verify + unpack into <adapters>/<id> once; returns that folder.
-fn download_unpacked(id: &str, url: &str, file: &str, sha: &str, keep: Option<&str>) -> Result<PathBuf, String> {
-    let dir = adapters_dir().join(id);
-    provision(&dir, |tmp| {
+/// Download + verify + unpack `version` into <adapters>/<name> once; returns that folder. The file's SHA-256 is part
+/// of what the folder records: a rebuilt file under the same version number is taken too.
+fn download_unpacked(name: &str, version: &str, url: &str, file: &str, sha: &str, keep: Option<&str>) -> Result<PathBuf, String> {
+    provision(name, &format!("{version} {sha}"), |tmp| {
         let archive = tmp.join(file);
         fetch(url, file, sha, &archive)?;
         unpack(&archive, tmp, keep)?;
         std::fs::remove_file(&archive).map_err(|e| e.to_string())
-    })?;
-    Ok(dir)
+    })
 }
 
 fn exe(name: &str) -> String {
@@ -276,8 +306,7 @@ fn java_for_jdi() -> Result<PathBuf, String> {
 /// aidev-jdi.jar written from the runner binary into the adapters folder (once per version and content).
 fn ensure_jdi() -> Result<PathBuf, String> {
     let sha = crate::sync::sha256_bytes(AIDEV_JDI_JAR);
-    let dir = adapters_dir().join(format!("aidev-jdi-{AIDEV_JDI_VERSION}-{}", &sha[..12]));
-    provision(&dir, |tmp| std::fs::write(tmp.join("aidev-jdi.jar"), AIDEV_JDI_JAR).map_err(|e| e.to_string()))?;
+    let dir = provision("aidev-jdi", &format!("{AIDEV_JDI_VERSION} {sha}"), |tmp| std::fs::write(tmp.join("aidev-jdi.jar"), AIDEV_JDI_JAR).map_err(|e| e.to_string()))?;
     existing(dir.join("aidev-jdi.jar"))
 }
 
@@ -288,8 +317,7 @@ fn python() -> Result<PathBuf, String> {
 
 /// debugpy, installed privately (pip --target) so the user's Python stays untouched.
 fn ensure_debugpy(python: &Path) -> Result<PathBuf, String> {
-    let dir = adapters_dir().join(format!("debugpy-{DEBUGPY_VERSION}"));
-    provision(&dir, |tmp| {
+    provision("debugpy", DEBUGPY_VERSION, |tmp| {
         let mut cmd = std::process::Command::new(python);
         cmd.no_window().args(["-m", "pip", "install", "--disable-pip-version-check", "--no-input", "--quiet", "--target"]).arg(tmp).arg(format!("debugpy=={DEBUGPY_VERSION}"));
         if let Some(mirror) = std::env::var_os("AIDEV_ADAPTER_MIRROR") {
@@ -307,8 +335,7 @@ fn ensure_debugpy(python: &Path) -> Result<PathBuf, String> {
             return Err("debugpy 설치 결과가 없습니다".into());
         }
         Ok(())
-    })?;
-    Ok(dir)
+    })
 }
 
 /// `<tool> --version` output's first line (for the version checks and the report).
@@ -366,7 +393,7 @@ fn ensure_netcoredbg(gateway: Option<&str>) -> Result<PathBuf, String> {
         });
     }
     let (_, file, sha) = NETCOREDBG_ASSETS.iter().find(|(p, _, _)| *p == platform).ok_or_else(|| unsupported("netcoredbg"))?;
-    let dir = download_unpacked(&format!("netcoredbg-{NETCOREDBG_VERSION}"), &format!("https://github.com/Samsung/netcoredbg/releases/download/{NETCOREDBG_VERSION}/{file}"), file, sha, None)?;
+    let dir = download_unpacked("netcoredbg", NETCOREDBG_VERSION, &format!("https://github.com/Samsung/netcoredbg/releases/download/{NETCOREDBG_VERSION}/{file}"), file, sha, None)?;
     existing(dir.join("netcoredbg").join(exe("netcoredbg")))
 }
 
@@ -386,7 +413,7 @@ fn ensure_from_gateway(name: &str, gateway: Option<&str>) -> Result<PathBuf, Str
     if file.is_empty() || file.contains('/') || file.contains("..") || sha.len() != 64 {
         return Err(format!("{name}: 목록 항목이 올바르지 않습니다"));
     }
-    download_unpacked(&format!("{name}-{version}-{platform}"), &format!("{base}/_runner/adapters/{file}"), file, sha, None)
+    download_unpacked(name, version, &format!("{base}/_runner/adapters/{file}"), file, sha, None)
 }
 
 /// A .NET assembly that runs as a 32-bit process (x86, or AnyCPU with "prefer 32-bit"): machine i386 with
@@ -420,8 +447,7 @@ fn ensure_delve() -> Result<PathBuf, String> {
         return Ok(p);
     }
     let go = which("go").ok_or("Go 디버깅에는 이 PC에 go가 있어야 합니다")?;
-    let dir = adapters_dir().join("delve");
-    provision(&dir, |tmp| {
+    let dir = provision("delve", "latest", |tmp| {
         let mut cmd = std::process::Command::new(&go);
         cmd.no_window().args(["install", "github.com/go-delve/delve/cmd/dlv@latest"]).env("GOBIN", tmp).stdin(std::process::Stdio::null());
         if let Some(path) = crate::exec::user_path() {
@@ -444,7 +470,7 @@ pub fn launch(adapter: &str, port: u16, opts: &Options) -> Result<Launch, String
     match adapter {
         "js-debug" => {
             let node = which("node").ok_or("Node 디버깅에는 이 PC에 node가 있어야 합니다")?;
-            let dir = download_unpacked(&format!("js-debug-{JS_DEBUG_VERSION}"), &format!("https://github.com/microsoft/vscode-js-debug/releases/download/v{JS_DEBUG_VERSION}/js-debug-dap-v{JS_DEBUG_VERSION}.tar.gz"), &format!("js-debug-dap-v{JS_DEBUG_VERSION}.tar.gz"), JS_DEBUG_SHA256, None)?;
+            let dir = download_unpacked("js-debug", JS_DEBUG_VERSION, &format!("https://github.com/microsoft/vscode-js-debug/releases/download/v{JS_DEBUG_VERSION}/js-debug-dap-v{JS_DEBUG_VERSION}.tar.gz"), &format!("js-debug-dap-v{JS_DEBUG_VERSION}.tar.gz"), JS_DEBUG_SHA256, None)?;
             let server = existing(dir.join("js-debug").join("src").join("dapDebugServer.js"))?;
             Ok(tcp(node, vec![server.display().to_string(), p, "127.0.0.1".into()], JS_DEBUG_VERSION))
         }
@@ -459,7 +485,7 @@ pub fn launch(adapter: &str, port: u16, opts: &Options) -> Result<Launch, String
             let platform = platform().ok_or_else(|| unsupported("codelldb"))?;
             let sha = CODELLDB_ASSETS.iter().find(|(pl, _)| *pl == platform).map(|(_, s)| *s).ok_or_else(|| unsupported("codelldb"))?;
             let file = format!("codelldb-{platform}.vsix");
-            let dir = download_unpacked(&format!("codelldb-{CODELLDB_VERSION}"), &format!("https://github.com/vadimcn/codelldb/releases/download/v{CODELLDB_VERSION}/{file}"), &file, sha, Some("extension"))?;
+            let dir = download_unpacked("codelldb", CODELLDB_VERSION, &format!("https://github.com/vadimcn/codelldb/releases/download/v{CODELLDB_VERSION}/{file}"), &file, sha, Some("extension"))?;
             #[cfg(unix)]
             for sub in ["extension/adapter/codelldb", "extension/lldb/bin/lldb", "extension/lldb/bin/lldb-server", "extension/lldb/bin/lldb-argdumper", "extension/lldb/bin/debugserver"] {
                 if dir.join(sub).is_file() { let _ = set_mode(&dir.join(sub), true); }
@@ -498,7 +524,7 @@ pub fn launch(adapter: &str, port: u16, opts: &Options) -> Result<Launch, String
         "probe-rs" => {
             let platform = platform().ok_or_else(|| unsupported("probe-rs"))?;
             let (_, file, sha) = PROBE_RS_ASSETS.iter().find(|(pl, _, _)| *pl == platform).ok_or_else(|| unsupported("probe-rs"))?;
-            let dir = download_unpacked(&format!("probe-rs-{PROBE_RS_VERSION}"), &format!("https://github.com/probe-rs/probe-rs/releases/download/v{PROBE_RS_VERSION}/{file}"), file, sha, None)?;
+            let dir = download_unpacked("probe-rs", PROBE_RS_VERSION, &format!("https://github.com/probe-rs/probe-rs/releases/download/v{PROBE_RS_VERSION}/{file}"), file, sha, None)?;
             let folder = file.trim_end_matches(".tar.xz").trim_end_matches(".zip");
             let bin = [dir.join(folder).join(exe("probe-rs")), dir.join(exe("probe-rs"))].into_iter().find(|p| p.is_file()).ok_or("probe-rs 실행 파일이 없습니다")?;
             #[cfg(unix)]
@@ -508,7 +534,7 @@ pub fn launch(adapter: &str, port: u16, opts: &Options) -> Result<Launch, String
         "mono" => {
             let mono = which("mono").ok_or("Mono 디버깅에는 이 PC에 mono가 있어야 합니다 (Unity는 에디터/플레이어의 디버그 포트에 attach)")?;
             let file = format!("mono-debug-{MONO_DEBUG_VERSION}.vsix");
-            let dir = download_unpacked(&format!("mono-debug-{MONO_DEBUG_VERSION}"), &format!("https://github.com/microsoft/vscode-mono-debug/releases/download/v{MONO_DEBUG_VERSION}/{file}"), &file, MONO_DEBUG_SHA256, Some("extension/bin"))?;
+            let dir = download_unpacked("mono-debug", MONO_DEBUG_VERSION, &format!("https://github.com/microsoft/vscode-mono-debug/releases/download/v{MONO_DEBUG_VERSION}/{file}"), &file, MONO_DEBUG_SHA256, Some("extension/bin"))?;
             let exe_path = existing(dir.join("extension").join("bin").join("Release").join("mono-debug.exe"))?;
             Ok(stdio(mono, vec![exe_path.display().to_string()], MONO_DEBUG_VERSION.into()))
         }
@@ -576,6 +602,50 @@ mod tests {
         std::fs::write(dir.join("native.bin"), b"MZ not a pe").unwrap();
         assert_eq!(managed_32bit(&dir.join("native.bin")), None);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[test]
+    fn adapters_live_in_one_folder_per_name_and_follow_the_version() {
+        let root = std::env::temp_dir().join(format!("aidev-provision-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let fill = |text: &'static str| move |tmp: &Path| std::fs::write(tmp.join("bin"), text).map_err(|e| e.to_string());
+        let dir = provision_in(&root, "clrdbg", "1.0.0 aa", fill("one")).unwrap();
+        assert_eq!(dir, root.join("clrdbg"));
+        assert_eq!(std::fs::read_to_string(dir.join("bin")).unwrap(), "one");
+        // the same version: nothing is fetched again
+        provision_in(&root, "clrdbg", "1.0.0 aa", |_: &Path| -> Result<(), String> { panic!("built again") }).unwrap();
+        // a failed build keeps what is there
+        assert!(provision_in(&root, "clrdbg", "1.1.0 bb", |_: &Path| Err("offline".to_string())).is_err());
+        assert_eq!(std::fs::read_to_string(dir.join("bin")).unwrap(), "one");
+        // another version replaces it in the same folder; nothing else is left behind
+        provision_in(&root, "clrdbg", "1.1.0 bb", fill("two")).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join("bin")).unwrap(), "two");
+        assert_eq!(std::fs::read_to_string(dir.join(".aidev-ok")).unwrap(), "1.1.0 bb");
+        let names: Vec<String> = std::fs::read_dir(&root).unwrap().map(|e| e.unwrap().file_name().to_string_lossy().into_owned()).collect();
+        assert_eq!(names, vec!["clrdbg".to_string()]);
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// Windows: an adapter running from the folder blocks the swap — the version there keeps working, nothing is
+    /// half deleted, and the next provisioning after it ends takes the new one.
+    #[cfg(windows)]
+    #[test]
+    fn win_adapter_in_use_keeps_the_working_version() {
+        let root = std::env::temp_dir().join(format!("aidev-provision-win-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let ping = |tmp: &Path| std::fs::copy(r"C:\Windows\System32\PING.EXE", tmp.join("ping.exe")).map(|_| ()).map_err(|e| e.to_string());
+        let dir = provision_in(&root, "clrdbg", "1.0.0", ping).unwrap();
+        let mut running = std::process::Command::new(dir.join("ping.exe")).args(["-n", "30", "127.0.0.1"]).stdout(std::process::Stdio::null()).spawn().unwrap();
+        std::thread::sleep(Duration::from_millis(500));
+        let again = provision_in(&root, "clrdbg", "2.0.0", ping);
+        assert!(again.is_ok(), "{again:?}");
+        assert!(dir.join("ping.exe").is_file(), "the folder in use stays whole");
+        let _ = running.kill();
+        let _ = running.wait();
+        std::thread::sleep(Duration::from_millis(500));
+        provision_in(&root, "clrdbg", "2.0.0", ping).unwrap();
+        assert_eq!(std::fs::read_to_string(dir.join(".aidev-ok")).unwrap(), "2.0.0");
+        let _ = std::fs::remove_dir_all(&root);
     }
 
     #[test]
