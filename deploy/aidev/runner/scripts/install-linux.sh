@@ -36,7 +36,7 @@ has_systemd() { command -v systemctl >/dev/null && systemctl --user show-environ
 # runners of this user that use this configuration (same HOME / AIDEV_RUNNER_HOME): they hold this PC's token
 same_config_runners() {
   local want_home=${AIDEV_RUNNER_HOME:-} pid env
-  for pid in $(pgrep -u "$(id -u)" -f 'aidev-runner[^ ]* start' 2>/dev/null || true); do
+  for pid in $(pgrep -u "$(id -u)" -f 'aidev-runner[^ ]*( start|$)' 2>/dev/null || true); do
     [ "$pid" = "$$" ] && continue
     env=$(tr '\0' '\n' < "/proc/$pid/environ" 2>/dev/null) || continue
     if [ -n "$want_home" ]; then printf '%s\n' "$env" | grep -qx "AIDEV_RUNNER_HOME=$want_home" || continue
@@ -103,7 +103,7 @@ if ! "$DEST" status >/dev/null 2>&1; then
   else echo "  curl -fsSL ${gateway:-https://dev.nado.work}/_runner/scripts/install-linux.sh | bash -s -- --code <페어링 코드>"; fi
   exit 0
 fi
-[ $service = 1 ] || { echo "설치만 했습니다 (--no-service). 실행: $DEST start"; exit 0; }
+[ $service = 1 ] || { echo "설치만 했습니다 (--no-service). 실행: $DEST   (서비스로: $DEST service)"; exit 0; }
 
 # ---- keep it running -----------------------------------------------------------------------------------
 logf="$HOME/.aidev/runner.log"

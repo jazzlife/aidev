@@ -49,7 +49,7 @@ export function pairingSteps(p: { platform: string; file: RunnerFile | undefined
         `curl.exe -fsSL ${p.gateway}/_runner/download/${p.file.name} -o ${exe}`,
       ] : []),
       `& ${exe} pair ${p.code} --gateway ${p.gateway}`,
-      `& ${exe} install-service`,
+      `& ${exe} service`,
     ];
     return {
       commands: lines.join('\n'),
@@ -67,7 +67,7 @@ export function pairingSteps(p: { platform: string; file: RunnerFile | undefined
       `chmod +x ${exe}`,
     ] : []),
     `${exe} pair ${p.code} --gateway ${p.gateway}`,
-    `${exe} install-service`,
+    `${exe} service`,
   ];
   return {
     commands: lines.join('\n'),

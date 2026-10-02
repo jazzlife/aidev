@@ -32,7 +32,7 @@ plist="$HOME/Library/LaunchAgents/work.nado.aidev-runner.plist"
 stop_running() {
   launchctl bootout "gui/$uid" "$plist" 2>/dev/null || true
   # a runner started by hand in a terminal: only one may be connected with this PC's token
-  pkill -f 'aidev-runner[^ ]* start' 2>/dev/null && sleep 1 || true
+  pkill -f 'aidev-runner[^ ]*( start|$)' 2>/dev/null && sleep 1 || true
 }
 if [ $uninstall = 1 ]; then
   stop_running; rm -f "$plist"
@@ -92,7 +92,7 @@ if ! "$DEST" status >/dev/null 2>&1; then
 EOF
   exit 0
 fi
-[ $service = 1 ] || { echo "설치만 했습니다 (--no-service). 실행: $DEST start"; exit 0; }
+[ $service = 1 ] || { echo "설치만 했습니다 (--no-service). 실행: $DEST   (서비스로: $DEST service)"; exit 0; }
 
 # ---- LaunchAgent ---------------------------------------------------------------------------------------
 logf="$HOME/.aidev/runner.log"; since=$( [ -f "$logf" ] && wc -c < "$logf" | tr -d ' ' || echo 0)   # only lines written after this

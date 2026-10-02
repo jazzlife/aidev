@@ -6,10 +6,10 @@
 
 ```
 aidev-runner pair <코드> [--gateway https://dev.nado.work] [--name 이름]   # 작업대 "원격 대상"에서 받은 10분짜리 코드
-aidev-runner start                        # 포그라운드 실행 (Ctrl+C 종료)
-aidev-runner install-service [--print]    # 로그인 시 자동 실행: systemd 사용자 서비스 / LaunchAgent / 로그온 작업
-aidev-runner install-service --elevated --at-startup   # Windows(관리자 PowerShell): 관리자 권한 실행 / 로그인 없이 부팅 때 실행(S4U, 화면 없음)
-aidev-runner uninstall-service
+aidev-runner                              # 포그라운드 실행 (Ctrl+C 종료; = start). 미등록이면 페어링 코드를 물어봄, Windows는 더블클릭으로도
+aidev-runner service [--print]            # 서비스로 등록·실행, 로그인 때마다 자동 실행: systemd 사용자 서비스 / LaunchAgent / 작업 스케줄러
+aidev-runner service --elevated --at-startup   # Windows(관리자 PowerShell): 관리자 권한 실행 / 로그인 없이 부팅 때 실행(S4U, 화면 없음)
+aidev-runner service --remove             # 서비스 제거   (예전 이름 install-service / uninstall-service도 그대로 동작)
 aidev-runner status                       # 설정 표시 (토큰은 표시 안 함)
 aidev-runner caps                         # 보고할 capabilities(JSON)
 aidev-runner roots list|add <폴더>|remove <폴더>   # 기본 ~/aidev-work. / 와 홈 전체는 거부

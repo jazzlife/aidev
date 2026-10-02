@@ -92,8 +92,14 @@ jobs:
           $cfgDir = "$env:USERPROFILE\.aidev"
           New-Item -ItemType Directory -Force $cfgDir | Out-Null
           Set-Content "$cfgDir\runner.toml" "gateway = `"http://127.0.0.1:9`"`ntoken = `"x`"`ntarget_id = 1`nname = `"ci`"`nallowed_roots = ['$env:RUNNER_TEMP']" -Encoding utf8
-          & $bin install-service --elevated --at-startup
-          if ($LASTEXITCODE) { throw "install-service exit $LASTEXITCODE" }
+          # no command: the runner runs in the foreground (what a double-click does)
+          $fg = Start-Process $bin -PassThru -WindowStyle Hidden
+          Start-Sleep 3
+          if ($fg.HasExited) { throw "bare aidev-runner exited ($($fg.ExitCode))" }
+          Stop-Process -Id $fg.Id -Force
+          'bare aidev-runner runs in the foreground'
+          & $bin service --elevated --at-startup
+          if ($LASTEXITCODE) { throw "service exit $LASTEXITCODE" }
           $t = Get-ScheduledTask -TaskName aidev-runner
           "RunLevel=$($t.Principal.RunLevel) LogonType=$($t.Principal.LogonType) Trigger=$($t.Triggers[0].CimClass.CimClassName)"
           if ($t.Principal.RunLevel -ne 'Highest') { throw 'not elevated' }
@@ -107,10 +113,11 @@ jobs:
           if (Test-Path "$cfgDir\runner.log") { Get-Content "$cfgDir\runner.log" -Tail 5 }
           if (-not (Get-Process aidev-runner -ErrorAction SilentlyContinue)) { throw 'the boot task did not start the runner' }
           'the boot task started the runner'
-          & $bin install-service
+          & $bin install-service   # the old name still works (installers of older releases call it)
           $t = Get-ScheduledTask -TaskName aidev-runner
           "RunLevel=$($t.Principal.RunLevel) Trigger=$($t.Triggers[0].CimClass.CimClassName)"
           if ($t.Principal.RunLevel -ne 'Limited' -or $t.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskLogonTrigger') { throw 'default task changed' }
-          & $bin uninstall-service
+          & $bin service --remove
+          if (Get-ScheduledTask -TaskName aidev-runner -ErrorAction SilentlyContinue) { throw 'service --remove left the task' }
           Stop-Process -Name aidev-runner -Force -ErrorAction SilentlyContinue
           'task options ok'

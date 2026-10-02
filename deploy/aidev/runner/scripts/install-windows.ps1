@@ -128,7 +128,7 @@ if ((Invoke-Native $Dest @('status') -Quiet) -ne 0) {
   else { Write-Host "  & ([scriptblock]::Create((irm $gw/_runner/scripts/install-windows.ps1))) -Code <페어링 코드>" }
   exit 0
 }
-if ($NoService) { Write-Host "설치만 했습니다 (-NoService). 실행: & `"$Dest`" start"; exit 0 }
+if ($NoService) { Write-Host "설치만 했습니다 (-NoService). 실행: & `"$Dest`"   (또는 탐색기에서 더블클릭; 서비스로: & `"$Dest`" service)"; exit 0 }
 
 # ---- keep it running: logon task, started now ----------------------------------------------------------------
 $since = if (Test-Path $Log) { (Get-Item $Log).Length } else { 0 }

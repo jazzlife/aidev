@@ -23,7 +23,7 @@ fn run(cmd: &str, args: &[&str]) -> Result<(), String> {
 
 pub fn unit_text(exe: &str) -> String {
     format!(
-        "[Unit]\nDescription=Nado AI Dev runner\nAfter=network-online.target\n\n[Service]\nExecStart=\"{exe}\" start\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n"
+        "[Unit]\nDescription=NadoVibe runner\nAfter=network-online.target\n\n[Service]\nExecStart=\"{exe}\" start\nRestart=always\nRestartSec=5\n\n[Install]\nWantedBy=default.target\n"
     )
 }
 

@@ -26,10 +26,11 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 #[derive(Parser)]
-#[command(name = "aidev-runner", version, about = "Nado AI Dev 원격 실행 러너 (밖으로만 연결)")]
+#[command(name = "aidev-runner", version, about = "NadoVibe 원격 실행 러너 (밖으로만 연결) — `aidev-runner`: 포그라운드 실행, `aidev-runner service`: 서비스로 등록·실행")]
 struct Cli {
+    /// 없으면 포그라운드로 실행(`start`) — 아직 페어링하지 않았으면 코드를 물어봄
     #[command(subcommand)]
-    cmd: Cmd,
+    cmd: Option<Cmd>,
 }
 
 #[derive(Subcommand)]
@@ -43,7 +44,7 @@ enum Cmd {
         #[arg(long)]
         name: Option<String>,
     },
-    /// 포그라운드로 실행 (Ctrl+C로 종료)
+    /// 포그라운드로 실행 (Ctrl+C로 종료) — 아무 명령 없이 `aidev-runner`만 실행해도 같음
     Start {
         /// 출력을 이 파일에 덧붙임 (서비스로 실행할 때)
         #[arg(long)]
@@ -66,8 +67,12 @@ enum Cmd {
         what: String,
         state: String,
     },
-    /// 로그인 시 자동 실행 등록 (systemd 사용자 서비스 / LaunchAgent / 로그온 작업)
+    /// 서비스로 실행: 등록하고 바로 시작, 로그인(또는 부팅) 때마다 자동 실행 (systemd 사용자 서비스 / LaunchAgent / 작업 스케줄러)
+    #[command(name = "service", alias = "install-service")]
     InstallService {
+        /// 서비스 등록을 지움 (실행 중인 러너도 멈춤)
+        #[arg(long)]
+        remove: bool,
         /// 등록하지 않고 내용만 출력
         #[arg(long)]
         print: bool,
@@ -78,6 +83,7 @@ enum Cmd {
         #[arg(long)]
         at_startup: bool,
     },
+    #[command(hide = true)]
     UninstallService,
     /// 이 PC의 토큰을 지움 (작업대에서도 대상을 삭제하세요)
     Unpair,
@@ -96,20 +102,53 @@ fn main() -> ExitCode {
     #[cfg(windows)]
     let _ = enigo::set_dpi_awareness();
     let cli = Cli::parse();
+    let bare = cli.cmd.is_none();
     match run(cli) {
         Ok(code) => code,
         Err(e) => {
             eprintln!("오류: {e}");
+            // double-clicked on Windows: keep the window open long enough to read why
+            if bare && cfg!(windows) && std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+                eprintln!("\nEnter 키를 누르면 닫힙니다");
+                let _ = std::io::stdin().read_line(&mut String::new());
+            }
             ExitCode::FAILURE
         }
     }
 }
 
+/// `aidev-runner` with nothing after it on a PC that was never paired: ask for the code in the terminal.
+fn pair_interactively() -> Result<(), String> {
+    use std::io::{IsTerminal, Write};
+    if config::path().exists() || !std::io::stdin().is_terminal() {
+        return Ok(());
+    }
+    println!("이 PC는 아직 등록되지 않았습니다. 작업대 \"원격 대상\"에서 받은 페어링 코드를 입력하세요.");
+    print!("페어링 코드: ");
+    let _ = std::io::stdout().flush();
+    let mut code = String::new();
+    std::io::stdin().read_line(&mut code).map_err(|e| e.to_string())?;
+    let code = code.trim();
+    if code.is_empty() {
+        return Err("페어링 코드가 없습니다".into());
+    }
+    let cfg = pair::pair(code, "https://dev.nado.work", None)?;
+    println!("등록 완료: 대상 #{} {}\n", cfg.target_id, cfg.name);
+    Ok(())
+}
+
 fn run(cli: Cli) -> Result<ExitCode, String> {
-    match cli.cmd {
+    let cmd = match cli.cmd {
+        Some(cmd) => cmd,
+        None => {
+            pair_interactively()?;
+            Cmd::Start { log: None, hidden: false }
+        }
+    };
+    match cmd {
         Cmd::Pair { code, gateway, name } => {
             let cfg = pair::pair(&code, &gateway, name.as_deref())?;
-            println!("등록 완료: 대상 #{} {}\n{}\n\n다음: `aidev-runner start` (또는 `aidev-runner install-service`)", cfg.target_id, cfg.name, config::describe(&cfg));
+            println!("등록 완료: 대상 #{} {}\n{}\n\n다음: `aidev-runner` (포그라운드) 또는 `aidev-runner service` (서비스로 등록·실행)", cfg.target_id, cfg.name, config::describe(&cfg));
         }
         Cmd::Start { log, hidden } => {
             if hidden {
@@ -171,7 +210,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             println!("화면 보기: {} / 원격 제어(마우스·키보드): {}", if cfg.screen_consent { "허용" } else { "꺼짐" }, if cfg.control_consent { "허용" } else { "꺼짐" });
             println!("(실행 중인 러너는 다시 시작해야 반영됩니다)");
         }
-        Cmd::InstallService { print, elevated, at_startup } => println!("{}", service::install(print, elevated, at_startup)?),
+        Cmd::InstallService { remove: true, .. } => println!("{}", service::uninstall()?),
+        Cmd::InstallService { print, elevated, at_startup, .. } => println!("{}", service::install(print, elevated, at_startup)?),
         Cmd::UninstallService => println!("{}", service::uninstall()?),
         Cmd::Unpair => {
             let p = config::path();
