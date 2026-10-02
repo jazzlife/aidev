@@ -10,6 +10,7 @@ import { PluginsProvider } from '@/modules/plugins';
 import { LiveWindowPage } from '@/modules/workbench';
 import { ProjectWorkspaceRoute } from '@/modules/project-workspace';
 import { i18n } from '@/modules/i18n';
+import { useReleaseWatch } from '@/shared/hooks/useReleaseWatch';
 
 const DEPLOYMENT_ASSET_DIRECTORIES = new Set(['assets', 'static', 'icons', 'images']);
 
@@ -106,6 +107,18 @@ function detectRouterBasename() {
   return detectedBasename;
 }
 
+/** A new release while the page is open: one click to load it (returning to the app loads it by itself). */
+function ReleaseUpdateNotice() {
+  const { updateReady, reload } = useReleaseWatch();
+  if (!updateReady) return null;
+  return (
+    <button type="button" onClick={reload} data-testid="release-update"
+      className="fixed bottom-4 left-4 z-[70] rounded-lg border border-primary/40 bg-background px-3 py-2 text-sm shadow-lg hover:bg-muted">
+      새 버전이 있습니다 · <span className="font-medium text-primary">새로고침</span>
+    </button>
+  );
+}
+
 /** Rendered by main.tsx; mounts the shared providers, the auth gate and the project workspace routes. */
 export default function App() {
   const routerBasename = detectRouterBasename();
@@ -128,6 +141,7 @@ export default function App() {
                     </Routes>
                   </Router>
                 </ProtectedRoute>
+                <ReleaseUpdateNotice />
                 </TaskMasterProvider>
               </TasksSettingsProvider>
             </PluginsProvider>

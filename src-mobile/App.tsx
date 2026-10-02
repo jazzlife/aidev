@@ -9,6 +9,7 @@ import { ApprovalSheet } from '@m/components/ApprovalSheet';
 import { BackController } from '@m/lib/nav';
 import { DrawerProvider } from '@m/components/AppDrawer';
 import { UiCommandBridge } from '@m/components/UiCommandBridge';
+import { UpdateBanner } from '@m/components/UpdateBanner';
 
 // C-06 (Lighthouse mobile 4G: LCP 2.7 s, 82% of the main chunk unused on the first screen): only the entry screens
 // (login, conversation list) ship in the main chunk; every other screen loads when it is opened.
@@ -41,6 +42,8 @@ export default function App() {
     <BrowserRouter basename="/m">
       {/* back = up (parent screen), never the previous page; leaves the app at the root */}
       <BackController />
+      {/* a deploy reaches an installed app: reload on return, or a tap while it is open */}
+      <UpdateBanner />
       <AuthProvider>
         <Routes>
           <Route path="/login" element={<LoginScreen />} />
