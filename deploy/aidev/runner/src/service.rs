@@ -129,8 +129,10 @@ pub fn uninstall() -> Result<String, String> {
             Ok("LaunchAgent를 제거했습니다".into())
         }
         "windows" => {
+            // the task's runner stops with it (as systemctl disable --now / launchctl bootout do)
+            let _ = run("schtasks", &["/End", "/TN", "aidev-runner"]);
             run("schtasks", &["/Delete", "/F", "/TN", "aidev-runner"])?;
-            Ok("로그온 작업을 제거했습니다".into())
+            Ok("서비스(작업 스케줄러 작업)를 제거하고 러너를 멈췄습니다".into())
         }
         other => Err(format!("{other}: 지원하지 않습니다")),
     }

@@ -103,7 +103,7 @@ if ! "$DEST" status >/dev/null 2>&1; then
   else echo "  curl -fsSL ${gateway:-https://dev.nado.work}/_runner/scripts/install-linux.sh | bash -s -- --code <페어링 코드>"; fi
   exit 0
 fi
-[ $service = 1 ] || { echo "설치만 했습니다 (--no-service). 실행: $DEST   (서비스로: $DEST service)"; exit 0; }
+[ $service = 1 ] || { echo "설치만 했습니다 (--no-service). 실행: $DEST   (서비스 설치: $DEST install)"; exit 0; }
 
 # ---- keep it running -----------------------------------------------------------------------------------
 logf="$HOME/.aidev/runner.log"

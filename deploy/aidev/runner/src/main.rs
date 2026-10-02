@@ -26,7 +26,7 @@ use std::path::PathBuf;
 use std::process::ExitCode;
 
 #[derive(Parser)]
-#[command(name = "aidev-runner", version, about = "NadoVibe 원격 실행 러너 (밖으로만 연결) — `aidev-runner`: 포그라운드 실행, `aidev-runner service`: 서비스로 등록·실행")]
+#[command(name = "aidev-runner", version, about = "NadoVibe 원격 실행 러너 (밖으로만 연결) — `aidev-runner`: 포그라운드 실행, `install`: 서비스 설치, `uninstall`: 서비스 제거")]
 struct Cli {
     /// 없으면 포그라운드로 실행(`start`) — 아직 페어링하지 않았으면 코드를 물어봄
     #[command(subcommand)]
@@ -67,12 +67,9 @@ enum Cmd {
         what: String,
         state: String,
     },
-    /// 서비스로 실행: 등록하고 바로 시작, 로그인(또는 부팅) 때마다 자동 실행 (systemd 사용자 서비스 / LaunchAgent / 작업 스케줄러)
-    #[command(name = "service", alias = "install-service")]
+    /// 서비스 설치: 등록하고 바로 시작, 로그인(또는 부팅) 때마다 자동 실행 (systemd 사용자 서비스 / LaunchAgent / 작업 스케줄러)
+    #[command(name = "install", alias = "install-service")]
     InstallService {
-        /// 서비스 등록을 지움 (실행 중인 러너도 멈춤)
-        #[arg(long)]
-        remove: bool,
         /// 등록하지 않고 내용만 출력
         #[arg(long)]
         print: bool,
@@ -83,7 +80,8 @@ enum Cmd {
         #[arg(long)]
         at_startup: bool,
     },
-    #[command(hide = true)]
+    /// 서비스 제거 (자동 실행 등록을 지우고 서비스로 돌던 러너를 멈춤)
+    #[command(name = "uninstall", alias = "uninstall-service")]
     UninstallService,
     /// 이 PC의 토큰을 지움 (작업대에서도 대상을 삭제하세요)
     Unpair,
@@ -148,7 +146,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
     match cmd {
         Cmd::Pair { code, gateway, name } => {
             let cfg = pair::pair(&code, &gateway, name.as_deref())?;
-            println!("등록 완료: 대상 #{} {}\n{}\n\n다음: `aidev-runner` (포그라운드) 또는 `aidev-runner service` (서비스로 등록·실행)", cfg.target_id, cfg.name, config::describe(&cfg));
+            println!("등록 완료: 대상 #{} {}\n{}\n\n다음: `aidev-runner` (포그라운드) 또는 `aidev-runner install` (서비스 설치)", cfg.target_id, cfg.name, config::describe(&cfg));
         }
         Cmd::Start { log, hidden } => {
             if hidden {
@@ -210,8 +208,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             println!("화면 보기: {} / 원격 제어(마우스·키보드): {}", if cfg.screen_consent { "허용" } else { "꺼짐" }, if cfg.control_consent { "허용" } else { "꺼짐" });
             println!("(실행 중인 러너는 다시 시작해야 반영됩니다)");
         }
-        Cmd::InstallService { remove: true, .. } => println!("{}", service::uninstall()?),
-        Cmd::InstallService { print, elevated, at_startup, .. } => println!("{}", service::install(print, elevated, at_startup)?),
+        Cmd::InstallService { print, elevated, at_startup } => println!("{}", service::install(print, elevated, at_startup)?),
         Cmd::UninstallService => println!("{}", service::uninstall()?),
         Cmd::Unpair => {
             let p = config::path();

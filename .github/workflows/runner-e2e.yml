@@ -98,8 +98,8 @@ jobs:
           if ($fg.HasExited) { throw "bare aidev-runner exited ($($fg.ExitCode))" }
           Stop-Process -Id $fg.Id -Force
           'bare aidev-runner runs in the foreground'
-          & $bin service --elevated --at-startup
-          if ($LASTEXITCODE) { throw "service exit $LASTEXITCODE" }
+          & $bin install --elevated --at-startup
+          if ($LASTEXITCODE) { throw "install exit $LASTEXITCODE" }
           $t = Get-ScheduledTask -TaskName aidev-runner
           "RunLevel=$($t.Principal.RunLevel) LogonType=$($t.Principal.LogonType) Trigger=$($t.Triggers[0].CimClass.CimClassName)"
           if ($t.Principal.RunLevel -ne 'Highest') { throw 'not elevated' }
@@ -117,7 +117,8 @@ jobs:
           $t = Get-ScheduledTask -TaskName aidev-runner
           "RunLevel=$($t.Principal.RunLevel) Trigger=$($t.Triggers[0].CimClass.CimClassName)"
           if ($t.Principal.RunLevel -ne 'Limited' -or $t.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskLogonTrigger') { throw 'default task changed' }
-          & $bin service --remove
-          if (Get-ScheduledTask -TaskName aidev-runner -ErrorAction SilentlyContinue) { throw 'service --remove left the task' }
-          Stop-Process -Name aidev-runner -Force -ErrorAction SilentlyContinue
+          & $bin uninstall
+          if (Get-ScheduledTask -TaskName aidev-runner -ErrorAction SilentlyContinue) { throw 'uninstall left the task' }
+          Start-Sleep 2
+          if (Get-Process aidev-runner -ErrorAction SilentlyContinue) { throw 'uninstall left the runner running' }
           'task options ok'

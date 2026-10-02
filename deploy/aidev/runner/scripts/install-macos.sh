@@ -92,7 +92,7 @@ if ! "$DEST" status >/dev/null 2>&1; then
 EOF
   exit 0
 fi
-[ $service = 1 ] || { echo "설치만 했습니다 (--no-service). 실행: $DEST   (서비스로: $DEST service)"; exit 0; }
+[ $service = 1 ] || { echo "설치만 했습니다 (--no-service). 실행: $DEST   (서비스 설치: $DEST install)"; exit 0; }
 
 # ---- LaunchAgent ---------------------------------------------------------------------------------------
 logf="$HOME/.aidev/runner.log"; since=$( [ -f "$logf" ] && wc -c < "$logf" | tr -d ' ' || echo 0)   # only lines written after this
