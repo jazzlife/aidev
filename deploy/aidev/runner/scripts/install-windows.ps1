@@ -12,9 +12,10 @@
   powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 -Code ABCD-1234
   powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 -File dist\aidev-runner-0.9.0-win-x64.exe
   powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 -Uninstall
-  # from an administrator PowerShell — what WinRM gives: commands run elevated (services, registry, firewall),
-  # and/or the runner starts at boot without a sign-in (build/test machines; no screen capture then)
-  powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 -Code ABCD-1234 -Elevated -AtStartup
+  # default: administrator rights (what WinRM gives — services, registry, firewall, installs; one UAC prompt) and running
+  # from boot (before a sign-in a boot task holds the connection, after it the user's session runner — screen, GUI)
+  # restrict:  -Limited (normal user rights)   -LogonOnly (only while signed in)
+  powershell -ExecutionPolicy Bypass -File scripts\install-windows.ps1 -Code ABCD-1234 -Limited -LogonOnly
 #>
 [CmdletBinding()]
 param(
@@ -24,8 +25,10 @@ param(
   [string] $Gateway,
   [string] $Name,
   [switch] $NoService,
-  [switch] $Elevated,
-  [switch] $AtStartup,
+  [switch] $Limited,
+  [switch] $LogonOnly,
+  [switch] $Elevated,    # older option, now the default — ignored
+  [switch] $AtStartup,   # older option, now the default — ignored
   [switch] $Uninstall
 )
 $ErrorActionPreference = 'Stop'
@@ -130,20 +133,19 @@ if ((Invoke-Native $Dest @('status') -Quiet) -ne 0) {
 }
 if ($NoService) { Write-Host "설치만 했습니다 (-NoService). 실행: & `"$Dest`"   (또는 탐색기에서 더블클릭; 서비스 설치: & `"$Dest`" install)"; exit 0 }
 
-# ---- keep it running: logon task, started now ----------------------------------------------------------------
+# ---- keep it running: the runner's own `install` (administrator rights and boot start unless restricted; it asks
+#      for UAC itself when this prompt is not elevated) ---------------------------------------------------------
 $since = if (Test-Path $Log) { (Get-Item $Log).Length } else { 0 }
-$svcArgs = @('install-service')
-if ($Elevated) { $svcArgs += '--elevated' }
-if ($AtStartup) { $svcArgs += '--at-startup' }
-if (($Elevated -or $AtStartup) -and -not ([Security.Principal.WindowsPrincipal][Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-  throw '-Elevated / -AtStartup은 관리자 권한 PowerShell에서 실행하세요'
-}
-if ((Invoke-Native $Dest $svcArgs) -ne 0) { throw 'install-service 실패' }
+$svcArgs = @('install')
+if ($Limited) { $svcArgs += '--limited' }
+if ($LogonOnly) { $svcArgs += '--logon-only' }
+if ((Invoke-Native $Dest $svcArgs) -ne 0) { throw '서비스 설치 실패 (aidev-runner install)' }
 
 # ---- verify ---------------------------------------------------------------------------------------------
 $ok = $false; $line = $null
 for ($i = 0; $i -lt 20; $i++) {
-  $proc = Get-Process aidev-runner -ErrorAction SilentlyContinue | Where-Object { $_.Path -eq $Dest }
+  # an elevated runner's Path is not readable from a normal prompt: the name and the log are enough
+  $proc = Get-Process aidev-runner -ErrorAction SilentlyContinue
   if ($proc -and (Test-Path $Log)) {
     $fs = [IO.File]::Open($Log, 'Open', 'Read', 'ReadWrite')
     try {

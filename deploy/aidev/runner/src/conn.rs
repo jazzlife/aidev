@@ -21,6 +21,8 @@ pub enum Exit {
     Unauthorized,
     /// Ctrl+C / service stop.
     Shutdown,
+    /// Boot-time runner: a sign-in's runner asked to take over (config::handoff_path).
+    Handoff,
 }
 
 fn ws_url(gateway: &str) -> String {
@@ -42,15 +44,19 @@ fn chrono_now() -> String {
     format!("{:02}:{:02}:{:02}Z", (secs / 3600) % 24, (secs / 60) % 60, secs % 60)
 }
 
-/// Runs until shutdown or revocation, reconnecting as needed.
-pub async fn run(cfg: Config) -> Exit {
+/// Runs until shutdown or revocation, reconnecting as needed; `yields` (a boot-time runner) also ends when a
+/// sign-in's runner asks for the connection.
+pub async fn run(cfg: Config, yields: bool) -> Exit {
     let hub = ExecHub::default();
     // probe the interactive PATH once, off the connection path
     tokio::task::spawn_blocking(|| {
         let path = crate::exec::user_path();
         log(&format!("명령 PATH: {}", path.as_deref().map(|p| format!("사용자 셸에서 가져옴 ({}개 경로)", p.split(':').count())).unwrap_or_else(|| "기본값".into())));
     });
-    let exit = run_with(&cfg, &hub).await;
+    let exit = tokio::select! {
+        exit = run_with(&cfg, &hub) => exit,
+        _ = handoff_asked(), if yields => Exit::Handoff,
+    };
     // nothing keeps running unattended once the runner itself stops
     if hub.running() > 0 {
         hub.kill_all();
@@ -92,6 +98,12 @@ async fn run_with(cfg: &Config, hub: &ExecHub) -> Exit {
             _ = shutdown_signal() => return Exit::Shutdown,
         }
         backoff = (backoff * 2).min(BACKOFF_MAX);
+    }
+}
+
+async fn handoff_asked() {
+    while !crate::config::handoff_path().exists() {
+        tokio::time::sleep(Duration::from_secs(2)).await;
     }
 }
 

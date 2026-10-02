@@ -81,44 +81,58 @@ jobs:
           [ "$RUNNER_OS" = Windows ] && bin="$bin.exe"
           RUNNER_BIN="$bin" node test/runner-parity-e2e-test.mjs
 
-      # what WinRM gives an administrator: the runner as an elevated task, and one that starts at boot without a sign-in
-      - name: elevated / at-startup task (Windows)
+      # install's default (what WinRM gives an administrator): elevated, from boot — a boot task (S4U) holds the
+      # connection before a sign-in and hands it to the sign-in's runner; --limited --logon-only restrict it
+      - name: install / uninstall (Windows)
         if: ${{ !cancelled() && runner.os == 'Windows' }}
-        shell: powershell
+        # pwsh: reads the step script as UTF-8 (the log checks match Korean text; Windows PowerShell would read ANSI)
+        shell: pwsh
         run: |
           $ErrorActionPreference = 'Stop'
           $bin = "$env:GITHUB_WORKSPACE\$env:RUNNER_DIR\target\release\aidev-runner.exe"
-          # the task runs without this step's environment: the config sits where a real install keeps it
+          # the tasks run without this step's environment: the config sits where a real install keeps it
           $cfgDir = "$env:USERPROFILE\.aidev"
           New-Item -ItemType Directory -Force $cfgDir | Out-Null
           Set-Content "$cfgDir\runner.toml" "gateway = `"http://127.0.0.1:9`"`ntoken = `"x`"`ntarget_id = 1`nname = `"ci`"`nallowed_roots = ['$env:RUNNER_TEMP']" -Encoding utf8
+          $log = "$cfgDir\runner.log"
+          function LogHas($re) { (Test-Path $log) -and ((Get-Content $log -Encoding utf8 -Raw) -match $re) }
+          function WaitFor($what, $test) { for ($i = 0; $i -lt 40 -and -not (& $test); $i++) { Start-Sleep 1 }; if (-not (& $test)) { if (Test-Path $log) { Get-Content $log -Encoding utf8 -Tail 15 }; throw "timed out: $what" }; "ok: $what" }
+
           # no command: the runner runs in the foreground (what a double-click does)
           $fg = Start-Process $bin -PassThru -WindowStyle Hidden
           Start-Sleep 3
           if ($fg.HasExited) { throw "bare aidev-runner exited ($($fg.ExitCode))" }
           Stop-Process -Id $fg.Id -Force
           'bare aidev-runner runs in the foreground'
-          & $bin install --elevated --at-startup
+
+          & $bin install
           if ($LASTEXITCODE) { throw "install exit $LASTEXITCODE" }
-          $t = Get-ScheduledTask -TaskName aidev-runner
-          "RunLevel=$($t.Principal.RunLevel) LogonType=$($t.Principal.LogonType) Trigger=$($t.Triggers[0].CimClass.CimClassName)"
-          if ($t.Principal.RunLevel -ne 'Highest') { throw 'not elevated' }
-          if ($t.Principal.LogonType -ne 'S4U') { throw 'not S4U (runs without a sign-in)' }
-          if ($t.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger') { throw 'not a boot trigger' }
-          "ExecutionTimeLimit=$($t.Settings.ExecutionTimeLimit)"
-          if ($t.Settings.ExecutionTimeLimit -ne 'PT0S') { throw 'the task would stop after a time limit' }
-          for ($i = 0; $i -lt 30 -and -not (Get-Process aidev-runner -ErrorAction SilentlyContinue); $i++) { Start-Sleep 1 }
-          $info = Get-ScheduledTaskInfo -TaskName aidev-runner
-          "State=$((Get-ScheduledTask -TaskName aidev-runner).State) LastTaskResult=$($info.LastTaskResult)"
-          if (Test-Path "$cfgDir\runner.log") { Get-Content "$cfgDir\runner.log" -Tail 5 }
-          if (-not (Get-Process aidev-runner -ErrorAction SilentlyContinue)) { throw 'the boot task did not start the runner' }
-          'the boot task started the runner'
-          & $bin install-service   # the old name still works (installers of older releases call it)
-          $t = Get-ScheduledTask -TaskName aidev-runner
-          "RunLevel=$($t.Principal.RunLevel) Trigger=$($t.Triggers[0].CimClass.CimClassName)"
-          if ($t.Principal.RunLevel -ne 'Limited' -or $t.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskLogonTrigger') { throw 'default task changed' }
+          $logon = Get-ScheduledTask -TaskName aidev-runner; $boot = Get-ScheduledTask -TaskName aidev-runner-boot
+          "logon: RunLevel=$($logon.Principal.RunLevel) LogonType=$($logon.Principal.LogonType) Trigger=$($logon.Triggers[0].CimClass.CimClassName) Limit=$($logon.Settings.ExecutionTimeLimit)"
+          "boot:  RunLevel=$($boot.Principal.RunLevel) LogonType=$($boot.Principal.LogonType) Trigger=$($boot.Triggers[0].CimClass.CimClassName) Limit=$($boot.Settings.ExecutionTimeLimit)"
+          if ($logon.Principal.RunLevel -ne 'Highest' -or $boot.Principal.RunLevel -ne 'Highest') { throw 'not elevated by default' }
+          if ($boot.Principal.LogonType -ne 'S4U' -or $boot.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskBootTrigger') { throw 'no boot start by default' }
+          if ($logon.Triggers[0].CimClass.CimClassName -ne 'MSFT_TaskLogonTrigger') { throw 'no sign-in task' }
+          if ($logon.Settings.ExecutionTimeLimit -ne 'PT0S' -or $boot.Settings.ExecutionTimeLimit -ne 'PT0S') { throw 'a task would stop after a time limit' }
+          WaitFor 'the boot runner holds the connection' { LogHas '부팅 러너: 연결을 맡습니다' }
+          # a sign-in's runner (here: one started by hand) takes the connection; the boot runner waits and comes back
+          $session = Start-Process $bin -ArgumentList 'start','--log',"$env:RUNNER_TEMP\session.log" -PassThru -WindowStyle Hidden
+          WaitFor 'the boot runner hands over' { LogHas '연결을 넘깁니다' }
+          Start-Sleep 3
+          if ($session.HasExited) { Get-Content "$env:RUNNER_TEMP\session.log" -Tail 5; throw 'the session runner did not get the connection' }
+          'the session runner holds the connection'
+          Stop-Process -Id $session.Id -Force
+          WaitFor 'the boot runner takes over again' { ([regex]::Matches((Get-Content $log -Encoding utf8 -Raw), '부팅 러너: 연결을 맡습니다')).Count -ge 2 }
+
           & $bin uninstall
-          if (Get-ScheduledTask -TaskName aidev-runner -ErrorAction SilentlyContinue) { throw 'uninstall left the task' }
+          if (Get-ScheduledTask -TaskName 'aidev-runner*' -ErrorAction SilentlyContinue) { throw 'uninstall left a task' }
           Start-Sleep 2
-          if (Get-Process aidev-runner -ErrorAction SilentlyContinue) { throw 'uninstall left the runner running' }
-          'task options ok'
+          if (Get-Process aidev-runner -ErrorAction SilentlyContinue) { throw 'uninstall left a runner running' }
+          'uninstall removed both tasks and their runners'
+
+          & $bin install --limited --logon-only
+          $t = Get-ScheduledTask -TaskName aidev-runner
+          if ($t.Principal.RunLevel -ne 'Limited' -or (Get-ScheduledTask -TaskName aidev-runner-boot -ErrorAction SilentlyContinue)) { throw '--limited --logon-only' }
+          & $bin install-service --limited   # the old name still works
+          & $bin uninstall
+          'restricted install ok'

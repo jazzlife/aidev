@@ -68,22 +68,16 @@ async fn devices(tool: &std::path::Path) -> Vec<String> {
         .collect()
 }
 
-#[cfg(windows)]
-#[link(name = "shell32")]
-extern "system" {
-    fn IsUserAnAdmin() -> i32;
-}
-
 /// {elevated, sudo}: elevated = commands run with administrator rights (Windows elevated token / Unix root);
 /// sudo (Unix) = "nopasswd" when `sudo -n true` succeeds, "password" when sudo needs one, null without sudo.
 async fn admin() -> Value {
     #[cfg(windows)]
     {
-        json!({ "elevated": unsafe { IsUserAnAdmin() } != 0, "sudo": null })
+        json!({ "elevated": crate::proc_util::is_elevated(), "sudo": null })
     }
     #[cfg(not(windows))]
     {
-        let elevated = unsafe { libc::geteuid() } == 0;
+        let elevated = crate::proc_util::is_elevated();
         let sudo = if elevated {
             Value::Null
         } else {

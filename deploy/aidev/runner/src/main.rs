@@ -52,6 +52,9 @@ enum Cmd {
         /// Windows: 콘솔 창 없이 (로그온 작업이 씀; --log 기본값 ~/.aidev/runner.log)
         #[arg(long)]
         hidden: bool,
+        /// 부팅 작업용: 로그인 전 연결을 맡고, 로그인한 사용자의 러너가 오면 넘긴 뒤 그 러너가 끝나면 다시 이어받음
+        #[arg(long, hide = true)]
+        boot: bool,
     },
     /// 설정·연결 대상 표시 (토큰은 표시하지 않음)
     Status,
@@ -73,12 +76,20 @@ enum Cmd {
         /// 등록하지 않고 내용만 출력
         #[arg(long)]
         print: bool,
-        /// Windows: 관리자 권한으로 실행 (관리자 PowerShell에서 등록 — WinRM처럼 서비스·레지스트리·방화벽까지)
+        /// Windows: 일반 사용자 권한으로 실행 (기본은 관리자 권한 — 서비스·레지스트리·방화벽·설치까지)
         #[arg(long)]
+        limited: bool,
+        /// Windows: 로그인한 동안만 실행 (기본은 부팅 직후부터 — 로그인 전엔 부팅 작업이, 로그인하면 사용자 세션의 러너가 맡음)
+        #[arg(long)]
+        logon_only: bool,
+        /// 예전 옵션(이제 기본값) — 무시
+        #[arg(long, hide = true)]
         elevated: bool,
-        /// Windows: 로그인하지 않아도 부팅 때 실행 (화면 캡처는 불가 — 빌드·테스트 전용 PC, 관리자 필요)
-        #[arg(long)]
+        #[arg(long, hide = true)]
         at_startup: bool,
+        /// 관리자 권한으로 다시 실행된 설치가 원래 사용자를 받음
+        #[arg(long, hide = true)]
+        user: Option<String>,
     },
     /// 서비스 제거 (자동 실행 등록을 지우고 서비스로 돌던 러너를 멈춤)
     #[command(name = "uninstall", alias = "uninstall-service")]
@@ -140,7 +151,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
         Some(cmd) => cmd,
         None => {
             pair_interactively()?;
-            Cmd::Start { log: None, hidden: false }
+            Cmd::Start { log: None, hidden: false, boot: false }
         }
     };
     match cmd {
@@ -148,22 +159,35 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let cfg = pair::pair(&code, &gateway, name.as_deref())?;
             println!("등록 완료: 대상 #{} {}\n{}\n\n다음: `aidev-runner` (포그라운드) 또는 `aidev-runner install` (서비스 설치)", cfg.target_id, cfg.name, config::describe(&cfg));
         }
-        Cmd::Start { log, hidden } => {
+        Cmd::Start { log, hidden, boot } => {
             if hidden {
                 proc_util::detach_console();
             }
-            if let Some(path) = log.or_else(|| hidden.then(|| config::dir().join("runner.log"))) {
+            if let Some(path) = log.or_else(|| (hidden || boot).then(|| config::dir().join("runner.log"))) {
                 proc_util::redirect_output(&path)?;
             }
             let cfg = config::load()?;
-            // one runner per config: a second `start` (terminal + service) would keep stealing the connection
-            let _lock = config::lock_instance()?;
             let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
-            match rt.block_on(conn::run(cfg)) {
-                conn::Exit::Shutdown => eprintln!("종료합니다"),
-                conn::Exit::Unauthorized => {
-                    eprintln!("게이트웨이가 이 러너의 토큰을 거부했습니다(대상이 삭제되었거나 다시 페어링됨). 작업대에서 새 페어링 코드를 받아 `aidev-runner pair <코드>`를 실행하세요.");
-                    return Ok(ExitCode::from(3));
+            loop {
+                // one runner per config: a second `start` would keep stealing the target's connection — except that
+                // the boot-time runner hands over to a sign-in's runner and takes over again when it ends
+                let lock = config::acquire_instance(boot, std::time::Duration::from_secs(60))?;
+                if boot {
+                    eprintln!("부팅 러너: 연결을 맡습니다");
+                }
+                match rt.block_on(conn::run(cfg.clone(), boot)) {
+                    conn::Exit::Handoff => {
+                        drop(lock);
+                        eprintln!("부팅 러너: 로그인한 사용자의 러너에 연결을 넘깁니다 — 그 러너가 끝나면 다시 이어받습니다");
+                    }
+                    conn::Exit::Shutdown => {
+                        eprintln!("종료합니다");
+                        break;
+                    }
+                    conn::Exit::Unauthorized => {
+                        eprintln!("게이트웨이가 이 러너의 토큰을 거부했습니다(대상이 삭제되었거나 다시 페어링됨). 작업대에서 새 페어링 코드를 받아 `aidev-runner pair <코드>`를 실행하세요.");
+                        return Ok(ExitCode::from(3));
+                    }
                 }
             }
         }
@@ -208,7 +232,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             println!("화면 보기: {} / 원격 제어(마우스·키보드): {}", if cfg.screen_consent { "허용" } else { "꺼짐" }, if cfg.control_consent { "허용" } else { "꺼짐" });
             println!("(실행 중인 러너는 다시 시작해야 반영됩니다)");
         }
-        Cmd::InstallService { print, elevated, at_startup } => println!("{}", service::install(print, elevated, at_startup)?),
+        Cmd::InstallService { print, limited, logon_only, user, .. } => println!("{}", service::install(print, limited, logon_only, user)?),
         Cmd::UninstallService => println!("{}", service::uninstall()?),
         Cmd::Unpair => {
             let p = config::path();

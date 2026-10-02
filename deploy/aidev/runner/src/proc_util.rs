@@ -37,6 +37,28 @@ extern "system" {
     fn SetStdHandle(which: u32, handle: *mut core::ffi::c_void) -> i32;
 }
 
+#[cfg(windows)]
+#[link(name = "shell32")]
+extern "system" {
+    fn IsUserAnAdmin() -> i32;
+}
+
+/// Running with administrator rights (Windows elevated token / Unix root).
+pub fn is_elevated() -> bool {
+    #[cfg(windows)]
+    {
+        unsafe { IsUserAnAdmin() != 0 }
+    }
+    #[cfg(unix)]
+    {
+        unsafe { libc::geteuid() == 0 }
+    }
+    #[cfg(not(any(windows, unix)))]
+    {
+        false
+    }
+}
+
 /// Windows: let go of the console window the logon task opened (no-op elsewhere).
 pub fn detach_console() {
     #[cfg(windows)]

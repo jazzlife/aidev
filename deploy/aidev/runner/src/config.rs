@@ -94,7 +94,73 @@ pub fn describe(cfg: &Config) -> String {
 
 /// Held for the lifetime of `start`: a second runner with the same config is refused instead of
 /// fighting the first one for the target's connection.
-pub struct InstanceLock(#[allow(dead_code)] std::fs::File);
+pub struct InstanceLock(#[allow(dead_code)] std::fs::File, Option<PathBuf>);
+
+impl Drop for InstanceLock {
+    fn drop(&mut self) {
+        if let Some(marker) = &self.1 {
+            let _ = std::fs::remove_file(marker);
+        }
+    }
+}
+
+/// Present while the lock's holder is a boot-time runner (one that hands over).
+fn boot_marker() -> PathBuf {
+    dir().join("boot-holder")
+}
+
+/// While a sign-in's runner waits for the boot-time runner (`start --boot`) to hand over, this file exists.
+pub fn handoff_path() -> PathBuf {
+    dir().join("handoff")
+}
+
+/// The lock `start` holds. A boot-time runner (Windows `--boot`, before anyone signs in) waits for it — also after
+/// handing over, until the runner that asked has taken it — and so takes over again when that one ends (sign-out).
+/// Any other runner that finds it held by a boot-time runner asks it to hand over and waits up to `wait`; held by
+/// any other runner, it is refused at once.
+pub fn acquire_instance(boot: bool, wait: std::time::Duration) -> Result<InstanceLock, String> {
+    use std::time::{Duration, Instant, SystemTime};
+    let pause = |ms| std::thread::sleep(Duration::from_millis(ms));
+    if boot {
+        loop {
+            let asked = std::fs::metadata(handoff_path()).ok().and_then(|m| m.modified().ok());
+            match asked.map(|t| SystemTime::now().duration_since(t).unwrap_or_default()) {
+                Some(age) if age < Duration::from_secs(120) => pause(1000),
+                Some(_) => { let _ = std::fs::remove_file(handoff_path()); }   // left by a runner that gave up
+                None => match lock_instance() {
+                    Ok(mut lock) => {
+                        let _ = std::fs::write(boot_marker(), std::process::id().to_string());
+                        lock.1 = Some(boot_marker());
+                        return Ok(lock);
+                    }
+                    Err(_) => pause(3000),
+                },
+            }
+        }
+    }
+    let busy = match lock_instance() {
+        Ok(lock) => {
+            let _ = std::fs::remove_file(boot_marker());   // left by a boot-time runner that was killed
+            return Ok(lock);
+        }
+        Err(e) => e,
+    };
+    if !boot_marker().exists() {
+        return Err(busy);
+    }
+    let _ = std::fs::write(handoff_path(), std::process::id().to_string());
+    let deadline = Instant::now() + wait;
+    while Instant::now() < deadline {
+        pause(500);
+        if let Ok(lock) = lock_instance() {
+            let _ = std::fs::remove_file(handoff_path());
+            let _ = std::fs::remove_file(boot_marker());
+            return Ok(lock);
+        }
+    }
+    let _ = std::fs::remove_file(handoff_path());
+    Err(busy)
+}
 
 pub fn lock_instance() -> Result<InstanceLock, String> {
     std::fs::create_dir_all(dir()).map_err(|e| e.to_string())?;
@@ -109,12 +175,12 @@ pub fn lock_instance() -> Result<InstanceLock, String> {
         }
         let _ = file.set_len(0);
         let _ = std::io::Write::write_all(&mut &file, std::process::id().to_string().as_bytes());
-        Ok(InstanceLock(file))
+        Ok(InstanceLock(file, None))
     }
     #[cfg(windows)]
     {
         use std::os::windows::fs::OpenOptionsExt;
         let file = std::fs::OpenOptions::new().create(true).truncate(false).write(true).share_mode(0).open(&path).map_err(|_| busy())?;
-        Ok(InstanceLock(file))
+        Ok(InstanceLock(file, None))
     }
 }
