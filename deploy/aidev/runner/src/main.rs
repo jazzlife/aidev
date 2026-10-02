@@ -24,6 +24,8 @@ mod service;
 mod sync;
 mod tray;
 mod tunnel;
+mod update;
+mod dialog;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -103,6 +105,14 @@ enum Cmd {
     UninstallService,
     /// 이 PC의 토큰을 지움 (작업대에서도 대상을 삭제하세요)
     Unpair,
+    /// 업데이트: 받을 수 있는 버전(최신·이전)을 보여 주고 고른 버전으로 교체 — 서비스·권한·설정은 그대로
+    Update {
+        /// 이 버전으로 바로 (`latest`: 최신) — 없으면 목록에서 고름
+        version: Option<String>,
+        /// 게이트웨이 (기본: 페어링한 게이트웨이)
+        #[arg(long)]
+        gateway: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]
@@ -117,6 +127,7 @@ fn main() -> ExitCode {
     // on 125–150 % displays, where they would disagree). The runner has no UI, so nothing else is affected.
     #[cfg(windows)]
     let _ = enigo::set_dpi_awareness();
+    control::remember_exe();
     let cli = Cli::parse();
     let bare = cli.cmd.is_none();
     match run(cli) {
@@ -153,16 +164,66 @@ fn pair_interactively() -> Result<(), String> {
     Ok(())
 }
 
+/// `aidev-runner update`: the versions as a numbered list (the status icon's popup, in the console), then the one
+/// chosen installed.
+fn update_console(version: Option<String>, gateway: Option<String>) -> Result<String, String> {
+    use std::io::{IsTerminal, Write};
+    let gateway = gateway.or_else(|| config::load().ok().map(|c| c.gateway)).unwrap_or_else(|| "https://dev.nado.work".into());
+    let list = update::versions(&gateway)?;
+    let newest = list.first().ok_or("받을 수 있는 버전이 없습니다")?.version.clone();
+    let pick = match version.as_deref() {
+        Some("latest") => 0,
+        Some(v) => list.iter().position(|x| x.version == v.trim_start_matches('v')).ok_or_else(|| {
+            format!("{v}: 받을 수 있는 버전이 아닙니다 ({})", list.iter().map(|x| x.version.as_str()).collect::<Vec<_>>().join(", "))
+        })?,
+        None => {
+            println!("NadoVibe 러너 업데이트 — 지금 {}
+", update::CURRENT);
+            for (i, v) in list.iter().enumerate() {
+                println!("  {:>2}) {}", i + 1, update::label(v, &newest));
+            }
+            if !std::io::stdin().is_terminal() {
+                return Ok(format!("
+설치하려면: aidev-runner update <버전>  (최신: aidev-runner update latest)"));
+            }
+            print!("
+설치할 번호 [1, 취소는 q]: ");
+            let _ = std::io::stdout().flush();
+            let mut line = String::new();
+            std::io::stdin().read_line(&mut line).map_err(|e| e.to_string())?;
+            match line.trim() {
+                "" => 0,
+                "q" | "Q" => return Ok("취소했습니다".into()),
+                n => n.parse::<usize>().ok().filter(|n| (1..=list.len()).contains(n)).map(|n| n - 1).ok_or_else(|| format!("{n}: 1~{} 중에서 고르세요", list.len()))?,
+            }
+        }
+    };
+    update::install(&list[pick], &|s| println!("{s}"))
+}
+
 /// The runner's life: connect, reconnect, hand over (boot-time runner), pause and resume (status icon) — until a
 /// shutdown (exit 0) or a refused token (exit 3).
 fn serve(cfg: config::Config, boot: bool) -> Result<i32, String> {
     let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
     loop {
+        // an update is replacing the file: hold on, disconnected, then start again from the new one
+        if control::update_pending() {
+            control::set_state(control::State::Connecting);
+            eprintln!("업데이트: 연결을 끊고 러너 파일이 바뀌기를 기다립니다");
+            while control::updating() && !control::quit_requested() {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+            }
+            if control::quit_requested() {
+                return Ok(0);
+            }
+            let why = control::restart_self();
+            eprintln!("업데이트: 다시 시작하지 못했습니다 ({why}) — 이 러너로 계속합니다");
+        }
         if control::is_paused() {
             control::set_state(control::State::Paused);
             eprintln!("정지됨 — 상태 아이콘의 \"시작\"(또는 `aidev-runner` 직접 실행)으로 다시 연결합니다");
             let interrupted = rt.block_on(async {
-                while control::is_paused() && !control::quit_requested() {
+                while control::is_paused() && !control::quit_requested() && !control::update_pending() {
                     tokio::select! {
                         _ = tokio::signal::ctrl_c() => return true,
                         _ = tokio::time::sleep(std::time::Duration::from_secs(1)) => {}
@@ -174,11 +235,18 @@ fn serve(cfg: config::Config, boot: bool) -> Result<i32, String> {
                 eprintln!("종료합니다");
                 return Ok(0);
             }
+            if control::update_pending() {
+                continue;   // restarts from the new file, still paused
+            }
             control::set_state(control::State::Connecting);
         }
         // one runner per config: a second `start` would keep stealing the target's connection — except that
         // the boot-time runner hands over to a sign-in's runner and takes over again when it ends
-        let lock = config::acquire_instance(boot, std::time::Duration::from_secs(60))?;
+        let lock = match config::acquire_instance(boot, std::time::Duration::from_secs(60)) {
+            Ok(lock) => lock,
+            Err(_) if control::update_pending() => continue,
+            Err(e) => return Err(e),
+        };
         if boot {
             eprintln!("부팅 러너: 연결을 맡습니다");
         }
@@ -236,14 +304,14 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             }
             #[cfg(any(windows, target_os = "macos"))]
             if tray::wanted(boot) {
-                tray::run(cfg.name.clone(), move || serve(cfg, boot).unwrap_or_else(|e| {
+                tray::run(cfg.name.clone(), cfg.gateway.clone(), move || serve(cfg, boot).unwrap_or_else(|e| {
                     eprintln!("오류: {e}");
                     1
                 }));
             }
             #[cfg(target_os = "linux")]
             if tray::wanted(boot) {
-                tray::spawn(cfg.name.clone());
+                tray::spawn(cfg.name.clone(), cfg.gateway.clone());
             }
             return Ok(ExitCode::from(serve(cfg, boot)? as u8));
         }
@@ -291,6 +359,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
         }
         Cmd::InstallService { print, limited, logon_only, user, .. } => println!("{}", service::install(print, limited, logon_only, user)?),
         Cmd::UninstallService => println!("{}", service::uninstall()?),
+        Cmd::Update { version, gateway } => println!("{}", update_console(version, gateway)?),
         Cmd::Unpair => {
             let p = config::path();
             if p.exists() { std::fs::remove_file(&p).map_err(|e| e.to_string())?; }

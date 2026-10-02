@@ -171,5 +171,6 @@ cat <<EOF
 - macOS가 처음 한 번 "화면 기록"·"손쉬운 사용" 허용을 물으면 켜 주세요. 이 Mac의 고정 서명으로 설치하므로
   업데이트해도 다시 묻지 않습니다.
 - 로그: ~/.aidev/runner.log
+- 새 터미널부터 어디서든 aidev-runner — 업데이트: 메뉴 막대 아이콘의 "업데이트" 또는 aidev-runner update
 EOF
 [ "$ok" = 1 ]

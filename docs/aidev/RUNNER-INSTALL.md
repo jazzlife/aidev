@@ -117,7 +117,26 @@ PC에서 토큰을 지운 뒤, 작업대 원격 대상(또는 휴대폰 PC 연�
 
 ## 업데이트
 
-이미 연결된 PC: 코드 없이 같은 줄. 페어링과 허용 설정은 그대로 유지됩니다.
+**러너 0.14.0부터**
+
+- **아이콘 메뉴**: 새 버전이 있으면 메뉴 막대·알림 영역·트레이 아이콘의 메뉴에 **"업데이트 — 0.x.y 있음…"**이 나타납니다. 누르면 버전 목록(최신과 이전 버전) 창이 뜨고, 고른 버전으로 바로 교체됩니다.
+- **콘솔**: 같은 목록이 번호로 나옵니다. 번호를 고르거나(Enter = 최신) 버전을 바로 지정합니다.
+
+```bash
+aidev-runner update            # 목록에서 고르기
+aidev-runner update latest     # 최신으로 바로
+aidev-runner update 0.14.0     # 이 버전으로 (이전 버전으로 되돌리기도)
+```
+
+진행 과정:
+1. 받은 파일의 SHA-256을 확인합니다.
+2. 이 PC의 러너를 모두 멈춥니다(연결과 실행 중인 명령 중지).
+3. `~/.aidev/bin`의 파일을 교체합니다. 이전 파일은 `aidev-runner.prev`로 남깁니다.
+4. 각 러너가 같은 서비스·관리자 권한·데스크톱 세션으로 다시 시작합니다.
+
+페어링·허용 설정·macOS 화면 기록 권한은 그대로입니다.
+
+**0.13.x 이하에서 올릴 때**(또는 설치 스크립트로): 코드 없이 같은 줄. 페어링과 허용 설정은 그대로 유지됩니다.
 
 ```powershell
 # Windows (PowerShell)
@@ -149,7 +168,7 @@ curl -fsSL https://dev.nado.work/_runner/scripts/install-linux.sh | bash
 
 ## 러너 명령
 
-설치 스크립트 없이 받은 실행 파일을 직접 쓸 때. `install`은 자신을 `~/.aidev/bin`(Windows `%USERPROFILE%\.aidev\bin`)에 복사해 등록하므로 받은 파일은 지워도 됩니다(러너 0.13.5부터).
+설치 스크립트 없이 받은 실행 파일을 직접 쓸 때. `install`은 자신을 `~/.aidev/bin`(Windows `%USERPROFILE%\.aidev\bin`)에 복사해 등록하므로 받은 파일은 지워도 됩니다(러너 0.13.5부터). 그 폴더를 PATH에 등록하므로 새로 연 터미널 어디서든 `aidev-runner`로 실행됩니다(0.14.0부터 — Windows: 사용자 Path, macOS·Linux: 셸 시작 파일과 `/usr/local/bin`).
 
 | 명령 | 하는 일 |
 |---|---|
@@ -157,9 +176,10 @@ curl -fsSL https://dev.nado.work/_runner/scripts/install-linux.sh | bash
 | `aidev-runner install` | 서비스 설치: 부팅 직후부터, 관리자 권한으로 실행. |
 | `aidev-runner install --limited --logon-only` | 일반 사용자 권한, 로그인한 동안만. |
 | `aidev-runner uninstall` | 서비스 제거. |
+| `aidev-runner update` | 받을 수 있는 버전(최신·이전) 목록에서 골라 교체. `update latest` · `update 0.14.0`으로 바로. |
 | `aidev-runner status` | 연결 대상·허용 폴더·화면 허용 상태. |
 | `aidev-runner consent screen off` | 화면 보기 끄기 (`control off`는 원격 제어만). 처음엔 둘 다 켜져 있습니다. |
 | `aidev-runner pair <코드>` | 다시 페어링. |
 | `aidev-runner unpair` | 이 PC의 토큰 삭제. |
 
-화면이 있는 OS에서는 아이콘 메뉴로 **시작 · 정지 · 종료**를 할 수 있습니다. 정지하면 연결이 끊기고 실행 중인 명령이 멈추며, 종료하면 다시 실행할 때까지 꺼져 있습니다.
+화면이 있는 OS에서는 아이콘 메뉴로 **시작 · 정지 · 종료**(새 버전이 있으면 **업데이트**도)를 할 수 있습니다. 정지하면 연결이 끊기고 실행 중인 명령이 멈추며, 종료하면 다시 실행할 때까지 꺼져 있습니다.

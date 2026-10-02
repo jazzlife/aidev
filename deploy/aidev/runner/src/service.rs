@@ -38,6 +38,80 @@ pub fn installed_path() -> PathBuf {
 /// scripts/sign-macos.sh, run on the copy `install` makes (macOS).
 const SIGN_MACOS: &str = include_str!("../scripts/sign-macos.sh");
 
+/// macOS: a runner file made ready to replace the installed one — no quarantine flag, this Mac's stable signature.
+#[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+pub fn sign_for_this_mac(file: &std::path::Path) -> bool {
+    quiet("xattr", &["-d", "com.apple.quarantine", &file.display().to_string()]);
+    quiet("bash", &["-c", SIGN_MACOS, "sign-macos", &file.display().to_string()])
+}
+
+/// `aidev-runner` from any terminal: ~/.aidev/bin on the PATH.
+///   Windows       — the user's Path (registry, kept as REG_EXPAND_SZ; new windows see it)
+///   Linux / macOS — a line in the shell start files (zsh, bash, sh, fish), and a link in /usr/local/bin when sudo
+///                   needs no password (after the default install) — also for non-interactive shells
+/// Kept on `uninstall`: the file stays for a later `install`.
+fn register_path(bin: &std::path::Path) -> String {
+    let bin_s = bin.display().to_string();
+    #[cfg(windows)]
+    {
+        let script = format!(
+            "$d = {q}\n\
+             $k = (Get-Item 'HKCU:\\').OpenSubKey('Environment', $true)\n\
+             $p = [string]$k.GetValue('Path', '', 'DoNotExpandEnvironmentNames')\n\
+             if (-not (($p -split ';') | Where-Object {{ $_.TrimEnd('\\') -ieq $d }})) {{\n\
+               $k.SetValue('Path', ((@($p.TrimEnd(';'), $d) | Where-Object {{ $_ }}) -join ';'), 'ExpandString')\n\
+               # any user variable set this way tells open programs (Explorer) to read the environment again\n\
+               [Environment]::SetEnvironmentVariable('AIDEV_RUNNER_BIN', $d, 'User')\n\
+             }}\n\
+             $k.Close()",
+            q = format!("'{}'", bin_s.replace('\'', "''")),
+        );
+        return match powershell(&script, std::time::Duration::from_secs(30)) {
+            Ok(()) => format!("PATH 등록: {bin_s} — 새로 연 창에서 `aidev-runner`"),
+            Err(e) => format!("! PATH에 등록하지 못했습니다 ({e}) — {bin_s}\\aidev-runner.exe 로 실행하세요"),
+        };
+    }
+    #[cfg(unix)]
+    {
+        let home = config::home();
+        let line = "\n# NadoVibe runner (aidev-runner install)\nexport PATH=\"$HOME/.aidev/bin:$PATH\"\n";
+        let shell = std::env::var("SHELL").unwrap_or_default();
+        let mut files: Vec<PathBuf> = [".zshrc", ".bashrc", ".bash_profile", ".profile"].iter().map(|f| home.join(f)).filter(|p| p.exists()).collect();
+        if !files.iter().any(|p| p.ends_with(".zshrc") || p.ends_with(".bashrc")) {
+            // a fresh account: the start file of the login shell
+            files.push(home.join(if shell.ends_with("zsh") { ".zshrc" } else if shell.ends_with("bash") { ".bashrc" } else { ".profile" }));
+        }
+        let mut done = Vec::new();
+        for f in &files {
+            let text = std::fs::read_to_string(f).unwrap_or_default();
+            if text.contains(".aidev/bin") {
+                done.push(f.display().to_string());
+                continue;
+            }
+            if std::fs::OpenOptions::new().create(true).append(true).open(f).and_then(|mut h| std::io::Write::write_all(&mut h, line.as_bytes())).is_ok() {
+                done.push(f.display().to_string());
+            }
+        }
+        let fish = home.join(".config/fish");
+        if fish.is_dir() {
+            let conf = fish.join("conf.d/aidev-runner.fish");
+            let _ = std::fs::create_dir_all(fish.join("conf.d"));
+            if std::fs::write(&conf, "# NadoVibe runner (aidev-runner install)\ncontains $HOME/.aidev/bin $PATH; or set -gx PATH $HOME/.aidev/bin $PATH\n").is_ok() {
+                done.push(conf.display().to_string());
+            }
+        }
+        let exe = bin.join("aidev-runner").display().to_string();
+        let linked = quiet("sudo", &["-n", "mkdir", "-p", "/usr/local/bin"]) && quiet("sudo", &["-n", "ln", "-sf", &exe, "/usr/local/bin/aidev-runner"]);
+        return format!(
+            "PATH 등록: {bin_s} ({}){} — 새로 연 터미널에서 `aidev-runner`",
+            done.join(", "),
+            if linked { ", /usr/local/bin/aidev-runner" } else { "" }
+        );
+    }
+    #[allow(unreachable_code)]
+    String::new()
+}
+
 /// `install` from a downloaded file: copies itself to `installed_path()` (true) — or is already there (false).
 fn place_self() -> Result<(PathBuf, bool), String> {
     let me = exe()?;
@@ -59,11 +133,8 @@ fn place_self() -> Result<(PathBuf, bool), String> {
     // CI signature is not this Mac's: Screen Recording / Accessibility given to the installed runner would not apply to
     // it (the capture shows only the wallpaper, no windows). Sign the copy — before it replaces a running file — with
     // this Mac's stable identity, as the installer does.
-    if cfg!(target_os = "macos") {
-        quiet("xattr", &["-d", "com.apple.quarantine", &tmp.display().to_string()]);
-        if !quiet("bash", &["-c", SIGN_MACOS, "sign-macos", &tmp.display().to_string()]) {
-            eprintln!("! 이 Mac의 고정 서명을 입히지 못했습니다 — macOS가 화면 기록 권한을 다시 물을 수 있습니다");
-        }
+    if cfg!(target_os = "macos") && !sign_for_this_mac(&tmp) {
+        eprintln!("! 이 Mac의 고정 서명을 입히지 못했습니다 — macOS가 화면 기록 권한을 다시 물을 수 있습니다");
     }
     // Windows: the runner a task started holds its file open — stop those first (unix renames over a running file)
     #[cfg(windows)]
@@ -312,6 +383,7 @@ pub fn install(print_only: bool, limited: bool, logon_only: bool, for_user: Opti
     let placed = if copied { format!("\n설치 위치: {} — 받은 파일은 지워도 됩니다", exe.display()) } else { String::new() };
     let exe_s = exe.display().to_string();
     let home = config::home();
+    let bin = installed_path().parent().map(|p| p.to_path_buf()).unwrap_or_default();
     match std::env::consts::OS {
         "linux" => {
             let dir = home.join(".config/systemd/user");
@@ -351,6 +423,7 @@ pub fn install(print_only: bool, limited: bool, logon_only: bool, for_user: Opti
                 }
             }
             notes.push(admin_rights(limited, &user));
+            notes.push(register_path(&bin));
             Ok(format!("{}{placed}", notes.join("\n")))
         }
         "macos" => {
@@ -392,10 +465,12 @@ pub fn install(print_only: bool, limited: bool, logon_only: bool, for_user: Opti
                 });
             }
             notes.push(admin_rights(limited, &user));
+            notes.push(register_path(&bin));
             Ok(format!("{}{placed}", notes.join("\n")))
         }
         "windows" => {
             // no console window at sign-in; output to ~/.aidev/runner.log
+            let rerun = for_user.is_some();   // the UAC re-run: the Path was set by the user's own `install`
             let user = for_user.unwrap_or_else(|| format!("{}\\{}", std::env::var("USERDOMAIN").unwrap_or_default(), std::env::var("USERNAME").unwrap_or_default()).trim_start_matches('\\').to_string());
             let script = task_script(&exe_s, limited, logon_only, &user);
             if print_only { return Ok(script); }
@@ -406,12 +481,13 @@ pub fn install(print_only: bool, limited: bool, logon_only: bool, for_user: Opti
                 if limited { args.push("--limited".into()); }
                 if logon_only { args.push("--logon-only".into()); }
                 run_elevated(&exe_s, &args.join(" "))?;
-                return Ok(describe(limited, logon_only, true));
+                return Ok(format!("{}\n{}", describe(limited, logon_only, true), register_path(&bin)));
             }
             println!("작업 스케줄러에 등록하는 중…");
             powershell(&script, std::time::Duration::from_secs(90))
                 .map_err(|e| if e == "timeout" { "작업 스케줄러가 90초 안에 응답하지 않았습니다".to_string() } else if needs_admin { "작업 등록 실패 — 관리자 권한이 필요합니다".to_string() } else { "작업 등록 실패 (Register-ScheduledTask)".to_string() })?;
-            return Ok(format!("{}{placed}", describe(limited, logon_only, false)));
+            let path_note = if rerun { String::new() } else { format!("\n{}", register_path(&bin)) };
+            return Ok(format!("{}{path_note}{placed}", describe(limited, logon_only, false)));
         }
         other => Err(format!("{other}: 서비스 등록을 지원하지 않습니다 — `aidev-runner start`를 직접 실행하세요")),
     }

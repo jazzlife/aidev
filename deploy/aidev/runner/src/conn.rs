@@ -112,7 +112,8 @@ async fn stop_asked() -> Exit {
         if crate::control::quit_requested() {
             return Exit::Shutdown;
         }
-        if crate::control::is_paused() {
+        // an update stops it the same way; `serve` then waits for the new file and starts again from it
+        if crate::control::is_paused() || crate::control::update_pending() {
             return Exit::Paused;
         }
         tokio::time::sleep(Duration::from_secs(1)).await;

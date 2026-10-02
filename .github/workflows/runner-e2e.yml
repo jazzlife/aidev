@@ -129,6 +129,38 @@ jobs:
             waitfor 'two runners: the session one and the boot one' '[ "$(pgrep -f "aidev-runner start" | wc -l | tr -d " ")" -ge 2 ]'
             waitfor 'the boot runner handed over to the session runner' 'grep -q "연결을 넘깁니다" "$log" || ! grep -q "부팅 러너: 연결을 맡습니다" "$log"'
           fi
+          # on the PATH: the shell start files, and /usr/local/bin (passwordless sudo after the default install)
+          grep -l '.aidev/bin' ~/.zshrc ~/.bashrc ~/.bash_profile ~/.profile 2>/dev/null | grep -q . && echo "ok: PATH line in $(grep -l '.aidev/bin' ~/.zshrc ~/.bashrc ~/.bash_profile ~/.profile 2>/dev/null | xargs)"
+          [ "$(readlink /usr/local/bin/aidev-runner)" = "$HOME/.aidev/bin/aidev-runner" ] && echo "ok: /usr/local/bin/aidev-runner"
+          env -i HOME="$HOME" PATH=/usr/bin:/bin:/usr/local/bin bash -c 'command -v aidev-runner' >/dev/null && echo "ok: aidev-runner from any shell"
+          # update (`aidev-runner update`, the icon's 업데이트): the runners stop, the file is replaced, each starts again
+          # from it — the service's own process (same pid), sudo and the registrations unchanged
+          ver=$("$bin" --version | awk '{print $2}')
+          srv="$RUNNER_TEMP/srv"; mkdir -p "$srv/_runner"; cp "$GITHUB_WORKSPACE/$RUNNER_DIR/target/release/aidev-runner" "$srv/runner-bin"
+          sha=$( (sha256sum "$srv/runner-bin" 2>/dev/null || shasum -a 256 "$srv/runner-bin") | awk '{print $1}')
+          printf '{"latest":"%s","versions":[{"version":"%s","url":"/runner-bin","sha256":"%s","date":null}]}' "$ver" "$ver" "$sha" > "$srv/_runner/versions"
+          (cd "$srv" && exec python3 -m http.server 8765 --bind 127.0.0.1 >/dev/null 2>&1) & http=$!
+          sleep 2
+          if [ "$RUNNER_OS" = Linux ]; then pid_before=$(systemctl --user show -p MainPID --value aidev-runner); else pid_before=$(launchctl print "gui/$(id -u)/work.nado.aidev-runner" | awk '/^\tpid =/ {print $3}'); fi
+          before=$(grep -c "새 러너로 다시 시작합니다" "$log" || true); holds=$(grep -c "부팅 러너: 연결을 맡습니다" "$log" || true)
+          "$bin" update --gateway http://127.0.0.1:8765 < /dev/null | tee "$RUNNER_TEMP/list.out"
+          grep -q "$ver (최신, 현재)" "$RUNNER_TEMP/list.out" && echo "ok: the version list"
+          "$bin" update "$ver" --gateway http://127.0.0.1:8765 | tee "$RUNNER_TEMP/update.out"
+          grep -q "설치 완료" "$RUNNER_TEMP/update.out"
+          test -x ~/.aidev/bin/aidev-runner.prev && echo "ok: the previous file kept"
+          want=$([ "$RUNNER_OS" = macOS ] && echo 2 || echo 1)
+          waitfor "$want runner(s) started again from the new file" '[ "$(grep -c "새 러너로 다시 시작합니다" "$log")" -ge $((before + want)) ]'
+          if [ "$RUNNER_OS" = Linux ]; then
+            pid_after=$(systemctl --user show -p MainPID --value aidev-runner)
+            waitfor 'the boot runner holds the connection again' '[ "$(grep -c "부팅 러너: 연결을 맡습니다" "$log")" -gt $holds ]'
+          else
+            pid_after=$(launchctl print "gui/$(id -u)/work.nado.aidev-runner" | awk '/^\tpid =/ {print $3}')
+            sudo launchctl print system/work.nado.aidev-runner-boot >/dev/null
+          fi
+          [ -n "$pid_before" ] && [ "$pid_before" = "$pid_after" ] && echo "ok: the service's own process, updated in place (pid $pid_after)"
+          sudo grep -q "^$USER ALL=(ALL) NOPASSWD: ALL" /etc/sudoers.d/aidev-runner && echo "ok: sudo kept"
+          test ! -e ~/.aidev/updating
+          kill $http 2>/dev/null || true
           "$bin" install --limited --logon-only
           sudo test ! -e /etc/sudoers.d/aidev-runner
           echo "ok: --limited removed the sudo rule"
@@ -194,6 +226,39 @@ jobs:
           'the session runner holds the connection'
           Stop-Process -Id $session.Id -Force
           WaitFor 'the boot runner takes over again' { BootHolds }
+
+          # on the user's Path (registry, REG_EXPAND_SZ kept)
+          $envKey = (Get-Item 'HKCU:\').OpenSubKey('Environment')
+          $userPath = [string]$envKey.GetValue('Path', '', 'DoNotExpandEnvironmentNames')
+          if (-not (($userPath -split ';') -contains "$cfgDir\bin")) { throw "not on the user's Path: $userPath" }
+          if ($envKey.GetValueKind('Path') -ne 'ExpandString') { throw 'the Path lost its REG_EXPAND_SZ type' }
+          'ok: on the user''s Path'
+          # update: the runners stop, the file is replaced (a running .exe is renamed aside), each starts again from it
+          # with its own arguments and token; the tasks are unchanged
+          $ver = ((& $bin --version) -split ' ')[1]
+          $srv = "$env:RUNNER_TEMP\srv"; New-Item -ItemType Directory -Force "$srv\_runner" | Out-Null
+          Copy-Item "$env:GITHUB_WORKSPACE\$env:RUNNER_DIR\target\release\aidev-runner.exe" "$srv\runner-bin"
+          $sha = (Get-FileHash "$srv\runner-bin" -Algorithm SHA256).Hash.ToLower()
+          Set-Content "$srv\_runner\versions" ('{"latest":"' + $ver + '","versions":[{"version":"' + $ver + '","url":"/runner-bin","sha256":"' + $sha + '","date":null}]}') -NoNewline -Encoding ascii
+          $http = Start-Process python -ArgumentList '-m','http.server','8765','--bind','127.0.0.1' -WorkingDirectory $srv -PassThru -WindowStyle Hidden
+          Start-Sleep 3
+          $restarts = { ([regex]::Matches((Get-Content $log -Encoding utf8 -Raw), '새 러너로 다시 시작합니다')).Count }
+          $before = & $restarts
+          $list = (& $bin update --gateway http://127.0.0.1:8765 | Out-String); $list
+          if ($list -notmatch [regex]::Escape("$ver (최신, 현재)")) { throw 'the version list' }
+          & $bin update $ver --gateway http://127.0.0.1:8765
+          if ($LASTEXITCODE) { throw "update exit $LASTEXITCODE" }
+          if (-not (Test-Path "$cfgDir\bin\aidev-runner.prev.exe")) { throw 'the previous file was not kept' }
+          WaitFor 'the boot runner started again from the new file' { (& $restarts) -gt $before }
+          Start-Sleep 5
+          WaitFor 'the restarted runner holds the connection' { BootHolds }
+          $running = @(Get-CimInstance Win32_Process -Filter "Name='aidev-runner.exe'" | Where-Object { $_.CommandLine -match ' start( |$)' })
+          if ($running.Count -lt 1) { throw 'no runner after the update' }
+          "runners after the update: $($running.Count) ($($running.CommandLine -join ' | '))"
+          if ((Get-ScheduledTask -TaskName aidev-runner).Principal.RunLevel -ne 'Highest' -or (Get-ScheduledTask -TaskName aidev-runner-boot).Actions[0].Execute -ne $bin) { throw 'the tasks changed' }
+          if (Test-Path "$cfgDir\updating") { throw 'the update file was left behind' }
+          Stop-Process -Id $http.Id -Force
+          'ok: update kept the tasks and restarted the runners'
 
           & $bin uninstall
           if (Get-ScheduledTask -TaskName 'aidev-runner*' -ErrorAction SilentlyContinue) { throw 'uninstall left a task' }

@@ -139,3 +139,4 @@ done
 if [ $ok = 1 ]; then echo " ✓ 실행 중이고 플랫폼에 연결됨: ${line##*연결됨: }"
 elif pgrep -u "$(id -u)" -f "$DEST start" >/dev/null; then echo " ! 실행 중이지만 20초 안에 연결 기록을 못 봤습니다 — 로그: $(has_systemd && echo 'journalctl --user -u aidev-runner -f' || echo "$logf")"
 else echo " ✗ 러너가 실행되지 않았습니다 — 로그: $(has_systemd && echo 'journalctl --user -u aidev-runner -n 50' || echo "$logf")"; exit 1; fi
+echo "- 새 터미널부터 어디서든 aidev-runner — 업데이트: 트레이 아이콘의 \"업데이트\" 또는 aidev-runner update"

@@ -152,7 +152,9 @@ r=$(post "$A" /api/aidev/push/subscribe '{"subscription":{"endpoint":"https://pu
 r=$(post "$A" /api/aidev/claude-auth '{"expires_at":4102444800000}'); check "$r" 'j.ok===true' "claude-auth: expiry report accepted"
 r=$(post "$A" /api/aidev/push/unsubscribe '{"endpoint":"https://push.example/abc"}'); check "$r" 'j.removed===1' "push: unsubscribe"
 r=$(curl -s "$G/_runner/download"); if [ -d "$RUNNER_DIST_DIR" ]; then check "$r" 'j.files.length>=1 && j.files[0].sha256 && j.files[0].platform' "runner binaries listed ($(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).files.map(f=>f.platform).join(",")'))"
-  F=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).files[0].name'); n=$(curl -s "$G/_runner/download/$F" | wc -c); check "{\"n\":$n,\"want\":$(wc -c < "$RUNNER_DIST_DIR/$F" | tr -d ' ')}" 'j.n===j.want' "runner binary download ($n bytes)"; fi
+  F=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).files[0].name'); n=$(curl -s "$G/_runner/download/$F" | wc -c); check "{\"n\":$n,\"want\":$(wc -c < "$RUNNER_DIST_DIR/$F" | tr -d ' ')}" 'j.n===j.want' "runner binary download ($n bytes)"
+  P=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).files[0].platform'); v=$(curl -s "$G/_runner/versions?platform=nope,$P")
+  check "$v" "j.latest && j.versions[0].version===j.latest && j.versions[0].url.startsWith('/_runner/download/') && j.versions[0].sha256.length===64 && j.versions.every(x => x.sha256.length===64)" "runner versions for update: the shipped one first ($(echo "$v" | node -pe 'JSON.parse(require("fs").readFileSync(0)).versions.map(x=>x.version).join(" ")'))"; fi
 r=$(curl -s "$G/_runner/download/..%2F..%2Fetc%2Fpasswd" | grep -c "root:" || true); check "{\"c\":$r}" 'j.c===0' "download path traversal cannot read files"
 # F-09b: platform-built debug adapters (aidev-clrdbg) listed and served with the SHA-256 the runner checks
 if [ -f "$RUNNER_DIST_DIR/adapters/manifest.json" ]; then

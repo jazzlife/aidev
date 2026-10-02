@@ -176,6 +176,9 @@ pub fn acquire_instance(boot: bool, wait: std::time::Duration) -> Result<Instanc
     let pause = |ms| std::thread::sleep(Duration::from_millis(ms));
     if boot {
         loop {
+            if crate::control::update_pending() {
+                return Err("업데이트 중".into());
+            }
             let asked = std::fs::metadata(handoff_path()).ok().and_then(|m| m.modified().ok());
             match asked.map(|t| SystemTime::now().duration_since(t).unwrap_or_default()) {
                 Some(age) if age < Duration::from_secs(120) => pause(1000),
@@ -203,7 +206,7 @@ pub fn acquire_instance(boot: bool, wait: std::time::Duration) -> Result<Instanc
     }
     let _ = std::fs::write(handoff_path(), std::process::id().to_string());
     let deadline = Instant::now() + wait;
-    while Instant::now() < deadline {
+    while Instant::now() < deadline && !crate::control::update_pending() {
         pause(500);
         if let Ok(lock) = lock_instance() {
             let _ = std::fs::remove_file(handoff_path());

@@ -280,6 +280,61 @@ async function runnerFiles() {
     return { name, version: m?.[1] ?? null, platform: m?.[2] ?? null, size: (await fs.promises.stat(path.join(dir, name))).size, sha256 };
   }));
 }
+/**
+ * Runner versions for `aidev-runner update` and the status icon's 업데이트 (2026-10-02): the one this release ships (served
+ * here) and the earlier GitHub releases of the runner (public repository; RUNNER_RELEASES_REPO), newest first — never
+ * one newer than the shipped one (the platform has not taken it yet). `platform` lists the PC's file names in order
+ * of preference ("mac-arm64,mac-universal"); each version gives that file's URL and SHA-256.
+ */
+const RUNNER_REPO = process.env.RUNNER_RELEASES_REPO ?? 'jazzlife/aidev';
+type GhAsset = { name: string; size: number; digest?: string | null; browser_download_url: string };
+type GhRelease = { tag_name: string; draft: boolean; prerelease: boolean; published_at: string | null; assets: GhAsset[] };
+let ghReleases: { at: number; list: GhRelease[] } | null = null;
+const ghSums = new Map<string, string>();
+const ghHeaders = () => ({ accept: 'application/vnd.github+json', 'user-agent': 'nadovibe-gateway', ...(process.env.GITHUB_TOKEN ? { authorization: `Bearer ${process.env.GITHUB_TOKEN}` } : {}) });
+async function runnerReleases(): Promise<GhRelease[]> {
+  if (ghReleases && Date.now() - ghReleases.at < 10 * 60_000) return ghReleases.list;
+  try {
+    const r = await fetch(`https://api.github.com/repos/${RUNNER_REPO}/releases?per_page=40`, { headers: ghHeaders(), signal: AbortSignal.timeout(8000) });
+    const list = r.ok ? await r.json() as GhRelease[] : null;
+    if (!Array.isArray(list)) throw new Error(`GitHub ${r.status}`);
+    ghReleases = { at: Date.now(), list };
+  } catch {
+    ghReleases = { at: Date.now() - 9 * 60_000, list: ghReleases?.list ?? [] };   // try again in a minute
+  }
+  return ghReleases.list;
+}
+/** An asset's SHA-256: GitHub's digest, else the release's SHA256SUMS. */
+async function releaseSha(rel: GhRelease, asset: GhAsset) {
+  if (asset.digest?.startsWith('sha256:')) return asset.digest.slice(7);
+  let sums = ghSums.get(rel.tag_name);
+  if (sums === undefined) {
+    const file = rel.assets.find((a) => a.name === 'SHA256SUMS');
+    sums = file ? await fetch(file.browser_download_url, { headers: { 'user-agent': 'nadovibe-gateway' }, signal: AbortSignal.timeout(8000) }).then((r) => r.ok ? r.text() : '').catch(() => '') : '';
+    if (sums) ghSums.set(rel.tag_name, sums);
+  }
+  return sums.split('\n').map((l) => l.trim().split(/\s+\*?/)).find(([, n]) => n === asset.name)?.[0] ?? null;
+}
+const semver = (v: string) => v.split('.').map(Number);
+const cmpVersion = (a: string, b: string) => { const x = semver(a), y = semver(b); for (let i = 0; i < 3; i++) if ((x[i] ?? 0) !== (y[i] ?? 0)) return (x[i] ?? 0) - (y[i] ?? 0); return 0; };
+async function runnerVersions(platformParam: string) {
+  const prefs = platformParam.split(',').filter((p) => /^[a-z0-9-]{3,24}$/.test(p)).slice(0, 4);
+  const files = await runnerFiles();
+  const latest = files.map((f) => f.version).filter((v): v is string => Boolean(v)).sort(cmpVersion).at(-1) ?? null;
+  const out = new Map<string, { version: string; url: string; sha256: string; size: number; date: string | null }>();
+  const here = prefs.map((p) => files.find((f) => f.platform === p && f.sha256 && f.version)).find(Boolean);
+  if (here) out.set(here.version!, { version: here.version!, url: `/_runner/download/${here.name}`, sha256: here.sha256!, size: here.size, date: null });
+  for (const rel of await runnerReleases()) {
+    const v = rel.tag_name.match(/^runner-v(\d+\.\d+\.\d+)$/)?.[1];
+    if (!v || rel.draft || rel.prerelease || (latest && cmpVersion(v, latest) > 0)) continue;
+    const known = out.get(v);
+    if (known) { known.date ??= rel.published_at; continue; }
+    const asset = prefs.map((p) => rel.assets.find((a) => a.name === `aidev-runner-${v}-${p}` || a.name === `aidev-runner-${v}-${p}.exe`)).find(Boolean);
+    const sha256 = asset ? await releaseSha(rel, asset) : null;
+    if (asset && sha256) out.set(v, { version: v, url: asset.browser_download_url, sha256, size: asset.size, date: rel.published_at });
+  }
+  return { latest, versions: [...out.values()].sort((a, b) => cmpVersion(b.version, a.version)).slice(0, 12) };
+}
 const assetFallback = new Map<string, string | null>();
 async function findAssetInOtherReleases(currentRoot: string, pathname: string, distDir = 'dist') {
   const key = `${distDir}:${pathname}`;
@@ -304,6 +359,7 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname === '/_gateway/health' && req.method === 'GET') return json(res, 200, { status: 'ok' });
     // Runner binaries shipped with the release (control/runner): list + download, no session needed.
     if (url.pathname === '/_runner/download' && req.method === 'GET') return json(res, 200, { files: await runnerFiles() });
+    if (url.pathname === '/_runner/versions' && req.method === 'GET') return json(res, 200, await runnerVersions(url.searchParams.get('platform') ?? ''));
     const dl = url.pathname.match(/^\/_runner\/download\/(aidev-runner-[0-9A-Za-z._-]+|SHA256SUMS)$/);
     if (dl && (req.method === 'GET' || req.method === 'HEAD')) {
       const file = path.join(runnerDir(), dl[1]);

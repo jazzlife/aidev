@@ -140,6 +140,9 @@ $svcArgs = @('install')
 if ($Limited) { $svcArgs += '--limited' }
 if ($LogonOnly) { $svcArgs += '--logon-only' }
 if ((Invoke-Native $Dest $svcArgs) -ne 0) { throw '서비스 설치 실패 (aidev-runner install)' }
+# `install` put .aidev\bin on the user's Path for new windows; this one too
+$binDir = Split-Path -Parent $Dest
+if (-not (($env:Path -split ';') -contains $binDir)) { $env:Path = "$env:Path;$binDir" }
 
 # ---- verify ---------------------------------------------------------------------------------------------
 $ok = $false; $line = $null
@@ -164,3 +167,4 @@ Write-Host ''
 Write-Host '완료. 작업대 "원격 대상"에서 이 PC가 온라인인지 확인하세요.'
 Write-Host "- 화면 보기·원격 제어는 첫 실행에서 허용됩니다 (끄기: & `"$Dest`" consent screen off)"
 Write-Host "- 로그: $Log"
+Write-Host '- 어디서든 aidev-runner — 업데이트: 알림 영역 아이콘의 "업데이트" 또는 aidev-runner update'

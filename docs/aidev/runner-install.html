@@ -190,7 +190,15 @@
   <section id="manage">
     <h2>업데이트 · 제거</h2>
     <div class="step">
-      <h3>업데이트 (이미 연결된 PC: 코드 없이 같은 줄)</h3>
+      <h3>업데이트 (러너 0.14.0부터)</h3>
+      <p class="hint"><b>아이콘 메뉴:</b> 새 버전이 있으면 메뉴 막대·알림 영역·트레이 아이콘의 메뉴에 <b>"업데이트 — 0.x.y 있음…"</b>이 나타납니다. 누르면 버전 목록(최신과 이전 버전) 창이 뜨고, 고른 버전으로 바로 교체됩니다.</p>
+      <p class="hint"><b>콘솔:</b> 같은 목록이 번호로 나옵니다. 번호를 고르거나(Enter = 최신) 버전을 바로 지정할 수 있습니다.</p>
+      <div class="cmd"><pre>aidev-runner update</pre><button type="button">복사</button></div>
+      <div class="cmd"><pre>aidev-runner update latest</pre><button type="button">복사</button></div>
+      <p class="hint">진행: 받은 파일의 SHA-256 확인 → 이 PC의 러너를 모두 멈춤(연결·실행 중인 명령 중지) → <code>~/.aidev/bin</code>의 파일 교체(이전 파일은 <code>aidev-runner.prev</code>로 남김) → 각 러너가 같은 서비스·관리자 권한·데스크톱 세션으로 다시 시작. 페어링·허용 설정·macOS 화면 기록 권한은 그대로입니다.</p>
+    </div>
+    <div class="step">
+      <h3>0.13.x 이하에서 올릴 때 · 설치 스크립트로 업데이트 (코드 없이 같은 줄)</h3>
       <div class="cmd"><pre>&amp; ([scriptblock]::Create((irm https://dev.nado.work/_runner/scripts/install-windows.ps1)))</pre><button type="button">복사</button></div>
       <div class="cmd"><pre>curl -fsSL https://dev.nado.work/_runner/scripts/install-macos.sh | bash</pre><button type="button">복사</button></div>
       <div class="cmd"><pre>curl -fsSL https://dev.nado.work/_runner/scripts/install-linux.sh | bash</pre><button type="button">복사</button></div>
@@ -208,7 +216,7 @@
 
   <section id="commands">
     <h2>러너 명령</h2>
-    <p class="hint">설치 스크립트를 쓰지 않고 받은 실행 파일을 직접 쓸 때. <code>install</code>은 자신을 <code>~/.aidev/bin</code>(Windows는 <code>%USERPROFILE%\.aidev\bin</code>)에 복사해 등록하므로 받은 파일은 지워도 됩니다(러너 0.13.5부터).</p>
+    <p class="hint">설치 스크립트를 쓰지 않고 받은 실행 파일을 직접 쓸 때. <code>install</code>은 자신을 <code>~/.aidev/bin</code>(Windows는 <code>%USERPROFILE%\.aidev\bin</code>)에 복사해 등록하므로 받은 파일은 지워도 됩니다(러너 0.13.5부터). 그 폴더를 PATH에 등록하므로 새로 연 터미널 어디서든 <code>aidev-runner</code>로 실행됩니다(0.14.0부터 — Windows: 사용자 Path, macOS·Linux: 셸 시작 파일과 <code>/usr/local/bin</code>).</p>
     <div class="table-wrap">
       <table>
         <thead><tr><th>명령</th><th>하는 일</th></tr></thead>
@@ -217,6 +225,7 @@
           <tr><td><code>aidev-runner install</code></td><td>서비스 설치: 부팅 직후부터, 관리자 권한으로 실행.</td></tr>
           <tr><td><code>aidev-runner install --limited --logon-only</code></td><td>일반 사용자 권한, 로그인한 동안만.</td></tr>
           <tr><td><code>aidev-runner uninstall</code></td><td>서비스 제거.</td></tr>
+          <tr><td><code>aidev-runner update</code></td><td>받을 수 있는 버전(최신·이전) 목록에서 골라 교체. <code>update latest</code> · <code>update 0.14.0</code>으로 바로.</td></tr>
           <tr><td><code>aidev-runner status</code></td><td>연결 대상·허용 폴더·화면 허용 상태.</td></tr>
           <tr><td><code>aidev-runner consent screen off</code></td><td>화면 보기 끄기 (<code>control off</code>는 원격 제어만). 처음엔 둘 다 켜져 있습니다.</td></tr>
           <tr><td><code>aidev-runner pair &lt;코드&gt;</code></td><td>다시 페어링.</td></tr>
@@ -224,7 +233,7 @@
         </tbody>
       </table>
     </div>
-    <p class="hint">화면이 있는 OS에서는 아이콘 메뉴로 <b>시작 · 정지 · 종료</b>를 할 수 있습니다. 정지하면 연결이 끊기고 실행 중인 명령이 멈추며, 종료하면 다시 실행할 때까지 꺼져 있습니다.</p>
+    <p class="hint">화면이 있는 OS에서는 아이콘 메뉴로 <b>시작 · 정지 · 종료</b>(새 버전이 있으면 <b>업데이트</b>도)를 할 수 있습니다. 정지하면 연결이 끊기고 실행 중인 명령이 멈추며, 종료하면 다시 실행할 때까지 꺼져 있습니다.</p>
   </section>
 </div>
 

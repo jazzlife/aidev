@@ -13,7 +13,9 @@ aidev-runner install [--print]            # 서비스 설치: 자신을 ~/.aidev
                                           #   로그인 때 XDG autostart의 세션 러너(DISPLAY·D-Bus)가 넘겨받음
                                           #   관리자 권한 — Windows 관리자 토큰(UAC 한 번), Linux·macOS 비밀번호 없는 sudo(/etc/sudoers.d/aidev-runner, sudo 비밀번호 한 번)
 aidev-runner install --limited --logon-only   # 제한: 일반 사용자 권한 / 로그인한 동안만
+                                          #   PATH 등록 — Windows 사용자 Path, Linux·macOS 셸 시작 파일 + /usr/local/bin 링크: 어디서든 `aidev-runner`
 aidev-runner uninstall                    # 서비스 제거   (예전 이름 install-service / uninstall-service도 그대로 동작)
+aidev-runner update [버전|latest] [--gateway URL]   # 받을 수 있는 버전(최신·이전) 번호 목록에서 골라 ~/.aidev/bin 교체 (0.14.0)
 aidev-runner status                       # 설정 표시 (토큰은 표시 안 함)
 aidev-runner caps                         # 보고할 capabilities(JSON)
 aidev-runner roots list|add <폴더>|remove <폴더>   # 기본 ~/aidev-work. / 와 홈 전체는 거부
@@ -25,6 +27,12 @@ aidev-runner unpair                       # 토큰 삭제
   NadoVibe 로고 + 점 (초록 연결됨 / 주황 연결 중 / 빨강 정지됨), 메뉴 **시작 · 정지 · 종료**. 정지는 `~/.aidev/paused`로 이 PC의 모든 러너
   (부팅용 포함)가 따름, 종료는 정지 + 러너 끝냄(서비스가 다시 띄우지 않음). 직접 실행한 `aidev-runner`는 정지를 풀고 시작.
   SSH·서버·부팅용 러너는 아이콘 없음, `AIDEV_NO_TRAY=1`로 끔.
+- 업데이트(0.14.0, `update.rs`·`dialog.rs`): 게이트웨이 `/_runner/versions?platform=`이 플랫폼이 배포한 버전과 그보다 오래된 GitHub
+  릴리스(파일 URL·SHA-256)를 최신순으로 줌. 아이콘 러너가 시작 20초 뒤·6시간마다 확인해 새 버전이 있으면 메뉴에 **업데이트 — x.y.z 있음…**,
+  누르면 OS 기본 팝업(macOS osascript 목록, Windows WinForms 목록, Linux zenity/kdialog — 없으면 터미널의 `aidev-runner update`)에서 버전 선택.
+  교체: 받고 SHA-256·`--version` 확인(macOS는 이 Mac의 고정 서명) → `~/.aidev/updating`으로 이 PC의 러너가 모두 연결·명령을 멈춤(정지와 같음)
+  → 연결 잠금이 풀리면 파일 교체(이전 파일 `aidev-runner.prev`) → 각 러너가 자기 인자 그대로 새 파일로 다시 시작(Unix exec: 같은 pid라
+  서비스 관계·sudo·세션 유지, Windows: 같은 토큰으로 새 프로세스). 그 사이 대기 중이라 표시를 놓친 러너도 실행 파일이 바뀐 것을 보고 다시 시작.
 - 설정: `~/.aidev/runner.toml`(Unix 0600) — gateway, token, target_id, name, allowed_roots, screen_consent, inherit_env.
   `AIDEV_RUNNER_HOME`으로 위치 변경.
 - 연결: Bearer 토큰, 접속 즉시 `runner.hello{capabilities}`(OS·아키텍처·호스트·셸·도구 버전·adb/sdb 기기·allowed_roots·화면 동의),
