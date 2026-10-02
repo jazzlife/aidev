@@ -28,6 +28,13 @@ while [ $# -gt 0 ]; do
   shift
 done
 [ "$(uname -s)" = Darwin ] || { echo "macOS 전용입니다 (Linux: install-linux.sh, Windows: install-windows.ps1)"; exit 1; }
+# 0.16+: ScreenCaptureKit + VideoToolbox for the remote screen — macOS 13 (Ventura) or later
+macos=$(sw_vers -productVersion 2>/dev/null || echo 0)
+if [ "${macos%%.*}" -lt 13 ] && [ $uninstall = 0 ]; then
+  echo "이 러너는 macOS 13(Ventura) 이상에서 동작합니다 — 이 Mac은 $macos 입니다."
+  echo "macOS를 업데이트하거나, 이전 러너(0.15.0)를 쓰세요: https://github.com/jazzlife/aidev/releases/tag/runner-v0.15.0"
+  exit 1
+fi
 arch=$([ "$(uname -m)" = arm64 ] && echo arm64 || echo x64)
 uid=$(id -u); label="gui/$uid/work.nado.aidev-runner"
 plist="$HOME/Library/LaunchAgents/work.nado.aidev-runner.plist"

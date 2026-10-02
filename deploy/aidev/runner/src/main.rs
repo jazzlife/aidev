@@ -16,6 +16,8 @@ mod exec;
 mod input;
 #[cfg(target_os = "macos")]
 mod macperm;
+#[cfg(target_os = "macos")]
+mod mac_screen;
 mod pair;
 mod proc_util;
 mod roots;
@@ -370,7 +372,13 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
         }
         Cmd::InstallService { print, limited, logon_only, user, .. } => println!("{}", service::install(print, limited, logon_only, user)?),
         Cmd::UninstallService => println!("{}", service::uninstall()?),
-        Cmd::Bench { window, frames, max_width } => println!("{}", screen::bench(window, frames.max(1), max_width)?),
+        Cmd::Bench { window, frames, max_width } => {
+            println!("[CPU: xcap + OpenH264]\n{}", screen::bench(window, frames.max(1), max_width)?);
+            #[cfg(target_os = "macos")]
+            if mac_screen::available() {
+                println!("\n[{}]", screen::bench_native(window, frames.max(1), max_width).unwrap_or_else(|e| format!("ScreenCaptureKit 측정 실패: {e}")));
+            }
+        }
         Cmd::Update { version, gateway } => println!("{}", update_console(version, gateway)?),
         Cmd::Unpair => {
             let p = config::path();

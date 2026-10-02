@@ -196,6 +196,86 @@ fn avg_ms(total: Duration, n: u32) -> f64 {
     if n == 0 { 0.0 } else { (total.as_secs_f64() * 1000.0 / n as f64 * 10.0).round() / 10.0 }
 }
 
+/// What every stream loop shares (F-18): acks and pacing, the bit rate that follows them, the numbers.
+pub(crate) struct Pace {
+    id: u32,
+    flow: Flow,
+    meter: Meter,
+    meter_at: Instant,
+    target: u32,
+    pub kbps: u32,
+    adapt_at: Instant,
+    calm_since: Instant,
+    skipped_window: u32,
+    acked: Acked,
+}
+
+impl Pace {
+    fn new(id: u32, acks: bool, kbps: u32, acked: Acked) -> Self {
+        let now = Instant::now();
+        Pace { id, flow: Flow::new(acks), meter: Meter::default(), meter_at: now, target: kbps, kbps, adapt_at: now, calm_since: now, skipped_window: 0, acked }
+    }
+
+    /// Acks in, the second's numbers out; Some(kbps) when the bit rate should change.
+    fn tick(&mut self, now: Instant) -> Option<u32> {
+        self.flow.take_acks(&self.acked);
+        if now.duration_since(self.meter_at) >= Duration::from_secs(1) {
+            let secs = now.duration_since(self.meter_at).as_secs_f64();
+            let m = std::mem::take(&mut self.meter);
+            note("screen.stats", json!({
+                "streamId": self.id, "fps": (m.frames as f64 / secs * 10.0).round() / 10.0,
+                "captureMs": avg_ms(m.capture, m.frames), "scaleMs": avg_ms(m.scale, m.frames), "encodeMs": avg_ms(m.encode, m.frames),
+                "loopMs": self.flow.median_loop(), "baseMs": self.flow.base.map(|b| b.as_millis() as u64), "skipped": m.skipped,
+                "kbps": (m.bytes as f64 * 8.0 / 1000.0 / secs).round(), "bitrate": self.kbps,
+            }));
+            self.meter_at = now;
+        }
+        if now.duration_since(self.adapt_at) < Duration::from_secs(2) {
+            return None;
+        }
+        // down when frames queue, back up after 6 s without (bit rate before frame rate, as RustDesk's VideoQoS)
+        let next = if self.skipped_window > 0 {
+            self.calm_since = now;
+            (self.kbps * 3 / 4).max(MIN_KBPS)
+        } else if now.duration_since(self.calm_since) >= Duration::from_secs(6) {
+            (self.kbps * 115 / 100).min(self.target)
+        } else {
+            self.kbps
+        };
+        self.skipped_window = 0;
+        self.adapt_at = now;
+        (next != self.kbps).then(|| {
+            self.kbps = next;
+            next
+        })
+    }
+
+    /// Frames are queueing on the way to the viewers: make none now.
+    fn hold(&mut self, now: Instant) -> bool {
+        if self.flow.on && self.flow.congested(now) {
+            self.meter.skipped += 1;
+            self.skipped_window += 1;
+            return true;
+        }
+        false
+    }
+
+    /// One frame made: counted, numbered, tagged.
+    fn frame(&mut self, kind: u8, key: bool, data: &[u8], capture: Duration, scale: Duration, encode: Duration) -> Vec<u8> {
+        self.meter.frames += 1;
+        self.meter.bytes += data.len();
+        self.meter.capture += capture;
+        self.meter.scale += scale;
+        self.meter.encode += encode;
+        tagged(kind, key, self.flow.next_seq(Instant::now()), data)
+    }
+}
+
+/// Into the connection; false when it is gone.
+fn send_frame(id: u32, payload: &[u8]) -> bool {
+    out().is_some_and(|out| out.blocking_send(Message::Binary(frame(id, payload))).is_ok())
+}
+
 fn temp_file() -> std::path::PathBuf {
     static N: AtomicU64 = AtomicU64::new(0);
     std::env::temp_dir().join(format!("aidev-screen-{}-{}.img", std::process::id(), N.fetch_add(1, Ordering::Relaxed)))
@@ -264,6 +344,19 @@ struct StreamOpts {
 
 /// The capture/encode loop, on its own thread (window handles and the encoder stay on it).
 fn run(id: u32, o: StreamOpts, stop: Arc<AtomicBool>, want_key: Arc<AtomicBool>, acked: Acked) {
+    // macOS 13+: ScreenCaptureKit + VideoToolbox (F-18); anything it cannot do goes the CPU way below
+    #[cfg(target_os = "macos")]
+    if o.video && std::env::var("AIDEV_SCREEN_CMD").is_err() && crate::mac_screen::available() {
+        let (window, display) = if appwin::is_display(o.window) { (None, appwin::display_os_id(o.window - appwin::DISPLAY_BASE)) } else { (Some(o.window), None) };
+        match crate::mac_screen::Capture::open(window, display, o.max_width, o.fps) {
+            Ok(cap) => {
+                stream_mac(id, &o, cap, &stop, &want_key, acked);
+                hub().lock().unwrap().streams.remove(&id);
+                return;
+            }
+            Err(e) => eprintln!("[aidev-runner] ScreenCaptureKit을 쓰지 못해 CPU 캡처로 합니다: {e}"),
+        }
+    }
     match Source::open(o.window) {
         Ok(source) => stream(id, o, source, stop, want_key, acked),
         Err(e) => note("screen.error", json!({ "streamId": id, "error": e })),
@@ -277,46 +370,13 @@ fn stream(id: u32, o: StreamOpts, mut source: Source, stop: Arc<AtomicBool>, wan
     let mut jpeg_size: Option<(u32, u32)> = None;
     let mut last: Option<u64> = None;
     let mut failures = 0;
-    let mut flow = Flow::new(o.acks);
-    let mut meter = Meter::default();
-    let mut meter_at = Instant::now();
-    // bit rate: down when frames queue, back up after 6 s without
-    let (mut kbps, mut adapt_at, mut calm_since, mut skipped_window) = (o.bitrate, Instant::now(), Instant::now(), 0u32);
+    let mut pace = Pace::new(id, o.acks, o.bitrate, acked);
     while !stop.load(Ordering::Relaxed) {
         let t0 = Instant::now();
-        flow.take_acks(&acked);
-        if t0.duration_since(meter_at) >= Duration::from_secs(1) {
-            let secs = t0.duration_since(meter_at).as_secs_f64();
-            note("screen.stats", json!({
-                "streamId": id, "fps": (meter.frames as f64 / secs * 10.0).round() / 10.0,
-                "captureMs": avg_ms(meter.capture, meter.frames), "scaleMs": avg_ms(meter.scale, meter.frames), "encodeMs": avg_ms(meter.encode, meter.frames),
-                "loopMs": flow.median_loop(), "baseMs": flow.base.map(|b| b.as_millis() as u64), "skipped": meter.skipped,
-                "kbps": (meter.bytes as f64 * 8.0 / 1000.0 / secs).round(), "bitrate": kbps,
-            }));
-            meter = Meter::default();
-            meter_at = t0;
+        if let (Some(kbps), Some(e)) = (pace.tick(t0), enc.as_mut()) {
+            e.set_bitrate(kbps);
         }
-        if o.video && t0.duration_since(adapt_at) >= Duration::from_secs(2) {
-            let next = if skipped_window > 0 {
-                calm_since = t0;
-                (kbps * 3 / 4).max(MIN_KBPS)
-            } else if t0.duration_since(calm_since) >= Duration::from_secs(6) {
-                (kbps * 115 / 100).min(o.bitrate)
-            } else {
-                kbps
-            };
-            if next != kbps {
-                kbps = next;
-                if let Some(e) = enc.as_mut() {
-                    e.set_bitrate(kbps);
-                }
-            }
-            skipped_window = 0;
-            adapt_at = t0;
-        }
-        if flow.on && flow.congested(t0) {
-            meter.skipped += 1;
-            skipped_window += 1;
+        if pace.hold(t0) {
             std::thread::sleep(period);
             continue;
         }
@@ -333,7 +393,7 @@ fn stream(id: u32, o: StreamOpts, mut source: Source, stop: Arc<AtomicBool>, wan
                     let payload = if o.video {
                         if enc.as_ref().map(|e| (e.width, e.height)) != Some((w, h)) {
                             // first frame or the window was resized: a new encoder, starting with a keyframe
-                            match H264::new(w, h, o.fps.round() as u32, kbps) {
+                            match H264::new(w, h, o.fps.round() as u32, pace.kbps) {
                                 Ok(e) => { enc = Some(e); note("screen.format", json!({ "streamId": id, "codec": "h264", "width": w, "height": h })); }
                                 Err(e) => { note("screen.error", json!({ "streamId": id, "error": e })); break; }
                             }
@@ -352,15 +412,8 @@ fn stream(id: u32, o: StreamOpts, mut source: Source, stop: Arc<AtomicBool>, wan
                         jpeg(&rgba, w, h, 70).ok().map(|j| (KIND_JPEG, true, j))
                     };
                     if let Some((kind, key, data)) = payload {
-                        let t3 = Instant::now();
-                        meter.frames += 1;
-                        meter.bytes += data.len();
-                        meter.capture += t1.duration_since(t0);
-                        meter.scale += t2.duration_since(t1);
-                        meter.encode += t3.duration_since(t2);
-                        let p = tagged(kind, key, flow.next_seq(t3), &data);
-                        let Some(out) = out() else { break };
-                        if out.blocking_send(Message::Binary(frame(id, &p))).is_err() {
+                        let p = pace.frame(kind, key, &data, t1 - t0, t2 - t1, t2.elapsed());
+                        if !send_frame(id, &p) {
                             break;
                         }
                     }
@@ -377,6 +430,64 @@ fn stream(id: u32, o: StreamOpts, mut source: Source, stop: Arc<AtomicBool>, wan
             }
         }
         std::thread::sleep(period.saturating_sub(t0.elapsed()));
+    }
+}
+
+/// The macOS stream: a picture only when the screen changed, encoded on the GPU; while frames queue the newest one
+/// waits and goes once the queue has drained (the viewer always ends on the current picture).
+#[cfg(target_os = "macos")]
+fn stream_mac(id: u32, o: &StreamOpts, mut cap: crate::mac_screen::Capture, stop: &AtomicBool, want_key: &AtomicBool, acked: Acked) {
+    use crate::mac_screen::{Encoder, Picture};
+    let mut pace = Pace::new(id, o.acks, o.bitrate, acked);
+    let mut enc: Option<Encoder> = None;
+    let mut pending: Option<Picture> = None;
+    let mut last: Option<Picture> = None;
+    let mut follow_at = Instant::now();
+    while !stop.load(Ordering::Relaxed) {
+        let now = Instant::now();
+        if let (Some(kbps), Some(e)) = (pace.tick(now), enc.as_mut()) {
+            e.set_bitrate(kbps);
+        }
+        if let Some(p) = cap.next(Duration::from_millis(50)) {
+            pending = Some(p);
+        }
+        // a window that changed shape: the capture follows it, and a new encoder starts with a keyframe
+        if now.duration_since(follow_at) >= Duration::from_secs(1) {
+            follow_at = now;
+            match cap.follow_window() {
+                Ok(true) => enc = None,
+                Ok(false) => {}
+                Err(e) => { note("screen.error", json!({ "streamId": id, "error": e })); break; }
+            }
+        }
+        let force = want_key.load(Ordering::Relaxed);
+        if pending.is_none() && force {
+            pending = last.take();   // nothing changed, a keyframe asked for: the last picture again
+        }
+        if pending.is_none() || pace.hold(Instant::now()) {
+            continue;
+        }
+        let Some(pic) = pending.take() else { continue };
+        want_key.store(false, Ordering::Relaxed);
+        if enc.as_ref().map(|e| (e.width, e.height)) != Some((cap.width, cap.height)) {
+            match Encoder::new(cap.width, cap.height, o.fps, pace.kbps) {
+                Ok(e) => { enc = Some(e); note("screen.format", json!({ "streamId": id, "codec": "h264", "width": cap.width, "height": cap.height, "encoder": "videotoolbox" })); }
+                Err(e) => { note("screen.error", json!({ "streamId": id, "error": e })); break; }
+            }
+        }
+        let t = Instant::now();
+        let first = enc.as_ref().is_some_and(|e| e.fresh());
+        match enc.as_mut().map(|e| e.encode(&pic.pixels, force || first)) {
+            Some(Ok((au, key))) if !au.is_empty() => {
+                let p = pace.frame(KIND_H264, key, &au, pic.capture, Duration::ZERO, t.elapsed());
+                if !send_frame(id, &p) {
+                    break;
+                }
+            }
+            Some(Err(e)) => { note("screen.error", json!({ "streamId": id, "error": e })); break; }
+            _ => {}
+        }
+        last = Some(pic);
     }
 }
 
@@ -465,6 +576,55 @@ pub fn bench(window: Option<u32>, frames: u32, max_width: u32) -> Result<String,
         if window.is_some() { "창" } else { "주 화면" }, size.0, size.1, size.2, size.3,
         line("캡처", &mut capture), line("축소", &mut scale), line("변화확인", &mut check), line("인코딩", &mut encode), line("합계", &mut total),
         1.0 / avg_total.max(1e-6), bytes / 1024 / frames.max(1) as usize,
+    ))
+}
+
+/// `bench` on macOS 13+: ScreenCaptureKit + VideoToolbox — pictures for 3 s (only changes arrive: move something on
+/// the screen meanwhile), the time from composition to the runner, and the hardware encoder on the last picture.
+#[cfg(target_os = "macos")]
+pub fn bench_native(window: Option<u32>, frames: u32, max_width: u32) -> Result<String, String> {
+    use crate::mac_screen::{Capture, Encoder};
+    let (win, display) = match window {
+        Some(w) if !appwin::is_display(w) => (Some(w), None),
+        Some(w) => (None, appwin::display_os_id(w - appwin::DISPLAY_BASE)),
+        None => (None, appwin::display_os_id(0)),
+    };
+    let t_open = Instant::now();
+    let cap = Capture::open(win, display, max_width, 60.0)?;
+    let open_ms = t_open.elapsed().as_secs_f64() * 1000.0;
+    let mut enc = Encoder::new(cap.width, cap.height, 60.0, 4000)?;
+    let (mut lat, mut encode, mut bytes) = (Vec::new(), Vec::new(), 0usize);
+    let mut last = None;
+    let until = Instant::now() + Duration::from_secs(3);
+    while Instant::now() < until {
+        if let Some(p) = cap.next(Duration::from_millis(100)) {
+            lat.push(p.capture);
+            let t = Instant::now();
+            let (au, _) = enc.encode(&p.pixels, encode.is_empty())?;
+            encode.push(t.elapsed());
+            bytes += au.len();
+            last = Some(p);
+        }
+    }
+    let changes = lat.len();
+    let pic = last.ok_or("3초 동안 받은 화면이 없습니다 (화면 기록 권한?)")?;
+    for i in 0..frames {
+        let t = Instant::now();
+        let (au, _) = enc.encode(&pic.pixels, i % 30 == 0)?;
+        encode.push(t.elapsed());
+        bytes += au.len();
+    }
+    let stat = |v: &mut Vec<Duration>| {
+        v.sort();
+        let avg = v.iter().sum::<Duration>().as_secs_f64() * 1000.0 / v.len().max(1) as f64;
+        let p95 = v.get(v.len() * 95 / 100).copied().unwrap_or_default().as_secs_f64() * 1000.0;
+        (avg, p95)
+    };
+    let (la, lp) = stat(&mut lat);
+    let (ea, ep) = stat(&mut encode);
+    Ok(format!(
+        "ScreenCaptureKit + VideoToolbox ({}×{}, 스트림 여는 데 {open_ms:.0} ms)\n받은 화면 변화 {changes}개 / 3초 — 합성→러너 평균 {la:.1} ms, p95 {lp:.1} ms (축소·색 변환은 GPU)\n인코딩 {}회 평균 {ea:.1} ms, p95 {ep:.1} ms, 평균 {} KB/프레임\n→ 인코딩만으로 최대 {:.0} fps (캡처는 별도 스레드에서 와서 기다리지 않음)",
+        cap.width, cap.height, encode.len(), bytes / 1024 / encode.len().max(1), 1000.0 / ea.max(0.01),
     ))
 }
 

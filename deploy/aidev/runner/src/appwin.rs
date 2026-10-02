@@ -76,6 +76,9 @@ pub fn find(id: Option<u32>, query: Option<&str>) -> Result<WinInfo, String> {
 }
 
 /// A capture session on one window: keeps the OS handle between frames.
+#[cfg(target_os = "macos")]
+pub use imp::display_os_id;
+
 pub struct Capturer(imp::Handle);
 
 impl Capturer {
@@ -111,6 +114,12 @@ mod imp {
         // primary first: display #1 is the main screen
         all.sort_by_key(|m| !m.is_primary().unwrap_or(false));
         Ok(all)
+    }
+
+    /// The OS's id of display #`index` (screen.list order: the primary first) — macOS: the CGDirectDisplayID.
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    pub fn display_os_id(index: u32) -> Option<u32> {
+        monitors().ok()?.get(index as usize)?.id().ok()
     }
 
     pub fn displays() -> Result<Vec<WinInfo>, String> {

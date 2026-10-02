@@ -117,10 +117,6 @@ pub fn adapters_dir() -> PathBuf {
     crate::config::dir().join("adapters")
 }
 
-fn now_ms() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0)
-}
-
 /// `bin` on the user's PATH (the login shell's, as jobs see it).
 pub fn which(bin: &str) -> Option<PathBuf> {
     let path = crate::exec::user_path().or_else(|| std::env::var("PATH").ok())?;

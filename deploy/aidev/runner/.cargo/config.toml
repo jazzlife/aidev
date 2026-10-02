@@ -1,0 +1,4 @@
+# macOS 13 (Ventura) is the runner's minimum: ScreenCaptureKit + VideoToolbox for the remote screen (F-18) and the
+# Swift runtime they bring. An older Mac is refused with "needs a newer macOS" instead of crashing at launch.
+[env]
+MACOSX_DEPLOYMENT_TARGET = "13.0"

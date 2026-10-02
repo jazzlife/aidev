@@ -22,7 +22,7 @@ PowerShell (관리자로 열 필요 없음)
 & ([scriptblock]::Create((irm https://dev.nado.work/_runner/scripts/install-windows.ps1))) -Code <코드> -Limited -LogonOnly
 ```
 
-## macOS
+## macOS (13 Ventura 이상)
 
 터미널
 
