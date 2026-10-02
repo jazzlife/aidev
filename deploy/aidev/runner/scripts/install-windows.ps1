@@ -53,7 +53,10 @@ $Home_ = $env:USERPROFILE
 $Dest = Join-Path $Home_ '.aidev\bin\aidev-runner.exe'
 $Log = Join-Path $Home_ '.aidev\runner.log'
 $Toml = Join-Path $Home_ '.aidev\runner.toml'
-$Arch = if ($env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -eq 'ARM64') { 'arm64' } else { 'x64' }
+# the machine's own architecture: an x64 PowerShell emulated on ARM64 Windows says AMD64 in its environment, and the x64
+# runner would then run emulated too (the remote screen several times slower)
+$native = try { (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\Session Manager\Environment' -ErrorAction Stop).PROCESSOR_ARCHITECTURE } catch { $env:PROCESSOR_ARCHITECTURE }
+$Arch = if ($native -eq 'ARM64' -or $env:PROCESSOR_ARCHITECTURE -eq 'ARM64' -or $env:PROCESSOR_ARCHITEW6432 -eq 'ARM64') { 'arm64' } else { 'x64' }
 
 function Stop-Runner {
   if (-not $TestMode) { try { schtasks /End /TN aidev-runner 2>$null | Out-Null } catch { } }

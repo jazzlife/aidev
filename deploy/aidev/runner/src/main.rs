@@ -220,6 +220,9 @@ fn update_console(version: Option<String>, gateway: Option<String>) -> Result<St
 /// shutdown (exit 0) or a refused token (exit 3).
 fn serve(cfg: config::Config, boot: bool) -> Result<i32, String> {
     let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+    if update::emulated() {
+        eprintln!("! 이 PC는 ARM64인데 x64 러너가 에뮬레이션으로 돌고 있습니다 — 원격 화면 등이 몇 배 느립니다: 상태 아이콘의 \"업데이트\" 또는 `aidev-runner update latest`로 ARM64 빌드로 바꾸세요");
+    }
     loop {
         // an update is replacing the file: hold on, disconnected, then start again from the new one
         if control::update_pending() {

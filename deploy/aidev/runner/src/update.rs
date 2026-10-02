@@ -32,8 +32,29 @@ struct List {
     versions: Vec<Version>,
 }
 
+/// The x64 runner on an ARM64 Windows PC (installed from the x64 file): it runs emulated, the screen several times
+/// slower — the update offers the ARM64 build, this same version too.
+pub fn emulated() -> bool {
+    #[cfg(all(windows, target_arch = "x86_64"))]
+    {
+        #[link(name = "kernel32")]
+        extern "system" {
+            fn GetCurrentProcess() -> isize;
+            fn IsWow64Process2(process: isize, process_machine: *mut u16, native_machine: *mut u16) -> i32;
+        }
+        let (mut process, mut native) = (0u16, 0u16);
+        // IMAGE_FILE_MACHINE_ARM64
+        return unsafe { IsWow64Process2(GetCurrentProcess(), &mut process, &mut native) } != 0 && native == 0xAA64;
+    }
+    #[allow(unreachable_code)]
+    false
+}
+
 /// This PC's file names on the gateway, in order of preference.
 fn platforms() -> &'static str {
+    if emulated() {
+        return "win-arm64";
+    }
     match (std::env::consts::OS, std::env::consts::ARCH) {
         ("windows", "x86_64") => "win-x64",
         ("windows", "aarch64") => "win-arm64",
@@ -76,9 +97,13 @@ pub fn versions(gateway: &str) -> Result<Vec<Version>, String> {
     Ok(list)
 }
 
-/// The newest offered version, when it is newer than this runner.
+/// The newest offered version, when it is newer than this runner (or this PC's own build of it: `emulated`).
 pub fn newer(list: &[Version]) -> Option<&Version> {
-    list.first().filter(|v| cmp(&v.version, CURRENT) == Ordering::Greater)
+    list.first().filter(|v| match cmp(&v.version, CURRENT) {
+        Ordering::Greater => true,
+        Ordering::Equal => emulated(),
+        Ordering::Less => false,
+    })
 }
 
 /// A version as the lists show it: "0.14.1 (최신)", "0.14.0 (현재)" …
@@ -88,7 +113,7 @@ pub fn label(v: &Version, newest: &str) -> String {
         tags.push("최신");
     }
     if v.version == CURRENT {
-        tags.push("현재");
+        tags.push(if emulated() { "현재 x64 — 이 PC용 ARM64 빌드로 교체" } else { "현재" });
     }
     if cmp(&v.version, FIRST_SELF_UPDATE) == Ordering::Less {
         tags.push("이후 업데이트는 설치 스크립트로");

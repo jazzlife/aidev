@@ -311,7 +311,7 @@ impl Source {
         if std::env::var_os("AIDEV_SCREEN_CPU").is_none() {
             match crate::win_screen::Capture::open(window, fps) {
                 Ok(c) => return Ok(Source::Wgc(Box::new(c))),
-                Err(e) => eprintln!("[aidev-runner] Windows Graphics Capture를 쓰지 못해 GDI 캡처로 합니다: {e}"),
+                Err(e) => eprintln!("[aidev-runner] Windows Graphics Capture를 쓰지 못해 GDI 캡처로 합니다 (#{window}): {e}"),
             }
         }
         let _ = fps;
