@@ -18,6 +18,8 @@ mod input;
 mod macperm;
 #[cfg(target_os = "macos")]
 mod mac_screen;
+#[cfg(windows)]
+mod win_screen;
 mod pair;
 mod proc_util;
 mod roots;
@@ -374,6 +376,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
         Cmd::UninstallService => println!("{}", service::uninstall()?),
         Cmd::Bench { window, frames, max_width } => {
             println!("[CPU: xcap + OpenH264]\n{}", screen::bench(window, frames.max(1), max_width)?);
+            #[cfg(windows)]
+            println!("\n[{}]", screen::bench_wgc(window, max_width).unwrap_or_else(|e| format!("Windows Graphics Capture 측정 실패: {e}")));
             #[cfg(target_os = "macos")]
             if mac_screen::available() {
                 println!("\n[{}]", screen::bench_native(window, frames.max(1), max_width).unwrap_or_else(|e| format!("ScreenCaptureKit 측정 실패: {e}")));

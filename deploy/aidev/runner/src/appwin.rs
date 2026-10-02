@@ -76,7 +76,7 @@ pub fn find(id: Option<u32>, query: Option<&str>) -> Result<WinInfo, String> {
 }
 
 /// A capture session on one window: keeps the OS handle between frames.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", windows))]
 pub use imp::display_os_id;
 
 pub struct Capturer(imp::Handle);
@@ -90,6 +90,13 @@ impl Capturer {
     }
     pub fn capture(&mut self) -> Result<Frame, String> {
         self.0.capture()
+    }
+    /// How the pixels are read (for `bench`).
+    pub fn method(&self) -> &'static str {
+        #[cfg(target_os = "linux")]
+        return self.0.method();
+        #[cfg(not(target_os = "linux"))]
+        "xcap"
     }
 }
 
@@ -117,7 +124,6 @@ mod imp {
     }
 
     /// The OS's id of display #`index` (screen.list order: the primary first) — macOS: the CGDirectDisplayID.
-    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     pub fn display_os_id(index: u32) -> Option<u32> {
         monitors().ok()?.get(index as usize)?.id().ok()
     }
@@ -273,16 +279,90 @@ mod imp {
         Ok(windows(&x).into_iter().filter_map(|w| describe(&x, w, active)).collect())
     }
 
+    /// A System V shared memory segment the X server writes the picture into (MIT-SHM, F-18): no copy of the whole
+    /// frame through the X socket. Not on a remote X (ssh -X) — then plain GetImage.
+    struct Shm {
+        seg: u32,
+        addr: *mut u8,
+        size: usize,
+    }
+
+    fn shm_open(x: &X, size: usize) -> Option<Shm> {
+        use x11rb::protocol::shm::ConnectionExt as _;
+        x.conn.shm_query_version().ok()?.reply().ok()?;
+        let seg = x.conn.generate_id().ok()?;
+        let id = unsafe { libc::shmget(libc::IPC_PRIVATE, size, libc::IPC_CREAT | 0o600) };
+        if id < 0 {
+            return None;
+        }
+        let addr = unsafe { libc::shmat(id, std::ptr::null(), 0) };
+        let attached = addr as isize != -1 && x.conn.shm_attach(seg, id as u32, false).ok().is_some_and(|c| c.check().is_ok());
+        // marked for removal now: it goes once both sides have detached (also when the runner dies)
+        unsafe { libc::shmctl(id, libc::IPC_RMID, std::ptr::null_mut()) };
+        if !attached {
+            if addr as isize != -1 {
+                unsafe { libc::shmdt(addr) };
+            }
+            return None;
+        }
+        Some(Shm { seg, addr: addr.cast(), size })
+    }
+
     pub struct Handle {
         x: X,
         win: Window,
+        shm: Option<Shm>,
+        /// MIT-SHM failed once: GetImage from then on
+        no_shm: bool,
+    }
+
+    impl Drop for Handle {
+        fn drop(&mut self) {
+            use x11rb::protocol::shm::ConnectionExt as _;
+            if let Some(s) = self.shm.take() {
+                let _ = self.x.conn.shm_detach(s.seg);
+                let _ = self.x.conn.flush();
+                unsafe { libc::shmdt(s.addr.cast()) };
+            }
+        }
     }
 
     impl Handle {
+        /// What reads the pixels: "MIT-SHM" or "GetImage".
+        pub fn method(&self) -> &'static str {
+            if self.shm.is_some() { "MIT-SHM" } else { "GetImage" }
+        }
+
+        /// The visible rectangle's pixels (BGRX), through shared memory when the X server allows it.
+        fn read(&mut self, x0: i16, y0: i16, vw: u16, vh: u16) -> Result<Vec<u8>, String> {
+            use x11rb::protocol::shm::ConnectionExt as _;
+            let need = usize::from(vw) * usize::from(vh) * 4;
+            if !self.no_shm && self.shm.as_ref().is_none_or(|s| s.size < need) {
+                if let Some(old) = self.shm.take() {
+                    let _ = self.x.conn.shm_detach(old.seg);
+                    unsafe { libc::shmdt(old.addr.cast()) };
+                }
+                self.shm = shm_open(&self.x, need);
+                self.no_shm = self.shm.is_none();
+            }
+            if let Some(s) = &self.shm {
+                let r = self.x.conn.shm_get_image(self.win, x0, y0, vw, vh, !0, ImageFormat::Z_PIXMAP.into(), s.seg, 0).map_err(|e| e.to_string())?.reply();
+                match r {
+                    Ok(r) if r.size as usize >= need => return Ok(unsafe { std::slice::from_raw_parts(s.addr, need) }.to_vec()),
+                    _ => self.no_shm = true,   // fall through to GetImage, and keep to it
+                }
+            }
+            let img = self.x.conn.get_image(ImageFormat::Z_PIXMAP, self.win, x0, y0, vw, vh, !0).map_err(|e| e.to_string())?.reply().map_err(|e| format!("창 이미지를 읽지 못했습니다: {e:?}"))?;
+            if img.data.len() < need {
+                return Err(format!("지원하지 않는 화면 형식입니다 (depth {})", img.depth));
+            }
+            Ok(img.data)
+        }
+
         pub fn open(id: u32) -> Result<Self, String> {
             let x = connect()?;
             x.conn.get_geometry(id).map_err(|e| e.to_string())?.reply().map_err(|_| format!("창 #{id}이(가) 없습니다"))?;
-            Ok(Handle { x, win: id })
+            Ok(Handle { x, win: id, shm: None, no_shm: false })
         }
         pub fn open_display(index: u32) -> Result<Self, String> {
             if index != 0 {
@@ -290,7 +370,7 @@ mod imp {
             }
             let x = connect()?;
             let win = x.root;
-            Ok(Handle { x, win })
+            Ok(Handle { x, win, shm: None, no_shm: false })
         }
 
         pub fn capture(&mut self) -> Result<Frame, String> {
@@ -306,15 +386,12 @@ mod imp {
                 return Err("창이 화면 밖에 있습니다".into());
             }
             let (vw, vh) = ((x1 - x0) as usize, (y1 - y0) as usize);
-            let img = self.x.conn.get_image(ImageFormat::Z_PIXMAP, self.win, x0 as i16, y0 as i16, vw as u16, vh as u16, !0).map_err(|e| e.to_string())?.reply().map_err(|e| format!("창 이미지를 읽지 못했습니다: {e:?}"))?;
-            if img.data.len() < vw * vh * 4 {
-                return Err(format!("지원하지 않는 화면 형식입니다 (depth {})", img.depth));
-            }
+            let data = self.read(x0 as i16, y0 as i16, vw as u16, vh as u16)?;
             // 24/32-bit TrueColor: BGRX in memory (little endian)
             let (fw, fh) = (w as usize, h as usize);
             let mut rgba = vec![0u8; fw * fh * 4];
             for row in 0..vh {
-                let src = &img.data[row * vw * 4..(row + 1) * vw * 4];
+                let src = &data[row * vw * 4..(row + 1) * vw * 4];
                 let start = ((y0 as usize + row) * fw + x0 as usize) * 4;
                 for (dst, s) in rgba[start..start + vw * 4].chunks_exact_mut(4).zip(src.chunks_exact(4)) {
                     dst[0] = s[2];

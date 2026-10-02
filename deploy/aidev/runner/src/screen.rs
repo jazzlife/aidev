@@ -297,19 +297,43 @@ fn fake_capture(cmd: &str) -> Result<Frame, String> {
 enum Source {
     Fake(String),
     Window(Box<appwin::Capturer>),
+    /// Windows Graphics Capture (F-18): pictures only when something changed
+    #[cfg(windows)]
+    Wgc(Box<crate::win_screen::Capture>),
 }
 
 impl Source {
-    fn open(window: u32) -> Result<Self, String> {
+    fn open(window: u32, fps: f64) -> Result<Self, String> {
         if let Ok(cmd) = std::env::var("AIDEV_SCREEN_CMD") {
             return Ok(Source::Fake(cmd));
         }
+        #[cfg(windows)]
+        if std::env::var_os("AIDEV_SCREEN_CPU").is_none() {
+            match crate::win_screen::Capture::open(window, fps) {
+                Ok(c) => return Ok(Source::Wgc(Box::new(c))),
+                Err(e) => eprintln!("[aidev-runner] Windows Graphics Capture를 쓰지 못해 GDI 캡처로 합니다: {e}"),
+            }
+        }
+        let _ = fps;
         appwin::Capturer::open(window).map(|c| Source::Window(Box::new(c)))
     }
-    fn capture(&mut self) -> Result<Frame, String> {
+
+    /// A picture; None when the source tells changes itself (WGC) and nothing changed within `wait`.
+    fn tells_changes(&self) -> bool {
+        #[cfg(windows)]
+        if matches!(self, Source::Wgc(_)) {
+            return true;
+        }
+        false
+    }
+
+    fn capture(&mut self, wait: Duration) -> Result<Option<Frame>, String> {
+        let _ = wait;
         match self {
-            Source::Fake(cmd) => fake_capture(cmd),
-            Source::Window(c) => c.capture(),
+            Source::Fake(cmd) => fake_capture(cmd).map(Some),
+            Source::Window(c) => c.capture().map(Some),
+            #[cfg(windows)]
+            Source::Wgc(c) => Ok(c.next(wait)),
         }
     }
 }
@@ -357,7 +381,7 @@ fn run(id: u32, o: StreamOpts, stop: Arc<AtomicBool>, want_key: Arc<AtomicBool>,
             Err(e) => eprintln!("[aidev-runner] ScreenCaptureKit을 쓰지 못해 CPU 캡처로 합니다: {e}"),
         }
     }
-    match Source::open(o.window) {
+    match Source::open(o.window, o.fps) {
         Ok(source) => stream(id, o, source, stop, want_key, acked),
         Err(e) => note("screen.error", json!({ "streamId": id, "error": e })),
     }
@@ -371,6 +395,8 @@ fn stream(id: u32, o: StreamOpts, mut source: Source, stop: Arc<AtomicBool>, wan
     let mut last: Option<u64> = None;
     let mut failures = 0;
     let mut pace = Pace::new(id, o.acks, o.bitrate, acked);
+    // a source that only reports changes keeps the last picture here, for a keyframe on request
+    let mut last_scaled: Option<(Vec<u8>, u32, u32)> = None;
     while !stop.load(Ordering::Relaxed) {
         let t0 = Instant::now();
         if let (Some(kbps), Some(e)) = (pace.tick(t0), enc.as_mut()) {
@@ -380,11 +406,16 @@ fn stream(id: u32, o: StreamOpts, mut source: Source, stop: Arc<AtomicBool>, wan
             std::thread::sleep(period);
             continue;
         }
-        match source.capture() {
+        match source.capture(period) {
+            // nothing changed (WGC tells): only a keyframe asked for makes a frame — from the last picture
+            Ok(None) if !(want_key.load(Ordering::Relaxed) && last_scaled.is_some()) => continue,
             Ok(captured) => {
                 failures = 0;
                 let t1 = Instant::now();
-                let (rgba, w, h) = encoder::fit(captured, o.max_width);
+                let (rgba, w, h) = match captured {
+                    Some(captured) => encoder::fit(captured, o.max_width),
+                    None => last_scaled.take().expect("checked above"),
+                };
                 let t2 = Instant::now();
                 let fp = fingerprint(&rgba);
                 let force = want_key.swap(false, Ordering::Relaxed);
@@ -417,6 +448,9 @@ fn stream(id: u32, o: StreamOpts, mut source: Source, stop: Arc<AtomicBool>, wan
                             break;
                         }
                     }
+                }
+                if source.tells_changes() {
+                    last_scaled = Some((rgba, w, h));
                 }
             }
             Err(e) => {
@@ -572,8 +606,8 @@ pub fn bench(window: Option<u32>, frames: u32, max_width: u32) -> Result<String,
     let mut total = total;
     let avg_total = total.iter().sum::<Duration>().as_secs_f64() / total.len().max(1) as f64;
     Ok(format!(
-        "{} ({}×{} → {}×{}, {frames}프레임)\n{}\n{}\n{}\n{}\n{}\n→ 한 스레드로 최대 {:.0} fps, 인코딩 평균 {} KB/프레임",
-        if window.is_some() { "창" } else { "주 화면" }, size.0, size.1, size.2, size.3,
+        "{} ({}×{} → {}×{}, {frames}프레임, 캡처 {})\n{}\n{}\n{}\n{}\n{}\n→ 한 스레드로 최대 {:.0} fps, 인코딩 평균 {} KB/프레임",
+        if window.is_some() { "창" } else { "주 화면" }, size.0, size.1, size.2, size.3, cap.method(),
         line("캡처", &mut capture), line("축소", &mut scale), line("변화확인", &mut check), line("인코딩", &mut encode), line("합계", &mut total),
         1.0 / avg_total.max(1e-6), bytes / 1024 / frames.max(1) as usize,
     ))
@@ -625,6 +659,43 @@ pub fn bench_native(window: Option<u32>, frames: u32, max_width: u32) -> Result<
     Ok(format!(
         "ScreenCaptureKit + VideoToolbox ({}×{}, 스트림 여는 데 {open_ms:.0} ms)\n받은 화면 변화 {changes}개 / 3초 — 합성→러너 평균 {la:.1} ms, p95 {lp:.1} ms (축소·색 변환은 GPU)\n인코딩 {}회 평균 {ea:.1} ms, p95 {ep:.1} ms, 평균 {} KB/프레임\n→ 인코딩만으로 최대 {:.0} fps (캡처는 별도 스레드에서 와서 기다리지 않음)",
         cap.width, cap.height, encode.len(), bytes / 1024 / encode.len().max(1), 1000.0 / ea.max(0.01),
+    ))
+}
+
+/// `bench` on Windows: Windows Graphics Capture — the first picture, then changes for 2 s, and the CPU path's
+/// scaling and encoder on what arrived.
+#[cfg(windows)]
+pub fn bench_wgc(window: Option<u32>, max_width: u32) -> Result<String, String> {
+    let id = window.unwrap_or(appwin::DISPLAY_BASE);
+    let t = Instant::now();
+    let cap = crate::win_screen::Capture::open(id, 60.0)?;
+    let first = cap.next(Duration::from_secs(3)).ok_or("3초 안에 첫 화면이 오지 않았습니다")?;
+    let first_ms = t.elapsed().as_secs_f64() * 1000.0;
+    let (w0, h0) = (first.width, first.height);
+    let (mut frames, mut scale, mut encode) = (1u32, Duration::ZERO, Duration::ZERO);
+    let mut enc: Option<H264> = None;
+    let mut next = Some(first);
+    let until = Instant::now() + Duration::from_secs(2);
+    while Instant::now() < until {
+        if let Some(f) = next.take() {
+            let t1 = Instant::now();
+            let (rgba, w, h) = encoder::fit(f, max_width);
+            let t2 = Instant::now();
+            if enc.as_ref().map(|e| (e.width, e.height)) != Some((w, h)) {
+                enc = Some(H264::new(w, h, 30, 4000)?);
+            }
+            enc.as_mut().unwrap().encode(&rgba, false)?;
+            scale += t2 - t1;
+            encode += t2.elapsed();
+        }
+        next = cap.next(Duration::from_millis(100));
+        if next.is_some() {
+            frames += 1;
+        }
+    }
+    Ok(format!(
+        "Windows Graphics Capture ({w0}×{h0}): 첫 화면 {first_ms:.0} ms, 2초 동안 변화 {} 개\n축소 평균 {:.1} ms, 인코딩 평균 {:.1} ms (CPU, SIMD)",
+        frames - 1, scale.as_secs_f64() * 1000.0 / f64::from(frames), encode.as_secs_f64() * 1000.0 / f64::from(frames),
     ))
 }
 
