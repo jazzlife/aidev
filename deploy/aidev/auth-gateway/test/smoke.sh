@@ -178,6 +178,10 @@ if [ -x "$RUNNER_BIN" ]; then
   r=$(curl -s -X POST "$G/_runner/pair" -H 'content-type: application/json' -d '{"code":"ZZZZ9999"}'); check "$r" '/expired|not found/.test(j.error)' "unknown pairing code refused"
   r=$(curl -s -X POST "$G/_runner/pair" -H 'content-type: application/json' -H "origin: $G" -d "{\"code\":\"$CODE\"}"); check "$r" 'j.error' "pairing from a browser origin refused"
   HOME="$RH" "$RUNNER_BIN" pair "$(echo "$CODE" | tr A-Z a-z)" --gateway "$G" >/dev/null 2>&1; check "{\"ok\":$([ -f "$AIDEV_RUNNER_HOME/runner.toml" ] && echo true || echo false)}" 'j.ok' "runner paired with the code"
+  # 0.13.2: a new PC grants screen and control on its first run (no `consent … on` step); the owner can still turn them off —
+  # the refusals below are checked with both off
+  check "{\"ok\":$(grep -q 'screen_consent = true' "$AIDEV_RUNNER_HOME/runner.toml" && grep -q 'control_consent = true' "$AIDEV_RUNNER_HOME/runner.toml" && echo true || echo false)}" 'j.ok' "a newly paired runner allows screen and control from the start"
+  HOME="$RH" "$RUNNER_BIN" consent screen off >/dev/null; HOME="$RH" "$RUNNER_BIN" consent control off >/dev/null
   r=$(curl -s -X POST "$G/_runner/pair" -H 'content-type: application/json' -d "{\"code\":\"$CODE\"}"); check "$r" 'j.error' "pairing code works once"
   HOME="$RH" "$RUNNER_BIN" start > "$T/runner1.log" 2>&1 & RPID=$!
   for i in $(seq 1 40); do r=$(get "$A" /api/aidev/targets); echo "$r" | grep -q '"online":true' && echo "$r" | grep -q '"hostname"' && break; sleep 0.25; done
@@ -281,7 +285,7 @@ if [ -x "$RUNNER_BIN" ]; then
   kill $DEV1 $DEV2 2>/dev/null; wait $DEV1 $DEV2 2>/dev/null || true
   r=$(curl -s -w '|%{http_code}' "$G$PB"); check "{\"ok\":$(echo "$r" | grep -q '연결할 수 없습니다' && echo "$r" | grep -q '|503' && echo true || echo false)}" 'j.ok' "dev server stopped → 503 page (not 502: Cloudflare would replace it)"
   # F-07: screen — consent, screenshot (REST + jpg), shared stream with change-only frames, agent audit
-  r=$(post "$A" "/api/aidev/targets/$TID/screenshot" '{}'); check "$r" '/허용하지 않았습니다/.test(j.error)' "no screen consent on the PC → refused with the command to enable it"
+  r=$(post "$A" "/api/aidev/targets/$TID/screenshot" '{}'); check "$r" '/화면 보기가 꺼져/.test(j.error)' "screen turned off on the PC → refused with the command to enable it"
   kill $RPID 2>/dev/null; wait $RPID 2>/dev/null || true
   HOME="$RH" "$RUNNER_BIN" consent screen on >/dev/null
   SRC="$T/screen.png"; node test/make-png.mjs "$SRC" 10
@@ -301,7 +305,7 @@ if [ -x "$RUNNER_BIN" ]; then
     node -e "const [dir]=process.argv.slice(1),w=640,h=360;for(let f=0;f<8;f++){const b=Buffer.alloc(w*h*3);for(let i=0;i<w*h;i++){const x=i%w,y=(i/w)|0;const bar=Math.abs(x-f*80)<40;b[i*3]=bar?250:x%256;b[i*3+1]=bar?250:y%256;b[i*3+2]=140}require('fs').writeFileSync(dir+'/anim-'+f+'.ppm',Buffer.concat([Buffer.from('P6\\n'+w+' '+h+'\\n255\\n'),b]))}" "$T"
     DISPLAY=:99 animate -geometry +200+100 -delay 4 "$T"/anim-*.ppm >/dev/null 2>&1 & APID=$!; sleep 1.5
     r=$(node test/screen-video.mjs "$G" "$A" "$TID" :99 "$T" 1 refuse || true)
-    check "$r" 'j.controlAvailable===false && /허용하지 않았습니다/.test(j.error||"")' "control without the owner's consent refused"
+    check "$r" 'j.controlAvailable===false && /원격 제어가 꺼져/.test(j.error||"")' "control turned off by the owner refused"
     kill $RPID 2>/dev/null; wait $RPID 2>/dev/null || true
     HOME="$RH" "$RUNNER_BIN" consent control on >/dev/null
     HOME="$RH" DISPLAY=:99 "$RUNNER_BIN" start > "$T/runner-video.log" 2>&1 & RPID=$!
@@ -356,7 +360,7 @@ FAKE
   r=$(rpost "/targets/$TID/devices/shot" '{"serial":"fake-0001","maxWidth":320}'); check "$r" 'j.image && j.device.serial==="fake-0001"' "agent (runtime session) looks at the device screen"
   r=$(post "$B" "/api/aidev/targets/$TID/devices/shot" '{"serial":"fake-0001"}'); check "$r" 'j.error' "another user cannot see the device"
   # mouse/keyboard on a window: the owner's control consent first, then agents too (full permissions)
-  r=$(rpost "/targets/$TID/input" '{"window":999999901,"actions":[{"type":"click","x":10,"y":10}]}'); check "$r" '/원격 제어를 허용하지 않았습니다/.test(j.error)' "input: no control consent on the PC → refused"
+  r=$(rpost "/targets/$TID/input" '{"window":999999901,"actions":[{"type":"click","x":10,"y":10}]}'); check "$r" '/원격 제어가 꺼져/.test(j.error)' "input: control turned off on the PC → refused"
   kill $RPID 2>/dev/null; wait $RPID 2>/dev/null || true; HOME="$RH" "$RUNNER_BIN" consent control on >/dev/null
   HOME="$RH" AIDEV_ADB="$FADB" AIDEV_SCREEN_CMD="cp $SRC {out}" "$RUNNER_BIN" start > "$T/runner-input.log" 2>&1 & RPID=$!
   for i in $(seq 1 40); do r=$(get "$A" /api/aidev/targets); echo "$r" | node -e "const j=JSON.parse(require('fs').readFileSync(0));const t=j.targets.find(t=>t.id===$TID);process.exit(t?.online && t.capabilities.control ? 0 : 1)" && break; sleep 0.25; done

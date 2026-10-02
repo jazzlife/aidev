@@ -30,7 +30,7 @@ const MAX_STREAMS: usize = 4;
 const DEFAULT_WIDTH: u32 = 1440;
 const KIND_H264: u8 = 1;
 const KIND_JPEG: u8 = 3;
-pub(crate) const NO_CONSENT: &str = "이 PC는 화면 보기를 허용하지 않았습니다 — PC에서 `aidev-runner consent screen on` 후 러너를 다시 시작하세요";
+pub(crate) const NO_CONSENT: &str = "이 PC에서 화면 보기를 꺼 두었습니다 — PC에서 `aidev-runner consent screen on` 후 러너를 다시 시작하세요";
 
 struct Ctl {
     stop: Arc<AtomicBool>,

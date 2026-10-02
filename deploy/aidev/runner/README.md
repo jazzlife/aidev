@@ -17,7 +17,7 @@ aidev-runner uninstall                    # 서비스 제거   (예전 이름 in
 aidev-runner status                       # 설정 표시 (토큰은 표시 안 함)
 aidev-runner caps                         # 보고할 capabilities(JSON)
 aidev-runner roots list|add <폴더>|remove <폴더>   # 기본 ~/aidev-work. / 와 홈 전체는 거부
-aidev-runner consent screen on|off        # 화면 캡처 동의 (기본 꺼짐)
+aidev-runner consent screen on|off        # 화면 보기·원격 제어 — 첫 실행에서 켜짐(macOS는 화면 기록·손쉬운 사용 요청을 그때 한 번), off로 끔
 aidev-runner unpair                       # 토큰 삭제
 ```
 

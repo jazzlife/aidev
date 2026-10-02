@@ -640,7 +640,7 @@ export function createAidevApi(deps: AidevDeps) {
         if (!deps.runners.online(id)) throw new HttpError(409, 'target is offline');
         const caps = (() => { try { return JSON.parse(target.capabilities ?? '{}') as { control?: boolean; features?: string[]; runner?: string }; } catch { return {}; } })();
         if (!caps.features?.includes('input') || !caps.features?.includes('windows')) throw new HttpError(501, `이 PC의 러너(${caps.runner ?? '?'})는 창 제어를 지원하지 않습니다 — 0.7.0 이상으로 교체하세요`);
-        if (!caps.control) throw new HttpError(403, '이 PC는 원격 제어를 허용하지 않았습니다 — PC에서 `aidev-runner consent control on` 후 러너를 다시 시작하세요');
+        if (!caps.control) throw new HttpError(403, '이 PC에서 원격 제어가 꺼져 있습니다 — 러너를 0.13.2 이상으로 업데이트하면 첫 실행에서 자동으로 켜집니다 (PC에서 직접 껐다면 `aidev-runner consent control on`)');
         const b = await readJson(req);
         const win = Number(b.window);
         if (!Number.isInteger(win) || win <= 0) throw new HttpError(400, 'window (id from the window list) is required');

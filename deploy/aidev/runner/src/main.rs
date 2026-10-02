@@ -14,6 +14,8 @@ mod devserver;
 mod encoder;
 mod exec;
 mod input;
+#[cfg(target_os = "macos")]
+mod macperm;
 mod pair;
 mod proc_util;
 mod roots;
@@ -218,7 +220,15 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             if let Some(path) = log.or_else(|| (hidden || boot).then(|| config::dir().join("runner.log"))) {
                 proc_util::redirect_output(&path)?;
             }
-            let cfg = config::load()?;
+            let mut cfg = config::load()?;
+            if config::grant_on_first_run(&mut cfg) {
+                eprintln!("첫 실행: 화면 보기·원격 제어를 허용했습니다 (끄기: aidev-runner consent screen off)");
+            }
+            // macOS: the OS permissions (screen recording, accessibility) asked once, together, in the desktop session
+            #[cfg(target_os = "macos")]
+            if !boot && tray::wanted(boot) {
+                macperm::request_once();
+            }
             // started by hand: that is asking it to run (a 정지 from the status icon is lifted); services keep it
             if !(hidden || boot || service) {
                 control::set_paused(false);
@@ -268,11 +278,12 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let mut cfg = config::load()?;
             let on = match state.as_str() { "on" => true, "off" => false, _ => return Err("on|off".into()) };
             match what.as_str() {
-                "screen" => cfg.screen_consent = on,
+                "screen" => { cfg.screen_consent = on; if !on { cfg.control_consent = false; } }
                 // control implies seeing the screen
                 "control" => { cfg.control_consent = on; if on { cfg.screen_consent = true; } }
                 _ => return Err("지원: consent screen on|off, consent control on|off".into()),
             }
+            cfg.consent_version = 1;   // the owner's choice: the first-run grant never overrides it
             config::save(&cfg)?;
             println!("화면 보기: {} / 원격 제어(마우스·키보드): {}", if cfg.screen_consent { "허용" } else { "꺼짐" }, if cfg.control_consent { "허용" } else { "꺼짐" });
             println!("(실행 중인 러너는 다시 시작해야 반영됩니다)");

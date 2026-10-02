@@ -147,7 +147,7 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
   function screenReady(targetId: number) {
     const caps = screenCaps(targetId);
     if (!caps.features?.includes('screen')) throw new RpcError(-32021, tooOld(caps, '화면 보기', '0.7.0'));
-    if (!caps.screen) throw new RpcError(-32030, '이 PC는 화면 캡처를 허용하지 않았습니다 — PC에서 `aidev-runner consent screen on` 후 러너를 다시 시작하세요');
+    if (!caps.screen) throw new RpcError(-32030, '이 PC에서 화면 보기가 꺼져 있습니다 — 러너를 0.13.2 이상으로 업데이트하면 첫 실행에서 자동으로 켜집니다 (PC에서 직접 껐다면 `aidev-runner consent screen on`)');
   }
   const listeners = new Map<number, Set<(event: TargetEvent) => void>>();
   const finishListeners = new Set<(stream: StreamInfo, userId: number) => void>();
@@ -604,7 +604,7 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
             const caps = screenCaps(targetId);
             const target = store.targetById(targetId);
             if (!caps.features?.includes('input')) return send({ type: 'error', message: tooOld(caps, '원격 제어', '0.7.0') });
-            if (!caps.control) return send({ type: 'error', message: '이 PC는 원격 제어를 허용하지 않았습니다 — PC에서 `aidev-runner consent control on` 후 러너를 다시 시작하세요' });
+            if (!caps.control) return send({ type: 'error', message: '이 PC에서 원격 제어가 꺼져 있습니다 — 러너를 0.13.2 이상으로 업데이트하면 첫 실행에서 자동으로 켜집니다 (PC에서 직접 껐다면 `aidev-runner consent control on`)' });
             if (!target || target.policy === 'deny') return send({ type: 'error', message: '이 대상의 실행 정책이 "실행 금지"입니다' });
             if (!control) {
               const remoteRunId = store.addRemoteRun({ runId: null, targetId, userId, kind: 'control', cmd: current?.window != null ? `remote control (window #${current.window})` : 'remote control (mouse/keyboard)', cwd: null, risk: null, approvedBy: 'user' });

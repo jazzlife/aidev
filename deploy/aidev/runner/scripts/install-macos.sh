@@ -78,8 +78,44 @@ stop_running
 mkdir -p "$(dirname "$DEST")"
 cp "$file" "$DEST.new" && chmod 755 "$DEST.new"
 xattr -c "$DEST.new" 2>/dev/null || true
-# ad-hoc signature with a fixed identifier (the linker's signature does not survive every copy/lipo)
-codesign --force --sign - --identifier work.nado.aidev-runner "$DEST.new" >/dev/null 2>&1 || true
+# Signed with this Mac's own runner identity, the same for every version: macOS keeps the Screen Recording and
+# Accessibility permissions it was given (they belong to the signature — an ad-hoc signature is a new hash per build,
+# so every update asked again). The identity is made once, in a keychain of its own (~/.aidev/signing.keychain-db);
+# the login keychain is not touched, and the keychain search list is put back as it was.
+sign_stable() {
+  local dir="$HOME/.aidev" kc="$HOME/.aidev/signing.keychain-db" pass="$HOME/.aidev/signing.pass" id orig tmp
+  mkdir -p "$dir"
+  if [ ! -f "$kc" ] || [ ! -s "$pass" ]; then
+    command -v openssl >/dev/null || return 1
+    rm -f "$kc"; (umask 077; openssl rand -hex 24 > "$pass")
+    tmp=$(mktemp -d)
+    printf '[req]\ndistinguished_name=dn\nx509_extensions=ext\nprompt=no\n[dn]\nCN=NadoVibe Runner (%s)\n[ext]\nbasicConstraints=critical,CA:false\nkeyUsage=critical,digitalSignature\nextendedKeyUsage=critical,codeSigning\n' "$(hostname -s)" > "$tmp/cfg"
+    openssl req -x509 -newkey rsa:2048 -nodes -keyout "$tmp/key" -out "$tmp/cert" -days 7300 -config "$tmp/cfg" >/dev/null 2>&1 &&
+      { openssl pkcs12 -export -legacy -inkey "$tmp/key" -in "$tmp/cert" -out "$tmp/id.p12" -passout pass:x >/dev/null 2>&1 ||
+        openssl pkcs12 -export -inkey "$tmp/key" -in "$tmp/cert" -out "$tmp/id.p12" -passout pass:x >/dev/null 2>&1; } &&
+      security create-keychain -p "$(cat "$pass")" "$kc" >/dev/null 2>&1 &&
+      security set-keychain-settings "$kc" >/dev/null 2>&1 &&
+      security unlock-keychain -p "$(cat "$pass")" "$kc" >/dev/null 2>&1 &&
+      security import "$tmp/id.p12" -k "$kc" -P x -T /usr/bin/codesign >/dev/null 2>&1 &&
+      security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$(cat "$pass")" "$kc" >/dev/null 2>&1
+    local made=$?
+    rm -rf "$tmp"
+    [ $made = 0 ] || { rm -f "$kc"; return 1; }
+    echo " ✓ 이 Mac의 러너 서명 인증서를 만들었습니다 (업데이트해도 macOS 권한 유지)"
+  fi
+  security unlock-keychain -p "$(cat "$pass")" "$kc" >/dev/null 2>&1 || return 1
+  id=$(security find-identity "$kc" 2>/dev/null | awk '/NadoVibe Runner/ {print $2; exit}')
+  [ -n "$id" ] || return 1
+  orig=$(security list-keychains -d user | tr -d '"' | xargs)
+  security list-keychains -d user -s $orig "$kc"
+  codesign --force --sign "$id" --identifier work.nado.aidev-runner "$1" >/dev/null 2>&1; local ok=$?
+  security list-keychains -d user -s $orig
+  return $ok
+}
+sign_stable "$DEST.new" || {
+  echo " ! 고정 서명을 만들지 못해 ad-hoc 서명을 씁니다 — 업데이트하면 macOS가 화면 기록 권한을 다시 물을 수 있습니다"
+  codesign --force --sign - --identifier work.nado.aidev-runner "$DEST.new" >/dev/null 2>&1 || true
+}
 mv -f "$DEST.new" "$DEST"
 echo "==> $("$DEST" --version)"
 
@@ -130,11 +166,9 @@ if [ -n "$connected" ]; then echo " ✓ $connected"; else echo " ✗ 20초 안�
 cat <<EOF
 
 완료. 작업대 "원격 대상"에서 러너 버전이 $ver 로 바뀌었는지 확인하세요.
-- 화면 보기·원격 제어는 한 번 허용해야 합니다(설정은 유지됨):
-    $DEST consent screen on     # 또는  consent control on  (제어 포함)
-    launchctl kickstart -k gui/$(id -u)/work.nado.aidev-runner    # 설정 바꾼 뒤 재시작
-- macOS 권한(시스템 설정 → 개인정보 보호 및 보안): 화면 기록, 손쉬운 사용에 $DEST 허용.
-  러너 파일이 바뀌면 macOS가 이전 허용을 인정하지 않을 수 있습니다 — 목록에서 지우고(−) 다시 추가(+)하세요.
+- 화면 보기·원격 제어는 첫 실행에서 허용됩니다 (끄기: $DEST consent screen off).
+- macOS가 처음 한 번 "화면 기록"·"손쉬운 사용" 허용을 물으면 켜 주세요. 이 Mac의 고정 서명으로 설치하므로
+  업데이트해도 다시 묻지 않습니다.
 - 로그: ~/.aidev/runner.log
 EOF
 [ "$ok" = 1 ]

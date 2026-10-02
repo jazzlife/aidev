@@ -162,5 +162,5 @@ elseif (Get-Process aidev-runner -ErrorAction SilentlyContinue) { Write-Host " !
 else { Write-Host " ✗ 러너가 실행되지 않았습니다 — 로그: $Log / 작업 스케줄러의 aidev-runner"; exit 1 }
 Write-Host ''
 Write-Host '완료. 작업대 "원격 대상"에서 이 PC가 온라인인지 확인하세요.'
-Write-Host "- 화면 보기·원격 제어는 한 번 허용해야 합니다: & `"$Dest`" consent screen on  (또는 consent control on), 그다음 schtasks /Run /TN aidev-runner"
+Write-Host "- 화면 보기·원격 제어는 첫 실행에서 허용됩니다 (끄기: & `"$Dest`" consent screen off)"
 Write-Host "- 로그: $Log"

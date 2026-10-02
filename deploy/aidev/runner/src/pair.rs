@@ -64,8 +64,10 @@ pub fn pair(code: &str, gateway: &str, name: Option<&str>) -> Result<config::Con
         target_id: parsed.target_id,
         name: parsed.name,
         allowed_roots: roots,
-        screen_consent: previous.as_ref().map(|c| c.screen_consent).unwrap_or(false),
-        control_consent: previous.as_ref().map(|c| c.control_consent).unwrap_or(false),
+        // a new PC: everything from the start (no `consent … on` step); a re-pair keeps what the owner chose
+        screen_consent: previous.as_ref().map(|c| c.screen_consent || c.consent_version == 0).unwrap_or(true),
+        control_consent: previous.as_ref().map(|c| c.control_consent || c.consent_version == 0).unwrap_or(true),
+        consent_version: 1,
         inherit_env: previous.as_ref().map(|c| c.inherit_env).unwrap_or(false),
     };
     config::save(&cfg)?;

@@ -77,7 +77,7 @@ export function ScreenPane({ isVisible = true }: { isVisible?: boolean }) {
     const a = document.createElement('a'); a.href = c.toDataURL('image/png'); a.download = `${target?.name ?? 'screen'}-${win?.app ?? 'window'}-${new Date().toISOString().replace(/[:.]/g, '-')}.png`; a.click();
   };
   const canControl = streaming && state.controlAvailable && (source?.kind === 'window' || (source?.kind === 'display' && source.id === 1));
-  const controlTitle = !state.controlAvailable ? '이 PC에서 원격 제어가 허용되지 않았습니다 (PC에서 aidev-runner consent control on)' : source?.kind === 'display' && source.id !== 1 ? '제어는 주 화면(1번)에서만 됩니다' : state.control ? '제어 끄기' : '이 창을 마우스·키보드로 제어';
+  const controlTitle = !state.controlAvailable ? '이 PC에서 원격 제어가 꺼져 있습니다 — 러너를 최신으로 업데이트하면 자동으로 켜집니다 (직접 껐다면 PC에서 aidev-runner consent control on)' : source?.kind === 'display' && source.id !== 1 ? '제어는 주 화면(1번)에서만 됩니다' : state.control ? '제어 끄기' : '이 창을 마우스·키보드로 제어';
   const empty = !sources.loading && !windows.length && !consoles.length && perWindow;
 
   return (
@@ -120,7 +120,7 @@ export function ScreenPane({ isVisible = true }: { isVisible?: boolean }) {
           <textarea ref={keysRef} aria-label="원격 키보드 입력" autoCapitalize="off" autoCorrect="off" spellCheck={false} className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0" />
           {!state.width && streaming ? (
             <div className="absolute max-w-md px-4 text-center leading-6 text-muted-foreground">
-              {target && !target.capabilities?.screen ? '이 PC에서 화면 보기가 꺼져 있습니다. PC에서 `aidev-runner consent screen on` 후 러너를 다시 시작하세요.'
+              {target && !target.capabilities?.screen ? '이 PC에서 화면 보기가 꺼져 있습니다. 러너를 최신으로 업데이트하면 첫 실행에서 자동으로 켜집니다 (직접 껐다면 PC에서 `aidev-runner consent screen on`).'
                 : empty ? '보이는 프로그램 창이 없습니다 (최소화된 창은 목록에 나오지 않습니다).'
                   : state.status === 'connecting' || state.status === 'live' ? '화면을 기다리는 중…' : '연결되지 않음'}
             </div>
