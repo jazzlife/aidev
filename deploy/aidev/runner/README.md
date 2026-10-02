@@ -7,7 +7,7 @@
 ```
 aidev-runner pair <코드> [--gateway https://dev.nado.work] [--name 이름]   # 작업대 "원격 대상"에서 받은 10분짜리 코드
 aidev-runner                              # 포그라운드 실행 (Ctrl+C 종료; = start). 미등록이면 페어링 코드를 물어봄, Windows는 더블클릭으로도
-aidev-runner install [--print]            # 서비스 설치: 등록하고 바로 시작, 재부팅 후에도 자동 실행. 기본은 강한 설정:
+aidev-runner install [--print]            # 서비스 설치: 자신을 ~/.aidev/bin에 복사해 그 파일을 등록(받은 파일은 지워도 됨), 바로 시작, 재부팅 후에도 자동 실행. 기본은 강한 설정:
                                           #   부팅 직후부터 — Windows 부팅 작업(S4U)·macOS LaunchDaemon이 로그인 전 연결을 맡고, 로그인하면 사용자 세션의
                                           #   러너(화면·GUI·상태 아이콘)가 넘겨받음; Linux는 systemd 사용자 서비스(linger)가 부팅 때부터 맡고 데스크탑
                                           #   로그인 때 XDG autostart의 세션 러너(DISPLAY·D-Bus)가 넘겨받음

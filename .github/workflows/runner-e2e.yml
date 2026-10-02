@@ -93,13 +93,19 @@ jobs:
           printf 'gateway = "http://127.0.0.1:9"\ntoken = "x"\ntarget_id = 1\nname = "ci"\nallowed_roots = ["%s"]\n' "$RUNNER_TEMP/work" > ~/.aidev/runner.toml
           log=~/.aidev/runner.log
           waitfor() { for i in $(seq 1 40); do if eval "$2"; then echo "ok: $1"; return 0; fi; sleep 1; done; tail -20 "$log" 2>/dev/null || true; echo "timed out: $1"; exit 1; }
-          "$bin" install
+          # installed from a downloaded file, which is deleted afterwards: the service runs ~/.aidev/bin/aidev-runner
+          mkdir -p "$RUNNER_TEMP/Downloads"; cp "$bin" "$RUNNER_TEMP/Downloads/aidev-runner"
+          "$RUNNER_TEMP/Downloads/aidev-runner" install
+          rm "$RUNNER_TEMP/Downloads/aidev-runner"
+          test -x ~/.aidev/bin/aidev-runner && echo "ok: copied to ~/.aidev/bin, the download is gone"
+          bin=~/.aidev/bin/aidev-runner
           # /etc/sudoers.d is root-only on Ubuntu: look with sudo
           sudo grep -q "^$USER ALL=(ALL) NOPASSWD: ALL" /etc/sudoers.d/aidev-runner
           echo "ok: passwordless sudo for $USER"
           if [ "$RUNNER_OS" = Linux ]; then
             export XDG_RUNTIME_DIR=/run/user/$(id -u)
             [ "$(loginctl show-user "$USER" -p Linger --value)" = yes ] && echo "ok: linger (runs from boot)"
+            grep -q "ExecStart=\"$HOME/.aidev/bin/aidev-runner\" start --service --boot" ~/.config/systemd/user/aidev-runner.service && echo "ok: the unit runs the installed copy"
             grep -q 'start --service --boot' ~/.config/systemd/user/aidev-runner.service && grep -q 'Restart=on-failure' ~/.config/systemd/user/aidev-runner.service
             grep -q 'start --service --log' ~/.config/autostart/aidev-runner.desktop && echo "ok: autostart entry for desktop logins"
             waitfor 'the user service runs' 'systemctl --user is-active --quiet aidev-runner'
@@ -118,6 +124,7 @@ jobs:
             launchctl print "gui/$(id -u)/work.nado.aidev-runner" >/dev/null && echo "ok: LaunchAgent"
             sudo launchctl print system/work.nado.aidev-runner-boot >/dev/null && echo "ok: LaunchDaemon (from boot, as $USER)"
             grep -q '<string>--boot</string>' /Library/LaunchDaemons/work.nado.aidev-runner-boot.plist
+            grep -q "<string>$HOME/.aidev/bin/aidev-runner</string>" ~/Library/LaunchAgents/work.nado.aidev-runner.plist && echo "ok: the LaunchAgent runs the installed copy"
             # the session's runner and the boot runner: one holds the connection, the other waits or has handed over
             waitfor 'two runners: the session one and the boot one' '[ "$(pgrep -f "aidev-runner start" | wc -l | tr -d " ")" -ge 2 ]'
             waitfor 'the boot runner handed over to the session runner' 'grep -q "연결을 넘깁니다" "$log" || ! grep -q "부팅 러너: 연결을 맡습니다" "$log"'
@@ -159,8 +166,15 @@ jobs:
           Stop-Process -Id $fg.Id -Force
           'bare aidev-runner runs in the foreground'
 
-          & $bin install
+          # installed from a downloaded file, which is deleted afterwards: the tasks run %USERPROFILE%\.aidev\bin\aidev-runner.exe
+          $dl = "$env:RUNNER_TEMP\Downloads"; New-Item -ItemType Directory -Force $dl | Out-Null; Copy-Item $bin "$dl\aidev-runner.exe"
+          & "$dl\aidev-runner.exe" install
           if ($LASTEXITCODE) { throw "install exit $LASTEXITCODE" }
+          Remove-Item "$dl\aidev-runner.exe"
+          $bin = "$cfgDir\bin\aidev-runner.exe"
+          if (-not (Test-Path $bin)) { throw 'not copied to .aidev\bin' }
+          if ((Get-ScheduledTask -TaskName aidev-runner).Actions[0].Execute -ne $bin) { throw "the task runs $((Get-ScheduledTask -TaskName aidev-runner).Actions[0].Execute)" }
+          'ok: copied to .aidev\bin, the download is gone, the tasks run the installed copy'
           $logon = Get-ScheduledTask -TaskName aidev-runner; $boot = Get-ScheduledTask -TaskName aidev-runner-boot
           "logon: RunLevel=$($logon.Principal.RunLevel) LogonType=$($logon.Principal.LogonType) Trigger=$($logon.Triggers[0].CimClass.CimClassName) Limit=$($logon.Settings.ExecutionTimeLimit)"
           "boot:  RunLevel=$($boot.Principal.RunLevel) LogonType=$($boot.Principal.LogonType) Trigger=$($boot.Triggers[0].CimClass.CimClassName) Limit=$($boot.Settings.ExecutionTimeLimit)"

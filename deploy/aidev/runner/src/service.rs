@@ -29,6 +29,48 @@ fn exe() -> Result<PathBuf, String> {
     std::env::current_exe().map_err(|e| format!("실행 파일 경로를 알 수 없습니다: {e}"))
 }
 
+/// Where the service runs the runner from (the installers use it too): the downloaded file can be deleted after
+/// `install`, and an update replaces this one file.
+pub fn installed_path() -> PathBuf {
+    config::dir().join("bin").join(if cfg!(windows) { "aidev-runner.exe" } else { "aidev-runner" })
+}
+
+/// `install` from a downloaded file: copies itself to `installed_path()` (true) — or is already there (false).
+fn place_self() -> Result<(PathBuf, bool), String> {
+    let me = exe()?;
+    let target = installed_path();
+    if target.exists() && std::fs::canonicalize(&me).ok() == std::fs::canonicalize(&target).ok() {
+        return Ok((target, false));
+    }
+    if let Some(dir) = target.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    }
+    let tmp = target.with_extension("new");
+    std::fs::copy(&me, &tmp).map_err(|e| format!("{} → {}: {e}", me.display(), tmp.display()))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755));
+    }
+    // macOS: a downloaded file carries the quarantine flag, which would stop launchd from running the copy
+    if cfg!(target_os = "macos") {
+        quiet("xattr", &["-d", "com.apple.quarantine", &tmp.display().to_string()]);
+    }
+    // Windows: the runner a task started holds its file open — stop those first (unix renames over a running file)
+    #[cfg(windows)]
+    {
+        let script = format!(
+            "foreach ($n in 'aidev-runner', '{BOOT_TASK}') {{ Stop-ScheduledTask -TaskName $n -ErrorAction SilentlyContinue }}\n\
+             Get-Process aidev-runner -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -eq '{path}' }} | Stop-Process -Force -ErrorAction SilentlyContinue\n\
+             Start-Sleep -Milliseconds 500",
+            path = target.display().to_string().replace('\'', "''"),
+        );
+        quiet("powershell.exe", &["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &crate::exec::powershell_encoded(&script)]);
+    }
+    std::fs::rename(&tmp, &target).map_err(|e| { let _ = std::fs::remove_file(&tmp); format!("{}: {e} — 실행 중인 러너를 멈춘 뒤 다시 하세요", target.display()) })?;
+    Ok((target, true))
+}
+
 fn run(cmd: &str, args: &[&str]) -> Result<(), String> {
     let status = Command::new(cmd).args(args).status().map_err(|e| format!("{cmd}: {e}"))?;
     if status.success() { Ok(()) } else { Err(format!("{cmd} {} 실패 ({status})", args.join(" "))) }
@@ -218,7 +260,13 @@ fn run_elevated(exe: &str, args: &str) -> Result<(), String> {
 
 pub fn install(print_only: bool, limited: bool, logon_only: bool, for_user: Option<String>) -> Result<String, String> {
     config::load()?; // must be paired first
-    let exe = exe()?;
+    // the service always runs the copy in ~/.aidev/bin — except on Windows before the UAC re-run, which places it itself
+    #[cfg(windows)]
+    let elevating = !(limited && logon_only) && !crate::proc_util::is_elevated();
+    #[cfg(not(windows))]
+    let elevating = false;
+    let (exe, copied) = if print_only { (installed_path(), false) } else if elevating { (exe()?, false) } else { place_self()? };
+    let placed = if copied { format!("\n설치 위치: {} — 받은 파일은 지워도 됩니다", exe.display()) } else { String::new() };
     let exe_s = exe.display().to_string();
     let home = config::home();
     match std::env::consts::OS {
@@ -260,7 +308,7 @@ pub fn install(print_only: bool, limited: bool, logon_only: bool, for_user: Opti
                 }
             }
             notes.push(admin_rights(limited, &user));
-            Ok(notes.join("\n"))
+            Ok(format!("{}{placed}", notes.join("\n")))
         }
         "macos" => {
             let dir = home.join("Library/LaunchAgents");
@@ -301,7 +349,7 @@ pub fn install(print_only: bool, limited: bool, logon_only: bool, for_user: Opti
                 });
             }
             notes.push(admin_rights(limited, &user));
-            Ok(notes.join("\n"))
+            Ok(format!("{}{placed}", notes.join("\n")))
         }
         "windows" => {
             // no console window at sign-in; output to ~/.aidev/runner.log
@@ -319,7 +367,7 @@ pub fn install(print_only: bool, limited: bool, logon_only: bool, for_user: Opti
             }
             run("powershell.exe", &["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &crate::exec::powershell_encoded(&script)])
                 .map_err(|_| if needs_admin { "작업 등록 실패 — 관리자 권한이 필요합니다".to_string() } else { "작업 등록 실패 (Register-ScheduledTask)".to_string() })?;
-            return Ok(describe(limited, logon_only, false));
+            return Ok(format!("{}{placed}", describe(limited, logon_only, false)));
         }
         other => Err(format!("{other}: 서비스 등록을 지원하지 않습니다 — `aidev-runner start`를 직접 실행하세요")),
     }
