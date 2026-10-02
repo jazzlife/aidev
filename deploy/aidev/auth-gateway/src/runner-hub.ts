@@ -84,8 +84,10 @@ export const streamFrame = (streamId: number, chunk: Buffer) => { const head = B
 
 /** Viewer options for a screen stream, clamped. video: 5-60 fps (default 30), 500-20000 kbps; jpeg: 0.5-10 fps (default 2).
  *  `window`: the program window (id from `screen.list`, runner ≥ 0.7); `display`: whole display (older runners). */
-export type ScreenOpts = { mode: 'video' | 'jpeg'; window: number | null; display: number; fps: number; maxWidth: number; bitrate: number; codec: 'h264' | 'vp8' };
-export function screenOpts(q: { mode?: unknown; window?: unknown; display?: unknown; fps?: unknown; maxWidth?: unknown; bitrate?: unknown; codec?: unknown }): ScreenOpts {
+export type ScreenOpts = { mode: 'video' | 'jpeg'; window: number | null; display: number; fps: number; maxWidth: number; bitrate: number; codec: 'h264' | 'vp8'; codecs: string[] };
+/** The video codecs a viewer decodes (`codecs=vp9,h264` or a list), known ones only, in a fixed order (F-18). */
+const VIEWER_CODECS = ['vp9', 'h264'];
+export function screenOpts(q: { mode?: unknown; window?: unknown; display?: unknown; fps?: unknown; maxWidth?: unknown; bitrate?: unknown; codec?: unknown; codecs?: unknown }): ScreenOpts {
   const n = (v: unknown, d: number, lo: number, hi: number) => { const x = v === null || v === undefined || v === '' ? NaN : Number(v); return Number.isFinite(x) ? Math.min(Math.max(x, lo), hi) : d; };
   const mode = q.mode === 'jpeg' ? 'jpeg' : 'video';
   const win = n(q.window, NaN, 0, 0xffff_ffff);
@@ -94,6 +96,7 @@ export function screenOpts(q: { mode?: unknown; window?: unknown; display?: unkn
     fps: mode === 'video' ? Math.round(n(q.fps, 30, 5, 60)) : n(q.fps, 2, 0.5, 10),
     maxWidth: Math.round(n(q.maxWidth, 1440, 320, 2560)), bitrate: Math.round(n(q.bitrate, 4000, 500, 20000)),
     codec: q.codec === 'vp8' ? 'vp8' : 'h264',
+    codecs: (() => { const said = new Set((Array.isArray(q.codecs) ? q.codecs : String(q.codecs ?? '').split(',')).map((c) => String(c).trim())); return VIEWER_CODECS.filter((c) => said.has(c)); })(),
   };
 }
 
@@ -575,7 +578,7 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
       return true;
     },
     /** Browser side of `/api/aidev/targets/:id/screen` (session and ownership checked by the caller).
-     *  client → {op:"config", mode, window, display, fps, maxWidth, bitrate, codec} | {op:"control", on} | {op:"input", ev}
+     *  client → {op:"config", mode, window, display, fps, maxWidth, bitrate, codec, codecs} | {op:"control", on} | {op:"input", ev}
      *  server → {type:"started"|"format"|"control"|"error"|"offline"} + binary frames `[kind][flags][data]` */
     attachScreen(req: IncomingMessage, socket: Duplex, head: Buffer, targetId: number, userId: number, alive: () => boolean, initial: ScreenOpts, proto = 1) {
       wss.handleUpgrade(req, socket, head, (ws) => {
@@ -607,7 +610,8 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
             const win = perWindow ? o.window : null;
             const mode = o.mode === 'video' && !caps.features?.includes('video') ? 'jpeg' : o.mode;   // runner < 0.6: JPEG only
             const codec = perWindow ? 'h264' : o.codec;   // the runner's own encoder is H.264 (0.6 used ffmpeg: h264/vp8)
-            const config = `${mode}|${win ?? `d${o.display}`}|${o.fps}|${o.maxWidth}|${o.bitrate}|${codec}`;
+            // viewers that decode different codecs get their own stream (the runner picks VP9 only when asked)
+            const config = `${mode}|${win ?? `d${o.display}`}|${o.fps}|${o.maxWidth}|${o.bitrate}|${codec}|${o.codecs.join(',')}`;
             let sc = [...screens.values()].find((s) => s.targetId === targetId && s.config === config);
             if (!sc) {
               nextStream = nextStream >= 0x3fff_fff0 ? 1 : nextStream + 1;
@@ -616,7 +620,7 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
               // 0.15+ runners number their frames and pace themselves by the acks (F-07d)
               const acks = Boolean(caps.features?.includes('acks'));
               const params = perWindow
-                ? { streamId: sc.streamId, mode, window: win, fps: o.fps, maxWidth: o.maxWidth, bitrate: o.bitrate, acks }
+                ? { streamId: sc.streamId, mode, window: win, fps: o.fps, maxWidth: o.maxWidth, bitrate: o.bitrate, acks, codecs: o.codecs }
                 : { streamId: sc.streamId, mode, display: o.display, fps: o.fps, maxWidth: o.maxWidth, bitrate: o.bitrate, codec };
               try { await hub.call(targetId, 'screen.start', params, 10_000); }
               catch (error) { screens.delete(key(targetId, sc.streamId)); throw error; }

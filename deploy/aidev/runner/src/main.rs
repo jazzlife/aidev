@@ -29,6 +29,10 @@ mod sync;
 mod tray;
 mod tunnel;
 mod update;
+#[cfg(feature = "vpx")]
+mod vp9;
+#[cfg(feature = "vpx")]
+mod vpx_ffi;
 mod dialog;
 
 use clap::{Parser, Subcommand};
@@ -378,7 +382,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
         Cmd::InstallService { print, limited, logon_only, user, .. } => println!("{}", service::install(print, limited, logon_only, user)?),
         Cmd::UninstallService => println!("{}", service::uninstall()?),
         Cmd::Bench { window, frames, max_width } => {
-            println!("[CPU: xcap + OpenH264]\n{}", screen::bench(window, frames.max(1), max_width)?);
+            println!("[CPU 경로]\n{}", screen::bench(window, frames.max(1), max_width)?);
             #[cfg(windows)]
             println!("\n[{}]", screen::bench_wgc(window, max_width).unwrap_or_else(|e| format!("Windows Graphics Capture 측정 실패: {e}")));
             #[cfg(target_os = "macos")]

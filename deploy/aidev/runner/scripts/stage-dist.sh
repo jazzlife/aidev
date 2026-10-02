@@ -12,6 +12,6 @@ cp "$runner"/scripts/install-*.sh "$runner"/scripts/build-*.sh "$runner"/scripts
 # GNU tar (reproducible options below); on a Mac that is Homebrew's gtar (`brew install gnu-tar`)
 TAR=tar; command -v gtar >/dev/null && TAR=gtar
 $TAR --sort=name --mtime='2026-01-01 00:00Z' --owner=0 --group=0 --numeric-owner \
-  --exclude='target' --exclude='dist' --exclude='*.class' \
+  --exclude='target' --exclude='dist' --exclude='vendor' --exclude='*.class' \
   --transform 's,^\.,aidev-runner-src,' -C "$runner" -czf "$out/source/aidev-runner-src.tar.gz" \
   ./Cargo.toml ./Cargo.lock ./build.sh ./README.md ./src ./assets ./scripts

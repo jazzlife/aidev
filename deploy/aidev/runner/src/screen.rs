@@ -23,7 +23,7 @@
 
 use crate::appwin::{self, Frame};
 use crate::config::Config;
-use crate::encoder::{self, H264};
+use crate::encoder;
 use crate::exec::{frame, Out};
 use base64::Engine as _;
 use serde_json::{json, Value};
@@ -39,6 +39,8 @@ const MAX_STREAMS: usize = 4;
 const DEFAULT_WIDTH: u32 = 1440;
 const KIND_H264: u8 = 1;
 const KIND_JPEG: u8 = 3;
+/// a VP9 frame (F-18: libvpx, the CPU path where the viewers decode VP9)
+const KIND_VP9: u8 = 4;
 pub(crate) const NO_CONSENT: &str = "이 PC에서 화면 보기를 꺼 두었습니다 — PC에서 `aidev-runner consent screen on` 후 러너를 다시 시작하세요";
 
 /// The newest frame a viewer has shown, and when the ack came.
@@ -364,6 +366,8 @@ struct StreamOpts {
     max_width: u32,
     bitrate: u32,
     acks: bool,
+    /// the viewers decode VP9 (`codecs` of screen.start)
+    vp9: bool,
 }
 
 /// The capture/encode loop, on its own thread (window handles and the encoder stay on it).
@@ -390,7 +394,7 @@ fn run(id: u32, o: StreamOpts, stop: Arc<AtomicBool>, want_key: Arc<AtomicBool>,
 
 fn stream(id: u32, o: StreamOpts, mut source: Source, stop: Arc<AtomicBool>, want_key: Arc<AtomicBool>, acked: Acked) {
     let period = Duration::from_secs_f64(1.0 / o.fps);
-    let mut enc: Option<H264> = None;
+    let mut enc: Option<encoder::Video> = None;
     let mut jpeg_size: Option<(u32, u32)> = None;
     let mut last: Option<u64> = None;
     let mut failures = 0;
@@ -422,15 +426,16 @@ fn stream(id: u32, o: StreamOpts, mut source: Source, stop: Arc<AtomicBool>, wan
                 if last != Some(fp) || force {
                     last = Some(fp);
                     let payload = if o.video {
-                        if enc.as_ref().map(|e| (e.width, e.height)) != Some((w, h)) {
+                        if enc.as_ref().map(encoder::Video::size) != Some((w, h)) {
                             // first frame or the window was resized: a new encoder, starting with a keyframe
-                            match H264::new(w, h, o.fps.round() as u32, pace.kbps) {
-                                Ok(e) => { enc = Some(e); note("screen.format", json!({ "streamId": id, "codec": "h264", "width": w, "height": h })); }
+                            match encoder::Video::new(o.vp9, w, h, o.fps.round() as u32, pace.kbps) {
+                                Ok(e) => { note("screen.format", json!({ "streamId": id, "codec": e.codec(), "width": w, "height": h })); enc = Some(e); }
                                 Err(e) => { note("screen.error", json!({ "streamId": id, "error": e })); break; }
                             }
                         }
+                        let kind = if matches!(enc, Some(encoder::Video::H264(_))) { KIND_H264 } else { KIND_VP9 };
                         match enc.as_mut().map(|e| e.encode(&rgba, force)) {
-                            Some(Ok((au, key))) if !au.is_empty() => Some((KIND_H264, key, au)),
+                            Some(Ok((au, key))) if !au.is_empty() => Some((kind, key, au)),
                             // screen.error always means the stream has ended (the gateway drops it)
                             Some(Err(e)) => { note("screen.error", json!({ "streamId": id, "error": e })); break; }
                             _ => None,
@@ -533,6 +538,7 @@ fn start(params: &Value) -> RpcResult {
     let max_width = params.get("maxWidth").and_then(Value::as_u64).unwrap_or(DEFAULT_WIDTH as u64).clamp(320, 3840) as u32;
     let bitrate = params.get("bitrate").and_then(Value::as_u64).unwrap_or(4000).clamp(300, 20000) as u32;
     let acks = params.get("acks").and_then(Value::as_bool).unwrap_or(false);
+    let vp9 = encoder::vp9_wanted(params.get("codecs").and_then(Value::as_array).is_some_and(|c| c.iter().any(|x| x.as_str() == Some("vp9"))));
     let mut g = hub().lock().unwrap();
     if g.streams.contains_key(&id) {
         return Err((-32602, format!("stream {id} 이미 사용 중")));
@@ -545,9 +551,9 @@ fn start(params: &Value) -> RpcResult {
     let acked: Acked = Arc::new(Mutex::new(None));
     g.streams.insert(id, Ctl { stop: stop.clone(), key: key.clone(), acked: acked.clone() });
     drop(g);
-    let o = StreamOpts { window, video, fps, max_width, bitrate, acks };
+    let o = StreamOpts { window, video, fps, max_width, bitrate, acks, vp9 };
     std::thread::Builder::new().name(format!("aidev-screen-{id}")).spawn(move || run(id, o, stop, key, acked)).map_err(|e| (-32000, e.to_string()))?;
-    Ok(json!({ "streamId": id, "window": window, "mode": if video { "video" } else { "jpeg" }, "codec": if video { "h264" } else { "jpeg" } }))
+    Ok(json!({ "streamId": id, "window": window, "mode": if video { "video" } else { "jpeg" }, "codec": if !video { "jpeg" } else if vp9 { "vp9" } else { "h264" } }))
 }
 
 fn shot(params: &Value) -> RpcResult {
@@ -572,7 +578,7 @@ pub fn bench(window: Option<u32>, frames: u32, max_width: u32) -> Result<String,
     let id = window.unwrap_or(appwin::DISPLAY_BASE);
     let mut cap = appwin::Capturer::open(id)?;
     let (mut capture, mut scale, mut check, mut encode, mut bytes) = (Vec::new(), Vec::new(), Vec::new(), Vec::new(), 0usize);
-    let mut enc: Option<H264> = None;
+    let mut enc: Option<encoder::Video> = None;
     let mut size = (0, 0, 0, 0);
     for i in 0..frames {
         let t0 = Instant::now();
@@ -583,8 +589,8 @@ pub fn bench(window: Option<u32>, frames: u32, max_width: u32) -> Result<String,
         let t2 = Instant::now();
         let _ = fingerprint(&rgba);
         let t3 = Instant::now();
-        if enc.as_ref().map(|e| (e.width, e.height)) != Some((w, h)) {
-            enc = Some(H264::new(w, h, 30, 4000)?);
+        if enc.as_ref().map(encoder::Video::size) != Some((w, h)) {
+            enc = Some(encoder::Video::new(encoder::vp9_wanted(true), w, h, 30, 4000)?);
         }
         size.2 = w;
         size.3 = h;
@@ -606,8 +612,8 @@ pub fn bench(window: Option<u32>, frames: u32, max_width: u32) -> Result<String,
     let mut total = total;
     let avg_total = total.iter().sum::<Duration>().as_secs_f64() / total.len().max(1) as f64;
     Ok(format!(
-        "{} ({}×{} → {}×{}, {frames}프레임, 캡처 {})\n{}\n{}\n{}\n{}\n{}\n→ 한 스레드로 최대 {:.0} fps, 인코딩 평균 {} KB/프레임",
-        if window.is_some() { "창" } else { "주 화면" }, size.0, size.1, size.2, size.3, cap.method(),
+        "{} ({}×{} → {}×{}, {frames}프레임, 캡처 {}, {})\n{}\n{}\n{}\n{}\n{}\n→ 한 스레드로 최대 {:.0} fps, 인코딩 평균 {} KB/프레임",
+        if window.is_some() { "창" } else { "주 화면" }, size.0, size.1, size.2, size.3, cap.method(), enc.as_ref().map_or("-", encoder::Video::codec),
         line("캡처", &mut capture), line("축소", &mut scale), line("변화확인", &mut check), line("인코딩", &mut encode), line("합계", &mut total),
         1.0 / avg_total.max(1e-6), bytes / 1024 / frames.max(1) as usize,
     ))
@@ -673,7 +679,7 @@ pub fn bench_wgc(window: Option<u32>, max_width: u32) -> Result<String, String> 
     let first_ms = t.elapsed().as_secs_f64() * 1000.0;
     let (w0, h0) = (first.width, first.height);
     let (mut frames, mut scale, mut encode) = (1u32, Duration::ZERO, Duration::ZERO);
-    let mut enc: Option<H264> = None;
+    let mut enc: Option<encoder::Video> = None;
     let mut next = Some(first);
     let until = Instant::now() + Duration::from_secs(2);
     while Instant::now() < until {
@@ -681,8 +687,8 @@ pub fn bench_wgc(window: Option<u32>, max_width: u32) -> Result<String, String> 
             let t1 = Instant::now();
             let (rgba, w, h) = encoder::fit(f, max_width);
             let t2 = Instant::now();
-            if enc.as_ref().map(|e| (e.width, e.height)) != Some((w, h)) {
-                enc = Some(H264::new(w, h, 30, 4000)?);
+            if enc.as_ref().map(encoder::Video::size) != Some((w, h)) {
+                enc = Some(encoder::Video::new(encoder::vp9_wanted(true), w, h, 30, 4000)?);
             }
             enc.as_mut().unwrap().encode(&rgba, false)?;
             scale += t2 - t1;
@@ -694,8 +700,8 @@ pub fn bench_wgc(window: Option<u32>, max_width: u32) -> Result<String, String> 
         }
     }
     Ok(format!(
-        "Windows Graphics Capture ({w0}×{h0}): 첫 화면 {first_ms:.0} ms, 2초 동안 변화 {} 개\n축소 평균 {:.1} ms, 인코딩 평균 {:.1} ms (CPU, SIMD)",
-        frames - 1, scale.as_secs_f64() * 1000.0 / f64::from(frames), encode.as_secs_f64() * 1000.0 / f64::from(frames),
+        "Windows Graphics Capture ({w0}×{h0}): 첫 화면 {first_ms:.0} ms, 2초 동안 변화 {} 개\n축소 평균 {:.1} ms, 인코딩 평균 {:.1} ms (CPU, {})",
+        frames - 1, scale.as_secs_f64() * 1000.0 / f64::from(frames), encode.as_secs_f64() * 1000.0 / f64::from(frames), enc.as_ref().map_or("-", encoder::Video::codec),
     ))
 }
 

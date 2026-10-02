@@ -27,9 +27,12 @@ build() {   # label rust-target [zig-suffix]
     if [[ $target == *apple* ]]; then echo "warning $label: no nasm — the Intel Mac slice encodes without SIMD (brew install nasm)"
     else echo "error $label: nasm is required for x86 builds (apt install nasm)"; exit 1; fi
   fi
+  # Linux: VP9 through a static libvpx (F-18 — the remote screen's software encoder; AIDEV_VP9=0 leaves it out)
+  local features=()
+  if [[ $target == *linux* && ${AIDEV_VP9:-1} != 0 ]]; then scripts/build-libvpx.sh "$target"; features=(--features vpx); fi
   if [[ $target == *apple* ]]; then cargo build --release --target "$target"
-  elif zig_ok; then cargo zigbuild --release --target "$target$suffix"
-  elif [ "$target" = "$(rustc -vV | sed -n 's/host: //p')" ]; then cargo build --release --target "$target"
+  elif zig_ok; then cargo zigbuild --release --target "$target$suffix" "${features[@]}"
+  elif [ "$target" = "$(rustc -vV | sed -n 's/host: //p')" ]; then cargo build --release --target "$target" "${features[@]}"
   else echo "skip $label: needs zig + cargo-zigbuild for cross-linking"; return; fi
   cp "target/$target/release/aidev-runner$ext" "dist/aidev-runner-$ver-$label$ext"; built+=("aidev-runner-$ver-$label$ext")
 }

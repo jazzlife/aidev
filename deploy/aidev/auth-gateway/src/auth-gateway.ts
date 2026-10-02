@@ -486,7 +486,7 @@ server.on('upgrade', async (req, socket, head) => {
       const session = authenticate(req);
       if (!session || !store.target(session.user.id, Number(screenMatch[1]))) throw new Error('Authentication required');
       const q = new URL(req.url ?? '/', origin).searchParams;
-      runners.attachScreen(req, socket, head, Number(screenMatch[1]), session.user.id, () => Boolean(store.session(session.sid)), screenOpts({ mode: q.get('mode'), window: q.get('window'), display: q.get('display'), fps: q.get('fps'), maxWidth: q.get('maxWidth'), bitrate: q.get('bitrate'), codec: q.get('codec') }), Number(q.get('v') ?? 1) || 1);
+      runners.attachScreen(req, socket, head, Number(screenMatch[1]), session.user.id, () => Boolean(store.session(session.sid)), screenOpts({ mode: q.get('mode'), window: q.get('window'), display: q.get('display'), fps: q.get('fps'), maxWidth: q.get('maxWidth'), bitrate: q.get('bitrate'), codec: q.get('codec'), codecs: q.get('codecs') }), Number(q.get('v') ?? 1) || 1);
       return;
     }
     const streamMatch = pathname.match(/^\/api\/aidev\/targets\/(\d+)\/stream$/);

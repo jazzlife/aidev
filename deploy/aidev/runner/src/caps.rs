@@ -141,6 +141,11 @@ pub async fn collect(cfg: &crate::config::Config) -> Value {
         async { match &sdb_bin { Some(b) => devices(b).await, None => vec![] } },
         admin()
     );
+    let mut features = vec!["ping", "exec", "sync", "tunnel", "screen", "video", "input", "windows", "dev", "dap", "stdin", "device", "shell", "pull", "displays", "consent", "acks"];
+    // VP9 frames from the CPU path (libvpx, F-18)
+    if cfg!(feature = "vpx") {
+        features.push("vp9");
+    }
     json!({
         "runner": env!("CARGO_PKG_VERSION"),
         "os": platform(),
@@ -154,7 +159,7 @@ pub async fn collect(cfg: &crate::config::Config) -> Value {
         "allowed_roots": cfg.allowed_roots.iter().map(|r| r.display().to_string()).collect::<Vec<_>>(),
         "screen": crate::config::screen_allowed(cfg),
         "control": crate::config::control_allowed(cfg),
-        "features": ["ping", "exec", "sync", "tunnel", "screen", "video", "input", "windows", "dev", "dap", "stdin", "device", "shell", "pull", "displays", "consent", "acks"],
+        "features": features,
         "limits": { "exec_running": crate::exec::MAX_RUNNING },
     })
 }

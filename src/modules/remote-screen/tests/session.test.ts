@@ -62,4 +62,29 @@ describe('remote screen session (numbered frames, acks, latency)', () => {
     expect(ws.sent.some((m) => m.includes('"ack"'))).toBe(false);
     session.close();
   });
+
+  it('says it decodes VP9 and feeds VP9 frames (kind 4) to a VP9 decoder', async () => {
+    vi.stubGlobal('WebSocket', FakeSocket);
+    const configured: string[] = [];
+    const decoded: string[] = [];
+    class FakeDecoder {
+      static isConfigSupported = vi.fn(async (c: { codec: string }) => ({ supported: c.codec.startsWith('vp09') }));
+      state = 'unconfigured';
+      decodeQueueSize = 0;
+      configure(c: { codec: string }) { configured.push(c.codec); this.state = 'configured'; }
+      decode(chunk: { type: string }) { decoded.push(chunk.type); }
+      close() { this.state = 'closed'; }
+    }
+    vi.stubGlobal('VideoDecoder', FakeDecoder);
+    vi.stubGlobal('EncodedVideoChunk', class { type: string; constructor(o: { type: string }) { this.type = o.type; } });
+    const urls: string[] = [];
+    const session = new RemoteScreenSession((o) => { urls.push(String(o.codecs)); return 'ws://test/screen?v=2'; }, document.createElement('canvas'), { mode: 'video', window: 1, display: 0, fps: 30, maxWidth: 1440, bitrate: 4000 }, () => undefined);
+    await vi.waitFor(() => expect(FakeSocket.last?.url).toBe('ws://test/screen?v=2'));
+    expect(urls).toEqual(['vp9,h264']);
+    // `[kind 4][flags key|numbered][seq 1][VP9 frame marker …]`
+    FakeSocket.last!.push(new Uint8Array([4, 1 | 2, 0, 0, 0, 1, 0x82, 0x49, 0x83, 0x42]).buffer);
+    expect(configured).toEqual(['vp09.00.50.08']);
+    expect(decoded).toEqual(['key']);
+    session.close();
+  });
 });

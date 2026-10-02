@@ -10,11 +10,13 @@
  * acks each one once it is on the canvas — the runner paces itself by those acks, so the picture never sits in a
  * queue. Once a second the runner's numbers (capture, scale, encode, the send → shown → ack loop) arrive as
  * `stats`; with this page's decode time they make `state.stats` and its latency estimate.
+ * Codecs (F-18, 2026-10-03): the page says which it decodes (`codecs=vp9,h264`); runners with libvpx answer with VP9
+ * (kind 4) from their CPU path — several times faster to encode than OpenH264 there — and H.264 otherwise.
  */
 import { getStoredAuthToken } from '@/shared/authToken';
 
 export type ScreenMode = 'video' | 'jpeg';
-export type ScreenOptions = { mode: ScreenMode; window: number | null; display: number; fps: number; maxWidth: number; bitrate: number; codec?: 'h264' | 'vp8' };
+export type ScreenOptions = { mode: ScreenMode; window: number | null; display: number; fps: number; maxWidth: number; bitrate: number; codec?: 'h264' | 'vp8'; codecs?: string[] };
 export type InputEvent =
   | { t: 'move'; x: number; y: number }   // x, y ∈ [0,1] of the picture (the window); the gateway adds which window
   | { t: 'button'; b: 'left' | 'right' | 'middle'; down: boolean; x?: number; y?: number }
@@ -42,6 +44,20 @@ export type ScreenState = {
 const KIND_H264 = 1;
 const KIND_VP8 = 2;
 const KIND_JPEG = 3;
+const KIND_VP9 = 4;
+/** VP9 profile 0, 8-bit, level 5 (up to 4096×2176) — what the runner's libvpx sends. */
+const VP9_CODEC = 'vp09.00.50.08';
+
+let decodableCodecs: Promise<string[]> | null = null;
+/** The video codecs this browser decodes with WebCodecs, best first (checked once per page). */
+function videoCodecs(): Promise<string[]> {
+  decodableCodecs ??= (async () => {
+    if (!webCodecsAvailable()) return ['h264'];
+    const vp9 = await VideoDecoder.isConfigSupported({ codec: VP9_CODEC, optimizeForLatency: true }).then((r) => Boolean(r.supported), () => false);
+    return vp9 ? ['vp9', 'h264'] : ['h264'];
+  })();
+  return decodableCodecs;
+}
 
 /** avc1.PPCCLL from the SPS in an Annex B access unit (null when the unit has no SPS). */
 export function avcCodecFromAnnexB(au: Uint8Array): string | null {
@@ -61,7 +77,7 @@ export function avcCodecFromAnnexB(au: Uint8Array): string | null {
 export function screenSocketUrl(targetId: number, o: ScreenOptions) {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const token = getStoredAuthToken();
-  const q = new URLSearchParams({ v: '2', mode: o.mode, ...(o.window !== null ? { window: String(o.window) } : {}), display: String(o.display), fps: String(o.fps), maxWidth: String(o.maxWidth), bitrate: String(o.bitrate), codec: o.codec ?? 'h264', ...(token ? { token } : {}) });
+  const q = new URLSearchParams({ v: '2', mode: o.mode, ...(o.window !== null ? { window: String(o.window) } : {}), display: String(o.display), fps: String(o.fps), maxWidth: String(o.maxWidth), bitrate: String(o.bitrate), codec: o.codec ?? 'h264', ...(o.codecs?.length ? { codecs: o.codecs.join(',') } : {}), ...(token ? { token } : {}) });
   return `${protocol}//${window.location.host}/api/aidev/targets/${targetId}/screen?${q}`;
 }
 
@@ -86,12 +102,14 @@ export class RemoteScreenSession {
 
   constructor(private url: (opts: ScreenOptions) => string, private canvas: HTMLCanvasElement, private opts: ScreenOptions, private onState: (s: ScreenState) => void) {
     if (opts.mode === 'video' && !webCodecsAvailable()) this.opts = { ...opts, mode: 'jpeg', fps: 5 };
-    this.connect();
+    void this.connect();
   }
 
   private patch(p: Partial<ScreenState>) { this.state = { ...this.state, ...p }; this.onState(this.state); }
 
-  private connect() {
+  private async connect() {
+    if (this.opts.mode === 'video') this.opts = { ...this.opts, codecs: await videoCodecs() };
+    if (this.closed) return;
     const ws = new WebSocket(this.url(this.opts));
     ws.binaryType = 'arraybuffer';
     this.ws = ws;
@@ -189,7 +207,7 @@ export class RemoteScreenSession {
     }
     if (!webCodecsAvailable()) return;
     if (this.waitKey && !key) return;
-    const codec = kind === KIND_VP8 ? 'vp8' : kind === KIND_H264 ? (key ? avcCodecFromAnnexB(data) ?? this.decoderCodec : this.decoderCodec) : null;
+    const codec = kind === KIND_VP9 ? VP9_CODEC : kind === KIND_VP8 ? 'vp8' : kind === KIND_H264 ? (key ? avcCodecFromAnnexB(data) ?? this.decoderCodec : this.decoderCodec) : null;
     if (!codec || !this.ensureDecoder(codec) || !this.decoder) return;
     // keep latency low: a decoder that falls behind skips to the next keyframe (a queue is latency)
     if (this.decoder.decodeQueueSize > 2 && !key) { this.waitKey = true; this.pending.clear(); return; }
@@ -207,7 +225,9 @@ export class RemoteScreenSession {
 
   /** New window / quality: the gateway moves this viewer to the matching stream. */
   setOptions(opts: ScreenOptions) {
-    this.opts = opts.mode === 'video' && !webCodecsAvailable() ? { ...opts, mode: 'jpeg', fps: 5 } : opts;
+    // the codecs this page decodes stay with the session (found when it connected)
+    const next = { ...opts, codecs: this.opts.codecs };
+    this.opts = next.mode === 'video' && !webCodecsAvailable() ? { ...next, mode: 'jpeg', fps: 5 } : next;
     this.resetDecoder();
     this.send({ op: 'config', ...this.opts });
   }

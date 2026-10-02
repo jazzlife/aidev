@@ -69,6 +69,64 @@ impl H264 {
     }
 }
 
+/// The CPU path's video encoder (F-18): VP9 where the viewers decode it and the runner has libvpx (feature `vpx`),
+/// H.264 (OpenH264) otherwise.
+pub enum Video {
+    H264(H264),
+    #[cfg(feature = "vpx")]
+    Vp9(crate::vp9::Vp9),
+}
+
+impl Video {
+    pub fn new(vp9: bool, width: u32, height: u32, fps: u32, bitrate_kbps: u32) -> Result<Self, String> {
+        #[cfg(feature = "vpx")]
+        if vp9 {
+            return crate::vp9::Vp9::new(width, height, fps, bitrate_kbps).map(Video::Vp9);
+        }
+        let _ = vp9;
+        H264::new(width, height, fps, bitrate_kbps).map(Video::H264)
+    }
+
+    /// "vp9" / "h264", as screen.format names it.
+    pub fn codec(&self) -> &'static str {
+        match self {
+            Video::H264(_) => "h264",
+            #[cfg(feature = "vpx")]
+            Video::Vp9(_) => "vp9",
+        }
+    }
+
+    pub fn size(&self) -> (u32, u32) {
+        match self {
+            Video::H264(e) => (e.width, e.height),
+            #[cfg(feature = "vpx")]
+            Video::Vp9(e) => (e.width, e.height),
+        }
+    }
+
+    pub fn set_bitrate(&mut self, kbps: u32) {
+        match self {
+            Video::H264(e) => e.set_bitrate(kbps),
+            #[cfg(feature = "vpx")]
+            Video::Vp9(e) => e.set_bitrate(kbps),
+        }
+    }
+
+    /// RGBA → (frame, keyframe); empty when the encoder skipped the frame.
+    pub fn encode(&mut self, rgba: &[u8], force_key: bool) -> Result<(Vec<u8>, bool), String> {
+        match self {
+            Video::H264(e) => e.encode(rgba, force_key),
+            #[cfg(feature = "vpx")]
+            Video::Vp9(e) => e.encode(rgba, force_key),
+        }
+    }
+}
+
+/// VP9 for this stream: built with libvpx and asked for by the viewers (`AIDEV_SCREEN_CODEC=h264` keeps H.264).
+pub fn vp9_wanted(viewer_decodes_vp9: bool) -> bool {
+    cfg!(feature = "vpx") && viewer_decodes_vp9 && std::env::var("AIDEV_SCREEN_CODEC").as_deref() != Ok("h264")
+}
+
 /// Scale RGBA to at most `max_width` (keeping the aspect) and crop to even sizes for I420.
 pub fn fit(frame: crate::appwin::Frame, max_width: u32) -> (Vec<u8>, u32, u32) {
     let (mut w, mut h, mut rgba) = (frame.width, frame.height, frame.rgba);

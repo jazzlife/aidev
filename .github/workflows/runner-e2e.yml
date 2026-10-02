@@ -57,13 +57,29 @@ jobs:
         with:
           node-version: 22
 
+      # VP9 (F-18): Windows and Linux runners link a static libvpx (macOS sends hardware H.264)
+      - uses: actions/cache@v4
+        if: runner.os != 'macOS'
+        with:
+          path: ${{ env.RUNNER_DIR }}/vendor/libvpx
+          key: libvpx-e2e-${{ matrix.os }}-${{ hashFiles('deploy/aidev/runner/scripts/build-libvpx.*') }}
+      - name: libvpx
+        if: runner.os != 'macOS'
+        working-directory: ${{ env.RUNNER_DIR }}
+        shell: bash
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-libvpx.ps1 -Arch x64
+          else python3 -m pip install --user --break-system-packages -q ziglang==0.16.0 && scripts/build-libvpx.sh; fi
+          echo "FEATURES=--features vpx" >> "$GITHUB_ENV"
       - name: cargo build
         working-directory: ${{ env.RUNNER_DIR }}
-        run: cargo build --release --locked
+        shell: bash
+        run: cargo build --release --locked $FEATURES
       - name: cargo test (Windows-only checks)
         if: runner.os == 'Windows'
         working-directory: ${{ env.RUNNER_DIR }}
-        run: cargo test --release --locked win_ -- --nocapture
+        shell: bash
+        run: cargo test --release --locked $FEATURES win_ -- --nocapture
       # F-18: the remote screen's capture and encoders on this machine (Windows: Graphics Capture; macOS 13+:
       # ScreenCaptureKit needs a Screen Recording grant CI does not have — the CPU path is timed there)
       - name: remote screen bench
@@ -73,6 +89,7 @@ jobs:
         run: |
           $out = (& target\release\aidev-runner.exe bench --frames 30 2>&1 | Out-String); $out
           if ($out -notmatch 'Windows Graphics Capture \(\d+') { throw 'Windows Graphics Capture gave no picture' }
+          if ($out -notmatch ', vp9\)') { throw 'the CPU path did not encode VP9 (libvpx)' }
       - name: remote screen bench (Linux, X11 MIT-SHM)
         if: runner.os == 'Linux'
         working-directory: ${{ env.RUNNER_DIR }}
@@ -81,11 +98,12 @@ jobs:
           Xvfb :99 -screen 0 1920x1080x24 >/dev/null 2>&1 & sleep 1
           out=$(DISPLAY=:99 target/release/aidev-runner bench --frames 30 2>&1); echo "$out"
           echo "$out" | grep -q '캡처 MIT-SHM' || { echo 'MIT-SHM was not used'; exit 1; }
+          echo "$out" | grep -q ', vp9)' || { echo 'the CPU path did not encode VP9 (libvpx)'; exit 1; }
           kill %1
       - name: cargo test (all)
         if: runner.os != 'Windows'
         working-directory: ${{ env.RUNNER_DIR }}
-        run: cargo test --release --locked
+        run: cargo test --release --locked $FEATURES
 
       - name: gateway build
         if: ${{ !cancelled() }}

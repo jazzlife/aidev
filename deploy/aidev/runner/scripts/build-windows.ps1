@@ -21,7 +21,9 @@ param(
   [switch] $Install,
   [string] $Code,
   [string] $Gateway,
-  [string] $Name
+  [string] $Name,
+  # VP9 through a static libvpx (F-18, the remote screen's software encoder): auto = when MSYS2 can build it, on = must
+  [ValidateSet('auto', 'on', 'off')] [string] $Vp9 = 'auto'
 )
 $ErrorActionPreference = 'Stop'
 $Src = Split-Path -Parent $PSScriptRoot
@@ -128,7 +130,15 @@ $ver = (Select-String -Path "$Src\Cargo.toml" -Pattern '^version = "(.*)"').Matc
 Write-Host "==> aidev-runner $ver win-$Arch 빌드 (처음에는 의존성 컴파일로 몇 분)"
 Push-Location $Src
 try {
-  $code = Invoke-Native cargo @('build', '--release', '--locked', '--target', $Target)
+  $features = @()
+  if ($Vp9 -ne 'off') {
+    # its own PowerShell: the libvpx build puts MSYS2 first on PATH (whose `link` is not MSVC's)
+    $vpx = Invoke-Native powershell @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', "$PSScriptRoot\build-libvpx.ps1", '-Arch', $Arch)
+    if ($vpx -eq 0) { $features = @('--features', 'vpx') }
+    elseif ($Vp9 -eq 'on') { throw "libvpx 빌드 실패 ($vpx)" }
+    else { Write-Host '! VP9(libvpx) 없이 빌드합니다 — 원격 화면은 H.264로 보냅니다' }
+  }
+  $code = Invoke-Native cargo (@('build', '--release', '--locked', '--target', $Target) + $features)
   if ($code -ne 0) { throw "cargo build 실패 ($code)" }
 } finally { Pop-Location }
 $name = "aidev-runner-$ver-win-$Arch.exe"
