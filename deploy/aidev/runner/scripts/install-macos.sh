@@ -101,6 +101,7 @@ sign_stable() {
     local made=$?
     rm -rf "$tmp"
     [ $made = 0 ] || { rm -f "$kc"; return 1; }
+    chmod 600 "$kc"
     echo " ✓ 이 Mac의 러너 서명 인증서를 만들었습니다 (업데이트해도 macOS 권한 유지)"
   fi
   security unlock-keychain -p "$(cat "$pass")" "$kc" >/dev/null 2>&1 || return 1
