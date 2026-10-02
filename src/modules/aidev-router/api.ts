@@ -264,6 +264,14 @@ export type RemoteApproval = {
 };
 
 /** A command run on a remote PC (remote_runs row + the live stream while the gateway holds it). */
+/** An agent's request to the user's open NadoVibe pages (gateway ui-control): show a view or apply a page setting. */
+export type UiCommand = {
+  id: number; at: number; by: string | null; action: 'show' | 'set';
+  view?: 'screen' | 'preview' | 'debug' | 'pcs' | 'settings' | 'project' | 'catalog' | 'chat';
+  params: Record<string, string | number | boolean | null>;
+  note: string | null;
+};
+
 export type RemoteRun = {
   id: number; target_id: number; target_name: string | null; kind: string; cmd: string | null; cwd: string | null; approved_by: string | null;
   started_at: number; finished_at: number | null; exit_code: number | null;
@@ -319,6 +327,8 @@ export const aidevApi = {
   /** Last output as plain text (ANSI codes stripped). */
   remoteRunLog: (id: number, bytes = 16384) => authenticatedFetch(`/api/aidev/remote-runs/${id}/log?plain=1&bytes=${bytes}`).then(async (response) => { if (!response.ok) throw new Error(`log ${response.status}`); return response.text(); }),
   /** Agent commands waiting for the user's approval (F-05). */
+  /** App control: commands an agent sent to the user's open pages (long-poll, ≤25 s). */
+  uiCommands: (after: number, client: string, timeoutSec = 25, signal?: AbortSignal) => authenticatedFetch(`/api/aidev/ui/commands?after=${after}&client=${encodeURIComponent(client)}&timeout=${timeoutSec}`, { signal }).then((response) => readJson<{ commands: UiCommand[]; last: number }>(response)),
   approvals: (all = false) => authenticatedFetch(`/api/aidev/approvals${all ? '?all=1' : ''}`).then((response) => readJson<{ approvals: RemoteApproval[] }>(response)),
   answerApproval: (id: string, allow: boolean, auto = false) => post(`/api/aidev/approvals/${id}`, { allow, auto }).then((response) => readJson<{ approval: RemoteApproval }>(response)),
   remoteRunSignal: (id: number, signal: 'INT' | 'KILL' = 'INT') => post(`/api/aidev/remote-runs/${id}/signal`, { signal }).then((response) => readJson<{ ok: boolean }>(response)),

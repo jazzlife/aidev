@@ -20,18 +20,25 @@ vi.mock('@/modules/chat-core', async () => {
   const shared = await vi.importActual<typeof import('@/shared/api')>('@/shared/api');
   return { api, readApiJson: shared.readApiJson, useAuth: () => ({ user: { username: 'jazzlife' } }) };
 });
-vi.mock('@/modules/aidev-router', () => ({
-  aidevApi: {
-    targets: () => Promise.resolve({ targets: [{ id: 4, name: 'm4pro', online: true }, { id: 5, name: 'old-pc', online: false }] }),
-    remoteRuns: () => Promise.resolve({ runs: [] }),
-  },
-}));
+const uiQueue = vi.hoisted(() => ({ commands: [] as unknown[] }));
+vi.mock('@/modules/aidev-router', async () => {
+  const { useEffect } = await import('react');
+  return {
+    aidevApi: {
+      targets: () => Promise.resolve({ targets: [{ id: 4, name: 'm4pro', online: true }, { id: 5, name: 'old-pc', online: false }] }),
+      remoteRuns: () => Promise.resolve({ runs: [] }),
+    },
+    // the gateway queue, delivered once (the real hook long-polls it)
+    useUiCommands: (onShow: (c: unknown) => void) => { useEffect(() => { for (const c of uiQueue.commands.splice(0)) onShow(c); }); },
+  };
+});
 
 const { ProjectsScreen } = await import('@m/screens/ProjectsScreen');
 const { ProjectScreen } = await import('@m/screens/ProjectScreen');
 const { TargetsScreen } = await import('@m/screens/TargetsScreen');
 const { DrawerProvider } = await import('@m/components/AppDrawer');
 const { BackController } = await import('@m/lib/nav');
+const { UiCommandBridge } = await import('@m/components/UiCommandBridge');
 vi.mock('@m/components/FilePeek', () => ({ FilePeek: () => null }));
 
 function Where() { const l = useLocation(); return <div data-testid="where">{l.pathname}</div>; }
@@ -42,6 +49,7 @@ const at = (path: string) => {
       <BackController />
       <DrawerProvider>
       <Where />
+      <UiCommandBridge />
       <Routes>
         <Route path="/projects" element={<ProjectsScreen />} />
         <Route path="/projects/:projectId" element={<ProjectScreen />} />
@@ -121,5 +129,22 @@ describe('mobile common menu (drawer)', () => {
     await act(async () => { window.history.back(); await new Promise((r) => setTimeout(r, 30)); });
     expect(screen.queryByTestId('app-drawer')).toBeNull();
     expect(screen.getByTestId('where').textContent).toBe('/projects');
+  });
+});
+
+describe('agent shows the user something (app control)', () => {
+  it("opens the PC's whole screen with the agent's note, and back returns to where the user was", async () => {
+    uiQueue.commands.push({ id: 1, at: 0, by: 'agent', action: 'show', view: 'screen', params: { target: 4, window: 'full' }, note: '로그인 창을 확인해 주세요' });
+    at('/projects');
+    await settle();
+    expect(window.location.pathname + window.location.search).toBe('/screen/4?w=full');
+    expect(screen.getByTestId('agent-ui-note').textContent).toContain('로그인 창을 확인해 주세요');
+  });
+
+  it('opens a project by name', async () => {
+    uiQueue.commands.push({ id: 2, at: 0, by: 'agent', action: 'show', view: 'project', params: { project: 'beta' }, note: null });
+    at('/');
+    await settle();
+    expect(screen.getByTestId('where').textContent).toBe('/projects/p2');
   });
 });

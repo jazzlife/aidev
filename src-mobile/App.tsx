@@ -8,6 +8,7 @@ import { Splash } from '@m/components/Splash';
 import { ApprovalSheet } from '@m/components/ApprovalSheet';
 import { BackController } from '@m/lib/nav';
 import { DrawerProvider } from '@m/components/AppDrawer';
+import { UiCommandBridge } from '@m/components/UiCommandBridge';
 
 // C-06 (Lighthouse mobile 4G: LCP 2.7 s, 82% of the main chunk unused on the first screen): only the entry screens
 // (login, conversation list) ship in the main chunk; every other screen loads when it is opened.
@@ -32,7 +33,7 @@ function Gate({ children }: { children: React.ReactNode }) {
     return <Navigate to="/login" replace />;
   }
   // agent commands waiting for approval surface on every signed-in screen
-  return <WebSocketProvider><DrawerProvider><Suspense fallback={<Splash />}>{children}</Suspense><ApprovalSheet /></DrawerProvider></WebSocketProvider>;
+  return <WebSocketProvider><DrawerProvider><Suspense fallback={<Splash />}>{children}</Suspense><ApprovalSheet /><UiCommandBridge /></DrawerProvider></WebSocketProvider>;
 }
 
 export default function App() {

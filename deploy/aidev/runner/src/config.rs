@@ -46,6 +46,39 @@ fn first_run_grant(cfg: &mut Config) -> bool {
     true
 }
 
+/// Screen / control allowed right now: changed while running by `config.consent` (an agent or the workbench,
+/// 2026-10-02), else what the runner started with. Every check reads this, not the start-up copy of the config.
+static LIVE_CONSENT: std::sync::RwLock<Option<(bool, bool)>> = std::sync::RwLock::new(None);
+
+pub fn screen_allowed(cfg: &Config) -> bool {
+    LIVE_CONSENT.read().ok().and_then(|g| *g).map(|c| c.0).unwrap_or(cfg.screen_consent)
+}
+
+pub fn control_allowed(cfg: &Config) -> bool {
+    LIVE_CONSENT.read().ok().and_then(|g| *g).map(|c| c.1).unwrap_or(cfg.control_consent)
+}
+
+/// `config.consent {screen?, control?}`: saved to runner.toml and effective at once (control implies screen;
+/// screen off turns control off). Returns {screen, control}.
+pub fn set_consent(cfg: &Config, screen: Option<bool>, control: Option<bool>) -> Result<(bool, bool), String> {
+    let mut saved = load().unwrap_or_else(|_| cfg.clone());
+    let (s, c) = next_consent((screen_allowed(cfg), control_allowed(cfg)), screen, control);
+    saved.screen_consent = s;
+    saved.control_consent = c;
+    saved.consent_version = 1;
+    save(&saved)?;
+    if let Ok(mut g) = LIVE_CONSENT.write() { *g = Some((s, c)); }
+    Ok((s, c))
+}
+
+/// The consent after a change: control implies screen, screen off turns control off.
+fn next_consent(current: (bool, bool), screen: Option<bool>, control: Option<bool>) -> (bool, bool) {
+    let (mut s, mut c) = current;
+    if let Some(v) = screen { s = v; if !v { c = false; } }
+    if let Some(v) = control { c = v; if v { s = true; } }
+    (s, c)
+}
+
 pub fn home() -> PathBuf {
     std::env::var_os("HOME")
         .or_else(|| std::env::var_os("USERPROFILE"))
@@ -219,5 +252,12 @@ mod tests {
         cfg.screen_consent = false;
         assert!(!first_run_grant(&mut cfg));
         assert!(!cfg.screen_consent);
+    }
+
+    #[test]
+    fn consent_changes_follow_the_rules() {
+        assert_eq!(next_consent((false, false), None, Some(true)), (true, true), "control implies screen");
+        assert_eq!(next_consent((true, true), Some(false), None), (false, false), "screen off turns control off");
+        assert_eq!(next_consent((true, false), None, None), (true, false));
     }
 }

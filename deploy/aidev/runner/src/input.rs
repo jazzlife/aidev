@@ -290,7 +290,7 @@ pub fn notify(cfg: &Config, method: &str, params: &Value) -> bool {
     if !method.starts_with("input.") {
         return false;
     }
-    if !cfg.control_consent {
+    if !crate::config::control_allowed(cfg) {
         return true;
     }
     let job = if method == "input.end" { Job::End } else { Job::Event(params.clone()) };

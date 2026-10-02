@@ -4,6 +4,7 @@
  */
 export { TargetsPanel } from '@/modules/remote-target/TargetsPanel';
 export { pairingSteps } from '@/modules/remote-target/utils/runnerPairing';
+export { requestScreen } from '@/modules/remote-target/utils/screenRequest';
 export { RunOutputPane, requestRunFocus } from '@/modules/remote-target/RunOutputPane';
 export { RemoteApprovalCards, ApprovalCard } from '@/modules/remote-target/RemoteApprovalCards';
 export { PreviewPane } from '@/modules/remote-target/PreviewPane';

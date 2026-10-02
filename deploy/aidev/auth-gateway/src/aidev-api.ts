@@ -6,6 +6,7 @@ import type { LayaClient } from './laya.js';
 import type { Push } from './push.js';
 import { createNotifier } from './notify.js';
 import { EXEC_SHELLS, RpcError, screenOpts, type ExecShell, type RunnerHub } from './runner-hub.js';
+import { parseUiCommand, type UiControl } from './ui-control.js';
 import type { RemoteGate } from './remote-gate.js';
 import { applyLessonOutcome, promote } from './lesson-loop.js';
 import { downgradeEnabled, runTierPolicy, setTierPolicy } from './tier-policy.js';
@@ -42,6 +43,8 @@ export type AidevDeps = {
   preview?: Preview;
   /** Remote debugging sessions (F-09). */
   debug?: DebugHub;
+  /** App control: agents asking the user's open pages to show something or apply a page setting. */
+  ui?: UiControl;
   /** C-06: whether the user has one of the apps open right now (a live chat connection). */
   isOnline?: (userId: number) => boolean;
   /** Debugger consoles (F-09c): any CLI debugger/REPL in a pty, driven line by line. */
@@ -952,6 +955,24 @@ export function createAidevApi(deps: AidevDeps) {
         } catch (error) { throw new HttpError(error instanceof RpcError && error.code === -32001 ? 403 : 400, error instanceof Error ? error.message : 'read failed'); }
       }
       // ---- approvals (F-05): agent commands waiting for the user --------------------------------
+      // ---- app control (2026-10-02): an agent shows the user a screen or applies a page setting ------------------
+      if (rest === '/ui/commands' && m === 'POST') {
+        if (!deps.ui) throw new HttpError(503, 'app control unavailable');
+        const b = await readJson(req);
+        let cmd;
+        try { cmd = parseUiCommand(b); } catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid command'); }
+        const by = session.sid.startsWith('runtime:') ? optStr(b.agent, 41) ?? 'agent' : 'user';
+        const r = deps.ui.push(uid, { ...cmd, by });
+        console.log(`[ui] user #${uid} ${by} ${cmd.action} ${cmd.view ?? cmd.params.key ?? ''} ${JSON.stringify(cmd.params).slice(0, 120)} → ${r.viewers} page(s)`);
+        return json(res, 200, r), true;
+      }
+      if (rest === '/ui/commands' && m === 'GET') {
+        if (!deps.ui) return json(res, 200, { commands: [], last: 0 }), true;
+        const after = Math.max(Number(url.searchParams.get('after')) || 0, 0);
+        const timeoutMs = Math.min(Math.max(Number(url.searchParams.get('timeout')) || 0, 0), 25) * 1000;
+        const client = (url.searchParams.get('client') ?? session.sid).slice(0, 64);
+        return json(res, 200, await deps.ui.poll(uid, client, after, timeoutMs)), true;
+      }
       if (rest === '/approvals' && m === 'GET') return json(res, 200, { approvals: deps.gate?.list(uid, url.searchParams.get('all') === '1') ?? [] }), true;
       const approvalMatch = rest.match(/^\/approvals\/([A-Za-z0-9_-]{8,40})(\/wait)?$/);
       if (approvalMatch && deps.gate) {
@@ -1018,7 +1039,7 @@ export function createAidevApi(deps: AidevDeps) {
           return json(res, 200, { ok: true }), true;
         }
       }
-      const targetMatch = rest.match(/^\/targets\/(\d+)(\/pair\/refresh|\/ping|\/refresh-caps)?$/);
+      const targetMatch = rest.match(/^\/targets\/(\d+)(\/pair\/refresh|\/ping|\/refresh-caps|\/consent)?$/);
       if (targetMatch) {
         const id = Number(targetMatch[1]);
         if (!store.target(uid, id)) throw new HttpError(404, 'Target not found');
@@ -1026,6 +1047,19 @@ export function createAidevApi(deps: AidevDeps) {
           const t0 = Date.now();
           try { const result = await deps.runners!.call(id, 'runner.ping', {}, 10_000); return json(res, 200, { ok: true, rtt_ms: Date.now() - t0, result }), true; }
           catch (error) { return json(res, 200, { ok: false, error: error instanceof Error ? error.message : 'ping failed' }), true; }
+        }
+        // screen / control on that PC, changed while it runs (runner ≥ 0.13.4: config.consent) — the workbench or an agent
+        if (targetMatch[2] === '/consent' && m === 'POST') {
+          const b = await readJson(req);
+          const flag = (v: unknown) => (typeof v === 'boolean' ? v : undefined);
+          try {
+            deps.runners!.requireFeature(id, 'consent', '화면·제어 허용 변경', '0.13.4');
+            const r = await deps.runners!.call<{ screen: boolean; control: boolean }>(id, 'config.consent', { screen: flag(b.screen), control: flag(b.control) }, 15_000);
+            const caps = await deps.runners!.call<Record<string, unknown>>(id, 'runner.capabilities', {}, 20_000);
+            store.updateTarget(uid, id, { capabilities: caps, lastSeen: Date.now() });
+            console.log(`[runner] target #${id} consent by ${session.sid.startsWith('runtime:') ? 'agent' : 'user'}: screen=${r.screen} control=${r.control}`);
+            return json(res, 200, { consent: r, target: targetView(store.target(uid, id)!) }), true;
+          } catch (error) { throw new HttpError(error instanceof RpcError && error.code === -32021 ? 426 : 409, error instanceof Error ? error.message : 'runner unavailable'); }
         }
         if (targetMatch[2] === '/refresh-caps' && m === 'POST') {
           try {

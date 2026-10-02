@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useParams } from 'react-router-dom';
+import { useParams, useSearchParams } from 'react-router-dom';
 
 import { aidevApi } from '@/modules/aidev-router';
 import { isWholeScreen, RemoteConsole, screenSocketUrl, useRemoteScreen, useScreenSources, type ScreenOptions, type StickyMods } from '@/modules/remote-screen';
@@ -42,6 +42,16 @@ export function RemoteScreenScreen() {
   const [snapNote, setSnapNote] = useState<string | null>(null);
   const sources = useScreenSources(targetId, true, chosen);
   const { windows, consoles, displays, perWindow, refresh, source, parse } = sources;
+  // opened for a window or the whole screen (`?w=<id>|full`, an agent showing it through app control): picked once
+  const [params] = useSearchParams();
+  const wanted = params.get('w');
+  const [wantedApplied, setWantedApplied] = useState(false);
+  useEffect(() => {
+    if (wantedApplied || !wanted || !windows.length) return;
+    const pick = wanted === 'full' ? windows.find((w) => isWholeScreen(w.id)) : windows.find((w) => String(w.id) === wanted);
+    if (pick) setChosen({ kind: 'window', id: pick.id });
+    setWantedApplied(true);
+  }, [wanted, wantedApplied, windows]);
   const q = QUALITY.find((x) => x.id === quality) ?? QUALITY[0];
   const watching = source?.kind === 'window' || source?.kind === 'display';
   const opts: ScreenOptions = { ...q.opts, window: source?.kind === 'window' ? source.id : null, display: source?.kind === 'display' ? source.id : 1 };

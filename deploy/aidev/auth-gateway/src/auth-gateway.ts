@@ -7,6 +7,7 @@ import { WebSocket, WebSocketServer } from 'ws';
 import { openStore } from './store.js';
 import { LayaClient } from './laya.js';
 import { createAidevApi } from './aidev-api.js';
+import { createUiControl } from './ui-control.js';
 import { createPush } from './push.js';
 import { createRemoteGate } from './remote-gate.js';
 import { createDebugHub } from './debug-hub.js';
@@ -180,7 +181,7 @@ const consoles = createConsoleHub({ runners });
 // C-06: open chat connections (/ws) per user — while an app is open its news is on screen, so no push
 const openChats = new Map<number, number>();
 const aidev = createAidevApi({
-  runners, gate, preview, debug, console: consoles, publicOrigin: origin,
+  runners, gate, preview, debug, console: consoles, publicOrigin: origin, ui: createUiControl(),
   isOnline: (userId) => (openChats.get(userId) ?? 0) > 0,
   store, laya, json, push,
   async runtimeFetch(session, path, init, timeoutMs = 10_000) {

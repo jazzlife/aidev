@@ -288,6 +288,10 @@ pub async fn handle(cfg: &Config, hub: &ExecHub, text: &str) -> Option<Value> {
             let path = msg.pointer("/params/path").and_then(Value::as_str).unwrap_or("");
             crate::roots::resolve(&cfg.allowed_roots, path).map(|p| json!({ "path": p.display().to_string() })).map_err(|e| (-32001, e))
         }
+        "config.consent" => {
+            let b = |k: &str| msg.pointer(&format!("/params/{k}")).and_then(Value::as_bool);
+            crate::config::set_consent(cfg, b("screen"), b("control")).map(|(screen, control)| json!({ "screen": screen, "control": control })).map_err(|e| (-32000, e))
+        }
         "fs.pull" => {
             let (cfg, params) = (cfg.clone(), params.clone());
             tokio::task::spawn_blocking(move || crate::sync::pull(&cfg, &params)).await.unwrap_or_else(|e| Err((-32603, e.to_string())))

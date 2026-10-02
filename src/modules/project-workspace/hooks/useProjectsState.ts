@@ -1017,6 +1017,19 @@ export function useProjectsState({
     [isMobile, navigate],
   );
 
+  // app control (an agent: nadovibe_show view "project"): select a project by id or name
+  useEffect(() => {
+    const open = (event: Event) => {
+      const key = String((event as CustomEvent<{ project?: string }>).detail?.project ?? '').toLowerCase();
+      if (!key) return;
+      const hit = projectsRef.current.find((p) => String(p.projectId).toLowerCase() === key)
+        ?? projectsRef.current.find((p) => String(p.displayName ?? '').toLowerCase() === key);
+      if (hit) handleProjectSelect(hit);
+    };
+    window.addEventListener('aidev:open-project', open);
+    return () => window.removeEventListener('aidev:open-project', open);
+  }, [handleProjectSelect]);
+
   const handleSessionSelect = useCallback(
     (session: ProjectSession) => {
       clearSessionAttention(session.id);

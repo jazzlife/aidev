@@ -2,6 +2,7 @@ import express from 'express';
 
 import { aidevToolsService, DEBUG_ADAPTERS } from '@/modules/aidev-tools/aidev-tools.service.js';
 import { remotePull, remoteSync } from '@/modules/aidev-tools/remote-sync.service.js';
+import { appSettingsGet, appSettingsSet, appShow } from '@/modules/aidev-tools/app-control.service.js';
 
 /**
  * Local HTTP endpoint used only by the aidev-tools stdio MCP process
@@ -58,6 +59,24 @@ router.post('/tools/:toolName', async (req, res) => {
         break;
       case 'remote_targets':
         result = await aidevToolsService.listTargets();
+        break;
+      case 'nadovibe_show': {
+        const str = (v: unknown) => (typeof v === 'string' && v.trim() ? v.trim().slice(0, 200) : undefined);
+        result = await appShow({
+          view: String(input.view ?? ''),
+          target: typeof input.target === 'string' || typeof input.target === 'number' ? input.target : undefined,
+          window: typeof input.window === 'string' || typeof input.window === 'number' ? input.window : undefined,
+          port: typeof input.port === 'number' ? input.port : Number(input.port) || undefined,
+          session: str(input.session), section: str(input.section), project: str(input.project), agent: str(input.agent), note: str(input.note),
+        }, readTurn(input));
+        break;
+      }
+      case 'nadovibe_settings':
+        if (input.action === 'get') result = await appSettingsGet();
+        else if (input.action === 'set') {
+          if (typeof input.key !== 'string' || !input.key) throw new Error('key is required.');
+          result = await appSettingsSet({ key: input.key, value: input.value, target: typeof input.target === 'string' || typeof input.target === 'number' ? input.target : undefined }, readTurn(input));
+        } else throw new Error('action: get | set');
         break;
       case 'remote_exec': {
         const cmd = typeof input.cmd === 'string' ? input.cmd.trim() : '';

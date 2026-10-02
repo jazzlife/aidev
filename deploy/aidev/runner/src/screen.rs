@@ -258,7 +258,7 @@ pub async fn rpc(cfg: &Config, method: &str, params: &Value) -> Option<RpcResult
     if !method.starts_with("screen.") {
         return None;
     }
-    if !cfg.screen_consent {
+    if !crate::config::screen_allowed(cfg) {
         return Some(Err((-32030, NO_CONSENT.into())));
     }
     let params = params.clone();

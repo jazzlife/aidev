@@ -300,7 +300,7 @@ pub async fn rpc(cfg: &crate::config::Config, method: &str, params: &Value) -> O
     let params = params.clone();
     Some(match method {
         "device.list" => tokio::task::spawn_blocking(|| Ok(list())).await.unwrap_or_else(|e| Err((-32000, e.to_string()))),
-        "device.shot" if !cfg.screen_consent => Err((-32030, crate::screen::NO_CONSENT.into())),
+        "device.shot" if !crate::config::screen_allowed(cfg) => Err((-32030, crate::screen::NO_CONSENT.into())),
         "device.shot" => tokio::task::spawn_blocking(move || shot(&params)).await.unwrap_or_else(|e| Err((-32000, e.to_string()))),
         _ => Err((-32601, format!("method not found: {method}"))),
     })

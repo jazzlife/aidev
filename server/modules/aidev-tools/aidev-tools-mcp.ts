@@ -102,6 +102,49 @@ const tools: ToolDefinition[] = [
     },
   },
   {
+    name: 'nadovibe_show',
+    description: [
+      'Show the user something inside NadoVibe (the app they are using): opens it on their open workbench / phone pages at once.',
+      'view "screen": a PC\'s live screen with control — `window` "full" (the whole screen, default) or a window id from remote_windows; use it when the user should see or check a program running on their PC (after starting it), or watch you work.',
+      'view "preview": a web app preview (target + port, after remote_preview). view "debug": the debugger (session from remote_debug_start).',
+      'view "pcs": PC pairing (register/connect a PC). view "settings" (section: routing | effort | engines | notifications | account). view "project" (project id or name). view "catalog" (agent name).',
+      'Returns viewers: 0 means nobody has NadoVibe open — then tell the user where to look instead. Say in the chat what you opened and what to check.',
+    ].join(' '),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        view: { type: 'string', enum: ['screen', 'preview', 'debug', 'pcs', 'settings', 'project', 'catalog'] },
+        target: { type: 'string', description: 'PC name or id (screen, preview, debug). Optional when routed or only one is online.' },
+        window: { type: 'string', description: 'screen: "full" (whole screen, default) or a window id from remote_windows.' },
+        port: { type: 'number', description: 'preview: the dev server port.' },
+        session: { type: 'string', description: 'debug: the debug session id.' },
+        section: { type: 'string', description: 'settings: which part.' },
+        project: { type: 'string', description: 'project: id or name.' },
+        agent: { type: 'string', description: 'catalog: agent name.' },
+        note: { type: 'string', description: 'One short line shown to the user with it, e.g. "로그인 창이 뜨는지 확인해 주세요".' },
+      },
+      required: ['view'],
+    },
+  },
+  {
+    name: 'nadovibe_settings',
+    description: [
+      'Read or change the user\'s NadoVibe settings directly (the user allowed changes without asking; tell them what you changed).',
+      'action "get": the PCs (online, execution policy, default PC, screen/control allowed), effort ceilings, engines, and the keys you can set.',
+      'action "set" {key, value, target?}: pc.policy (full|auto|ask|deny), pc.default (true|false), pc.screen / pc.control (allow screen capture / remote control on that PC — use before showing or controlling its screen when it is off), effort_cap.claude / effort_cap.codex, routing_mode (auto|manual|off).',
+    ].join(' '),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        action: { type: 'string', enum: ['get', 'set'] },
+        key: { type: 'string' },
+        value: { type: 'string', description: 'The new value (true/false, a policy, an effort, a mode).' },
+        target: { type: 'string', description: 'PC name or id for pc.* keys.' },
+      },
+      required: ['action'],
+    },
+  },
+  {
     name: 'remote_targets',
     description: 'List the user\'s registered remote machines (their own PCs running aidev-runner): name, platform, online status, execution policy, allowed folders and installed tools. Call it first when the user asks to run, build, test or check something "on my Mac/PC/machine".',
     inputSchema: { type: 'object', properties: {} },
@@ -472,6 +515,8 @@ async function callTool(name: string, args: Record<string, unknown>) {
     case 'remote_targets':
       return jsonResponse(await callApi(name, {}));
     case 'remote_exec':
+    case 'nadovibe_show':
+    case 'nadovibe_settings':
     case 'remote_sync':
     case 'remote_pull':
     case 'remote_logs':

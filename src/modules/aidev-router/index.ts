@@ -3,8 +3,9 @@
  * Non-visual core shared by the workbench and the mobile app; UI components live in each app.
  */
 export { aidevApi } from '@/modules/aidev-router/api';
-export type { RouteResult, RouteScope, RouteTarget, DecideResult, EnginesResult, CatalogAgent, AgentDetail, UnreadSession, CreateQueueEntry, Engine, RouteRequest, RemoteRun, RemoteApproval } from '@/modules/aidev-router/api';
+export type { RouteResult, RouteScope, RouteTarget, DecideResult, EnginesResult, CatalogAgent, AgentDetail, UnreadSession, CreateQueueEntry, Engine, RouteRequest, RemoteRun, RemoteApproval, UiCommand } from '@/modules/aidev-router/api';
 export { useRemoteApprovals, focusRemoteRun, REMOTE_RUN_FOCUS_EVENT } from '@/modules/aidev-router/hooks/useRemoteApprovals';
+export { useUiCommands } from '@/modules/aidev-router/hooks/useUiCommands';
 export { announceRunComplete, changedFilesSince, RUN_COMPLETE_EVENT } from '@/modules/aidev-router/runEvents';
 export { routingStore, useRoutingState } from '@/modules/aidev-router/store';
 export type { RoutingMode, RoutingOverrides, RoutingState } from '@/modules/aidev-router/store';

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { AppWindow, Camera, MousePointer2, Pause, Play, RefreshCw } from 'lucide-react';
 
 import { isWholeScreen, RemoteConsole, screenSocketUrl, useRemoteScreen, useScreenSources, type ScreenOptions } from '@/modules/remote-screen';
+import { SCREEN_REQUEST_EVENT, takeScreenRequest } from '@/modules/remote-target/utils/screenRequest';
 import { api, readApiJson } from '@/shared/api';
 import type { RemoteConsoleSource, RemoteScreenSource, RemoteWindow } from '@/shared/types';
 
@@ -52,6 +53,29 @@ export function ScreenPane({ isVisible = true }: { isVisible?: boolean }) {
       } catch { /* the targets panel shows the error */ }
     })();
   }, [isVisible]);
+
+  // an agent asked to show this PC (app control): its window, or the whole screen once the list has it
+  const [wantFull, setWantFull] = useState<number | null>(null);
+  useEffect(() => {
+    const apply = () => {
+      const r = takeScreenRequest();
+      if (!r) return;
+      setTargetId(r.targetId);
+      setStreaming(true);
+      if (r.window === 'full') setWantFull(r.targetId);
+      else setChosen({ targetId: r.targetId, source: { kind: 'window', id: r.window } });
+    };
+    apply();
+    window.addEventListener(SCREEN_REQUEST_EVENT, apply);
+    return () => window.removeEventListener(SCREEN_REQUEST_EVENT, apply);
+  }, []);
+  useEffect(() => {
+    if (wantFull === null || wantFull !== targetId) return;
+    const full = windows.find((w) => isWholeScreen(w.id));
+    if (!full) return;
+    setChosen({ targetId: wantFull, source: { kind: 'window', id: full.id } });
+    setWantFull(null);
+  }, [wantFull, targetId, windows]);
 
   // a stream that ended (window closed or minimized) → the list is probably stale
   useEffect(() => { if (state.error) void refresh(); }, [state.error, refresh]);

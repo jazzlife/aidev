@@ -366,6 +366,17 @@ FAKE
   for i in $(seq 1 40); do r=$(get "$A" /api/aidev/targets); echo "$r" | node -e "const j=JSON.parse(require('fs').readFileSync(0));const t=j.targets.find(t=>t.id===$TID);process.exit(t?.online && t.capabilities.control ? 0 : 1)" && break; sleep 0.25; done
   r=$(rpost "/targets/$TID/input" '{"window":999999901,"imageWidth":640,"imageHeight":360,"actions":[{"type":"click","x":320,"y":180},{"type":"type","text":"hi"},{"type":"key","key":"Enter"}]}'); IRR=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).remoteRunId')
   check "$r" 'j.ok && j.events===5 && j.remoteRunId>0' "agent: click, type and Enter sent to the window (5 events)"
+  # app control (2026-10-02): an agent turns the PC's screen/control off and on again while the runner runs, and
+  # shows the user that PC's whole screen on their open pages (a page long-polling the command queue)
+  r=$(rpost "/targets/$TID/consent" '{"control":false}'); check "$r" 'j.consent && j.consent.screen===true && j.consent.control===false && j.target.capabilities.control===false' "agent turns remote control off on the PC, live (no restart)"
+  r=$(rpost "/targets/$TID/input" '{"window":999999901,"actions":[{"type":"click","x":10,"y":10}]}'); check "$r" '/원격 제어가 꺼져/.test(j.error)' "…and input is refused at once"
+  r=$(rpost "/targets/$TID/consent" '{"control":true}'); check "$r" 'j.consent.control===true && j.target.capabilities.control===true' "agent turns it back on"
+  UI_LAST=$(get "$A" "/api/aidev/ui/commands?after=0&client=smoke&timeout=0" | node -pe 'JSON.parse(require("fs").readFileSync(0)).last')
+  UI_WAIT="$T/ui-wait.json"; (curl -s "$G/api/aidev/ui/commands?after=$UI_LAST&client=smoke&timeout=10" -H "authorization: Bearer $A" > "$UI_WAIT") & UPID=$!
+  sleep 0.3
+  r=$(rpost "/ui/commands" "{\"action\":\"show\",\"view\":\"screen\",\"params\":{\"target\":$TID,\"window\":\"full\"},\"note\":\"창을 확인해 주세요\",\"agent\":\"tester\"}"); check "$r" 'j.viewers>=1 && j.command.by==="tester"' "agent shows the PC's whole screen: a page is watching"
+  wait $UPID; r=$(cat "$UI_WAIT"); check "$r" "j.commands.some(c=>c.view==='screen' && c.params.target===$TID && c.params.window==='full' && c.note)" "…and the waiting page receives the command"
+  r=$(get "$B" "/api/aidev/ui/commands?after=0&client=other&timeout=0"); check "$r" '!j.commands.length' "another user's pages do not get it"
   r=$(get "$A" "/api/aidev/remote-runs/$IRR"); check "$r" 'j.run.kind==="control" && j.run.approved_by==="agent" && /type \"hi\"/.test(j.run.cmd) && j.run.exit_code===0' "…recorded as a control run by the agent"
   r=$(rpost "/targets/$TID/input" '{"window":999999901,"actions":[{"type":"click","x":320,"y":180}]}'); check "$r" '/imageWidth/.test(j.error)' "pixel coordinates without the screenshot size → refused"
   r=$(post "$B" "/api/aidev/targets/$TID/input" '{"window":999999901,"actions":[{"type":"key","key":"a"}]}'); check "$r" 'j.error' "another user cannot control the PC"

@@ -14,11 +14,11 @@ import { useUiPreferences } from '@/shared/context/UiPreferencesContext';
 import { useFileOpenResolver, WorkspaceErrorBoundary, WorkspaceStateView } from '@/modules/project-workspace';
 import type { DirectoryRevealRequest, RunCompleteDetail, WorkspaceMainProps } from '@/shared/types';
 import { AgentCatalog } from '@/modules/aidev-router';
-import { DebugPane, PreviewPane, RemoteApprovalCards, requestRunFocus, RunOutputPane, ScreenPane, TargetsPanel } from '@/modules/remote-target';
+import { DebugPane, PreviewPane, RemoteApprovalCards, requestRunFocus, requestScreen, RunOutputPane, ScreenPane, TargetsPanel } from '@/modules/remote-target';
 import { usePreviewList } from '@/modules/remote-preview';
 import { LiveWindowHost, liveWindows, useLiveWindows, type LiveWindowSpec } from '@/modules/live-window';
 import { useAgentDebugSessions } from '@/modules/remote-debug';
-import { REMOTE_RUN_FOCUS_EVENT, RUN_COMPLETE_EVENT, useAidevDecide } from '@/modules/aidev-router';
+import { REMOTE_RUN_FOCUS_EVENT, RUN_COMPLETE_EVENT, useAidevDecide, useUiCommands } from '@/modules/aidev-router';
 import { EditorGroup, useEditorGroup } from '@/modules/workbench/EditorGroup';
 import { SplitHandle } from '@/modules/workbench/SplitHandle';
 import { layoutStore, useWorkbenchLayout, type BottomTab, type SideView, type TabletPane } from '@/modules/workbench/layoutStore';
@@ -53,7 +53,7 @@ const LIVE_WINDOWS: LiveWindowSpec[] = [
 ];
 // '원격 대상' (register and pair PCs) is the desktop activity bar's view; tablets reach it here (it had no way in)
 const TABLET_PANES: Array<{ id: TabletPane; title: string }> = [
-  { id: 'files', title: '파일' }, { id: 'terminal', title: '터미널' }, { id: 'git', title: 'Git' }, { id: 'remote', title: '원격 실행' }, { id: 'targets', title: '원격 대상' }, { id: 'browser', title: '브라우저' },
+  { id: 'files', title: '파일' }, { id: 'terminal', title: '터미널' }, { id: 'git', title: 'Git' }, { id: 'remote', title: '원격 실행' }, { id: 'targets', title: '원격 대상' }, { id: 'catalog', title: 'Agent' }, { id: 'browser', title: '브라우저' },
 ];
 
 /**
@@ -94,6 +94,37 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
     params.delete('view');
     window.history.replaceState(window.history.state, '', `${window.location.pathname}${params.size ? `?${params}` : ''}${window.location.hash}`);
   }, [tier]);
+  // App control (2026-10-02): an agent shows the user something here (nadovibe_show) — a PC's live screen, the preview,
+  // the debugger, PC pairing, settings, a project, the catalog — with its one-line note for a few seconds
+  const [agentNote, setAgentNote] = useState<string | null>(null);
+  useUiCommands((cmd) => {
+    const p = cmd.params;
+    if (cmd.view === 'screen' && typeof p.target === 'number') {
+      requestScreen({ targetId: p.target, window: p.window === 'full' || p.window === null || p.window === undefined ? 'full' : Number(p.window) });
+      liveWindows.open('screen');
+    } else if (cmd.view === 'preview' || cmd.view === 'debug') {
+      liveWindows.open(cmd.view);
+    } else if (cmd.view === 'pcs' || cmd.view === 'catalog') {
+      const pane = cmd.view === 'pcs' ? 'targets' : 'catalog';
+      if (tier === 'tablet') layoutStore.patch('tablet', { tabletShowChat: false, tabletPane: pane });
+      else layoutStore.patch('desktop', { sideView: pane });
+    } else if (cmd.view === 'settings') {
+      onShowSettings?.();
+    } else if (cmd.view === 'project' && p.project) {
+      window.dispatchEvent(new CustomEvent('aidev:open-project', { detail: { project: String(p.project) } }));
+    }
+    if (cmd.note) setAgentNote(cmd.note);
+  });
+  useEffect(() => {
+    if (!agentNote) return undefined;
+    const timer = window.setTimeout(() => setAgentNote(null), 8000);
+    return () => window.clearTimeout(timer);
+  }, [agentNote]);
+  const agentToast = agentNote ? (
+    <div role="status" className="fixed bottom-6 left-1/2 z-[60] -translate-x-1/2 max-w-[min(32rem,90vw)] rounded-lg border border-primary/40 bg-background px-4 py-2 text-sm shadow-xl" data-testid="agent-ui-note">
+      <span className="mr-2 font-medium text-primary">agent</span>{agentNote}
+    </div>
+  ) : null;
   const noProject = isLoading || !selectedProject;
   const openSessions = useCallback(() => {
     if (tier === 'tablet') setDrawerOpen(true);
@@ -281,9 +312,12 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
           {!layout.tabletShowChat && pane === 'git' ? <div className="absolute inset-0">{git}</div> : null}
           {!layout.tabletShowChat && pane === 'remote' ? <div className="absolute inset-0"><RunOutputPane isVisible project={remoteProject} /></div> : null}
           {!layout.tabletShowChat && pane === 'targets' ? <div className="absolute inset-0"><TargetsPanel /></div> : null}
+          {!layout.tabletShowChat && pane === 'catalog' ? <div className="absolute inset-0"><AgentCatalog /></div> : null}
           {!layout.tabletShowChat && pane === 'browser' && browserUseEnabled ? <div className="absolute inset-0"><BrowserUsePanel isVisible onShowSettings={onShowSettings} /></div> : null}
         </div>
         <LiveWindowHost windows={liveSpecs} compact={compactLive} />
+      {agentToast}
+        {agentToast}
       </div>
     );
   }
