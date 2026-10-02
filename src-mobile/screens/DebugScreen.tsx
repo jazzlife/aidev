@@ -6,6 +6,7 @@ import { adapterFor, DEBUG_STATE_LABEL, debugStore, splitArgs, useDebugSession, 
 import { api, debugApi, readApiJson } from '@/shared/api';
 import type { RemoteDebugSnapshot, RemoteDebugVariable } from '@/shared/types';
 import { TopBar } from '@m/components/TopBar';
+import { useBackOverlay, useOpener, useParent } from '@m/lib/nav';
 
 /**
  * Remote debugging on the phone (F-09): the same sessions as the workbench debug window — usually one an
@@ -24,6 +25,9 @@ export function DebugScreen() {
   const { sessions, reload } = useDebugSessions(true, 5000);
   const [tab, setTab] = useState<Tab>('code');
   const [creating, setCreating] = useState(false);
+  useParent(useOpener('/'));
+  // the "new debug" form is an in-screen view: back closes it first
+  useBackOverlay(creating, () => setCreating(false));
   const [frameId, setFrameId] = useState<number | null>(null);
   const [expr, setExpr] = useState('');
   const [evalLog, setEvalLog] = useState<string[]>([]);
@@ -60,7 +64,7 @@ export function DebugScreen() {
   const subtitle = snap ? `${base(snap.program ?? snap.module)} · ${snap.targetName} · ${DEBUG_STATE_LABEL[snap.state]}${snap.stopped ? ` (${snap.stopped.reason})` : ''}` : sessions.length ? '불러오는 중…' : '세션 없음';
   return (
     <div className="flex h-[100dvh] flex-col bg-bg">
-      <TopBar title="디버그" subtitle={creating ? '새 디버그' : subtitle} back="/"
+      <TopBar title="디버그" subtitle={creating ? '새 디버그' : subtitle} back
         right={<button type="button" aria-label="새 디버그" aria-pressed={creating} onClick={() => setCreating(!creating)} className={`m-touch flex items-center justify-center rounded-full ${creating ? 'text-accent' : 'text-muted'}`}><Plus size={20} /></button>} />
       {sessions.length > 1 && !creating ? (
         <div className="flex gap-1.5 overflow-x-auto border-b border-line px-3 py-2 text-[13px]">

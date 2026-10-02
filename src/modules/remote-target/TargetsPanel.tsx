@@ -150,7 +150,7 @@ function TargetRow({ target, files, reload, setNote }: { target: Target; files: 
 }
 
 /**
- * Used by the workbench side view "원격 대상" (F-02): registers developer PCs, shows the one-time pairing
+ * Used by the workbench's "원격 대상" — the desktop side view and the tablet pane (F-02): registers developer PCs, shows the one-time pairing
  * code with the runner commands, and lists targets with live online state and what each PC offers.
  */
 export function TargetsPanel() {

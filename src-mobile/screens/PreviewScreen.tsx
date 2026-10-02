@@ -7,6 +7,7 @@ import { fillCommand, useDevServer, usePreviewList } from '@/modules/remote-prev
 import { api, readApiJson } from '@/shared/api';
 import type { RemotePreviewEntry } from '@/shared/types';
 import { TopBar } from '@m/components/TopBar';
+import { useOpener, useParent } from '@m/lib/nav';
 
 /**
  * Dev-server previews on the phone (F-06/F-06b): the page full screen, the previews that are open
@@ -19,6 +20,7 @@ const keyOf = (p: { targetId: number; port: number }) => `${p.targetId}:${p.port
 /** Route `/m/preview` (from the 원격 menu and the chat's "미리보기가 열렸습니다" banner). */
 export function PreviewScreen() {
   const [params] = useSearchParams();
+  useParent(useOpener('/'));
   const { previews, reload } = usePreviewList(true, 8000);
   // the preview on screen (`targetId:port`); the newest one until the user picks another
   const [selectedKey, setSelectedKey] = useState<string | null>(params.get('p'));
@@ -62,7 +64,7 @@ export function PreviewScreen() {
 
   return (
     <div className="flex h-[100dvh] flex-col bg-bg">
-      <TopBar title="미리보기" subtitle={selected ? `${selected.label ? `${selected.label} · ` : ''}${selected.targetName}:${selected.port}` : '열린 미리보기 없음'} back="/"
+      <TopBar title="미리보기" subtitle={selected ? `${selected.label ? `${selected.label} · ` : ''}${selected.targetName}:${selected.port}` : '열린 미리보기 없음'} back
         right={(
           <div className="flex items-center">
             {selected ? <button type="button" aria-label="새로고침" onClick={() => setFrameKey((k) => k + 1)} className="m-touch flex items-center justify-center rounded-full text-muted"><RefreshCw size={18} /></button> : null}

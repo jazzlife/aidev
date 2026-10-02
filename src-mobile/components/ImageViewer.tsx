@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState, type PointerEvent } from 'react';
 import { X } from 'lucide-react';
 
+import { useBackOverlay } from '@m/lib/nav';
+
 const MAX_SCALE = 6;
 const DOUBLE_TAP_MS = 300;
 
@@ -13,6 +15,7 @@ const IDENTITY: View = { scale: 1, x: 0, y: 0 };
  * while zoomed and double-tap to zoom in/out. The app disables browser zoom (viewport), so the gesture is ours.
  */
 export function ImageViewer({ src, alt, onClose }: { src: string; alt: string; onClose: () => void }) {
+  useBackOverlay(true, onClose);
   // the image's zoom and offset (from the screen centre), driven by the gestures below
   const [view, setView] = useState<View>(IDENTITY);
   const pointers = useRef(new Map<number, Point>());

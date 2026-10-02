@@ -5,6 +5,7 @@ import { aidevApi } from '@/modules/aidev-router';
 import { RemoteConsole, screenSocketUrl, useRemoteScreen, useScreenSources, type ScreenOptions, type StickyMods } from '@/modules/remote-screen';
 import type { RemoteScreenSource } from '@/shared/types';
 import { TopBar } from '@m/components/TopBar';
+import { useOpener, useParent } from '@m/lib/nav';
 
 /**
  * A program on a PC, on the phone (IMPLEMENTATION-PLAN §3.12, F-07b/F-07c). The source is one program
@@ -30,6 +31,7 @@ const sourceKey = (s: RemoteScreenSource | null) => (!s ? '' : s.kind === 'windo
 /** Route `/m/screen/:targetId` (from settings → 원격 PC 프로그램). */
 export function RemoteScreenScreen() {
   const { targetId: raw } = useParams();
+  useParent(useOpener('/'));
   const targetId = Number(raw) || null;
   const [target, setTarget] = useState<Target | null>(null);
   const [chosen, setChosen] = useState<RemoteScreenSource | null>(null);

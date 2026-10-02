@@ -4,7 +4,8 @@
  * service (LaunchAgent / systemd user unit / logon task) keeps pointing at a file that stays put:
  *   macOS, Linux  ~/.aidev/bin/aidev-runner           (bash and zsh; no `#` comments — zsh treats them as words)
  *   Windows       $HOME\.aidev\bin\aidev-runner.exe   (PowerShell; `&` runs a quoted path)
- * Module-private to remote-target (TargetsPanel), kept apart so the generated lines can be tested in real shells.
+ * Used by remote-target's TargetsPanel and the mobile app's PC screen (pairingSteps), kept apart so the generated lines
+ * can be tested in real shells.
  */
 import type { RunnerFile } from '@/shared/types';
 

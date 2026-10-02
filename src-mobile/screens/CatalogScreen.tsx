@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
 import { Bot, CheckCircle2, ChevronDown, ChevronRight, ExternalLink, Monitor } from 'lucide-react';
-import { useNavigate, useParams } from 'react-router-dom';
+import { useParams } from 'react-router-dom';
 
 import { aidevApi, knowledgeLabel, type AgentDetail, type CatalogAgent } from '@/modules/aidev-router';
 import { TopBar } from '@m/components/TopBar';
+import { useGo, useOpener, useParent } from '@m/lib/nav';
 
 const lessonLabel = (lesson: AgentDetail['lessons'][number]) => {
   if (lesson.promoted_version) return `프롬프트 v${lesson.promoted_version}`;
@@ -85,7 +86,10 @@ function AgentView({ id }: { id: number }) {
  */
 export function CatalogScreen() {
   const { agentId } = useParams();
-  const navigate = useNavigate();
+  const go = useGo();
+  // the list's parent is settings; an agent's page goes back where it was opened (the list, or a chat's routing chip)
+  const opener = useOpener(agentId ? '/catalog' : '/settings');
+  useParent(agentId ? (opener.startsWith('/catalog/') ? '/catalog' : opener) : (opener.startsWith('/catalog') ? '/settings' : opener));
   const [agents, setAgents] = useState<CatalogAgent[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => { aidevApi.agents().then((response) => setAgents(response.agents)).catch((err: Error) => setError(err.message)); }, []);
@@ -94,20 +98,20 @@ export function CatalogScreen() {
     const agent = agents?.find((entry) => entry.id === id);
     return (
       <div className="m-app">
-        <TopBar title={agent ? agent.name : 'agent'} subtitle={agent ? `v${agent.version} · 사용 ${agent.uses}회` : undefined} back="/catalog" />
+        <TopBar title={agent ? agent.name : 'agent'} subtitle={agent ? `v${agent.version} · 사용 ${agent.uses}회` : undefined} back />
         <AgentView id={id} />
       </div>
     );
   }
   return (
     <div className="m-app">
-      <TopBar title="Agent 카탈로그" subtitle={agents ? `${agents.length}개` : undefined} back="/settings" />
+      <TopBar title="Agent 카탈로그" subtitle={agents ? `${agents.length}개` : undefined} back />
       <main className="m-scroll flex-1 px-4 py-3 pb-safe-b" data-testid="catalog-list">
         {error ? <div className="py-2 text-[14px] text-danger">{error}</div> : null}
         {!agents && !error ? <div className="py-6 text-center text-[14px] text-muted m-pulse">불러오는 중…</div> : null}
         <div className="divide-y divide-line">
           {agents?.map((agent) => (
-            <button key={agent.id} type="button" onClick={() => navigate(`/catalog/${agent.id}`)} className="w-full py-3 text-left">
+            <button key={agent.id} type="button" onClick={() => go(`/catalog/${agent.id}`)} className="w-full py-3 text-left">
               <div className="flex items-center gap-1.5">
                 <Bot size={15} className={agent.domain === 'meta' ? 'text-muted' : 'text-accent'} />
                 <span className="text-[15px] font-medium">{agent.name}</span>

@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import { AppWindow, Bug, Monitor, MonitorSmartphone } from 'lucide-react';
-import { useNavigate } from 'react-router-dom';
+import { AppWindow, Bug, Link2, Monitor, MonitorSmartphone } from 'lucide-react';
 
 import { aidevApi } from '@/modules/aidev-router';
 import { BottomSheet } from '@m/components/BottomSheet';
+import { useGo } from '@m/lib/nav';
 
 /**
  * The phone's way to the user's PCs (F-06/F-07/F-09): a top-bar button that opens a sheet with the previews, the debugger
@@ -13,7 +13,7 @@ type Target = { id: number; name: string; online: boolean; capabilities?: { scre
 
 /** Used by the sessions and chat screens' top bars. */
 export function RemoteMenu() {
-  const navigate = useNavigate();
+  const navigate = useGo();
   // sheet open/closed; the PC list is (re)loaded each time it opens (online state changes)
   const [open, setOpen] = useState(false);
   const [targets, setTargets] = useState<Target[] | null>(null);
@@ -36,7 +36,8 @@ export function RemoteMenu() {
             <span className="ml-auto text-[12px] text-muted">{t.online ? `${t.capabilities?.screen ? '창·콘솔' : '콘솔'}${t.capabilities?.control ? ' · 제어' : ''}` : '오프라인'}</span>
           </button>
         ))}
-        {targets && !targets.length ? <div className="px-3 py-2 text-[13px] text-muted">등록된 PC가 없습니다. 작업대의 "원격 대상"에서 PC를 등록하세요.</div> : null}
+        {targets && !targets.length ? <div className="px-3 py-2 text-[13px] text-muted">등록된 PC가 없습니다.</div> : null}
+        <button type="button" className={row} onClick={() => go('/pcs')}><Link2 size={19} className="text-accent" /> PC 연결 <span className="ml-auto text-[12px] text-muted">등록·페어링·관리</span></button>
       </BottomSheet>
     </>
   );

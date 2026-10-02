@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { useLocation, useNavigate, useParams } from 'react-router-dom';
+import { useLocation, useParams } from 'react-router-dom';
 import { Search } from 'lucide-react';
 
 import { api, useChatRealtimeHandlers, useSessionStore, useWebSocket, type LLMProvider, type NormalizedMessage, type PendingPermissionRequest, type ProjectSession } from '@/modules/chat-core';
@@ -21,6 +21,7 @@ import { ClarifyPrompt } from '@m/components/ClarifyPrompt';
 import { DiffPeek } from '@m/components/DiffPeek';
 import { FilePeek } from '@m/components/FilePeek';
 import type { FileEdit, FileRef } from '@m/lib/peek';
+import { useGo, useParent } from '@m/lib/nav';
 
 type SessionMeta = { id: string; provider: LLMProvider; projectId: string; projectPath: string; projectName: string; title: string };
 const PROVIDER_KEY = 'm.provider';
@@ -33,16 +34,17 @@ const readProvider = (): LLMProvider => { try { const value = localStorage.getIt
  */
 export function ChatScreen() {
   const { sessionId: routeSessionId } = useParams();
-  const navigate = useNavigate();
+  const navigate = useGo();
   const { ws, sendMessage, subscribe, isConnected } = useWebSocket();
   const sessionStore = useSessionStore();
   const { beforeSend, reportOutcome } = useAidevRouting();
   const [draft, setDraft] = useState('');
 
   const [meta, setMeta] = useState<SessionMeta | null>(null);
-  const [project, setProject] = useState<PickedProject | null>(() => readLastProject());
   // D-04: "만들기" on a proposal opens this new chat with the creation turn; it goes out once a project is chosen
   const location = useLocation();
+  // a new chat started from a project screen starts in that project
+  const [project, setProject] = useState<PickedProject | null>(() => (location.state as { project?: PickedProject } | null)?.project ?? readLastProject());
   const composeText = (location.state as { compose?: string } | null)?.compose ?? null;
   const composeRef = useRef<string | null>(composeText);
   const [pickingProject, setPickingProject] = useState(() => Boolean(composeText) && !readLastProject());
@@ -167,7 +169,7 @@ export function ChatScreen() {
         target = { id: body.data.sessionId, provider: engine, projectId: project.projectId, projectPath: project.fullPath, projectName: project.displayName, title: text.slice(0, 60) };
         try { localStorage.setItem(PROVIDER_KEY, engine); } catch { /* ignore */ }
         setMeta(target);
-        navigate(`/session/${encodeURIComponent(target.id)}`, { replace: true });
+        navigate(`/session/${encodeURIComponent(target.id)}`);
       } catch (error) {
         setLoadError(error instanceof Error ? error.message : '세션 생성 실패');
         return;
@@ -234,11 +236,15 @@ export function ChatScreen() {
   const peekProject = meta?.projectId ? { projectId: meta.projectId, projectPath: meta.projectPath } : !meta && project ? { projectId: project.projectId, projectPath: project.fullPath } : null;
   const openFile = (file: FileRef | null) => { setDiffPeek(null); setFilePeek({ open: true, file, fromSearch: false }); };
   const title = meta?.title || (routeSessionId ? '대화' : '새 대화');
+  // up = the conversation's project (its list of conversations); a new chat without a project yet: home
+  const projectId = meta?.projectId || (!meta ? project?.projectId : '') || '';
+  const projectPath = projectId ? `/projects/${encodeURIComponent(projectId)}` : null;
+  useParent(projectPath ?? (routeSessionId ? '/projects' : '/'));
   const subtitle = meta ? `${meta.provider}${meta.projectName ? ` · ${meta.projectName}` : ''}` : (project ? `${provider} · ${project.displayName}` : '프로젝트를 선택하세요');
 
   return (
     <div className="m-app">
-      <TopBar title={title} subtitle={subtitle} back="/" right={<div className="flex items-center">{peekProject ? <button type="button" aria-label="파일 찾기" onClick={() => openFile(null)} className="m-touch flex items-center justify-center rounded-full text-muted"><Search size={19} /></button> : null}<RemoteMenu />{!meta ? <button type="button" className="text-[13px] text-accent px-3 m-touch" onClick={() => setPickingProject(true)}>프로젝트</button> : null}</div>} />
+      <TopBar title={title} subtitle={subtitle} back onSubtitle={projectPath ? () => navigate(projectPath) : undefined} right={<div className="flex items-center">{peekProject ? <button type="button" aria-label="파일 찾기" onClick={() => openFile(null)} className="m-touch flex items-center justify-center rounded-full text-muted"><Search size={19} /></button> : null}<RemoteMenu />{!meta ? <button type="button" className="text-[13px] text-accent px-3 m-touch" onClick={() => setPickingProject(true)}>프로젝트</button> : null}</div>} />
       {agentPreview ? (
         <div className="flex items-center gap-2 border-b border-line bg-accent/10 px-4 py-2 text-[13px]">
           <span className="min-w-0 flex-1 truncate">미리보기가 열렸습니다 · {agentPreview.label ?? agentPreview.targetName}:{agentPreview.port}</span>

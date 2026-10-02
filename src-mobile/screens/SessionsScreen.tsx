@@ -1,14 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { Archive, ArrowLeft, EyeOff, MoreHorizontal, Plus, RotateCcw, Settings, Sparkles, Trash2 } from 'lucide-react';
-import { Link, useNavigate } from 'react-router-dom';
 
 import { api } from '@/modules/chat-core';
 import { aidevApi, useCreateProposals, type UnreadSession } from '@/modules/aidev-router';
 import { BottomSheet } from '@m/components/BottomSheet';
+import { HomeTabs } from '@m/components/HomeTabs';
 import { RemoteMenu } from '@m/components/RemoteMenu';
 import { TopBar } from '@m/components/TopBar';
 import { relativeTime } from '@m/lib/format';
 import { useLongPress } from '@m/lib/useLongPress';
+import { useBackOverlay, useGo, useParent } from '@m/lib/nav';
 
 type Conversation = { sessionId: string; provider?: string; projectId?: string | null; projectDisplayName?: string; sessionTitle?: string; lastActivity?: string | null };
 type View = 'active' | 'hidden';
@@ -46,8 +47,11 @@ function ConversationRow({ item, unread, onOpen, onActions }: { item: Conversati
  * button in the top bar lists hidden conversations to restore or delete.
  */
 export function SessionsScreen() {
-  const navigate = useNavigate();
+  const navigate = useGo();
+  // the app's root: back here leaves the app (the hidden list closes first)
+  useParent(null);
   const [view, setView] = useState<View>('active');
+  useBackOverlay(view === 'hidden', () => setView('active'));
   const [items, setItems] = useState<Conversation[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [target, setTarget] = useState<Conversation | null>(null);
@@ -112,13 +116,13 @@ export function SessionsScreen() {
   return (
     <div className="m-app">
       <TopBar
-        title={hidden ? '숨긴 대화' : '대화'}
+        title={hidden ? '숨긴 대화' : <HomeTabs active="conversations" />}
         left={hidden ? <button type="button" aria-label="대화 목록" onClick={() => setView('active')} className="m-touch flex items-center justify-center rounded-full"><ArrowLeft size={20} /></button> : undefined}
         right={hidden ? null : (
           <div className="flex items-center">
             <RemoteMenu />
             <button type="button" aria-label="숨긴 대화" onClick={() => setView('hidden')} className="m-touch flex items-center justify-center rounded-full text-muted"><Archive size={19} /></button>
-            <Link to="/settings" className="m-touch flex items-center justify-center rounded-full text-muted" aria-label="설정"><Settings size={20} /></Link>
+            <button type="button" onClick={() => navigate('/settings')} className="m-touch flex items-center justify-center rounded-full text-muted" aria-label="설정"><Settings size={20} /></button>
           </div>
         )}
       />
@@ -170,9 +174,9 @@ export function SessionsScreen() {
       ) : null}
 
       {!hidden ? (
-        <Link to="/new" aria-label="새 대화" className="fixed right-5 bottom-[calc(env(safe-area-inset-bottom)+20px)] w-14 h-14 rounded-full bg-accent text-accent-ink shadow-lg flex items-center justify-center">
+        <button type="button" onClick={() => navigate('/new')} aria-label="새 대화" className="fixed right-5 bottom-[calc(env(safe-area-inset-bottom)+20px)] w-14 h-14 rounded-full bg-accent text-accent-ink shadow-lg flex items-center justify-center">
           <Plus size={26} />
-        </Link>
+        </button>
       ) : null}
     </div>
   );

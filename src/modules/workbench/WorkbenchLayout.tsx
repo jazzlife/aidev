@@ -51,8 +51,9 @@ const LIVE_WINDOWS: LiveWindowSpec[] = [
   { id: 'preview', title: '미리보기', icon: AppWindow, render: (visible) => <PreviewPane isVisible={visible} />, popoutPath: '/live/preview' },
   { id: 'screen', title: '원격 화면', icon: Monitor, render: (visible) => <ScreenPane isVisible={visible} />, popoutPath: '/live/screen' },
 ];
+// '원격 대상' (register and pair PCs) is the desktop activity bar's view; tablets reach it here (it had no way in)
 const TABLET_PANES: Array<{ id: TabletPane; title: string }> = [
-  { id: 'files', title: '파일' }, { id: 'terminal', title: '터미널' }, { id: 'git', title: 'Git' }, { id: 'remote', title: '원격 실행' }, { id: 'browser', title: '브라우저' },
+  { id: 'files', title: '파일' }, { id: 'terminal', title: '터미널' }, { id: 'git', title: 'Git' }, { id: 'remote', title: '원격 실행' }, { id: 'targets', title: '원격 대상' }, { id: 'browser', title: '브라우저' },
 ];
 
 /**
@@ -279,6 +280,7 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
           <div className={`absolute inset-0 ${!layout.tabletShowChat && pane === 'terminal' ? '' : 'hidden'}`}>{terminal(!layout.tabletShowChat && pane === 'terminal')}</div>
           {!layout.tabletShowChat && pane === 'git' ? <div className="absolute inset-0">{git}</div> : null}
           {!layout.tabletShowChat && pane === 'remote' ? <div className="absolute inset-0"><RunOutputPane isVisible project={remoteProject} /></div> : null}
+          {!layout.tabletShowChat && pane === 'targets' ? <div className="absolute inset-0"><TargetsPanel /></div> : null}
           {!layout.tabletShowChat && pane === 'browser' && browserUseEnabled ? <div className="absolute inset-0"><BrowserUsePanel isVisible onShowSettings={onShowSettings} /></div> : null}
         </div>
         <LiveWindowHost windows={liveSpecs} compact={compactLive} />

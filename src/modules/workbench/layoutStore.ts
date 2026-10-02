@@ -9,7 +9,7 @@ import type { DeviceTier } from '@/modules/workbench/hooks/useDeviceTier';
  */
 export type SideView = 'sessions' | 'explorer' | 'git' | 'targets' | 'catalog';
 export type BottomTab = 'terminal' | 'browser' | 'tasks' | 'run_output' | 'preview' | 'screen' | 'debug';
-export type TabletPane = 'files' | 'terminal' | 'browser' | 'git' | 'remote' | 'preview' | 'screen';
+export type TabletPane = 'files' | 'terminal' | 'browser' | 'git' | 'remote' | 'targets' | 'preview' | 'screen';
 
 export type WorkbenchLayoutState = {
   sideView: SideView | null;

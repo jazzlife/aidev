@@ -1,10 +1,14 @@
 import type { ReactNode } from 'react';
 import { useEffect } from 'react';
 
+import { useBackOverlay } from '@m/lib/nav';
+
 type BottomSheetProps = { open: boolean; onClose: () => void; title?: ReactNode; children: ReactNode };
 
 /** Used by the chat screen for the router details, permission requests and file peeks. */
 export function BottomSheet({ open, onClose, title, children }: BottomSheetProps) {
+  // the back button closes the sheet, not the screen under it
+  useBackOverlay(open, onClose);
   useEffect(() => {
     if (!open) {
       return undefined;
