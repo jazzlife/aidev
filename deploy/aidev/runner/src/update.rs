@@ -129,8 +129,8 @@ fn prepare(v: &Version, file: &Path) -> Result<(), String> {
         std::fs::set_permissions(file, std::fs::Permissions::from_mode(0o755)).map_err(|e| e.to_string())?;
     }
     #[cfg(target_os = "macos")]
-    if !crate::service::sign_for_this_mac(file) {
-        eprintln!("! 이 Mac의 고정 서명을 입히지 못했습니다 — macOS가 화면 기록 권한을 다시 물을 수 있습니다");
+    if let Err(why) = crate::service::sign_for_this_mac(file) {
+        eprintln!("! 이 Mac의 고정 서명을 입히지 못했습니다 — macOS가 화면 기록 권한을 다시 물을 수 있습니다: {why}");
     }
     use crate::proc_util::NoWindow;
     let out = std::process::Command::new(file).arg("--version").no_window().output().map_err(|e| format!("받은 러너를 실행하지 못했습니다: {e}"))?;

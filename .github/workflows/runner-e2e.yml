@@ -153,7 +153,7 @@ jobs:
             waitfor 'the boot runner handed over to the session runner' 'grep -q "연결을 넘깁니다" "$log" || ! grep -q "부팅 러너: 연결을 맡습니다" "$log"'
           fi
           # this Mac's stable signature (Screen Recording kept across updates): say why if it cannot be made here
-          if [ "$RUNNER_OS" = macOS ]; then cp "$bin" "$RUNNER_TEMP/sign-probe"; bash -x "$GITHUB_WORKSPACE/$RUNNER_DIR/scripts/sign-macos.sh" "$RUNNER_TEMP/sign-probe" 2>&1 | tail -15 || true; fi
+          if [ "$RUNNER_OS" = macOS ]; then cp "$bin" "$RUNNER_TEMP/sign-probe"; bash "$GITHUB_WORKSPACE/$RUNNER_DIR/scripts/sign-macos.sh" "$RUNNER_TEMP/sign-probe" || { echo "--- signing.log"; cat ~/.aidev/signing.log; }; fi
           # on the PATH: the shell start files, and /usr/local/bin (passwordless sudo after the default install)
           # -q: a match is success even though some of these files do not exist
           grep -qsF 'export PATH="$HOME/.aidev/bin:$PATH"' ~/.zshrc ~/.bashrc ~/.bash_profile ~/.profile

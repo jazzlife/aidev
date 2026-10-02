@@ -40,9 +40,14 @@ const SIGN_MACOS: &str = include_str!("../scripts/sign-macos.sh");
 
 /// macOS: a runner file made ready to replace the installed one — no quarantine flag, this Mac's stable signature.
 #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
-pub fn sign_for_this_mac(file: &std::path::Path) -> bool {
+pub fn sign_for_this_mac(file: &std::path::Path) -> Result<(), String> {
     quiet("xattr", &["-d", "com.apple.quarantine", &file.display().to_string()]);
-    quiet("bash", &["-c", SIGN_MACOS, "sign-macos", &file.display().to_string()])
+    let out = Command::new("bash").args(["-c", SIGN_MACOS, "sign-macos", &file.display().to_string()]).output().map_err(|e| e.to_string())?;
+    if out.status.success() {
+        return Ok(());
+    }
+    let why = String::from_utf8_lossy(&out.stderr).trim().to_string();
+    Err(if why.is_empty() { "서명 스크립트 실패 (~/.aidev/signing.log)".into() } else { format!("{why} (~/.aidev/signing.log)") })
 }
 
 /// `aidev-runner` from any terminal: ~/.aidev/bin on the PATH.
@@ -133,8 +138,10 @@ fn place_self() -> Result<(PathBuf, bool), String> {
     // CI signature is not this Mac's: Screen Recording / Accessibility given to the installed runner would not apply to
     // it (the capture shows only the wallpaper, no windows). Sign the copy — before it replaces a running file — with
     // this Mac's stable identity, as the installer does.
-    if cfg!(target_os = "macos") && !sign_for_this_mac(&tmp) {
-        eprintln!("! 이 Mac의 고정 서명을 입히지 못했습니다 — macOS가 화면 기록 권한을 다시 물을 수 있습니다");
+    if cfg!(target_os = "macos") {
+        if let Err(why) = sign_for_this_mac(&tmp) {
+            eprintln!("! 이 Mac의 고정 서명을 입히지 못했습니다 — macOS가 화면 기록 권한을 다시 물을 수 있습니다: {why}");
+        }
     }
     // Windows: the runner a task started holds its file open — stop those first (unix renames over a running file)
     #[cfg(windows)]
