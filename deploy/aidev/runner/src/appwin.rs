@@ -29,10 +29,13 @@ pub struct Frame {
     pub rgba: Vec<u8>,
 }
 
+/// macOS system layers listed as windows (the Dock's is a screen-sized overlay): never a program to watch.
+const SYSTEM_OVERLAYS: &[&str] = &["Dock", "Window Server", "SystemUIServer", "Control Center", "Notification Center", "WindowManager"];
+
 /// Windows a person would pick: real size, a name, not minimized.
 pub fn list() -> Result<Vec<WinInfo>, String> {
     let mut all = imp::list()?;
-    all.retain(|w| w.width >= 80 && w.height >= 60 && !(w.title.trim().is_empty() && w.app.trim().is_empty()) && !w.minimized);
+    all.retain(|w| w.width >= 80 && w.height >= 60 && !(w.title.trim().is_empty() && w.app.trim().is_empty()) && !w.minimized && !SYSTEM_OVERLAYS.contains(&w.app.as_str()));
     all.sort_by(|a, b| b.focused.cmp(&a.focused).then_with(|| a.app.to_lowercase().cmp(&b.app.to_lowercase())).then_with(|| a.title.cmp(&b.title)));
     Ok(all)
 }

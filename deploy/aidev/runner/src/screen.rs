@@ -261,6 +261,16 @@ pub async fn rpc(cfg: &Config, method: &str, params: &Value) -> Option<RpcResult
     if !crate::config::screen_allowed(cfg) {
         return Some(Err((-32030, NO_CONSENT.into())));
     }
+    // the boot-time runner has no desktop: what it could capture is an empty login screen, not the user's
+    if crate::control::is_boot() && std::env::var("AIDEV_SCREEN_CMD").is_err() {
+        return Some(Err((-32030, "이 PC에 로그인한 사용자 세션이 없습니다 (부팅용 러너가 연결 중) — 로그인하면 그 세션의 러너가 넘겨받아 화면을 보여 줍니다".into())));
+    }
+    // macOS without Screen Recording hands out the wallpaper and no windows: say so instead of showing that
+    #[cfg(target_os = "macos")]
+    if !crate::macperm::granted().0 && std::env::var("AIDEV_SCREEN_CMD").is_err() {
+        crate::macperm::request_once();
+        return Some(Err((-32030, format!("이 Mac에서 aidev-runner의 화면 기록 권한이 꺼져 있습니다 — 시스템 설정 → 개인정보 보호 및 보안 → 화면 기록에서 {} 를 켜 주세요", std::env::current_exe().map(|p| p.display().to_string()).unwrap_or_else(|_| "aidev-runner".into())))));
+    }
     let params = params.clone();
     Some(match method {
         "screen.list" => tokio::task::spawn_blocking(|| {

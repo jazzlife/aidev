@@ -17,6 +17,16 @@ pub enum State {
 
 static STATE: AtomicU8 = AtomicU8::new(State::Connecting as u8);
 static QUIT: AtomicBool = AtomicBool::new(false);
+static BOOT: AtomicBool = AtomicBool::new(false);
+
+/// This runner is the boot-time one (`start --boot`): before a sign-in, with no desktop to show or control.
+pub fn set_boot(on: bool) {
+    BOOT.store(on, Ordering::Relaxed);
+}
+
+pub fn is_boot() -> bool {
+    BOOT.load(Ordering::Relaxed)
+}
 
 pub fn set_state(s: State) {
     STATE.store(s as u8, Ordering::Relaxed);

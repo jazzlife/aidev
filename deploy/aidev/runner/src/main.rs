@@ -221,6 +221,7 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
                 proc_util::redirect_output(&path)?;
             }
             let mut cfg = config::load()?;
+            control::set_boot(boot);
             if config::grant_on_first_run(&mut cfg) {
                 eprintln!("첫 실행: 화면 보기·원격 제어를 허용했습니다 (끄기: aidev-runner consent screen off)");
             }

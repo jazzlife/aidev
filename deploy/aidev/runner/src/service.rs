@@ -35,6 +35,9 @@ pub fn installed_path() -> PathBuf {
     config::dir().join("bin").join(if cfg!(windows) { "aidev-runner.exe" } else { "aidev-runner" })
 }
 
+/// scripts/sign-macos.sh, run on the copy `install` makes (macOS).
+const SIGN_MACOS: &str = include_str!("../scripts/sign-macos.sh");
+
 /// `install` from a downloaded file: copies itself to `installed_path()` (true) — or is already there (false).
 fn place_self() -> Result<(PathBuf, bool), String> {
     let me = exe()?;
@@ -52,9 +55,15 @@ fn place_self() -> Result<(PathBuf, bool), String> {
         use std::os::unix::fs::PermissionsExt;
         let _ = std::fs::set_permissions(&tmp, std::fs::Permissions::from_mode(0o755));
     }
-    // macOS: a downloaded file carries the quarantine flag, which would stop launchd from running the copy
+    // macOS: a downloaded file carries the quarantine flag, which would stop launchd from running the copy; and its
+    // CI signature is not this Mac's: Screen Recording / Accessibility given to the installed runner would not apply to
+    // it (the capture shows only the wallpaper, no windows). Sign the copy — before it replaces a running file — with
+    // this Mac's stable identity, as the installer does.
     if cfg!(target_os = "macos") {
         quiet("xattr", &["-d", "com.apple.quarantine", &tmp.display().to_string()]);
+        if !quiet("bash", &["-c", SIGN_MACOS, "sign-macos", &tmp.display().to_string()]) {
+            eprintln!("! 이 Mac의 고정 서명을 입히지 못했습니다 — macOS가 화면 기록 권한을 다시 물을 수 있습니다");
+        }
     }
     // Windows: the runner a task started holds its file open — stop those first (unix renames over a running file)
     #[cfg(windows)]
