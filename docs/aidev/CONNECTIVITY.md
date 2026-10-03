@@ -148,6 +148,13 @@ ping 104.21.76.48                                                  # Cloudflare 
 5. 서버 `~/aidev/deploy/.env`에 `AIDEV_REALTIME_ORIGIN=https://rt.nado.work:8443`을 넣고, 게이트웨이 컨테이너를 다시 만든다: `docker compose -p aidev --env-file .env -f docker-compose.yml up -d auth-gateway`.
 6. 게이트웨이 로그의 `[runner] … connected`와 러너 로그의 "CDN을 거치지 않는 주소"로 러너가 옮겨 갔는지 확인한다.
 
+2026-10-03에 켰다. 측정값:
+
+| 구간 | Cloudflare 경유 | 빠른 주소 |
+|---|---|---|
+| Mac → 게이트웨이 상태 확인 | 0.87 초 | 0.09 초 |
+| 서버 ↔ 러너 명령 왕복 (ally·vm-win) | 330~730 ms | 23~33 ms |
+
 ### 주의
 
 - 가정용 회선의 공인 IP는 바뀔 수 있다. 바뀌면 빠른 주소는 실패하고, 러너와 화면은 자동으로 Cloudflare 경로로 돌아간다. 오래 쓰려면 DNS를 자동으로 갱신하는 장치(DDNS)를 함께 두어야 한다.
