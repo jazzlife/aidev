@@ -1,6 +1,6 @@
 [package]
 name = "aidev-runner"
-version = "0.18.2"
+version = "0.18.3"
 edition = "2021"
 # wide 1.x (SIMD for the built-in H.264 encoder, via openh264 0.9.8) needs Rust 1.89; tray-icon 0.26 needs 1.90
 rust-version = "1.90"
@@ -65,6 +65,11 @@ windows-capture = "2"
 screencapturekit = "11"
 videotoolbox = "0.21"
 apple-cf = { version = "0.11", default-features = false, features = ["cv", "cm", "iosurface"] }
+# the window list in one CGWindowListCopyWindowInfo snapshot (appwin.rs) — the versions xcap already builds
+objc2-core-graphics = "0.3.2"
+objc2-core-foundation = "0.3.2"
+objc2-app-kit = "0.3.2"
+objc2-foundation = "0.3.2"
 
 [target.'cfg(target_os = "linux")'.dependencies]
 x11rb = { version = "0.13", features = ["shm"] }

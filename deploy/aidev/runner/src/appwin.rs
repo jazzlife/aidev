@@ -133,6 +133,7 @@ mod imp {
             m.x().unwrap_or(0), m.y().unwrap_or(0), m.width().unwrap_or(0), m.height().unwrap_or(0), m.is_primary().unwrap_or(false))).collect())
     }
 
+    #[cfg(any(windows, test))]
     fn to_info(w: &Window) -> Option<WinInfo> {
         Some(WinInfo {
             id: w.id().ok()?,
@@ -148,9 +149,88 @@ mod imp {
         })
     }
 
-    pub fn list() -> Result<Vec<WinInfo>, String> {
+    #[cfg(any(windows, test))]
+    pub fn list_xcap() -> Result<Vec<WinInfo>, String> {
         let all = Window::all().map_err(|e| format!("창 목록을 읽지 못했습니다: {e}"))?;
         Ok(all.iter().filter_map(to_info).collect())
+    }
+
+    #[cfg(windows)]
+    pub fn list() -> Result<Vec<WinInfo>, String> {
+        list_xcap()
+    }
+
+    /// macOS: one CGWindowListCopyWindowInfo snapshot, read once. xcap's getters each copy the whole list again
+    /// (about 12 per window: 250 ms on a desktop with many windows, and remote input looks its window up every
+    /// 300 ms and on each click). The same windows and values as xcap 0.9.8's `Window::all()` + getters
+    /// (test `mac_list_matches_xcap`).
+    #[cfg(target_os = "macos")]
+    #[allow(deprecated)] // NSWorkspace.activeApplication: xcap's choice too — frontmostApplication lags behind
+    pub fn list() -> Result<Vec<WinInfo>, String> {
+        use objc2_app_kit::NSWorkspace;
+        use objc2_core_foundation::{CFBoolean, CFDictionary, CFNumber, CFNumberType, CFString, CGRect};
+        use objc2_core_graphics::{CGRectMakeWithDictionaryRepresentation, CGWindowListCopyWindowInfo, CGWindowListOption};
+        use objc2_foundation::{NSNumber, NSString};
+        use std::ffi::c_void;
+
+        fn value(d: &CFDictionary, key: &str) -> Option<*const c_void> {
+            let key = CFString::from_str(key);
+            let v = unsafe { d.value((&*key as *const CFString).cast()) };
+            (!v.is_null()).then_some(v)
+        }
+        fn string(d: &CFDictionary, key: &str) -> Option<String> {
+            value(d, key).map(|v| unsafe { (*(v as *const CFString)).to_string() })
+        }
+        fn int(d: &CFDictionary, key: &str) -> Option<i32> {
+            let n = value(d, key)? as *const CFNumber;
+            let mut out = 0i32;
+            unsafe { (*n).value(CFNumberType::IntType, &mut out as *mut i32 as *mut c_void) }.then_some(out)
+        }
+        fn rect(d: &CFDictionary) -> Option<CGRect> {
+            let bounds = value(d, "kCGWindowBounds")? as *const CFDictionary;
+            let mut r = CGRect::default();
+            unsafe { CGRectMakeWithDictionaryRepresentation(Some(&*bounds), &mut r) }.then_some(r)
+        }
+
+        let active = NSWorkspace::sharedWorkspace()
+            .activeApplication()
+            .and_then(|d| d.valueForKey(&NSString::from_str("NSApplicationProcessIdentifier")))
+            .and_then(|pid| pid.downcast::<NSNumber>().ok())
+            .map(|pid| pid.intValue() as u32);
+        let Some(all) = CGWindowListCopyWindowInfo(CGWindowListOption::OptionOnScreenOnly | CGWindowListOption::ExcludeDesktopElements, 0) else {
+            return Ok(Vec::new());
+        };
+        let mut out = Vec::new();
+        for i in 0..all.count() {
+            let d = unsafe { all.value_at_index(i) } as *const CFDictionary;
+            if d.is_null() {
+                continue;
+            }
+            let d = unsafe { &*d };
+            // xcap's filter: named (both names present), not the status indicator, shareable
+            let (Some(title), Some(app)) = (string(d, "kCGWindowName"), string(d, "kCGWindowOwnerName")) else { continue };
+            if (title == "StatusIndicator" && app == "Window Server") || int(d, "kCGWindowSharingState").is_none_or(|s| s == 0) {
+                continue;
+            }
+            let Some(id) = int(d, "kCGWindowNumber") else { continue };
+            let pid = int(d, "kCGWindowOwnerPID").map(|p| p as u32);
+            let r = rect(d);
+            // listed on-screen only, so never minimized (xcap: off-screen and not maximized)
+            let on_screen = value(d, "kCGWindowIsOnscreen").map(|v| unsafe { (*(v as *const CFBoolean)).value() });
+            out.push(WinInfo {
+                id: id as u32,
+                pid: pid.unwrap_or(0),
+                app,
+                title,
+                x: r.map_or(0, |r| r.origin.x as i32),
+                y: r.map_or(0, |r| r.origin.y as i32),
+                width: r.map_or(0, |r| r.size.width as u32),
+                height: r.map_or(0, |r| r.size.height as u32),
+                minimized: on_screen == Some(false),
+                focused: pid.is_some() && pid == active,
+            });
+        }
+        Ok(out)
     }
 
     pub enum Handle {
@@ -439,4 +519,30 @@ mod imp {
         }
     }
     pub fn activate(_w: &WinInfo) {}
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod mac_tests {
+    /// The one-snapshot list reads the same windows and values as xcap's getters. A window can change between the
+    /// two reads (a title, a clock), so a mismatch is read again a few times before it fails.
+    #[test]
+    fn mac_list_matches_xcap() {
+        let key = |w: &super::WinInfo| format!("{} {} {:?} {:?} {},{} {}x{} {} {}", w.id, w.pid, w.app, w.title, w.x, w.y, w.width, w.height, w.minimized, w.focused);
+        let mut diff = Vec::new();
+        for _ in 0..3 {
+            let t = std::time::Instant::now();
+            let fast = super::imp::list().unwrap();
+            let fast_ms = t.elapsed().as_secs_f64() * 1000.0;
+            let t = std::time::Instant::now();
+            let slow = super::imp::list_xcap().unwrap();
+            let slow_ms = t.elapsed().as_secs_f64() * 1000.0;
+            println!("windows {} — one snapshot {fast_ms:.1} ms, xcap {slow_ms:.1} ms", fast.len());
+            let (a, b): (Vec<String>, Vec<String>) = (fast.iter().map(key).collect(), slow.iter().map(key).collect());
+            diff = a.iter().filter(|k| !b.contains(k)).chain(b.iter().filter(|k| !a.contains(k))).cloned().collect();
+            if diff.is_empty() {
+                return;
+            }
+        }
+        panic!("the lists differ: {diff:#?}");
+    }
 }
