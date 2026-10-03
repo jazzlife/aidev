@@ -23,6 +23,9 @@ const port = Number(process.env.PORT ?? 8080);
 const gatewayRelease = (() => { try { return fs.readFileSync(new URL('../../../RELEASE', import.meta.url), 'utf8').trim(); } catch { return 'unknown'; } })();
 const origin = new URL(process.env.PUBLIC_ORIGIN ?? 'https://dev.nado.work').origin;
 const secret = readSecret(process.env.JWT_SECRET_FILE ?? '/run/secrets/gateway-jwt');
+// F-18: the same gateway at an address that skips the CDN (docs/aidev/CONNECTIVITY.md) — e.g. https://rt.nado.work:8443.
+// Runners are moved there (runner.realtime) and remote screens open there, each falling back to PUBLIC_ORIGIN.
+const realtimeOrigin = process.env.REALTIME_ORIGIN ? new URL(process.env.REALTIME_ORIGIN).origin : null;
 const managerToken = readSecret(process.env.RUNTIME_MANAGER_TOKEN_FILE ?? '/run/secrets/runtime-token');
 const managerUrl = process.env.RUNTIME_MANAGER_URL ?? 'http://runtime-manager:8090';
 const layaUrl = process.env.LAYA_URL ?? 'http://laya:8095';
@@ -168,7 +171,7 @@ push.startReminders();
 // Remote PC runners (stage F): outbound WebSockets from `aidev-runner` on users' machines.
 // Command output logs (remote_runs) live next to the database unless REMOTE_LOG_DIR says otherwise.
 const remoteLogDir = process.env.REMOTE_LOG_DIR ?? path.join(path.dirname(process.env.DATABASE_PATH ?? '/data/auth.db'), 'remote-logs');
-const runners: RunnerHub = createRunnerHub(store, new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 * 1024 }), { logDir: remoteLogDir });
+const runners: RunnerHub = createRunnerHub(store, new WebSocketServer({ noServer: true, maxPayload: 16 * 1024 * 1024 }), { logDir: remoteLogDir, realtimeOrigin });
 runners.resetStatuses();
 // Agents' remote commands pass the gate (risk, policy, approvals); remote test results feed the chat run's outcome.
 const gate = createRemoteGate({ store, laya, runners, push });
@@ -445,6 +448,12 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { success: true }, { 'set-cookie': setCookie('', 0) });
       }
       return json(res, 404, { error: 'Not found' });
+    }
+    // the CDN-free address for this page's remote screens, with a short ticket (the session cookie is host-only)
+    if (url.pathname === '/api/aidev/realtime' && req.method === 'GET') {
+      if (!session) return json(res, 401, { error: 'Authentication required' }, { 'x-auth-error': 'invalid-token' });
+      const ticket = realtimeOrigin ? jwt.sign({ sid: session.sid, userId: session.user.id, username: session.user.username }, secret, { expiresIn: 120, issuer: 'aidev', audience: origin, algorithm: 'HS256' }) : null;
+      return json(res, 200, { origin: realtimeOrigin, ticket });
     }
     if (await aidev.handle(req, res, url, session)) return;
     // Runtime → gateway calls (aidev-tools MCP inside a user's CloudCLI container). The runtime signs a

@@ -18,6 +18,8 @@ import type { TargetRow } from './store-aidev.js';
  *        target online; JSON-RPC calls from the platform go out with call(); the runner's replies
  *        resolve them. Ping every 20 s; 45 s without any frame closes the socket.
  * Deleting a target or re-pairing closes its socket with 4401 (the runner stops and asks for pairing).
+ * With a CDN-free address (`realtimeOrigin`, F-18) a runner that came in through the CDN gets `runner.realtime {url}`
+ * after its hello and reconnects there (0.18.2+; it falls back to its own gateway address by itself).
  *
  * Streams (F-03): exec() allocates a stream id, records a remote_runs row and asks the runner to start
  * the command (`exec.start{…, streamId, tag:"rr:<id>"}`). Output arrives as binary frames
@@ -50,7 +52,8 @@ import type { TargetRow } from './store-aidev.js';
  * with "p2p-input" (0.18.1+) then also take that viewer's input straight over the channel (`started.p2pInput`). */
 type Store = ReturnType<typeof openStore>;
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
-type Conn = { ws: WebSocket; targetId: number; userId: number; connectedAt: number; lastFrame: number; pending: Map<number, Pending>; nextId: number; hello: boolean; version: string };
+type Conn = { ws: WebSocket; targetId: number; userId: number; connectedAt: number; lastFrame: number; pending: Map<number, Pending>; nextId: number; hello: boolean; version: string;
+  /** came in through the CDN while a CDN-free address exists: the runner is told to move there (F-18) */ moveTo: string | null };
 
 /** Semver-ish compare of runner versions ("0.7.1" > "0.3.0"); unknown versions sort lowest. */
 export function compareVersions(a: string, b: string) {
@@ -124,7 +127,7 @@ export class RunnerTunnel extends Duplex {
   unref() { return this; }
 }
 
-export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logDir?: string } = {}) {
+export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logDir?: string; realtimeOrigin?: string | null } = {}) {
   const conns = new Map<number, Conn>();
   const dupLogged = new Map<string, number>();   // refused old duplicates, logged once per 10 min
   const attempts = new Map<string, { count: number; until: number }>();
@@ -363,10 +366,13 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
         socket.end(`HTTP/1.1 409 Conflict\r\nContent-Type: text/plain; charset=utf-8\r\nConnection: close\r\n\r\nnewer runner ${current.version} is connected for this PC; stop this old runner (${version})`);
         return true;
       }
+      // runners from 0.18.2 move to the CDN-free address when told (runner.realtime), and fall back by themselves
+      const viaHost = String(req.headers.host ?? '').replace(/:\d+$/, '');
+      const moveTo = opts.realtimeOrigin && new URL(opts.realtimeOrigin).hostname !== viaHost && compareVersions(version, '0.18.2') >= 0 ? opts.realtimeOrigin : null;
       wss.handleUpgrade(req, socket, head, (ws) => {
         const previous = conns.get(target.id);
         if (previous) { try { previous.ws.close(4000, 'replaced by a new connection'); } catch { /* ignore */ } drop(previous, 'replaced'); }
-        const conn: Conn = { ws, targetId: target.id, userId: target.user_id, connectedAt: Date.now(), lastFrame: Date.now(), pending: new Map(), nextId: 1, hello: false, version };
+        const conn: Conn = { ws, targetId: target.id, userId: target.user_id, connectedAt: Date.now(), lastFrame: Date.now(), pending: new Map(), nextId: 1, hello: false, version, moveTo };
         conns.set(target.id, conn);
         setStatus(target, { status: 'online', lastSeen: Date.now() });
         console.log(`[runner] target #${target.id} ${target.name} connected (runner ${version}${previous ? `, replacing ${previous.version}` : ''})`);
@@ -417,6 +423,7 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
               allowedRoots: Array.isArray(caps.allowed_roots) ? (caps.allowed_roots as unknown[]).map(String).slice(0, 50) : null,
             });
             emit(conn.targetId, { type: 'online' });
+            if (conn.moveTo) ws.send(JSON.stringify({ jsonrpc: '2.0', method: 'runner.realtime', params: { url: conn.moveTo } }));
             if (Array.isArray(caps.features) && caps.features.includes('exec')) void reconcile(conn.targetId);
             return;
           }

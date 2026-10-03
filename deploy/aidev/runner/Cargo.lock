@@ -54,7 +54,7 @@ dependencies = [
 
 [[package]]
 name = "aidev-runner"
-version = "0.18.1"
+version = "0.18.2"
 dependencies = [
  "apple-cf",
  "base64 0.23.1",

@@ -21,6 +21,9 @@ services:
       HOST: 0.0.0.0
       PORT: 8080
       PUBLIC_ORIGIN: https://dev.nado.work
+      # F-18: the same gateway at an address that skips Cloudflare (docs/aidev/CONNECTIVITY.md), e.g.
+      # https://rt.nado.work:8443 — empty: off. Runners and remote screens try it first and fall back by themselves.
+      REALTIME_ORIGIN: ${AIDEV_REALTIME_ORIGIN:-}
       DATABASE_PATH: /data/auth.db
       JWT_SECRET_FILE: /run/secrets/gateway-jwt
       RUNTIME_MANAGER_URL: http://runtime-manager:8090

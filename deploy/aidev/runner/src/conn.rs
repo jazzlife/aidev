@@ -3,11 +3,16 @@
 //! and, in both directions, for preview tunnels (F-06).
 //! Heartbeat every 15 s; a silent link (45 s) or any error reconnects with jittered backoff (1 s → 60 s).
 //! A 401/403 at the handshake means the token was revoked: the runner stops and asks for pairing.
+//! F-18 (0.18.2): the gateway may name an address of itself that skips the CDN (`runner.realtime {url}`, see
+//! docs/aidev/CONNECTIVITY.md): the runner reconnects there, and after two failed connects in a row goes back to
+//! its own gateway address (which names it again — tried at most every 10 minutes after such a failure).
 
 use crate::{caps, config::Config, exec::ExecHub};
 use futures_util::{SinkExt, StreamExt};
 use rand::Rng;
 use serde_json::{json, Value};
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use tokio::sync::mpsc;
 use tokio_tungstenite::tungstenite::{client::IntoClientRequest, http::HeaderValue, Error as WsError, Message};
@@ -15,6 +20,35 @@ use tokio_tungstenite::tungstenite::{client::IntoClientRequest, http::HeaderValu
 const HEARTBEAT: Duration = Duration::from_secs(15);
 const SILENCE_LIMIT: Duration = Duration::from_secs(45);
 const BACKOFF_MAX: Duration = Duration::from_secs(60);
+const REALTIME_RETRY: Duration = Duration::from_secs(600);
+
+/// The gateway's CDN-free address: the URL, failed connects in a row, the last failure.
+struct Realtime {
+    url: String,
+    failures: u32,
+    failed_at: Option<Instant>,
+}
+static REALTIME: Mutex<Option<Realtime>> = Mutex::new(None);
+/// the URL this session connected to
+static CURRENT: Mutex<String> = Mutex::new(String::new());
+/// `runner.realtime` named another address: end this session and reconnect
+static MOVE: AtomicBool = AtomicBool::new(false);
+
+/// `runner.realtime {url}` (a notification): use that address from the next connect.
+fn realtime_named(params: &Value) {
+    // https only (a local development gateway aside), as for pairing
+    let Some(url) = params.get("url").and_then(Value::as_str).and_then(|u| crate::pair::check_gateway(u).ok()) else { return };
+    let url = url.as_str();
+    let mut g = REALTIME.lock().unwrap();
+    // it failed here lately: stay on the gateway address for now
+    if g.as_ref().is_some_and(|r| r.url == url && r.failures >= 2 && r.failed_at.is_some_and(|t| t.elapsed() < REALTIME_RETRY)) {
+        return;
+    }
+    *g = Some(Realtime { url: url.to_string(), failures: 0, failed_at: None });
+    if *CURRENT.lock().unwrap() != ws_url(url) {
+        MOVE.store(true, Ordering::Relaxed);
+    }
+}
 
 pub enum Exit {
     /// Token rejected: pairing needed again.
@@ -138,16 +172,30 @@ enum SessionError {
 }
 
 async fn session(cfg: &Config, hub: &ExecHub) -> Result<(), SessionError> {
-    let url = ws_url(&cfg.gateway);
+    let realtime = REALTIME.lock().unwrap().as_ref().filter(|r| r.failures < 2).map(|r| r.url.clone());
+    let url = ws_url(realtime.as_deref().unwrap_or(&cfg.gateway));
     let mut request = url.as_str().into_client_request().map_err(|e| SessionError::Other(e.to_string()))?;
     let auth = HeaderValue::from_str(&format!("Bearer {}", cfg.token)).map_err(|e| SessionError::Other(e.to_string()))?;
     request.headers_mut().insert("authorization", auth);
     request.headers_mut().insert("x-aidev-runner", HeaderValue::from_static(env!("CARGO_PKG_VERSION")));
     let (ws, _) = match tokio_tungstenite::connect_async(request).await {
         Ok(ok) => ok,
+        // the CDN-free address failing (also with 401/403 from a proxy in front of it) never unpairs: the gateway address next
+        Err(e) if realtime.is_some() => {
+            if let Some(r) = REALTIME.lock().unwrap().as_mut() {
+                r.failures += 1;
+                r.failed_at = Some(Instant::now());
+            }
+            return Err(SessionError::Other(format!("{url}: {e} (실패가 이어지면 기본 주소로 돌아갑니다)")));
+        }
         Err(WsError::Http(resp)) if resp.status() == 401 || resp.status() == 403 => return Err(SessionError::Unauthorized),
         Err(e) => return Err(SessionError::Other(e.to_string())),
     };
+    if let Some(r) = REALTIME.lock().unwrap().as_mut().filter(|_| realtime.is_some()) {
+        r.failures = 0;
+    }
+    *CURRENT.lock().unwrap() = url.clone();
+    MOVE.store(false, Ordering::Relaxed);
     log(&format!("연결됨: {url} (대상 #{} {})", cfg.target_id, cfg.name));
     crate::control::set_state(crate::control::State::Connected);
     let (mut tx, mut rx) = ws.split();
@@ -221,6 +269,10 @@ where
                         if let Some(reply) = handle(cfg, hub, &text).await {
                             send(Message::Text(reply.to_string())).await?;
                         }
+                        if MOVE.swap(false, Ordering::Relaxed) {
+                            log("게이트웨이가 CDN을 거치지 않는 주소를 알려 와 그쪽으로 다시 연결합니다");
+                            return Ok(());
+                        }
                     }
                     // tunnel bytes from the platform (F-06): [streamId u32 BE][bytes]
                     Message::Binary(b) if b.len() >= 4 => crate::tunnel::write(u32::from_be_bytes([b[0], b[1], b[2], b[3]]), &b[4..]),
@@ -254,6 +306,8 @@ pub async fn handle(cfg: &Config, hub: &ExecHub, text: &str) -> Option<Value> {
         let params = msg.get("params").unwrap_or(&Value::Null);
         if method == "screen.ack" {
             crate::screen::ack(params);
+        } else if method == "runner.realtime" {
+            realtime_named(params);
         } else if method == "screen.relay" {
             crate::screen::relay(params);
         } else if method == "screen.control" {

@@ -19,7 +19,11 @@
  * channel; if the channel fails it says `on:false` and the gateway path resumes from the next keyframe. With runners
  * that take it (`started.p2pInput`, 0.18.1+) the remote-control input goes over the channel as well — the gateway path
  * crosses the server (and its CDN) twice per event, the channel goes straight to the PC.
+ * Fast path (F-18, docs/aidev/CONNECTIVITY.md): where the gateway has an address that skips the CDN
+ * (`/api/aidev/realtime` → origin and a 2-minute ticket; the session cookie is host-only), the socket opens there
+ * first and falls back to this origin when it does not open within FAST_OPEN_MS.
  */
+import { authenticatedFetch } from '@/shared/api';
 import { getStoredAuthToken } from '@/shared/authToken';
 
 export type ScreenMode = 'video' | 'jpeg';
@@ -48,6 +52,8 @@ export type ScreenState = {
   stats: ScreenStats | null;
   /** the frames come straight from the PC (WebRTC), not through the server */
   direct: boolean;
+  /** the socket goes to the gateway's CDN-free address */
+  fastPath: boolean;
 };
 
 const KIND_H264 = 1;
@@ -60,6 +66,32 @@ const VP9_CODEC = 'vp09.00.50.08';
 const STUN_URL = 'stun:stun.cloudflare.com:3478';
 /** How long the page gathers its candidates before it sends the offer anyway. */
 const GATHER_MS = 2000;
+/** How long the CDN-free address may take to open before the page uses its own origin. */
+const FAST_OPEN_MS = 3000;
+
+/** The gateway's CDN-free address with a short ticket for it, or null (none configured, not reachable). */
+async function fastPathTicket(): Promise<{ origin: string; ticket: string } | null> {
+  try {
+    const response = await authenticatedFetch('/api/aidev/realtime');
+    if (!response.ok) return null;
+    const j = (await response.json()) as { origin?: string | null; ticket?: string | null };
+    return j.origin && j.ticket ? { origin: j.origin, ticket: j.ticket } : null;
+  } catch { return null; }
+}
+
+/** A socket that opened within `ms`, or null (closed and left alone). */
+function openWithin(url: string, ms: number): Promise<WebSocket | null> {
+  return new Promise((resolve) => {
+    let ws: WebSocket;
+    try { ws = new WebSocket(url); } catch { resolve(null); return; }
+    ws.binaryType = 'arraybuffer';
+    const give = (value: WebSocket | null) => { clearTimeout(timer); ws.onopen = null; ws.onerror = null; ws.onclose = null; resolve(value); };
+    const timer = setTimeout(() => { try { ws.close(); } catch { /* not open */ } give(null); }, ms);
+    ws.onopen = () => give(ws);
+    ws.onerror = () => give(null);
+    ws.onclose = () => give(null);
+  });
+}
 
 /** The page's side of a direct connection: frames arrive in pieces on `channel`. */
 type DirectPeer = { pc: RTCPeerConnection; channel: RTCDataChannel; streamId: number; pieces: Uint8Array[]; live: boolean };
@@ -132,7 +164,7 @@ export class RemoteScreenSession {
   private peer: DirectPeer | null = null;
   /** the runner takes input over the direct channel (else it always goes through the gateway) */
   private directInput = false;
-  state: ScreenState = { status: 'connecting', codec: null, note: null, error: null, controlAvailable: false, control: false, width: 0, height: 0, fps: 0, kbps: 0, stats: null, direct: false };
+  state: ScreenState = { status: 'connecting', codec: null, note: null, error: null, controlAvailable: false, control: false, width: 0, height: 0, fps: 0, kbps: 0, stats: null, direct: false, fastPath: false };
 
   constructor(private url: (opts: ScreenOptions) => string, private canvas: HTMLCanvasElement, private opts: ScreenOptions, private onState: (s: ScreenState) => void) {
     if (opts.mode === 'video' && !webCodecsAvailable()) this.opts = { ...opts, mode: 'jpeg', fps: 5 };
@@ -144,8 +176,24 @@ export class RemoteScreenSession {
   private async connect() {
     if (this.opts.mode === 'video') this.opts = { ...this.opts, codecs: await videoCodecs() };
     if (this.closed) return;
-    const ws = new WebSocket(this.url(this.opts));
-    ws.binaryType = 'arraybuffer';
+    const url = this.url(this.opts);
+    // the CDN-free address first, for this origin's own sockets
+    let ws: WebSocket | null = null;
+    const base = new URL(url, window.location.href);
+    if (base.host === window.location.host) {
+      const fast = await fastPathTicket();
+      if (this.closed) return;
+      if (fast) {
+        const target = new URL(fast.origin);
+        base.protocol = target.protocol === 'https:' ? 'wss:' : 'ws:';
+        base.host = target.host;
+        base.searchParams.set('token', fast.ticket);
+        ws = await openWithin(base.toString(), FAST_OPEN_MS);
+        if (this.closed) { ws?.close(); return; }
+      }
+    }
+    this.patch({ fastPath: ws !== null });
+    if (!ws) { ws = new WebSocket(url); ws.binaryType = 'arraybuffer'; }
     this.ws = ws;
     ws.onmessage = (event) => {
       if (typeof event.data === 'string') return this.onText(event.data);
