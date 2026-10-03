@@ -45,7 +45,8 @@ if (-not $msbuild) { throw 'Visual Studio 2022 (MSBuild)가 필요합니다' }
 
 $work = Join-Path ([IO.Path]::GetTempPath()) ("libvpx-" + [guid]::NewGuid().ToString('N').Substring(0, 8))
 New-Item -ItemType Directory -Force $work | Out-Null
-$target = if ($Arch -eq 'arm64') { 'arm64-win64-vs17-clangcl' } else { 'x86_64-win64-vs17 --as=yasm' }
+# (the clang-cl projects give no file its own -march: the Armv8.2+ extensions are left out, plain NEON stays)
+$target = if ($Arch -eq 'arm64') { 'arm64-win64-vs17-clangcl --disable-neon-dotprod --disable-neon-i8mm --disable-sve --disable-sve2' } else { 'x86_64-win64-vs17 --as=yasm' }
 # MSYS2's tools first, then MSBuild (libvpx's make calls msbuild.exe) and everything else this shell has
 $env:PATH = "$Msys\usr\bin;$Msys\mingw64\bin;$(Split-Path -Parent $msbuild);$env:PATH"
 $env:MSYS2_PATH_TYPE = 'inherit'
