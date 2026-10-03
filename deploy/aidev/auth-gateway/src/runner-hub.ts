@@ -131,7 +131,7 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
   /** A viewer of a screen stream. v2 viewers (session.ts with `v=2`) take numbered frames and ack each one they
    *  have shown; older pages get the frames without the number and are acked for when sent. */
   type ScreenViewer = { needKey: boolean; v2: boolean; inFlight: Array<[number, number]>; p2p: boolean };
-  type ScreenStream = { targetId: number; streamId: number; config: string; window: number | null; viewers: Map<WebSocket, ScreenViewer>; gop: Buffer[]; gopBytes: number; format: { codec: string; width?: number; height?: number; reason?: string | null } | null; lastAt: number; frames: number; bytes: number; stopTimer: NodeJS.Timeout | null; keyAskedAt: number; acked: number; relay: boolean };
+  type ScreenStream = { targetId: number; streamId: number; config: string; window: number | null; viewers: Map<WebSocket, ScreenViewer>; gop: Buffer[]; gopBytes: number; format: { codec: string; width?: number; height?: number; reason?: string | null } | null; lastAt: number; frames: number; bytes: number; stopTimer: NodeJS.Timeout | null; keyAskedAt: number; acked: number; relay: boolean; loggedAt: number };
   const screens = new Map<string, ScreenStream>();          // `${targetId}:${streamId}` (F-07)
   // F-07d (2026-10-02): a viewer more than a second behind (or with 2 MB unsent) skips to the next keyframe — the
   // runner paces itself to the quickest viewer's acks, so one slow page never holds up the others
@@ -423,6 +423,13 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
             const sc = typeof p.streamId === 'number' ? screens.get(key(conn.targetId, p.streamId)) : undefined;
             if (!sc) return;
             const out = JSON.stringify({ type: 'stats', ...p });
+            // what the viewers get, every 10 s in the log: where the time goes on real PCs and networks (F-18)
+            if (Date.now() - sc.loggedAt >= 10_000) {
+              sc.loggedAt = Date.now();
+              const direct = [...sc.viewers.values()].filter((v) => v.p2p).length;
+              const n = (k: string) => (typeof p[k] === 'number' ? p[k] : '-');
+              console.log(`[screen] target #${conn.targetId} stream ${sc.streamId} ${sc.format?.codec ?? '?'} ${sc.format?.width ?? '?'}x${sc.format?.height ?? '?'} fps ${n('fps')} capture ${n('captureMs')} scale ${n('scaleMs')} encode ${n('encodeMs')} loop ${n('loopMs')} base ${n('baseMs')} skipped ${n('skipped')} kbps ${n('kbps')}/${n('bitrate')} viewers ${sc.viewers.size} direct ${direct}`);
+            }
             for (const [v, state] of sc.viewers) if (state.v2 && v.readyState === WebSocket.OPEN) v.send(out);
             return;
           }
@@ -630,7 +637,7 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
             let sc = [...screens.values()].find((s) => s.targetId === targetId && s.config === config);
             if (!sc) {
               nextStream = nextStream >= 0x3fff_fff0 ? 1 : nextStream + 1;
-              sc = { targetId, streamId: nextStream, config, window: win, viewers: new Map(), gop: [], gopBytes: 0, format: null, lastAt: 0, frames: 0, bytes: 0, stopTimer: null, keyAskedAt: 0, acked: 0, relay: true };
+              sc = { targetId, streamId: nextStream, config, window: win, viewers: new Map(), gop: [], gopBytes: 0, format: null, lastAt: 0, frames: 0, bytes: 0, stopTimer: null, keyAskedAt: 0, acked: 0, relay: true, loggedAt: 0 };
               screens.set(key(targetId, sc.streamId), sc);
               // 0.15+ runners number their frames and pace themselves by the acks (F-07d)
               const acks = Boolean(caps.features?.includes('acks'));
@@ -675,13 +682,18 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
             if (!sc || typeof msg.offer !== 'string' || msg.offer.length > 20_000) return send({ type: 'rtc', error: '직접 연결을 시작할 수 없습니다' });
             hub.call<{ answer?: string }>(targetId, 'screen.rtc', { streamId: sc.streamId, offer: msg.offer }, 10_000)
               .then((r) => send({ type: 'rtc', streamId: sc.streamId, answer: r.answer }))
-              .catch((error) => send({ type: 'rtc', streamId: sc.streamId, error: error instanceof Error ? error.message : String(error) }));
+              .catch((error) => {
+                const message = error instanceof Error ? error.message : String(error);
+                console.log(`[screen] target #${targetId} stream ${sc.streamId}: no direct connection (${message.slice(0, 200)})`);
+                send({ type: 'rtc', streamId: sc.streamId, error: message });
+              });
             return;
           }
           if (msg.op === 'p2p') {
             const sc = current; const state = sc?.viewers.get(ws);
             if (!sc || !state) return;
             state.p2p = Boolean(msg.on);
+            console.log(`[screen] target #${targetId} stream ${sc.streamId}: a viewer is ${state.p2p ? 'direct (p2p)' : 'back on the gateway path'}`);
             // back on this path: from the next keyframe
             if (!state.p2p) { state.needKey = true; state.inFlight = []; askKey(sc); }
             return relay(sc);

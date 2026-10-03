@@ -183,6 +183,51 @@ mod tests {
 }
 
 #[cfg(test)]
+mod xp {
+    use super::*;
+    use std::io::Write;
+
+    /// The encoder's pictures, to check by eye or PSNR: a page scrolled 4 px a frame (the bottom quarter still), frames
+    /// 33 ms apart as from a screen (the rate control reads the timestamps) → `xp.ivf` and the source as `xp.rgba`:
+    ///   XP_PNG=<page> XP_OUT=<dir> cargo test --release --features vpx xp -- --ignored --nocapture
+    ///   ffmpeg -c:v libvpx-vp9 -i xp.ivf -f rawvideo -pix_fmt rgba dec.rgba   (then psnr against xp.rgba)
+    #[test]
+    #[ignore]
+    fn scroll_to_ivf() {
+        let img = image::open(std::env::var("XP_PNG").unwrap()).unwrap().to_rgba8();
+        let (w, h) = img.dimensions();
+        let rgba = img.into_raw();
+        let row = (w * 4) as usize;
+        let out = std::path::PathBuf::from(std::env::var("XP_OUT").unwrap());
+        let mut ivf = std::fs::File::create(out.join("xp.ivf")).unwrap();
+        let mut src = std::fs::File::create(out.join("xp.rgba")).unwrap();
+        let n = 120u32;
+        let mut hdr = Vec::from(*b"DKIF"); hdr.extend(0u16.to_le_bytes()); hdr.extend(32u16.to_le_bytes()); hdr.extend(*b"VP90");
+        hdr.extend((w as u16).to_le_bytes()); hdr.extend((h as u16).to_le_bytes()); hdr.extend(30u32.to_le_bytes()); hdr.extend(1u32.to_le_bytes()); hdr.extend(n.to_le_bytes()); hdr.extend(0u32.to_le_bytes());
+        ivf.write_all(&hdr).unwrap();
+        let mut enc = Vp9::new(w, h, 30, 4000).unwrap();
+        let mut bytes = 0;
+        let mut t = Instant::now();
+        for i in 0..n as usize {
+            // the top 3/4 scrolls 4 px a frame, the rest stays
+            let mut f = rgba.clone();
+            let band = (h as usize * 3 / 4) * row;
+            let s = (i * 4 * row) % band;
+            f[..band - s].copy_from_slice(&rgba[s..band]);
+            f[band - s..band].copy_from_slice(&rgba[..s]);
+            // frames 33 ms apart, as from a screen (libvpx's rate control reads the timestamps)
+            std::thread::sleep(std::time::Duration::from_millis(33).saturating_sub(t.elapsed()));
+            t = Instant::now();
+            let (pkt, _) = enc.encode(&f, false).unwrap();
+            bytes += pkt.len();
+            ivf.write_all(&(pkt.len() as u32).to_le_bytes()).unwrap(); ivf.write_all(&(i as u64).to_le_bytes()).unwrap(); ivf.write_all(&pkt).unwrap();
+            src.write_all(&f).unwrap();
+        }
+        println!("{w}x{h} {} KB/frame", bytes / n as usize / 1024);
+    }
+}
+
+#[cfg(test)]
 mod compare {
     use super::*;
 
