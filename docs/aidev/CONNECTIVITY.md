@@ -117,3 +117,38 @@ ping 104.21.76.48                                                  # Cloudflare 
 | 국내 클라우드 서버를 중계로 | 불필요 | 서버 비용 | 국내 경로 |
 | Tailscale (서버와 Mac은 이미 사용 중) | 불필요 | 기기마다 설치 | 기기 간 직접·국내 경로 |
 | TURN 서버 (직접 연결이 막힌 망을 중계) | 필요 (UDP) | 공유기 설정 | 직접 연결 실패 시의 대안 |
+
+## 6. 빠른 주소 (`rt.nado.work`) — 5절 첫 번째 방법
+
+코드는 준비되어 있다 (게이트웨이·화면 페이지, 러너 0.18.2+). `REALTIME_ORIGIN`이 비어 있으면 꺼져 있고, 지금과 똑같이 동작한다.
+
+```
+러너 ──wss──▶ rt.nado.work:8443 ─(공유기 포트포워딩)─▶ 서버 nginx-proxy-manager ─▶ 게이트웨이
+브라우저 화면 ──wss──▶ 〃                                (Cloudflare를 거치지 않음)
+웹 화면·로그인·API ──▶ dev.nado.work (지금처럼 Cloudflare)
+```
+
+- 러너: Cloudflare 주소로 들어오면 게이트웨이가 `runner.realtime {url}`로 빠른 주소를 알려 주고, 러너는 그쪽으로 다시 연결한다. 연결이 두 번 연속 실패하면 원래 주소로 돌아가고, 10분 동안은 다시 옮기지 않는다.
+- 브라우저: 원격 화면을 열 때 `/api/aidev/realtime`에서 빠른 주소와 2분짜리 접속표를 받는다. 로그인 쿠키는 dev.nado.work 전용이라 접속표가 필요하다. 빠른 주소가 3초 안에 열리지 않으면 원래 주소로 연다. 상태줄에는 "빠른 경로"로 표시된다 (직접 연결이면 "직접 연결").
+- 443은 이미 다른 장비(SoftEther VPN)로 포워딩되어 있고 80은 닫혀 있어서, 포트는 8443을 쓰고 인증서는 DNS 인증으로 받는다.
+
+### 켜는 순서
+
+소유자가 할 일:
+
+1. 공유기 포트포워딩: 외부 TCP 8443 → 서버 `192.168.219.55:8443` (nginx-proxy-manager의 HTTPS).
+2. Cloudflare DNS: `rt.nado.work` A 레코드 → 서버 공인 IP, 프록시 끔 (DNS only, 회색 구름).
+3. nginx-proxy-manager:
+   - Proxy Host `rt.nado.work` → `aidev-auth-gateway` : `8080`, Websockets Support 켬.
+   - SSL: Let's Encrypt, DNS Challenge (Cloudflare API 토큰, Zone:DNS 편집 권한).
+
+그다음 운영 작업:
+
+4. 바깥에서 확인: `curl https://rt.nado.work:8443/_gateway/health` → `{"status":"ok"}`.
+5. 서버 `~/aidev/deploy/.env`에 `AIDEV_REALTIME_ORIGIN=https://rt.nado.work:8443`을 넣고, 게이트웨이 컨테이너를 다시 만든다: `docker compose -p aidev --env-file .env -f docker-compose.yml up -d auth-gateway`.
+6. 게이트웨이 로그의 `[runner] … connected`와 러너 로그의 "CDN을 거치지 않는 주소"로 러너가 옮겨 갔는지 확인한다.
+
+### 주의
+
+- 가정용 회선의 공인 IP는 바뀔 수 있다. 바뀌면 빠른 주소는 실패하고, 러너와 화면은 자동으로 Cloudflare 경로로 돌아간다. 오래 쓰려면 DNS를 자동으로 갱신하는 장치(DDNS)를 함께 두어야 한다.
+- 서버와 같은 공유기 안에서 접속할 때는 공유기가 자기 공인 IP로 되돌려 보내는 기능(NAT 루프백)을 지원해야 한다. 지원하지 않으면 그 망에서만 원래 경로로 돌아간다.
