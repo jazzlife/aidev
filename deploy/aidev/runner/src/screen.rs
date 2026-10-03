@@ -13,6 +13,8 @@
 //!   from the gateway: notification screen.ack {streamId, seq} — the newest frame a viewer has shown
 //!   screen.rtc {streamId, offer} → {answer}: the stream straight to a browser as well (rtc.rs, F-18 P2P)
 //!   from the gateway: notification screen.relay {streamId, on} — off while every viewer gets the frames directly
+//!   from the gateway: notification screen.control {streamId, on} — a viewer of the stream has remote control: its input
+//!   may also come straight over the stream's channel (rtc.rs), positions relative to the stream's window
 //! Frames: binary `[streamId u32 BE][kind u8][flags u8][seq u32 BE, when flags bit 1][data]`, kind 1 = H.264
 //! access unit (Annex B, SPS/PPS before every IDR), 3 = JPEG; flags bit 0 = keyframe, bit 1 = numbered. A
 //! frame is encoded only when the window's pixels changed (or a keyframe was asked for), at most `fps` per
@@ -54,6 +56,11 @@ struct Ctl {
     acked: Acked,
     /// frames go to the gateway (off: every viewer has them directly, rtc.rs)
     relay: Arc<AtomicBool>,
+    /// input may come over the channel (screen.control, with the owner's consent)
+    control: AtomicBool,
+    window: u32,
+    /// direct input events this second (at most 300, as the gateway allows)
+    inputs: Mutex<(Instant, u32)>,
 }
 
 /// `screen.ack` from the gateway (a notification).
@@ -80,6 +87,31 @@ pub fn relay(params: &Value) {
     if let Some(c) = hub().lock().unwrap().streams.get(&(id as u32)) {
         c.relay.store(on, Ordering::Relaxed);
     }
+}
+
+/// `screen.control` from the gateway (a notification): direct input on or off for the stream.
+pub fn control(cfg: &Config, params: &Value) {
+    let (Some(id), Some(on)) = (params.get("streamId").and_then(Value::as_u64), params.get("on").and_then(Value::as_bool)) else { return };
+    if let Some(c) = hub().lock().unwrap().streams.get(&(id as u32)) {
+        c.control.store(on && crate::config::control_allowed(cfg), Ordering::Relaxed);
+    }
+}
+
+/// An input event from a direct viewer of `stream` (rtc.rs): replayed on the stream's window while control is on.
+pub fn direct_input(stream: u32, ev: &Value) {
+    let g = hub().lock().unwrap();
+    let Some(c) = g.streams.get(&stream).filter(|c| c.control.load(Ordering::Relaxed)) else { return };
+    let mut n = c.inputs.lock().unwrap();
+    if n.0.elapsed() >= Duration::from_secs(1) {
+        *n = (Instant::now(), 0);
+    }
+    n.1 += 1;
+    if n.1 > 300 {
+        return;   // a stuck page cannot flood the PC
+    }
+    let Value::Object(mut ev) = ev.clone() else { return };
+    ev.insert("win".into(), json!(c.window));
+    crate::input::direct(Value::Object(ev));
 }
 
 #[derive(Default)]
@@ -577,7 +609,7 @@ fn start(params: &Value) -> RpcResult {
     let stop = Arc::new(AtomicBool::new(false));
     let key = Arc::new(AtomicBool::new(false));
     let acked: Acked = Arc::new(Mutex::new(None));
-    g.streams.insert(id, Ctl { stop: stop.clone(), key: key.clone(), acked: acked.clone(), relay: Arc::new(AtomicBool::new(true)) });
+    g.streams.insert(id, Ctl { stop: stop.clone(), key: key.clone(), acked: acked.clone(), relay: Arc::new(AtomicBool::new(true)), control: AtomicBool::new(false), window, inputs: Mutex::new((Instant::now(), 0)) });
     drop(g);
     let o = StreamOpts { window, video, fps, max_width, bitrate, acks, vp9 };
     std::thread::Builder::new().name(format!("aidev-screen-{id}")).spawn(move || run(id, o, stop, key, acked)).map_err(|e| (-32000, e.to_string()))?;

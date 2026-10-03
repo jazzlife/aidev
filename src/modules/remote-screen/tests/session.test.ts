@@ -98,7 +98,7 @@ describe('remote screen session (numbered frames, acks, latency)', () => {
     let state: ScreenState | null = null;
     const session = new RemoteScreenSession(() => 'ws://test/screen?v=2', document.createElement('canvas'), { mode: 'jpeg', window: 1, display: 0, fps: 5, maxWidth: 640, bitrate: 1000 }, (s) => { state = s; });
     const ws = FakeSocket.last!;
-    ws.push(JSON.stringify({ type: 'started', streamId: 9, p2p: true }));
+    ws.push(JSON.stringify({ type: 'started', streamId: 9, p2p: true, p2pInput: true }));
     // the offer goes without the mDNS host candidate (the runner cannot resolve it)
     await vi.waitFor(() => expect(ws.sent.some((m) => m.includes('"op":"rtc"'))).toBe(true));
     const offer = JSON.parse(ws.sent.find((m) => m.includes('"op":"rtc"'))!) as { offer: string };
@@ -122,7 +122,15 @@ describe('remote screen session (numbered frames, acks, latency)', () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(drawn).toHaveBeenCalledTimes(2);
 
+    // with control on, input goes over the channel too
+    ws.push(JSON.stringify({ type: 'control', on: true }));
+    session.input({ t: 'move', x: 0.5, y: 0.5 });
+    expect(dc.sent).toContain(JSON.stringify({ input: { t: 'move', x: 0.5, y: 0.5 } }));
+    expect(ws.sent.some((m) => m.includes('"op":"input"'))).toBe(false);
+
     dc.onclose?.();
+    session.input({ t: 'move', x: 0.1, y: 0.1 });
+    expect(ws.sent).toContain(JSON.stringify({ op: 'input', ev: { t: 'move', x: 0.1, y: 0.1 } }));
     expect(ws.sent).toContain(JSON.stringify({ op: 'p2p', on: false }));
     expect(state!.direct).toBe(false);
     session.close();

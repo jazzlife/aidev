@@ -284,6 +284,12 @@ fn sender() -> Sender<Job> {
     tx
 }
 
+/// An event that came straight from the viewer (rtc.rs) on a stream the gateway turned control on for
+/// (screen::direct_input checked that, and the owner's consent when it was turned on).
+pub fn direct(params: Value) {
+    let _ = sender().send(Job::Event(params));
+}
+
 /// A notification from the gateway. Refused silently without consent (the gateway checks it first and
 /// tells the user); returns whether it was handled.
 pub fn notify(cfg: &Config, method: &str, params: &Value) -> bool {

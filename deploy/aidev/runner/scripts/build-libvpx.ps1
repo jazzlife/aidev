@@ -19,11 +19,7 @@ $Version = 'v1.17.0'
 $Root = Split-Path -Parent $PSScriptRoot
 $Triple = if ($Arch -eq 'arm64') { 'aarch64-pc-windows-msvc' } else { 'x86_64-pc-windows-msvc' }
 $Out = Join-Path $Root "vendor\libvpx\$Triple"
-# MSVC compiles `volatile` with acquire/release only under /volatile:ms — the default on x86/x64, not on ARM64
-# (/volatile:iso). libvpx's thread sync (vpx_util/vpx_atomics.h) relies on it: without it the row-based multi-threading
-# races on ARM64 and the encoder's reference pictures go wrong (red and blue streaks that stay, vm-win 2026-10-03)
-$Mark = if ($Arch -eq 'arm64') { "$Version volatile:ms" } else { $Version }
-if ((Test-Path "$Out\lib\vpx.lib") -and ((Get-Content "$Out\VERSION" -ErrorAction SilentlyContinue) -eq $Mark)) { Write-Host "libvpx $Mark ($Triple): $Out"; exit 0 }
+if ((Test-Path "$Out\lib\vpx.lib") -and ((Get-Content "$Out\VERSION" -ErrorAction SilentlyContinue) -eq $Version)) { Write-Host "libvpx $Version ($Triple): $Out"; exit 0 }
 
 # a native program's stderr (git's "tag is not a commit" note) would be an error record under Stop in Windows
 # PowerShell 5.1: native programs run through this, and only their exit code decides
@@ -49,8 +45,6 @@ $target = if ($Arch -eq 'arm64') { 'arm64-win64-vs17' } else { 'x86_64-win64-vs1
 # MSYS2's tools first, then MSBuild (libvpx's make calls msbuild.exe) and everything else this shell has
 $env:PATH = "$Msys\usr\bin;$Msys\mingw64\bin;$(Split-Path -Parent $msbuild);$env:PATH"
 $env:MSYS2_PATH_TYPE = 'inherit'
-# cl.exe reads extra options from CL (see $Mark); `-`, not `/`: MSYS2 would take a leading / for a path
-if ($Arch -eq 'arm64') { $env:CL = '-volatile:ms' }
 $srcU = (& "$Msys\usr\bin\cygpath.exe" -u $Src).Trim()
 $workU = (& "$Msys\usr\bin\cygpath.exe" -u $work).Trim()
 $sh = "cd '$workU' && '$srcU/configure' --target=$target " +
@@ -63,6 +57,6 @@ $lib = Get-ChildItem $work -Recurse -Filter 'vpxmd.lib' | Where-Object { $_.Full
 if (-not $lib) { throw "vpxmd.lib 이 만들어지지 않았습니다 — $work\make.log" }
 New-Item -ItemType Directory -Force "$Out\lib" | Out-Null
 Copy-Item -Force $lib.FullName "$Out\lib\vpx.lib"
-Set-Content "$Out\VERSION" $Mark -NoNewline
+Set-Content "$Out\VERSION" $Version -NoNewline
 Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
-Write-Host "libvpx $Mark ($Triple): $Out"
+Write-Host "libvpx $Version ($Triple): $Out"

@@ -16,7 +16,9 @@
  * (offer/answer over this socket, STUN only). The runner sends the same numbered frames there, in 16 KB pieces
  * `[last u8][bytes]`; each frame number is taken once from whichever path brings it first, so the switch has no gap.
  * Once frames come directly the page says `{op:"p2p", on:true}` (the gateway stops sending them) and acks on the
- * channel; if the channel fails it says `on:false` and the gateway path resumes from the next keyframe.
+ * channel; if the channel fails it says `on:false` and the gateway path resumes from the next keyframe. With runners
+ * that take it (`started.p2pInput`, 0.18.1+) the remote-control input goes over the channel as well — the gateway path
+ * crosses the server (and its CDN) twice per event, the channel goes straight to the PC.
  */
 import { getStoredAuthToken } from '@/shared/authToken';
 
@@ -128,6 +130,8 @@ export class RemoteScreenSession {
   /** the newest frame number taken (from either path) since the stream started */
   private lastSeq = 0;
   private peer: DirectPeer | null = null;
+  /** the runner takes input over the direct channel (else it always goes through the gateway) */
+  private directInput = false;
   state: ScreenState = { status: 'connecting', codec: null, note: null, error: null, controlAvailable: false, control: false, width: 0, height: 0, fps: 0, kbps: 0, stats: null, direct: false };
 
   constructor(private url: (opts: ScreenOptions) => string, private canvas: HTMLCanvasElement, private opts: ScreenOptions, private onState: (s: ScreenState) => void) {
@@ -152,13 +156,14 @@ export class RemoteScreenSession {
   }
 
   private onText(raw: string) {
-    let m: { type: string; message?: string; codec?: string; reason?: string | null; control?: boolean; on?: boolean; seq?: number; streamId?: number; p2p?: boolean; answer?: string } & Record<string, unknown>;
+    let m: { type: string; message?: string; codec?: string; reason?: string | null; control?: boolean; on?: boolean; seq?: number; streamId?: number; p2p?: boolean; p2pInput?: boolean; answer?: string } & Record<string, unknown>;
     try { m = JSON.parse(raw); } catch { return; }
     if (m.type === 'stats') return this.onStats(m);
     if (m.type === 'started') {
       // a new stream: frame numbers start over, and a direct path is tried for it
       this.lastSeq = 0;
       this.closePeer();
+      this.directInput = Boolean(m.p2pInput);
       this.patch({ status: 'live', error: null, controlAvailable: Boolean(m.control), direct: false });
       if (m.p2p && typeof m.streamId === 'number' && typeof RTCPeerConnection !== 'undefined') void this.openPeer(m.streamId);
     } else if (m.type === 'rtc') {
@@ -331,7 +336,12 @@ export class RemoteScreenSession {
 
   setControl(on: boolean) { this.send({ op: 'control', on }); }
 
-  input(ev: InputEvent) { if (this.state.control) this.send({ op: 'input', ev }); }
+  input(ev: InputEvent) {
+    if (!this.state.control) return;
+    const channel = this.directInput && this.peer?.live ? this.peer.channel : null;
+    if (channel?.readyState === 'open') channel.send(JSON.stringify({ input: ev }));
+    else this.send({ op: 'input', ev });
+  }
 
   close() {
     this.closed = true;

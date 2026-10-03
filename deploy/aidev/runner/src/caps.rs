@@ -149,6 +149,7 @@ pub async fn collect(cfg: &crate::config::Config) -> Value {
     // the screen straight to the browser over WebRTC (rtc.rs, F-18)
     if crate::rtc::available() {
         features.push("p2p");
+        features.push("p2p-input");
     }
     json!({
         "runner": env!("CARGO_PKG_VERSION"),

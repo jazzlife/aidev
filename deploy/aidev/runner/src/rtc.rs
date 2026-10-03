@@ -4,7 +4,8 @@
 //! STUN server sees of each (server reflexive). No TURN: where no direct path forms, the page stays on the gateway.
 //! On the channel go the stream's frames exactly as on the gateway path (`[kind][flags][seq][data]`), cut into
 //! 16 KB messages `[last u8][bytes]`; the page acks the frames it has shown as text `{"ack":seq}` (screen::ack, as
-//! from the gateway). A viewer whose channel is more than QUEUE_MAX behind skips to the next keyframe (asked for).
+//! from the gateway) and, while the gateway has control on for the stream (screen.control), sends its input as
+//! `{"input":ev}` (screen::direct_input; 0.18.1+, caps feature "p2p-input"). A viewer whose channel is more than QUEUE_MAX behind skips to the next keyframe (asked for).
 //! Windows: inbound UDP needs a firewall rule — added once by the elevated runner; a limited runner offers no P2P.
 
 use futures_util::future::join_all;
@@ -242,8 +243,11 @@ fn drain(rtc: &mut Rtc, socks: &[(Arc<UdpSocket>, SocketAddr)], ch: &mut Chan, s
                     crate::screen::key(stream);
                 }
                 Event::ChannelData(d) if !d.binary => {
-                    if let Some(seq) = serde_json::from_slice::<Value>(&d.data).ok().and_then(|v| v.get("ack").and_then(Value::as_u64)) {
+                    let Ok(v) = serde_json::from_slice::<Value>(&d.data) else { continue };
+                    if let Some(seq) = v.get("ack").and_then(Value::as_u64) {
                         crate::screen::ack(&json!({ "streamId": stream, "seq": seq }));
+                    } else if let Some(ev) = v.get("input") {
+                        crate::screen::direct_input(stream, ev);
                     }
                 }
                 _ => {}

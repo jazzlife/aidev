@@ -256,6 +256,8 @@ pub async fn handle(cfg: &Config, hub: &ExecHub, text: &str) -> Option<Value> {
             crate::screen::ack(params);
         } else if method == "screen.relay" {
             crate::screen::relay(params);
+        } else if method == "screen.control" {
+            crate::screen::control(cfg, params);
         } else {
             crate::input::notify(cfg, method, params);
         }

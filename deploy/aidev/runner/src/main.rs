@@ -124,6 +124,9 @@ enum Cmd {
         frames: u32,
         #[arg(long, default_value_t = 1440)]
         max_width: u32,
+        /// 캡처 없이 정해진 합성 화면을 이 PC의 VP9 인코더로 인코딩해 IVF 파일로 (다른 곳에서 디코딩해 비교)
+        #[arg(long)]
+        vp9_check: Option<PathBuf>,
     },
     /// 업데이트: 받을 수 있는 버전(최신·이전)을 보여 주고 고른 버전으로 교체 — 서비스·권한·설정은 그대로
     Update {
@@ -382,7 +385,11 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
         }
         Cmd::InstallService { print, limited, logon_only, user, .. } => println!("{}", service::install(print, limited, logon_only, user)?),
         Cmd::UninstallService => println!("{}", service::uninstall()?),
-        Cmd::Bench { window, frames, max_width } => {
+        #[cfg(feature = "vpx")]
+        Cmd::Bench { vp9_check: Some(path), frames, .. } => {
+            println!("{}", vp9::check(&path, frames.max(1) as usize)?);
+        }
+        Cmd::Bench { window, frames, max_width, .. } => {
             println!("[CPU 경로]\n{}", screen::bench(window, frames.max(1), max_width)?);
             #[cfg(windows)]
             println!("\n[{}]", screen::bench_wgc(window, max_width).unwrap_or_else(|e| format!("Windows Graphics Capture 측정 실패: {e}")));

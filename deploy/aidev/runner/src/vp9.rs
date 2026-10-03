@@ -25,8 +25,9 @@ pub struct Vp9 {
 // the codec context is used from one thread at a time (the stream's)
 unsafe impl Send for Vp9 {}
 
+/// Encoder threads: the cores, at most 8 (AIDEV_VP9_THREADS overrides, for checking).
 fn threads() -> u32 {
-    std::thread::available_parallelism().map_or(2, |n| n.get() as u32).clamp(1, 8)
+    std::env::var("AIDEV_VP9_THREADS").ok().and_then(|v| v.parse().ok()).unwrap_or_else(|| std::thread::available_parallelism().map_or(2, |n| n.get() as u32)).clamp(1, 8)
 }
 
 impl Vp9 {
@@ -182,48 +183,77 @@ mod tests {
     }
 }
 
+/// A page to check the encoder with, the same on every PC: rows of glyph-like dots and two coloured boxes on white,
+/// the top 3/4 scrolled `4 × i` pixels up (frame `i`), a grey bar below that stays.
+pub fn check_frame(i: usize) -> (Vec<u8>, u32, u32) {
+    const W: usize = 1440;
+    const H: usize = 1136;
+    let mut page = vec![255u8; W * H * 4];
+    let mut seed = 0x2545_f491u32;
+    let mut rnd = || { seed ^= seed << 13; seed ^= seed >> 17; seed ^= seed << 5; seed };
+    for row in 0..40 {
+        for col in 0..84 {
+            for p in 0..40 {
+                let v = rnd();
+                if v % 3 == 0 && (v >> 8) % 7 < 5 {
+                    let (x, y) = (10 + col * 9 + p % 7, 6 + row * 27 + p / 7 * 2);
+                    page[(y * W + x) * 4..(y * W + x) * 4 + 3].copy_from_slice(&[20, 20, 20]);
+                }
+            }
+        }
+    }
+    let mut fill = |x0: usize, y0: usize, w: usize, h: usize, c: [u8; 3]| {
+        for y in y0..y0 + h { for x in x0..x0 + w { page[(y * W + x) * 4..(y * W + x) * 4 + 3].copy_from_slice(&c); } }
+    };
+    fill(500, 300, 240, 240, [255, 69, 0]);
+    fill(900, 500, 400, 200, [48, 112, 208]);
+    fill(0, 1080, W, 56, [232, 232, 232]);
+    let (row, band) = (W * 4, H * 3 / 4 * W * 4);
+    let s = (i * 4 * row) % band;
+    let mut f = page.clone();
+    f[..band - s].copy_from_slice(&page[s..band]);
+    f[band - s..band].copy_from_slice(&page[..s]);
+    (f, W as u32, H as u32)
+}
+
+/// `bench --vp9-check <file>`: `frames` of check_frame, 33 ms apart as from a screen (the rate control reads the
+/// timestamps), through this PC's encoder into an IVF file — decoded elsewhere (ffmpeg) and compared with the same
+/// page, it shows whether the encoder itself is sound here, apart from any capture.
+pub fn check(path: &std::path::Path, frames: usize) -> Result<String, String> {
+    use std::io::Write;
+    let (_, w, h) = check_frame(0);
+    let mut ivf = Vec::from(*b"DKIF");
+    for v in [0u16, 32] { ivf.extend(v.to_le_bytes()); }
+    ivf.extend(*b"VP90");
+    for v in [w as u16, h as u16] { ivf.extend(v.to_le_bytes()); }
+    for v in [30u32, 1, frames as u32, 0] { ivf.extend(v.to_le_bytes()); }
+    let mut enc = Vp9::new(w, h, 30, 4000)?;
+    let (mut t, mut spent) = (Instant::now(), std::time::Duration::ZERO);
+    for i in 0..frames {
+        let (f, _, _) = check_frame(i);
+        std::thread::sleep(std::time::Duration::from_millis(33).saturating_sub(t.elapsed()));
+        t = Instant::now();
+        let (pkt, _) = enc.encode(&f, false)?;
+        spent += t.elapsed();
+        ivf.extend((pkt.len() as u32).to_le_bytes());
+        ivf.extend((i as u64).to_le_bytes());
+        ivf.extend(&pkt);
+    }
+    std::fs::File::create(path).and_then(|mut file| file.write_all(&ivf)).map_err(|e| format!("{}: {e}", path.display()))?;
+    Ok(format!("VP9 점검 {}×{} {frames}프레임 → {} ({} KB, 인코딩 평균 {:.1} ms, 스레드 {})", w, h, path.display(), ivf.len() / 1024, spent.as_secs_f64() * 1000.0 / frames as f64, threads()))
+}
+
 #[cfg(test)]
 mod xp {
-    use super::*;
-    use std::io::Write;
-
-    /// The encoder's pictures, to check by eye or PSNR: a page scrolled 4 px a frame (the bottom quarter still), frames
-    /// 33 ms apart as from a screen (the rate control reads the timestamps) → `xp.ivf` and the source as `xp.rgba`:
-    ///   XP_PNG=<page> XP_OUT=<dir> cargo test --release --features vpx xp -- --ignored --nocapture
-    ///   ffmpeg -c:v libvpx-vp9 -i xp.ivf -f rawvideo -pix_fmt rgba dec.rgba   (then psnr against xp.rgba)
+    /// The check page as raw RGBA, to compare a decoded `bench --vp9-check` file with (ffmpeg psnr):
+    ///   XP_OUT=<dir> cargo test --release --features vpx xp -- --ignored
     #[test]
     #[ignore]
-    fn scroll_to_ivf() {
-        let img = image::open(std::env::var("XP_PNG").unwrap()).unwrap().to_rgba8();
-        let (w, h) = img.dimensions();
-        let rgba = img.into_raw();
-        let row = (w * 4) as usize;
+    fn check_source() {
+        use std::io::Write;
         let out = std::path::PathBuf::from(std::env::var("XP_OUT").unwrap());
-        let mut ivf = std::fs::File::create(out.join("xp.ivf")).unwrap();
-        let mut src = std::fs::File::create(out.join("xp.rgba")).unwrap();
-        let n = 120u32;
-        let mut hdr = Vec::from(*b"DKIF"); hdr.extend(0u16.to_le_bytes()); hdr.extend(32u16.to_le_bytes()); hdr.extend(*b"VP90");
-        hdr.extend((w as u16).to_le_bytes()); hdr.extend((h as u16).to_le_bytes()); hdr.extend(30u32.to_le_bytes()); hdr.extend(1u32.to_le_bytes()); hdr.extend(n.to_le_bytes()); hdr.extend(0u32.to_le_bytes());
-        ivf.write_all(&hdr).unwrap();
-        let mut enc = Vp9::new(w, h, 30, 4000).unwrap();
-        let mut bytes = 0;
-        let mut t = Instant::now();
-        for i in 0..n as usize {
-            // the top 3/4 scrolls 4 px a frame, the rest stays
-            let mut f = rgba.clone();
-            let band = (h as usize * 3 / 4) * row;
-            let s = (i * 4 * row) % band;
-            f[..band - s].copy_from_slice(&rgba[s..band]);
-            f[band - s..band].copy_from_slice(&rgba[..s]);
-            // frames 33 ms apart, as from a screen (libvpx's rate control reads the timestamps)
-            std::thread::sleep(std::time::Duration::from_millis(33).saturating_sub(t.elapsed()));
-            t = Instant::now();
-            let (pkt, _) = enc.encode(&f, false).unwrap();
-            bytes += pkt.len();
-            ivf.write_all(&(pkt.len() as u32).to_le_bytes()).unwrap(); ivf.write_all(&(i as u64).to_le_bytes()).unwrap(); ivf.write_all(&pkt).unwrap();
-            src.write_all(&f).unwrap();
-        }
-        println!("{w}x{h} {} KB/frame", bytes / n as usize / 1024);
+        let mut f = std::fs::File::create(out.join("check.rgba")).unwrap();
+        for i in 0..120 { f.write_all(&super::check_frame(i).0).unwrap(); }
     }
 }
 
