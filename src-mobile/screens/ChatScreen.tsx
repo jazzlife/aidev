@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
-import { Clock, Download, Gauge, MoreHorizontal, Search } from 'lucide-react';
+import { Clock, Download, Gauge, GitBranch, MoreHorizontal, Search } from 'lucide-react';
 
 import { api, grantClaudeToolPermission, buildClaudeToolPermissionEntry, useChatRealtimeHandlers, useSessionStore, useWebSocket, type LLMProvider, type NormalizedMessage, type PendingPermissionRequest, type ProjectSession } from '@/modules/chat-core';
 import { AgentCreateCard, aidevApi, routingStore, shouldAskClarify, useAgentCreation, useAidevRouting, useEscalation, usePrejudge, type AidevSendDecoration, type Engine } from '@/modules/aidev-router';
@@ -19,6 +19,7 @@ import { ScheduleSheet, useScheduledMessages } from '@m/components/ScheduleSheet
 import { ComposerAssist } from '@m/components/ComposerAssist';
 import { CommandResultSheet, type CommandResult } from '@m/components/CommandResultSheet';
 import { MicButton } from '@m/components/MicButton';
+import { GitSheet } from '@m/components/GitSheet';
 import { TodoProgress, latestTodos } from '@m/components/ToolCards';
 import { trackCommandUse, type SlashCommand } from '@m/lib/composerAssist';
 import { exportConversation } from '@m/lib/exportMarkdown';
@@ -86,6 +87,8 @@ export function ChatScreen() {
   // the conversation's context use ({used, total}): fetched on open and after each run, updated live while it runs
   const [tokenBudget, setTokenBudget] = useState<Record<string, unknown> | null>(null);
   // the scheduling sheet: making one (the send button held, with the text to send) or the list (conversation sheet)
+  // the git sheet of the conversation's project ("변경 사항")
+  const [gitSheet, setGitSheet] = useState(false);
   const [scheduleSheet, setScheduleSheet] = useState<{ mode: 'create' | 'list'; text: string } | null>(null);
   const [lastRunFinished, setLastRunFinished] = useState<number | null>(null);
   // the message held down (its sheet: copy, read aloud, edit, fork here)
@@ -452,9 +455,11 @@ export function ChatScreen() {
               </div>
             ) : null}
             <button type="button" className={sheetButton} onClick={() => { setConversationSheet(false); void exportConversation(meta?.title ?? '대화', messages).catch(() => setActionError('내보내지 못했습니다')); }}><Download size={18} /> 내보내기<span className="ml-auto text-[12px] text-muted">Markdown</span></button>
+            {meta?.projectId ? <button type="button" className={sheetButton} onClick={() => { setConversationSheet(false); setGitSheet(true); }}><GitBranch size={18} /> 변경 사항<span className="ml-auto text-[12px] text-muted">커밋·푸시</span></button> : null}
             <button type="button" className={sheetButton} onClick={() => { setConversationSheet(false); setScheduleSheet({ mode: 'list', text: '' }); }}><Clock size={18} /> 예약된 메시지<span className="ml-auto text-[13px] text-muted">{scheduled.pending.length}</span></button>
           </>
         )} />
+      <GitSheet open={gitSheet} onClose={() => setGitSheet(false)} project={meta?.projectId ? { projectId: meta.projectId, displayName: meta.projectName } : null} provider={provider} />
       <ScheduleSheet mode={scheduleSheet?.mode ?? null} text={scheduleSheet?.text ?? ''} scheduled={scheduled.pending} onClose={() => setScheduleSheet(null)}
         onSchedule={async (at) => {
           // the send options of a send now (mode and saved rules); model and effort are the router's when it goes

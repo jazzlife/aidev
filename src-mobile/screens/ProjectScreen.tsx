@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useState } from 'react';
-import { MoreHorizontal, Plus, Search } from 'lucide-react';
+import { GitBranch, MoreHorizontal, Plus, Search } from 'lucide-react';
 import { useLocation, useParams } from 'react-router-dom';
 
 import { api } from '@/modules/chat-core';
 import { FilePeek } from '@m/components/FilePeek';
 import { ConversationActions, type ConversationChange } from '@m/components/ConversationActions';
 import { ProjectActions, type ProjectTarget } from '@m/components/ProjectActions';
+import { GitSheet } from '@m/components/GitSheet';
 import { ListSkeleton } from '@m/components/Skeleton';
 import { TopBar } from '@m/components/TopBar';
 import { setCurrentProject } from '@m/lib/current';
@@ -50,6 +51,8 @@ export function ProjectScreen() {
   // the conversation whose sheet is open, and whether the project's own sheet is
   const [conversationTarget, setConversationTarget] = useState<SessionItem | null>(null);
   const [projectSheet, setProjectSheet] = useState(false);
+  // the git sheet (the project's changes, commit, push)
+  const [gitSheet, setGitSheet] = useState(false);
   const [filePeek, setFilePeek] = useState<{ open: boolean; file: FileRef | null; fromSearch: boolean }>({ open: false, file: null, fromSearch: false });
 
   // opened from a conversation or a link: the name and path come from the project list
@@ -99,6 +102,7 @@ export function ProjectScreen() {
         right={project ? (
           <>
             <button type="button" aria-label="파일 찾기" onClick={() => setFilePeek({ open: true, file: null, fromSearch: false })} className="m-touch flex items-center justify-center rounded-full text-muted"><Search size={19} /></button>
+            <button type="button" aria-label="변경 사항" onClick={() => setGitSheet(true)} className="m-touch flex items-center justify-center rounded-full text-muted"><GitBranch size={19} /></button>
             <button type="button" aria-label="프로젝트 메뉴" onClick={() => setProjectSheet(true)} className="m-touch flex items-center justify-center rounded-full text-muted"><MoreHorizontal size={20} /></button>
           </>
         ) : null}
@@ -119,6 +123,7 @@ export function ProjectScreen() {
       ) : null}
       <ConversationActions target={conversationTarget ? { sessionId: conversationTarget.id, title: conversationTarget.summary ?? '', provider: conversationTarget.provider } : null} onClose={() => setConversationTarget(null)} onChange={conversationChanged} />
       <ProjectActions target={projectSheet ? project : null} onClose={() => setProjectSheet(false)} onChange={(change) => { if (change.kind === 'removed') go('/projects'); else setProject(change.project); }} />
+      <GitSheet open={gitSheet} onClose={() => setGitSheet(false)} project={project} provider="claude" />
       <FilePeek open={filePeek.open} onClose={() => setFilePeek({ open: false, file: null, fromSearch: false })} project={project ? { projectId: project.projectId, projectPath: project.fullPath } : null} file={filePeek.file} fromSearch={filePeek.fromSearch} onFile={(file) => setFilePeek({ open: true, file, fromSearch: file !== null })} />
     </div>
   );

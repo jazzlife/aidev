@@ -67,3 +67,24 @@ export function languageFor(path: string): string | null {
   const extension = /\.([A-Za-z0-9]+)$/.exec(path)?.[1]?.toLowerCase();
   return extension ? LANGUAGE_BY_EXTENSION[extension] ?? null : null;
 }
+
+/**
+ * Used by the git sheet (C-12.8): a file's unified diff (`/api/git/diff`) as the diff peek's hunks — each `@@` block's
+ * old side (context and − lines) and new side (context and + lines), so the peek draws what changed per block.
+ */
+export function fileEditFromUnifiedDiff(path: string, diff: string, flags: { created?: boolean; deleted?: boolean } = {}): FileEdit {
+  const hunks: FileEdit['hunks'] = [];
+  let before: string[] | null = null;
+  let after: string[] = [];
+  const close = () => { if (before) hunks.push({ before: before.join('\n'), after: after.join('\n') }); };
+  // the text's own final newline is not a line of the file
+  for (const line of diff.replace(/\n$/, '').split('\n')) {
+    if (line.startsWith('@@')) { close(); before = []; after = []; continue; }
+    if (!before || line.startsWith('\\')) continue;   // file headers before the first block; "\ No newline at end of file"
+    if (line.startsWith('+')) after.push(line.slice(1));
+    else if (line.startsWith('-')) before.push(line.slice(1));
+    else { before.push(line.slice(1)); after.push(line.slice(1)); }
+  }
+  close();
+  return { path, hunks, created: Boolean(flags.created), deleted: Boolean(flags.deleted) };
+}
