@@ -12,7 +12,15 @@ set -euo pipefail
 trap 'echo " ✗ release.sh failed at line $LINENO (exit $?)" >&2' ERR
 VOL="${AIDEV_APP_VOLUME:-aidev_app}"
 # One release operation at a time per host (deploys, rollbacks, restarts must not interleave).
-if [ -z "${AIDEV_RELEASE_LOCKED:-}" ]; then exec env AIDEV_RELEASE_LOCKED=1 flock -w 600 /tmp/aidev-release.lock "$0" "$@"; fi
+# The lock file is opened read-only (no O_CREAT): /tmp is sticky, and with fs.protected_regular even root — the ship
+# container (OPS-02) — may not O_CREAT-open a file another user created there. The open descriptor holds the lock for
+# this process and everything it starts.
+LOCK=/tmp/aidev-release.lock
+if [ -z "${AIDEV_RELEASE_LOCKED:-}" ]; then
+  [ -e "$LOCK" ] || (umask 000; : > "$LOCK")
+  exec 9<"$LOCK"; flock -w 600 9 || { echo " ✗ another release operation holds $LOCK" >&2; exit 1; }
+  export AIDEV_RELEASE_LOCKED=1
+fi
 HELPER=node:22-bookworm          # same glibc as the runtime images -> native modules match
 log()  { printf '\033[1;34m==>\033[0m %s\n' "$*" >&2; }
 ok()   { printf '\033[1;32m ✓ \033[0m %s\n' "$*" >&2; }
@@ -126,16 +134,16 @@ cmd_restart() {
       done < <(docker ps --filter label=work.nado.aidev.managed=true --filter status=running --format '{{.Names}}')
       log "runtimes -> $want: ${#idle[@]} to restart now, ${#busy[@]} with live sessions, $skipped already current (batch $batch)"
       [ $canary = 1 ] && [ ${#idle[@]} -gt 0 ] && { idle=("${idle[0]}"); busy=(); log "canary: ${idle[0]} only"; }
-      local failed=0
+      local failed=0 restart_log; restart_log=$(mktemp /tmp/aidev-restart-XXXXXX.log)   # per run: no fixed file another user owns
       if [ ${#idle[@]} -gt 0 ]; then
-        printf '%s\n' "${idle[@]}" | xargs -P "$batch" -I{} bash -c 'restart_one "$1" "$2"' _ {} "$want" | tee /tmp/aidev-restart.log
-        failed=$(grep -c '^FAIL' /tmp/aidev-restart.log || true)
+        printf '%s\n' "${idle[@]}" | xargs -P "$batch" -I{} bash -c 'restart_one "$1" "$2"' _ {} "$want" | tee "$restart_log"
+        failed=$(grep -c '^FAIL' "$restart_log" || true)
       fi
       if [ ${#busy[@]} -gt 0 ]; then
         if [ $force = 1 ]; then
           log "restarting ${#busy[@]} busy runtime(s) (--force)"
-          printf '%s\n' "${busy[@]}" | xargs -P "$batch" -I{} bash -c 'restart_one "$1" "$2"' _ {} "$want" | tee -a /tmp/aidev-restart.log
-          failed=$(grep -c '^FAIL' /tmp/aidev-restart.log || true)
+          printf '%s\n' "${busy[@]}" | xargs -P "$batch" -I{} bash -c 'restart_one "$1" "$2"' _ {} "$want" | tee -a "$restart_log"
+          failed=$(grep -c '^FAIL' "$restart_log" || true)
         else
           echo " ! deferred (live sessions): ${busy[*]}"; echo "   re-run later:  release.sh restart --drain runtimes   (or --force)"
         fi

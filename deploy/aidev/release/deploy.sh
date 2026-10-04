@@ -20,8 +20,13 @@ fi
 # Override per deploy:  deploy.sh <tgz> --batch 10 --force      (or set RESTART_OPTS)
 RESTART_OPTS="${RESTART_OPTS:---drain --batch 6}"; [ $# -gt 0 ] && RESTART_OPTS="$*"
 # Hold the host-wide release lock for the whole deploy; nested release.sh calls inherit it.
-if [ -z "${AIDEV_RELEASE_LOCKED:-}" ]; then exec env AIDEV_RELEASE_LOCKED=1 AIDEV_SPOOL="${spool:-}" flock -w 600 /tmp/aidev-release.lock "$0" "$tgz" "$@"; fi
-[ -n "${AIDEV_SPOOL:-}" ] && trap 'rm -f "$AIDEV_SPOOL"' EXIT
+# (opened read-only, no O_CREAT — see release.sh: the ship container's root may not O_CREAT another user's /tmp file)
+LOCK=/tmp/aidev-release.lock
+if [ -z "${AIDEV_RELEASE_LOCKED:-}" ]; then
+  [ -e "$LOCK" ] || (umask 000; : > "$LOCK")
+  exec 9<"$LOCK"; flock -w 600 9 || { echo " ✗ another release operation holds $LOCK" >&2; exit 1; }
+  export AIDEV_RELEASE_LOCKED=1
+fi
 sha=$("$R" install "$tgz" | tail -1)
 prev=$(docker run --rm -v aidev_app:/srv/app node:22-bookworm-slim sh -c 'readlink /srv/app/current 2>/dev/null | sed "s#releases/##"' </dev/null || true)
 if [ "$prev" = "$sha" ]; then echo "release $sha is already active"; exit 0; fi

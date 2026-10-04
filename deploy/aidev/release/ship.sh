@@ -75,8 +75,16 @@ echo "release $REL ($tgz)"
 
 step deploy
 PREV=$(docker run --rm -v aidev_app:/srv/app node:22-bookworm-slim sh -c 'readlink /srv/app/current 2>/dev/null | sed "s#releases/##"' </dev/null)
-bash deploy/aidev/release/deploy.sh "$tgz" | tee /tmp/aidev-ship-deploy.log
-[ "${PIPESTATUS[0]}" = 0 ] || { [ -n "$PREV" ] && bash deploy/aidev/release/release.sh rollback "$PREV"; result rolled_back "deploy.sh failed; back on $PREV"; }
+DEPLOY_LOG=$(mktemp /tmp/aidev-ship-deploy-XXXXXX.log); DRAIN_LOG=$(mktemp /tmp/aidev-ship-drain-XXXXXX.log)
+trap 'rm -f "$DEPLOY_LOG" "$DRAIN_LOG"' EXIT
+bash deploy/aidev/release/deploy.sh "$tgz" | tee "$DEPLOY_LOG"
+if [ "${PIPESTATUS[0]}" != 0 ]; then
+  NOW=$(docker run --rm -v aidev_app:/srv/app node:22-bookworm-slim sh -c 'readlink /srv/app/current 2>/dev/null | sed "s#releases/##"' </dev/null)
+  # failed before the switch: nothing changed; after it: put the previous release back
+  [ "$NOW" = "$PREV" ] && result failed "deploy.sh failed before switching; still on $PREV"
+  [ -n "$PREV" ] && bash deploy/aidev/release/release.sh rollback "$PREV"
+  result rolled_back "deploy.sh failed; back on $PREV"
+fi
 
 step verify
 gw() { docker run --rm --network npm_bridge curlimages/curl:8.16.0 -fsS -m 10 "http://aidev-auth-gateway:8080$1" </dev/null; }
@@ -103,11 +111,11 @@ fi
 echo "SHIP_RESULT ok $SHA release $REL is live"
 
 # runtimes that had a live session kept the old code: restart each once its sessions end (up to 30 min)
-if grep -q 'deferred (live sessions)' /tmp/aidev-ship-deploy.log; then
+if grep -q 'deferred (live sessions)' "$DEPLOY_LOG"; then
   for _ in $(seq 1 30); do
     sleep 60
-    bash deploy/aidev/release/release.sh restart --drain runtimes 2>&1 | tee /tmp/aidev-ship-drain.log | tail -2
-    grep -q 'deferred (live sessions)' /tmp/aidev-ship-drain.log || { echo " ✓ every runtime runs $REL"; exit 0; }
+    bash deploy/aidev/release/release.sh restart --drain runtimes 2>&1 | tee "$DRAIN_LOG" | tail -2
+    grep -q 'deferred (live sessions)' "$DRAIN_LOG" || { echo " ✓ every runtime runs $REL"; exit 0; }
   done
   echo " ! some runtimes still run the old release (live sessions); the next ship restarts them"
 fi
