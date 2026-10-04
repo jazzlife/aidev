@@ -364,7 +364,7 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 - [~] C-10 `ui.focus`·`ui.artifact` 연결(작업대): run 이벤트 → Laya → 패널 포커스/파일 자동 열기, 3회 되돌림 시 off
   - 구현(2026-10-01, c6ff486a 배포): `workbench/hooks/useUiFocus` — agent 미리보기·디버거 정지·agent가 PC에서 돌린 명령 실패(`useAgentRunFailures`, remote runs 8초 폴링) → Laya `ui.focus`(확신할 때만 그 답, 아니면 이벤트의 기본 패널 — 기존 자동 표시보다 줄지 않음), 15초 안에 사용자가 치우면 override 기록(`final_answer: reverted`), 3회 연속이면 그 채팅 세션에서 off(sessionStorage). run 완료 시 채팅이 도구로 쓴 파일 목록을 알림(`aidev:run-complete`) → 여러 개면 Laya `ui.artifact`로 하나 골라 엶(데스크탑 코드 패널, 태블릿은 탭만 — 채팅 유지). 테스트: `changedFilesSince` 2건, 클라이언트 457 PASS. 남은 확인: 실제 채팅에서 동작(F-12와 함께).
 - [ ] C-11 실기기 확인(스크린샷 inbox 회수): iPhone 세로(모바일 앱), iPad 가로·세로(작업대 태블릿 모드), 데스크탑(작업대). 두 앱에서 같은 세션 딥링크가 열림
-- [~] C-12 모바일 기능 동등화(2026-10-04 사용자 결정: 모바일에서 빠지는 것은 코드 보기·작성 UI뿐, 채팅·프로젝트 기본 기능은 모두 모바일에서). 작업 지시서·명세: `docs/aidev/MOBILE-PARITY-PLAN.md`. C-12.1~C-12.9 구현·로컬 검증(2026-10-04): 채팅 환경의 번들(`d00bb12`·`4f9e00e`)은 전달되지 않아 §3 명세대로 다시 구현. 모바일 테스트 85, 클라이언트 565 통과, typecheck·lint 통과, 모바일 메인 청크 96KB(시작 129KB), lazy 35개 739KB. 작업대에서만 가능한 채팅·프로젝트 기본 기능: 코드 보기·작성 UI(편집기·터미널·파일 트리)와 HTML 내보내기. 남은 것: C-12.10 실기기
+- [~] C-12 모바일 기능 동등화(2026-10-04 사용자 결정: 모바일에서 빠지는 것은 코드 보기·작성 UI뿐, 채팅·프로젝트 기본 기능은 모두 모바일에서). 작업 지시서·명세: `docs/aidev/MOBILE-PARITY-PLAN.md`. C-12.1~C-12.9 구현·로컬 검증·운영 배포(2026-10-04, 릴리스 `891ef419fad4`, 프런트만 변경 — 재시작 없음, `/m/` 새 번들 확인, verify 실패 1건은 아래 위험 참고): 채팅 환경의 번들(`d00bb12`·`4f9e00e`)은 전달되지 않아 §3 명세대로 다시 구현. 모바일 테스트 85, 클라이언트 565 통과, typecheck·lint 통과, 모바일 메인 청크 96KB(시작 129KB), lazy 35개 739KB. 작업대에서만 가능한 채팅·프로젝트 기본 기능: 코드 보기·작성 UI(편집기·터미널·파일 트리)와 HTML 내보내기. 남은 것: C-12.10 실기기. verify의 `remote exec` 항목은 대상으로 Windows PC(`vm-win`, target 12)를 골라 bash 명령을 보내 실패함(이번 변경과 무관, 검증 스크립트가 OS를 보고 명령을 골라야 함)
   - [~] C-12.1 드로어(현재 작업 카드)·홈 탭(프로젝트 · 대화)·프로젝트 추가(폴더·Git 복제)·화면 전환 로딩(스플래시 대신 상단 막대) — 로컬 검증(2026-10-04): tsc 0, 모바일 테스트 32 통과, 메인 청크 119KB
   - [~] C-12.2 채팅 기본 기능: 질문 답하기·항상 허용·계획 승인·권한 모드·응답 중 대기열·첨부·이전 메시지 — 로컬 검증(2026-10-04): 모바일 테스트 44, 클라이언트 524 통과, 메인 청크 119KB
   - [~] C-12.3 대상별 시트(대화·프로젝트·메시지)·대화 검색 — 로컬 검증(2026-10-04): 모바일 테스트 52, 클라이언트 532 통과, 메인 청크 130KB
@@ -518,13 +518,18 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 ---
 
 ## 5. 매 릴리스 절차
-1. 클라우드: 구현 → `npm run build`(작업대 `dist` + 모바일 `dist-mobile` + 서버)/`tsc`(+ 러너 변경 시 `cargo build --release` cross) 통과, 모바일 번들 예산 통과 → 커밋 → `bash deploy/aidev/release/pack.sh /mnt/user-data/outputs/rel`
-2. `release-<sha>.tgz`를 Mac `ops/releases/`로 전달 (러너 바이너리는 `ops/runner/`로 별도)
-3. 배포: 사용자가 `./relay.sh watch`를 켜 둔 동안에는 Claude가 `ops/outbox/<id>.job`(허용 목록: deploy·rollback·status·list·restart·diag·gpu·logs·verify)으로 직접 배포하고 `ops/inbox/job-<id>.log`로 결과를 확인한다(2026-09-29). 꺼져 있으면 사용자가 `./relay.sh deploy releases/release-<sha>.tgz`. 서버 스크립트(`ops/scripts/*.sh`)가 바뀐 경우에만 사용자가 `./relay.sh scripts`. `verify`는 비밀번호 없이 서버 안에서 10분 세션을 발급·폐기(`manage-users session/end-session`).
-4. 검증: `./relay.sh status`, 필요 시 `./relay.sh run <cmd>`/`diag` 로그 회수 → 체크리스트 [x] + 릴리스 ID 기록
-5. 문제 시 `./relay.sh rollback`
-6. 도구 이미지가 바뀌는 경우에만 `laya-image.sh build` / `runtime-image.sh build` (drop-in payload로 별도 실행)
-7. 러너 갱신: Mac `ops/runner/build.sh` → `aidev-runner update`(게이트웨이 `/_runner/release`에서 버전 확인, 자기 교체는 2단계)
+
+변경은 묻지 않고 커밋·푸시·배포·검증까지 끝낸다(2026-10-01 사용자 지시). 되돌릴 수 없는 일(공개된 GitHub release 태그 재지정, 데이터 삭제)만 먼저 알린다. 경로: 저장소 `NadoVibe/aidev`(origin `jazzlife/aidev`), 운영 폴더 `NadoVibe/ops`, 서버 `turtlelab@100.64.0.9`(SSH 키는 macOS 키체인).
+
+1. 검증: `npx tsc --noEmit -p tsconfig.json`, 관련 테스트(`npx vitest run src-mobile`, `npm run test:client`, 서버를 고쳤으면 `npm test`), `npm run typecheck`, `npm run lint`, `npm run build`(작업대 `dist` + 모바일 `dist-mobile` 번들 예산 + 서버). 러너를 고쳤으면 `ops/runner/build.sh`.
+2. 커밋 → `git push origin main`(이 Mac은 직접 푸시된다. `ops/push-source.sh`는 푸시 권한 없는 클라우드 세션의 체크포인트 번들용). 백업: `git bundle create ops/backups/aidev-ckpt_<항목>-<날짜>.bundle <이전 배포 커밋>..main`.
+3. 릴리스: 깨끗한 체크아웃(`git status` 비어 있음, 원본 `NadoVibe/aidev`는 `git pull --ff-only`로 맞춘 뒤)에서 `bash deploy/aidev/release/pack.sh ../ops/releases` → `ops/releases/release-<sha12>.tgz`(이름에 `-dirty`가 붙으면 배포하지 않는다).
+4. 배포: `cd ops && ./relay.sh deploy releases/release-<sha12>.tgz`. 서버가 바뀐 컴포넌트(gateway·runtime-manager·runtimes·laya)만 재시작하고, 프런트만 바뀌면 재시작 없음. 런타임 코드가 바뀌었는데 재시작이 필요하면 `./relay.sh run restart --drain runtimes`. 서버 스크립트(`ops/scripts/*.sh`)가 바뀐 경우에만 `./relay.sh scripts`.
+5. 확인: `./relay.sh status`(current release = 새 sha), `./relay.sh verify jazzlife`(로그 `ops/inbox/verify-*.log`), 프런트는 `curl -s https://dev.nado.work/m/`의 `assets/index-*.js`가 `dist-mobile/index.html`과 같은지. 결과를 체크리스트에 기록(릴리스 ID 포함).
+6. 문제 시 `./relay.sh rollback [sha]`.
+7. 도구 이미지가 바뀌는 경우에만 `laya-image.sh build` / `runtime-image.sh build`. 러너 갱신: `ops/runner/build.sh` → `aidev-runner update`(게이트웨이 `/_runner/release`에서 버전 확인, 자기 교체는 2단계). 러너 CI 태그 `runner-v<버전>`은 공개 release가 있으면 옮기지 않는다.
+
+예전 방식(클라우드 세션이 `pack.sh /mnt/user-data/outputs/rel` → Mac 전달 → `ops/outbox/<id>.job` + `./relay.sh watch`)은 Mac에서 직접 작업할 수 없을 때만 쓴다.
 
 ---
 
