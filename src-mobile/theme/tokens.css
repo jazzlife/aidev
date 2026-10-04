@@ -63,6 +63,11 @@ body {
 .m-hljs .hljs-title, .m-hljs .hljs-section, .m-hljs .hljs-attribute, .m-hljs .hljs-selector-id, .m-hljs .hljs-selector-class { color: rgb(var(--m-ink)); font-weight: 600; }
 .m-hljs .hljs-comment, .m-hljs .hljs-quote, .m-hljs .hljs-meta { color: rgb(var(--m-muted)); font-style: italic; }
 .m-hljs .hljs-deletion { color: rgb(var(--m-danger)); }
+/* Screen code downloading (RouteProgress): a thin line under the status bar, shown only after 120 ms. */
+.m-route-progress { position: fixed; top: env(safe-area-inset-top); left: 0; right: 0; height: 2px; z-index: 60; pointer-events: none; opacity: 0; transition: opacity 150ms; overflow: hidden; }
+.m-route-progress[data-on="true"] { opacity: 1; transition-delay: 120ms; }
+.m-route-progress::after { content: ""; position: absolute; top: 0; bottom: 0; width: 40%; background: rgb(var(--m-accent)); animation: m-route-progress 1s ease-in-out infinite; }
+@keyframes m-route-progress { from { left: -40%; } to { left: 100%; } }
 @keyframes m-pulse { 0%, 100% { opacity: 0.35; } 50% { opacity: 1; } }
 .m-pulse { animation: m-pulse 1.2s ease-in-out infinite; }
 

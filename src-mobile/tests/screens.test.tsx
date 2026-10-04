@@ -3,13 +3,19 @@ import { BrowserRouter, Route, Routes, useLocation } from 'react-router-dom';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /** The mobile screens added 2026-10-02: projects (list → project → its conversations) and PC pairing. */
-const json = (body: unknown) => Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } }));
+const json = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.stringify(body), { status, headers: { 'content-type': 'application/json' } }));
 const api = {
   projects: vi.fn(() => json([
     { projectId: 'p1', displayName: 'alpha', fullPath: '/w/alpha', isStarred: false, sessions: [{ lastActivity: '2026-10-01T00:00:00Z' }], sessionMeta: { total: 3 } },
     { projectId: 'p2', displayName: 'beta', fullPath: '/w/beta', isStarred: true, sessions: [], sessionMeta: { total: 0 } },
   ])),
   projectSessions: vi.fn(() => json({ sessions: [{ id: 's1', provider: 'claude', summary: '로그인 버그', lastActivity: '2026-10-01T00:00:00Z' }], sessionMeta: { hasMore: false } })),
+  runningSessions: vi.fn(() => json({ data: { sessions: [{ sessionId: 's1' }, { sessionId: 's9' }] } })),
+  browseFilesystem: vi.fn((path: string | null) => json({ path: path ?? '/w', suggestions: path === '/w/new' ? [] : [{ name: 'alpha', path: '/w/alpha' }, { name: 'new', path: '/w/new' }] })),
+  createFolder: vi.fn(),
+  createProject: vi.fn((_body: unknown) => json({ success: true, project: { projectId: 'p3', displayName: 'new', fullPath: '/w/new', isArchived: false } })),
+  restoreProject: vi.fn(() => json({ success: true })),
+  settings: { credentials: vi.fn(() => json({ credentials: [] })) },
   targets: {
     list: vi.fn(() => json({ targets: [{ id: 7, name: 'my-pc', description: '', platform: null, online: false, paired: false, last_seen: null, pairing_code: 'AB12CD', pairing_expires: Date.now() + 9 * 60_000, capabilities: null }] })),
     runnerDownloads: vi.fn(() => json({ files: [{ name: 'aidev-runner-0.13.1-win-x64.exe', version: '0.13.1', platform: 'win-x64', size: 1, sha256: null }] })),
@@ -38,6 +44,8 @@ const { ProjectScreen } = await import('@m/screens/ProjectScreen');
 const { TargetsScreen } = await import('@m/screens/TargetsScreen');
 const { DrawerProvider } = await import('@m/components/AppDrawer');
 const { BackController } = await import('@m/lib/nav');
+const { HomeTabs } = await import('@m/components/HomeTabs');
+const { reloadCurrentForTests } = await import('@m/lib/current');
 const { UiCommandBridge } = await import('@m/components/UiCommandBridge');
 vi.mock('@m/components/FilePeek', () => ({ FilePeek: () => null }));
 
@@ -62,7 +70,7 @@ const at = (path: string) => {
 };
 const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 20)); });
 
-beforeEach(() => { vi.clearAllMocks(); });
+beforeEach(() => { vi.clearAllMocks(); localStorage.clear(); reloadCurrentForTests(); });
 
 describe('mobile projects', () => {
   it('lists projects, starred first, and opens one', async () => {
@@ -100,22 +108,46 @@ describe('mobile PC pairing', () => {
 });
 
 describe('mobile common menu (drawer)', () => {
-  it('opens from ☰ on any screen and switches project or opens a remote tool directly', async () => {
-    at('/projects/p1');
+  it('shows the current work — the project and the running conversation — and the remote tools, no lists', async () => {
+    localStorage.setItem('m.project', JSON.stringify({ projectId: 'p2', displayName: 'beta', fullPath: '/w/beta' }));
+    localStorage.setItem('m.conversation', JSON.stringify({ sessionId: 's1', title: '로그인 버그', projectId: 'p1', projectName: 'alpha' }));
+    reloadCurrentForTests();
+    at('/projects');
     await settle();
     fireEvent.click(screen.getByLabelText('메뉴'));
     await settle();
+    const current = screen.getByTestId('drawer-current');
+    expect(current.textContent).toContain('beta');
+    expect(current.textContent).toContain('진행 중인 대화');
+    expect(current.textContent).toContain('응답 중');
+    // a conversation of another project names its project
+    expect(current.textContent).toContain('alpha');
+    expect(current.textContent).toContain('다른 대화 1개 실행 중');
     const drawer = screen.getByTestId('app-drawer');
-    // fixed entries only: no list of PCs, no run history (that lives in its conversation)
+    // fixed entries only: no list of PCs, projects or conversations
     expect(drawer.textContent).toContain('원격 제어');
     expect(drawer.textContent).not.toContain('m4pro');
-    expect(drawer.textContent).not.toContain('원격 실행');
-    fireEvent.click(screen.getAllByText('beta').at(-1)!);
+    expect(drawer.textContent).not.toContain('모든 프로젝트');
+    expect(drawer.textContent).not.toContain('새 대화');
+    fireEvent.click(screen.getByText('로그인 버그'));
     await settle();
-    expect(screen.getByTestId('where').textContent).toBe('/projects/p2');
+    expect(screen.getByTestId('where').textContent).toBe('/session/s1');
     expect(screen.queryByTestId('app-drawer')).toBeNull();
+  });
+
+  it('without a current project it says where to pick one; the project card opens the project', async () => {
+    at('/projects');
+    await settle();
     fireEvent.click(screen.getByLabelText('메뉴'));
     await settle();
+    expect(screen.getByTestId('drawer-current').textContent).toContain('선택된 프로젝트가 없습니다');
+    fireEvent.click(screen.getByLabelText('메뉴 닫기'));
+    // opening a project makes it the current one
+    fireEvent.click(screen.getByText('alpha'));
+    await settle();
+    fireEvent.click(screen.getByLabelText('메뉴'));
+    await settle();
+    expect(screen.getByTestId('drawer-current').textContent).toContain('/w/alpha');
     fireEvent.click(screen.getByText('원격 제어'));
     expect(screen.getByTestId('where').textContent).toBe('/screen');
   });
@@ -129,6 +161,62 @@ describe('mobile common menu (drawer)', () => {
     await act(async () => { window.history.back(); await new Promise((r) => setTimeout(r, 30)); });
     expect(screen.queryByTestId('app-drawer')).toBeNull();
     expect(screen.getByTestId('where').textContent).toBe('/projects');
+  });
+});
+
+describe('home tabs', () => {
+  it('reads "프로젝트 · 대화"', () => {
+    render(<BrowserRouter><HomeTabs active="conversations" /></BrowserRouter>);
+    expect(screen.getAllByRole('tab').map((t) => t.textContent)).toEqual(['프로젝트', '대화']);
+  });
+});
+
+describe('adding a project', () => {
+  it('adds the folder chosen in the browser, makes it current and opens it', async () => {
+    at('/projects');
+    await settle();
+    fireEvent.click(screen.getByLabelText('프로젝트 추가'));
+    await settle();
+    expect(api.browseFilesystem).toHaveBeenCalledWith(null);
+    fireEvent.click(screen.getByText('new'));
+    await settle();
+    expect((screen.getByLabelText('경로') as HTMLInputElement).value).toBe('/w/new');
+    fireEvent.click(screen.getByRole('button', { name: '추가' }));
+    await settle();
+    expect(api.createProject).toHaveBeenCalledWith({ path: '/w/new' });
+    expect(screen.getByTestId('where').textContent).toBe('/projects/p3');
+    expect(JSON.parse(localStorage.getItem('m.project') ?? '{}').projectId).toBe('p3');
+  });
+
+  it("shows the server's message when the project already exists, and restores an archived path", async () => {
+    api.createProject.mockImplementationOnce(() => json({ success: false, error: { code: 'PROJECT_EXISTS', message: '이미 있는 프로젝트입니다' } }, 409));
+    at('/projects');
+    await settle();
+    fireEvent.click(screen.getByLabelText('프로젝트 추가'));
+    await settle();
+    fireEvent.click(screen.getByRole('button', { name: '추가' }));
+    await settle();
+    expect(screen.getByRole('alert').textContent).toBe('이미 있는 프로젝트입니다');
+    expect(screen.getByTestId('where').textContent).toBe('/projects');
+    api.createProject.mockImplementationOnce(() => json({ success: true, project: { projectId: 'p4', displayName: 'old', fullPath: '/w', isArchived: true } }));
+    fireEvent.click(screen.getByRole('button', { name: '추가' }));
+    await settle();
+    expect(api.restoreProject).toHaveBeenCalledWith('p4');
+    expect(screen.getByTestId('where').textContent).toBe('/projects/p4');
+  });
+
+  it('a clone shows where it lands', async () => {
+    const { repoFolderName } = await import('@m/components/AddProjectSheet');
+    expect(repoFolderName('https://github.com/a/b.git/')).toBe('b');
+    expect(repoFolderName('git@github.com:a/c.git')).toBe('c');
+    at('/projects');
+    await settle();
+    fireEvent.click(screen.getByLabelText('프로젝트 추가'));
+    await settle();
+    fireEvent.click(screen.getByRole('tab', { name: 'Git 복제' }));
+    fireEvent.change(screen.getByLabelText('저장소 주소'), { target: { value: 'https://github.com/a/repo.git' } });
+    await settle();
+    expect(screen.getByTestId('clone-target').textContent).toBe('→ /w/repo');
   });
 });
 

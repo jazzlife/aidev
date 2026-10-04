@@ -1,16 +1,17 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { AppWindow, Bot, Bug, FolderGit2, Link2, MessageSquare, Monitor, Plus, Settings, Star, X } from 'lucide-react';
+import { AppWindow, Bot, Bug, FolderGit2, Link2, MessageSquare, Monitor, Settings, X } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 
 import { api, useAuth } from '@/modules/chat-core';
 import { aidevApi } from '@/modules/aidev-router';
 import { useBackOverlay, useGo } from '@m/lib/nav';
+import { useCurrentConversation, useCurrentProject } from '@m/lib/current';
 
 /**
- * The app's common menu (2026-10-02, "공통 메뉴와 프로젝트 선택은 드로어에서 바로"): conversations, a project switch, the
- * remote tools (remote control, preview, debugger, PC pairing), the agent catalog and settings — fixed entries only
- * (which PC is chosen on the screen it opens; run history lives in its conversation) — reachable from
- * every screen (☰ in the top bar, or a swipe from the left edge). Top bars keep only the page's own actions.
+ * The app's common menu, reachable from every screen (☰ in the top bar, or a swipe from the left edge). No lists here
+ * (C-12.1): "현재 작업" — the project a new conversation starts in and the conversation last opened (running or not) —
+ * then the remote tools (remote control, preview, debugger, PC pairing), the agent catalog and settings. Projects and
+ * conversations are listed on the home tabs. Top bars keep only the page's own actions.
  */
 type DrawerApi = { open: () => void };
 const DrawerContext = createContext<DrawerApi>({ open: () => undefined });
@@ -20,9 +21,7 @@ export function useDrawer() {
   return useContext(DrawerContext);
 }
 
-type Project = { projectId: string; displayName: string; fullPath: string; isStarred?: boolean; sessions?: Array<{ lastActivity?: string }> };
 type Target = { id: number; name: string; online: boolean; capabilities?: { screen?: boolean } | null };
-const latest = (p: Project) => p.sessions?.reduce((max, s) => (s.lastActivity && s.lastActivity > max ? s.lastActivity : max), '') ?? '';
 const EDGE_PX = 24;
 const SWIPE_PX = 60;
 
@@ -30,21 +29,25 @@ function Drawer({ onClose }: { onClose: () => void }) {
   const go = useGo();
   const { pathname } = useLocation();
   const { user } = useAuth();
-  const [projects, setProjects] = useState<Project[] | null>(null);
+  const project = useCurrentProject();
+  const conversation = useCurrentConversation();
   const [targets, setTargets] = useState<Target[] | null>(null);
+  const [running, setRunning] = useState<string[]>([]);
   useBackOverlay(true, onClose);
   useEffect(() => {
-    api.projects().then(async (r) => {
-      const data = await r.json() as Project[];
-      const list = Array.isArray(data) ? data : [];
-      list.sort((a, b) => Number(Boolean(b.isStarred)) - Number(Boolean(a.isStarred)) || latest(b).localeCompare(latest(a)));
-      setProjects(list);
-    }).catch(() => setProjects([]));
     aidevApi.targets().then((r) => setTargets(r.targets as unknown as Target[])).catch(() => setTargets([]));
+    api.runningSessions().then(async (r) => {
+      const body = await r.json() as { data?: { sessions?: Array<{ sessionId?: string }> } };
+      setRunning((body.data?.sessions ?? []).map((s) => s.sessionId ?? '').filter(Boolean));
+    }).catch(() => undefined);
   }, []);
   const open = (path: string) => { onClose(); go(path); };
   const row = (active: boolean) => `w-full h-11 rounded-xl flex items-center gap-3 px-3 text-[15px] text-left ${active ? 'bg-elevated font-medium' : 'active:bg-elevated'}`;
   const section = (title: string) => <div className="px-3 pt-4 pb-1 text-[11px] uppercase tracking-wide text-muted">{title}</div>;
+  const card = 'w-full rounded-xl border border-line bg-bg px-3 py-2.5 text-left active:bg-elevated';
+  const isRunning = Boolean(conversation && running.includes(conversation.sessionId));
+  const others = running.filter((id) => id !== conversation?.sessionId).length;
+  const projectPath = project ? `/projects/${encodeURIComponent(project.projectId)}` : '';
   return (
     <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="메뉴" data-testid="app-drawer">
       <button type="button" aria-label="메뉴 닫기" className="absolute inset-0 bg-black/40" onClick={onClose} />
@@ -55,24 +58,29 @@ function Drawer({ onClose }: { onClose: () => void }) {
           <button type="button" aria-label="닫기" onClick={onClose} className="m-touch flex items-center justify-center rounded-full text-muted"><X size={20} /></button>
         </div>
         <div className="m-scroll flex-1 px-2 pb-4">
-          {section('대화')}
-          <button type="button" className={row(pathname === '/')} onClick={() => open('/')}><MessageSquare size={18} className="text-muted" /> 대화 목록</button>
-          <button type="button" className={row(pathname === '/new')} onClick={() => open('/new')}><Plus size={18} className="text-accent" /> 새 대화</button>
-
-          {section('프로젝트')}
-          {projects === null ? <div className="px-3 py-2 text-[13px] text-muted m-pulse">불러오는 중…</div> : null}
-          {projects?.slice(0, 8).map((p) => {
-            const path = `/projects/${encodeURIComponent(p.projectId)}`;
-            return (
-              <button key={p.projectId} type="button" className={row(pathname === path)} onClick={() => open(path)}>
-                <FolderGit2 size={18} className="text-muted shrink-0" />
-                <span className="flex-1 min-w-0 truncate">{p.displayName}</span>
-                {p.isStarred ? <Star size={12} className="text-accent shrink-0" fill="currentColor" /> : null}
+          {section('현재 작업')}
+          <div className="space-y-2 px-1" data-testid="drawer-current">
+            {project ? (
+              <button type="button" className={card} onClick={() => open(projectPath)} aria-current={pathname === projectPath ? 'page' : undefined}>
+                <div className="flex items-center gap-1.5 text-[11px] text-muted"><FolderGit2 size={13} /> 프로젝트</div>
+                <div className="mt-0.5 truncate text-[15px] font-medium">{project.displayName}</div>
+                <div className="truncate text-[12px] text-muted">{project.fullPath}</div>
               </button>
-            );
-          })}
-          {projects && projects.length === 0 ? <div className="px-3 py-2 text-[13px] text-muted">프로젝트가 없습니다</div> : null}
-          <button type="button" className={`${row(pathname === '/projects')} text-accent`} onClick={() => open('/projects')}>모든 프로젝트{projects && projects.length > 8 ? ` (${projects.length})` : ''}</button>
+            ) : (
+              <div className="rounded-xl border border-dashed border-line px-3 py-2.5 text-[13px] text-muted">선택된 프로젝트가 없습니다 · 홈의 프로젝트 탭에서 고르거나 추가하세요</div>
+            )}
+            {conversation ? (
+              <button type="button" className={card} onClick={() => open(`/session/${encodeURIComponent(conversation.sessionId)}`)}>
+                <div className="flex items-center gap-1.5 text-[11px] text-muted">
+                  <MessageSquare size={13} /> {isRunning ? '진행 중인 대화' : '최근 대화'}
+                  {isRunning ? <span className="ml-auto flex items-center gap-1 text-accent"><span className="h-1.5 w-1.5 rounded-full bg-accent m-pulse" />응답 중</span> : null}
+                </div>
+                <div className="mt-0.5 truncate text-[15px] font-medium">{conversation.title || '(제목 없음)'}</div>
+                {conversation.projectName && conversation.projectId !== project?.projectId ? <div className="truncate text-[12px] text-muted">{conversation.projectName}</div> : null}
+              </button>
+            ) : null}
+            {others > 0 ? <button type="button" className="w-full px-2 py-1 text-left text-[13px] text-accent" onClick={() => open('/')}>다른 대화 {others}개 실행 중 ›</button> : null}
+          </div>
 
           {section('원격 PC')}
           <button type="button" className={row(pathname.startsWith('/screen'))} onClick={() => open('/screen')}><Monitor size={18} className="text-muted" /> 원격 제어</button>

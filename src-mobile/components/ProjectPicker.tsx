@@ -2,13 +2,13 @@ import { useEffect, useState } from 'react';
 
 import { api } from '@/modules/chat-core';
 import { BottomSheet } from '@m/components/BottomSheet';
+import { readCurrentProject, setCurrentProject, type CurrentProject } from '@m/lib/current';
 
-export type PickedProject = { projectId: string; displayName: string; fullPath: string };
-const KEY = 'm.project';
+export type PickedProject = CurrentProject;
 
-/** Used by ChatScreen to remember the project a new conversation starts in. */
+/** Used by ChatScreen: the project a new conversation starts in (the drawer's current project). */
 export function readLastProject(): PickedProject | null {
-  try { const raw = localStorage.getItem(KEY); return raw ? JSON.parse(raw) as PickedProject : null; } catch { return null; }
+  return readCurrentProject();
 }
 
 /** Used by ChatScreen: sheet listing the runtime's projects for a new conversation. */
@@ -23,11 +23,11 @@ export function ProjectPicker({ open, onClose, onPick }: { open: boolean; onClos
   }, [open]);
   return (
     <BottomSheet open={open} onClose={onClose} title="프로젝트">
-      {projects === null ? <div className="text-muted m-pulse">불러오는 중…</div> : projects.length === 0 ? <div className="text-muted">프로젝트가 없습니다. 작업대에서 먼저 만들어 주세요.</div> : (
+      {projects === null ? <div className="text-muted m-pulse">불러오는 중…</div> : projects.length === 0 ? <div className="text-muted">프로젝트가 없습니다. 홈의 프로젝트 탭에서 추가하세요.</div> : (
         <ul className="divide-y divide-line">
           {projects.map((project) => (
             <li key={project.projectId}>
-              <button type="button" className="w-full text-left py-3" onClick={() => { try { localStorage.setItem(KEY, JSON.stringify(project)); } catch { /* ignore */ } onPick(project); }}>
+              <button type="button" className="w-full text-left py-3" onClick={() => { setCurrentProject(project); onPick(project); }}>
                 <div className="text-[15px]">{project.displayName}</div>
                 <div className="text-[12px] text-muted truncate">{project.fullPath}</div>
               </button>

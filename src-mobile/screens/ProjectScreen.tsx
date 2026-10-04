@@ -5,7 +5,9 @@ import { useLocation, useParams } from 'react-router-dom';
 import { api } from '@/modules/chat-core';
 import { FilePeek } from '@m/components/FilePeek';
 import type { PickedProject } from '@m/components/ProjectPicker';
+import { ListSkeleton } from '@m/components/Skeleton';
 import { TopBar } from '@m/components/TopBar';
+import { setCurrentProject } from '@m/lib/current';
 import { relativeTime } from '@m/lib/format';
 import type { FileRef } from '@m/lib/peek';
 import { useGo, useParent } from '@m/lib/nav';
@@ -39,6 +41,9 @@ export function ProjectScreen() {
     }).catch(() => setError('프로젝트를 불러오지 못했습니다'));
   }, [project, projectId]);
 
+  // the project on show is the one a new conversation starts in (the drawer's "현재 작업")
+  useEffect(() => { if (project) setCurrentProject(project); }, [project]);
+
   const load = useCallback(async (offset: number) => {
     try {
       const response = await api.projectSessions(projectId, { limit: PAGE, offset });
@@ -54,7 +59,6 @@ export function ProjectScreen() {
 
   const newChat = () => {
     if (!project) return;
-    try { localStorage.setItem('m.project', JSON.stringify(project)); } catch { /* ignore */ }
     go('/new', { state: { project } });
   };
 
@@ -68,7 +72,7 @@ export function ProjectScreen() {
       />
       <main className="m-scroll flex-1 pb-24">
         {error ? <div className="p-4 text-danger text-sm">{error}</div> : null}
-        {sessions === null && !error ? <div className="p-4 text-muted text-sm m-pulse">불러오는 중…</div> : null}
+        {sessions === null && !error ? <ListSkeleton /> : null}
         {sessions && sessions.length === 0 ? <div className="p-6 text-center text-muted text-sm">이 프로젝트에 대화가 없습니다. 아래 + 로 시작하세요.</div> : null}
         <ul>
           {sessions?.map((s) => (

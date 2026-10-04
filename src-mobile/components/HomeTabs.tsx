@@ -1,6 +1,6 @@
 import { useGo } from '@m/lib/nav';
 
-/** Used by the two home screens (conversations, projects) as their title: switches between them. */
+/** Used by the two home screens as their title: "프로젝트 · 대화" (C-12.1). The root `/` stays the conversation list. */
 export function HomeTabs({ active }: { active: 'conversations' | 'projects' }) {
   const go = useGo();
   const tab = (key: 'conversations' | 'projects', label: string, path: string) => (
@@ -14,5 +14,5 @@ export function HomeTabs({ active }: { active: 'conversations' | 'projects' }) {
       {label}
     </button>
   );
-  return <div role="tablist" className="flex items-center gap-1">{tab('conversations', '대화', '/')}{tab('projects', '프로젝트', '/projects')}</div>;
+  return <div role="tablist" className="flex items-center gap-1">{tab('projects', '프로젝트', '/projects')}{tab('conversations', '대화', '/')}</div>;
 }

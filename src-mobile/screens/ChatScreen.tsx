@@ -21,6 +21,7 @@ import { DiffPeek } from '@m/components/DiffPeek';
 import { FilePeek } from '@m/components/FilePeek';
 import type { FileEdit, FileRef } from '@m/lib/peek';
 import { useGo, useParent } from '@m/lib/nav';
+import { setCurrentConversation, setCurrentProject } from '@m/lib/current';
 
 type SessionMeta = { id: string; provider: LLMProvider; projectId: string; projectPath: string; projectName: string; title: string };
 const PROVIDER_KEY = 'm.provider';
@@ -108,6 +109,13 @@ export function ChatScreen() {
     }).catch(() => { if (!cancelled) setLoadError('세션을 불러오지 못했습니다'); });
     return () => { cancelled = true; };
   }, [routeSessionId]);
+
+  // the drawer's "현재 작업": this conversation, and its project is where the next new conversation starts
+  useEffect(() => {
+    if (!meta) return;
+    setCurrentConversation({ sessionId: meta.id, title: meta.title, projectId: meta.projectId, projectName: meta.projectName, provider: meta.provider });
+    if (meta.projectId) setCurrentProject({ projectId: meta.projectId, displayName: meta.projectName, fullPath: meta.projectPath });
+  }, [meta]);
 
   // ---- history + live subscription ---------------------------------------------------------
   useEffect(() => {

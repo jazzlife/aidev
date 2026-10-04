@@ -5,6 +5,7 @@ import { api } from '@/modules/chat-core';
 import { aidevApi, useCreateProposals, type UnreadSession } from '@/modules/aidev-router';
 import { BottomSheet } from '@m/components/BottomSheet';
 import { HomeTabs } from '@m/components/HomeTabs';
+import { ListSkeleton } from '@m/components/Skeleton';
 import { TopBar } from '@m/components/TopBar';
 import { relativeTime } from '@m/lib/format';
 import { useLongPress } from '@m/lib/useLongPress';
@@ -123,7 +124,7 @@ export function SessionsScreen() {
       />
       <main className="m-scroll flex-1 pb-24">
         {error ? <div className="p-4 text-danger text-sm">{error}</div> : null}
-        {items === null && !error ? <div className="p-4 text-muted text-sm m-pulse">불러오는 중…</div> : null}
+        {items === null && !error ? <ListSkeleton /> : null}
         {items && items.length === 0 ? <div className="p-6 text-center text-muted text-sm">{hidden ? '숨긴 대화가 없습니다.' : '아직 대화가 없습니다. 아래 + 로 시작하세요.'}</div> : null}
         {!hidden ? creation.proposals?.map((entry) => (
           <div key={entry.id} className="mx-3 mt-3 rounded-xl2 border border-accent/40 bg-surface p-3" data-testid="create-proposal">
