@@ -156,8 +156,8 @@ describe('conversation search', () => {
     at('/');
     await settle();
     fireEvent.click(screen.getByLabelText('대화 검색'));
-    await settle();   // the search's code loads on the first tap
-    fireEvent.change(screen.getByLabelText('검색어'), { target: { value: '로' } });
+    // the search's code loads on the first tap: wait for it rather than a fixed time (a loaded CI box is slower)
+    fireEvent.change(await screen.findByLabelText('검색어', {}, { timeout: 5000 }), { target: { value: '로' } });
     await settle(350);
     expect(FakeEventSource.last).toBeNull();
     fireEvent.change(screen.getByLabelText('검색어'), { target: { value: '로그인' } });
