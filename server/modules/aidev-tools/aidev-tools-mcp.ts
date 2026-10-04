@@ -149,7 +149,7 @@ const tools: ToolDefinition[] = [
     name: 'platform_ship',
     description: [
       'Administrators only: release NadoVibe itself (the platform this chat runs on) from the AI-PC server — no other machine is involved.',
-      'Commit your change in a clone of the platform repository (github.com/jazzlife/aidev) under /workspace first; only committed work ships, and only commits that continue GitHub main (rebase onto origin/main otherwise).',
+      'Work in a clone of the platform repository under /workspace (no clone yet: `git clone https://github.com/jazzlife/aidev /workspace/aidev`; otherwise `git pull --rebase` first), follow its AGENTS.md, run the checks that cover your change (npm ci once, then e.g. npx tsc --noEmit -p tsconfig.json and the related tests), and commit. Only committed work ships, and only commits that continue GitHub main (rebase onto origin/main otherwise).',
       'The server then fetches that commit, runs typecheck, lint, client and server tests, packs the release, deploys it, checks that the new release is live (rolling back if not) and pushes the commit to GitHub main. No approval is asked; the checks are the gate.',
       'Returns a ship `id`; follow it with platform_ship_status{id, waitSec}. A frontend-only release restarts nothing; a server change restarts runtimes once their chats are idle, so this chat keeps running.',
     ].join(' '),
