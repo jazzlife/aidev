@@ -1027,20 +1027,20 @@
   user-select: text;
   -webkit-touch-callout: default;
 }
-/* Touch devices (tablets): the same everywhere except where text is the point — fields, the code
-   editor and the terminal. Chat text is copied with the message copy buttons. */
+/* Every device: the same everywhere except where text is the point — fields, the code editor and the
+   terminal. Chat text is copied with the message copy buttons. */
+body {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+input, textarea, [contenteditable="true"], .cm-editor, .cm-content, .xterm, .xterm * {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
 @media (pointer: coarse) {
-  body {
-    -webkit-user-select: none;
-    user-select: none;
-    -webkit-touch-callout: none;
-    -webkit-tap-highlight-color: transparent;
-  }
-  input, textarea, [contenteditable="true"], .cm-editor, .cm-content, .xterm, .xterm * {
-    -webkit-user-select: text;
-    user-select: text;
-    -webkit-touch-callout: default;
-  }
+  body { -webkit-tap-highlight-color: transparent; }
   img, a { -webkit-user-drag: none; }
 }
 /* Text inside the chrome that people copy by hand (pairing commands, codes, paths): selectable again,

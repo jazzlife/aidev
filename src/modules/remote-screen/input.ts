@@ -38,7 +38,7 @@ export function bindRemoteInput(canvas: HTMLCanvasElement, keys: HTMLTextAreaEle
     if (e.pointerType !== 'touch') keys.focus({ preventScroll: true });
     canvas.setPointerCapture?.(e.pointerId);
     const p = norm(e.clientX, e.clientY);
-    if (e.pointerType !== 'touch') { send({ t: 'button', b: buttonName(e.button), down: true, ...p }); return; }
+    if (e.pointerType !== 'touch') { ownsContext = e.button === 2; send({ t: 'button', b: buttonName(e.button), down: true, ...p }); return; }
     touches.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY });
     if (touches.size === 1) {
       longFired = false; dragging = false;
@@ -82,7 +82,11 @@ export function bindRemoteInput(canvas: HTMLCanvasElement, keys: HTMLTextAreaEle
     if (!longFired) { send({ t: 'move', ...p }); send({ t: 'button', b: 'left', down: true, ...p }); send({ t: 'button', b: 'left', down: false, ...p }); }
   };
   const onWheel = (e: WheelEvent) => { e.preventDefault(); const k = e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 400 : 1; send({ t: 'wheel', dx: e.deltaX * k, dy: e.deltaY * k }); };
-  const onContext = (e: Event) => e.preventDefault();
+  // A right press on the canvas owns the next context menu wherever it opens: Windows opens it on the
+  // release, so a right drag that ends off the canvas would otherwise get the browser's menu.
+  let ownsContext = false;
+  const onAnyDown = () => { ownsContext = false; };   // window capture: runs before onDown sets it again
+  const onContext = (e: Event) => { if (ownsContext || e.target === canvas) { e.preventDefault(); ownsContext = false; } };
   // ---- keyboard -------------------------------------------------------------------------------------
   const mods = (e: KeyboardEvent) => {
     const s = sticky();
@@ -114,7 +118,8 @@ export function bindRemoteInput(canvas: HTMLCanvasElement, keys: HTMLTextAreaEle
   canvas.addEventListener('pointerup', onUp);
   canvas.addEventListener('pointercancel', onUp);
   canvas.addEventListener('wheel', onWheel, { passive: false });
-  canvas.addEventListener('contextmenu', onContext);
+  window.addEventListener('pointerdown', onAnyDown, true);
+  window.addEventListener('contextmenu', onContext, true);
   keys.addEventListener('keydown', onKeyDown);
   keys.addEventListener('input', onInput);
   keys.addEventListener('compositionend', onCompositionEnd);
@@ -125,7 +130,8 @@ export function bindRemoteInput(canvas: HTMLCanvasElement, keys: HTMLTextAreaEle
     canvas.removeEventListener('pointerup', onUp);
     canvas.removeEventListener('pointercancel', onUp);
     canvas.removeEventListener('wheel', onWheel);
-    canvas.removeEventListener('contextmenu', onContext);
+    window.removeEventListener('pointerdown', onAnyDown, true);
+    window.removeEventListener('contextmenu', onContext, true);
     keys.removeEventListener('keydown', onKeyDown);
     keys.removeEventListener('input', onInput);
     keys.removeEventListener('compositionend', onCompositionEnd);

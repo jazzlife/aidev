@@ -28,13 +28,11 @@ if (!rootElement) {
   throw new Error('Unable to mount the app: #root is missing from the document')
 }
 
-// Touch devices: the browser's long-press menu never opens outside text fields, the editor and the
-// terminal (their own menus/selection still work); app menus take its place.
-if (window.matchMedia('(pointer: coarse)').matches) {
-  document.addEventListener('contextmenu', (event) => {
-    if (!(event.target instanceof Element) || !event.target.closest('input, textarea, [contenteditable="true"], .cm-editor, .xterm')) event.preventDefault();
-  });
-}
+// The browser's context menu (right click, long press) never opens outside text fields, the editor, the
+// terminal and text marked copyable (their own menus/selection still work); app menus take its place.
+document.addEventListener('contextmenu', (event) => {
+  if (!(event.target instanceof Element) || !event.target.closest('input, textarea, [contenteditable="true"], .cm-editor, .xterm, .aidev-selectable')) event.preventDefault();
+});
 
 ReactDOM.createRoot(rootElement).render(
   <React.StrictMode>
