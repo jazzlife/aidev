@@ -1,7 +1,7 @@
-import { useState } from 'react';
-import { AlertTriangle, ChevronDown, ChevronRight, FileDiff, FileText, Wrench } from 'lucide-react';
+import { useEffect, useState } from 'react';
+import { AlertTriangle, ChevronDown, ChevronRight, FileDiff, FileText, Paperclip, Wrench } from 'lucide-react';
 
-import { parseToolPayload, type NormalizedMessage } from '@/modules/chat-core';
+import { api, parseToolPayload, type NormalizedMessage } from '@/modules/chat-core';
 import { Prose } from '@m/lib/markdown';
 import { clampText } from '@m/lib/format';
 import { useLongPress } from '@m/lib/useLongPress';
@@ -18,6 +18,40 @@ function summarizeInput(input: unknown): string {
   return clampText(JSON.stringify(record), 120);
 }
 
+type MessageImage = NonNullable<NormalizedMessage['images']>[number];
+
+/** One sent image: inline data (history, or this phone's own echo) or the stored file fetched with the auth header. */
+function SentImage({ image }: { image: MessageImage }) {
+  const [src, setSrc] = useState<string | null>(image.data ?? null);
+  useEffect(() => {
+    if (image.data || !image.path) return undefined;
+    const filename = image.path.split(/[\\/]/).pop() ?? '';
+    const controller = new AbortController();
+    let url: string | null = null;
+    api.assets.image(filename, { signal: controller.signal }).then(async (response) => {
+      if (!response.ok) return;
+      url = URL.createObjectURL(await response.blob());
+      setSrc(url);
+    }).catch(() => undefined);
+    return () => { controller.abort(); if (url) URL.revokeObjectURL(url); };
+  }, [image.data, image.path]);
+  return src ? <img src={src} alt={image.name ?? ''} className="h-24 max-w-[60vw] rounded-xl object-cover border border-line" /> : <div className="h-24 w-24 rounded-xl bg-elevated m-pulse" aria-label={image.name ?? '이미지'} />;
+}
+
+/** The images and files sent with a user message. */
+function SentAttachments({ message }: { message: NormalizedMessage }) {
+  const images = message.images ?? [];
+  const imagePaths = new Set(images.map((image) => image.path).filter(Boolean));
+  const files = (message.files ?? []).filter((file) => !file.path || !imagePaths.has(file.path));
+  if (!images.length && !files.length) return null;
+  return (
+    <div className="flex flex-wrap justify-end gap-1.5" data-testid="sent-attachments">
+      {images.map((image, index) => <SentImage key={image.path ?? index} image={image} />)}
+      {files.map((file, index) => <span key={file.path ?? index} className="flex items-center gap-1 rounded-lg border border-line bg-surface px-2 py-1 text-[12px]"><Paperclip size={12} className="text-muted" />{file.name ?? file.path?.split(/[\\/]/).pop()}</span>)}
+    </div>
+  );
+}
+
 export type PeekHandlers = {
   /** opens a file (and line) in the file peek */
   onPeekFile?: (ref: FileRef) => void;
@@ -26,14 +60,15 @@ export type PeekHandlers = {
 };
 
 /** Used by MessageList: one transcript row — user bubble, assistant prose, or a collapsible tool/thinking card. */
-export function MessageBubble({ message, result, onLongPress, onPeekFile, onPeekDiff }: { message: NormalizedMessage; result?: NormalizedMessage | null; /** text messages: long-press opens the copy sheet (text selection is off in the app) */ onLongPress?: (text: string) => void } & PeekHandlers) {
+export function MessageBubble({ message, result, onLongPress, onPeekFile, onPeekDiff }: { message: NormalizedMessage; result?: NormalizedMessage | null; /** text messages: long-press opens the copy sheet (text selection is off in the app) */ onLongPress?: (text: string, message: NormalizedMessage) => void } & PeekHandlers) {
   const [open, setOpen] = useState(false);
   const text = message.kind === 'text' || message.kind === 'stream_delta' ? String((message.role === 'user' ? message.displayText || message.content : message.content) ?? '') : '';
-  const press = useLongPress(() => { if (text) onLongPress?.(text); });
+  const press = useLongPress(() => { if (text) onLongPress?.(text, message); });
   if (message.kind === 'text' && message.role === 'user') {
     return (
-      <div className="flex justify-end px-3 py-1">
-        <div className="max-w-[85%] rounded-2xl rounded-br-md bg-accent text-accent-ink px-3.5 py-2 text-[15px] whitespace-pre-wrap break-words" {...press}>{text}</div>
+      <div className="flex flex-col items-end gap-1 px-3 py-1">
+        <SentAttachments message={message} />
+        {text ? <div className="max-w-[85%] rounded-2xl rounded-br-md bg-accent text-accent-ink px-3.5 py-2 text-[15px] whitespace-pre-wrap break-words" {...press}>{text}</div> : null}
       </div>
     );
   }

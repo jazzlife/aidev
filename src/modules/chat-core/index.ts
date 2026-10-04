@@ -23,3 +23,8 @@ export { WebSocketProvider, useWebSocket } from '@/shared/context/WebSocketConte
 export { AuthProvider, useAuth } from '@/modules/auth';
 export { api, authenticatedFetch, readApiJson } from '@/shared/api';
 export type { NormalizedMessage, ServerEvent, PendingPermissionRequest, LLMProvider, ProjectSession } from '@/shared/types';
+// Tool permissions shared with the workbench (C-12.2): the "항상 허용" rule and the server-synced allow-list.
+export { buildClaudeToolPermissionEntry, grantClaudeToolPermission } from '@/modules/chat/utils/chatPermissions';
+export { getClaudeSettings } from '@/modules/chat/utils/chatStorage';
+export { readUserPreference, writeUserPreference, subscribeToUserPreferences } from '@/shared/userSettings';
+export type { PermissionMode, Question } from '@/shared/types';
