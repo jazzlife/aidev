@@ -197,8 +197,12 @@ async function shipContainers(running = false) {
   return await docker('GET', `/containers/json?all=1&filters=${filters}`) as Array<{ Id: string; Names: string[]; State: string; Created: number; Labels: Record<string, string> }>;
 }
 async function shipStart(request: ShipRequest) {
-  const busy = await shipContainers(true);
-  if (busy.length) throw Object.assign(new Error(`a ship is already running (${busy[0].Labels[shipLabel]})`), { status: 409 });
+  // a ship that has its result and only waits for idle runtimes to restart gives way (this ship restarts them too)
+  for (const c of await shipContainers(true)) {
+    const log = await dockerText(`/containers/${c.Id}/logs?stdout=1&stderr=1&tail=400`).catch(() => '');
+    if (!readShipLog(log).result) throw Object.assign(new Error(`a ship is already running (${c.Labels[shipLabel]})`), { status: 409 });
+    await docker('POST', `/containers/${c.Id}/stop?t=5`, undefined, [204, 304]);
+  }
   if (!(await lookup('volumes', shipVolume))) await docker('POST', '/volumes/create', { Name: shipVolume, Labels: { [shipLabel]: 'build' } });
   const name = `aidev-ship-${request.id}`;
   await docker('POST', `/containers/create?name=${name}`, {

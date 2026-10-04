@@ -110,12 +110,11 @@ if [ $NEEDS_PUSH = 1 ]; then
 fi
 echo "SHIP_RESULT ok $SHA release $REL is live"
 
-# runtimes that had a live session kept the old code: restart each once its sessions end (up to 30 min)
-if grep -q 'deferred (live sessions)' "$DEPLOY_LOG"; then
-  for _ in $(seq 1 30); do
-    sleep 60
-    bash deploy/aidev/release/release.sh restart --drain runtimes 2>&1 | tee "$DRAIN_LOG" | tail -2
-    grep -q 'deferred (live sessions)' "$DRAIN_LOG" || { echo " ✓ every runtime runs $REL"; exit 0; }
-  done
-  echo " ! some runtimes still run the old release (live sessions); the next ship restarts them"
-fi
+# runtimes still on an older release (a live chat deferred them, now or in an earlier ship): restart each once its
+# chats are idle, for up to 30 min (a newer ship stops this wait and takes over)
+for _ in $(seq 1 31); do
+  bash deploy/aidev/release/release.sh restart --drain runtimes 2>&1 | tee "$DRAIN_LOG" | tail -2
+  grep -q 'deferred (live sessions)' "$DRAIN_LOG" || { echo " ✓ every runtime runs $REL"; exit 0; }
+  sleep 60
+done
+echo " ! some runtimes still run an older release (live chats); the next ship restarts them"
