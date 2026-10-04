@@ -22,12 +22,18 @@ const api = {
   providers: {
     capabilities: vi.fn(() => json({ success: true, data: { providers: [{ provider: 'claude', permissionModes: ['default', 'plan'], defaultPermissionMode: 'default', supportsMessageEditing: true, supportsSessionForking: true }] } })),
     createSession: vi.fn(),
+    skills: vi.fn(() => json({ data: { skills: [] } })),
     sessionTokenUsage: vi.fn((_id: string) => json({ success: true, data: { used: 170_000, total: 200_000 } })),
   },
   scheduledMessages: {
     list: vi.fn((_id?: string) => json({ success: true, data: [{ id: 'm1', sessionId: 's1', content: '배포 확인', options: {}, scheduledFor: '2026-10-05T00:00:00.000Z', status: 'pending', failureReason: null, createdAt: '' }] })),
     create: vi.fn((_body: unknown) => json({ success: true, data: {} }, 201)),
     cancel: vi.fn((_id: string) => json({ success: true })),
+  },
+  voice: { health: vi.fn(() => json({ configured: false })) },
+  commands: {
+    list: vi.fn(() => json({ builtIn: [{ name: '/help', description: '도움말' }], custom: [] })),
+    execute: vi.fn((_body: unknown) => json({ type: 'builtin', action: 'help', data: { content: '# 명령\n/help 도움말' } })),
   },
   forkSession: vi.fn((_id: string, _body?: unknown) => json({ success: true, data: { sessionId: 's9' } }, 201)),
   assets: { uploadFiles: vi.fn((_form: FormData) => json({ attachments: [{ path: '/assets/1-shot.png', name: 'shot.png', mimeType: 'image/png', size: 3 }] })), image: vi.fn(() => json({}, 404)) },
@@ -42,6 +48,8 @@ vi.mock('@/modules/chat-core', async () => {
     buildClaudeToolPermissionEntry: permissions.buildClaudeToolPermissionEntry,
     grantClaudeToolPermission: vi.fn(),
     readUserPreference: (_key: string, fallback: unknown) => fallback,
+    writeUserPreference: vi.fn(),
+    subscribeToUserPreferences: () => () => undefined,
     voicePlayer: { unlock: vi.fn(), toggle: vi.fn() },
     useWebSocket: () => ({ ws: {}, sendMessage: hoisted.sendMessage, subscribe: () => () => undefined, isConnected: true }),
     useChatRealtimeHandlers: (args: NonNullable<typeof hoisted.realtime>) => { hoisted.realtime = args; },
@@ -221,5 +229,18 @@ describe('chat screen', () => {
     fireEvent.click(screen.getByLabelText('예약 취소'));
     await settle();
     expect(api.scheduledMessages.cancel).toHaveBeenCalledWith('m1');
+  });
+
+  it('a `/` command runs from the menu and its result shows in a sheet', async () => {
+    open();
+    await settle();
+    type('/');
+    await settle();
+    fireEvent.click(screen.getByText('/help'));
+    await settle();
+    expect(api.commands.execute).toHaveBeenCalledWith({ commandName: '/help', commandPath: undefined, args: [], context: expect.objectContaining({ projectId: 'p1', projectPath: '/w/alpha', sessionId: 's1', provider: 'claude' }) });
+    expect(screen.getByTestId('command-result').textContent).toContain('/help 도움말');
+    expect((screen.getByPlaceholderText('명령을 입력하세요') as HTMLTextAreaElement).value).toBe('');
+    expect(sent()).toHaveLength(0);
   });
 });

@@ -16,6 +16,10 @@ import { usePreviewList } from '@/modules/remote-preview';
 import { useDebugSessions } from '@/modules/remote-debug';
 import { ConversationActions, sheetButton, type ConversationChange } from '@m/components/ConversationActions';
 import { ScheduleSheet, useScheduledMessages } from '@m/components/ScheduleSheet';
+import { ComposerAssist } from '@m/components/ComposerAssist';
+import { CommandResultSheet, type CommandResult } from '@m/components/CommandResultSheet';
+import { MicButton } from '@m/components/MicButton';
+import { trackCommandUse, type SlashCommand } from '@m/lib/composerAssist';
 import { exportConversation } from '@m/lib/exportMarkdown';
 import { MessageActions, type MessageTarget } from '@m/components/MessageActions';
 import { EscalationPrompt } from '@m/components/EscalationPrompt';
@@ -49,6 +53,12 @@ export function ChatScreen() {
   const sessionStore = useSessionStore();
   const { beforeSend, reportOutcome } = useAidevRouting();
   const [draft, setDraft] = useState('');
+  // where the cursor is in the draft (the `/` and `@` suggestions read the text before it)
+  const [cursor, setCursor] = useState(0);
+  // a `/` command's result on show (or a project command waiting for confirmation)
+  const [commandResult, setCommandResult] = useState<CommandResult | null>(null);
+  // why the last dictation gave no text
+  const [voiceError, setVoiceError] = useState<string | null>(null);
 
   const [meta, setMeta] = useState<SessionMeta | null>(null);
   // D-04: "만들기" on a proposal opens this new chat with the creation turn; it goes out once a project is chosen
@@ -358,6 +368,31 @@ export function ChatScreen() {
     else if (change.kind === 'hidden' || change.kind === 'deleted') navigate(meta?.projectId ? `/projects/${encodeURIComponent(meta.projectId)}` : '/');
   };
 
+  const assistProject = meta?.projectId ? { projectId: meta.projectId, fullPath: meta.projectPath } : !meta && project ? { projectId: project.projectId, fullPath: project.fullPath } : null;
+  const runCommand = async (command: SlashCommand) => {
+    if (!assistProject) return;
+    trackCommandUse(assistProject.projectId, command.name);
+    setRestore({ text: '', n: Date.now() });
+    setActionError(null);
+    try {
+      const response = await api.commands.execute({
+        commandName: command.name, commandPath: command.path, args: [],
+        context: { projectPath: assistProject.fullPath, projectId: assistProject.projectId, sessionId: meta?.id ?? null, provider, model: null, tokenUsage: tokenBudget },
+      });
+      const body = await response.json().catch(() => ({})) as { type?: string; action?: string; data?: Record<string, unknown>; content?: string; hasBashCommands?: boolean; message?: string; error?: string };
+      if (!response.ok) throw new Error(body.message || body.error || `실패했습니다 (${response.status})`);
+      if (body.type === 'builtin') {
+        if (body.action === 'config') navigate('/settings');
+        else setCommandResult({ type: 'builtin', action: body.action ?? '', data: body.data });
+      } else if (body.type === 'custom') {
+        if (body.hasBashCommands) setCommandResult({ type: 'custom', command: command.name, content: body.content ?? '', hasBashCommands: true });
+        else void send(body.content ?? '');
+      }
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : '명령을 실행하지 못했습니다');
+    }
+  };
+
   const messages = sessionId ? sessionStore.getMessages(sessionId) : [];
   // an echo's image previews go once the server's copy has replaced it
   useEffect(() => {
@@ -453,7 +488,10 @@ export function ChatScreen() {
           <span className="shrink-0 text-accent">열기</span>
         </button>
       ) : null}
-      <Composer busy={busy} restore={restore} disabled={!isConnected} onDraftChange={setDraft}
+      {voiceError ? <div className="px-4 py-1 text-[13px] text-danger" role="alert">{voiceError}</div> : null}
+      <ComposerAssist draft={draft} cursor={cursor} project={assistProject} provider={provider} onInsert={(text) => setRestore({ text, n: Date.now() })} onCommand={(command) => { void runCommand(command); }} />
+      <Composer busy={busy} restore={restore} disabled={!isConnected} onDraftChange={(text, at) => { setDraft(text); setCursor(at); }}
+        extra={<MicButton disabled={!isConnected} onError={setVoiceError} onText={(text) => setRestore({ text: draft.trim() ? `${draft.trimEnd()} ${text}` : text, n: Date.now() })} />}
         onSend={(text, files) => {
           if (sendingRef.current) return false;
           // answering: the send waits its turn (typed again: added to the waiting one)
@@ -469,6 +507,7 @@ export function ChatScreen() {
           setScheduleSheet({ mode: 'create', text });
         } : undefined} />
       <PermissionSheet request={sheetRequest} provider={provider} onDecide={decidePermission} onAlwaysAllow={alwaysAllow} onLater={() => setLaterRequestId(waiting?.requestId ?? null)} />
+      <CommandResultSheet result={commandResult} onClose={() => setCommandResult(null)} onSend={(content) => { void send(content); }} />
       <PermissionModeSheet open={modeSheet} onClose={() => setModeSheet(false)} modes={permission.modes} mode={permission.mode} onChoose={permission.choose} />
       <FilePeek open={filePeek.open} onClose={() => setFilePeek({ open: false, file: null, fromSearch: false })} project={peekProject} file={filePeek.file} fromSearch={filePeek.fromSearch} onFile={(file) => setFilePeek({ open: true, file, fromSearch: file !== null })} />
       <DiffPeek edit={diffPeek} onClose={() => setDiffPeek(null)} onOpenFile={(path) => openFile({ path, line: null })} />

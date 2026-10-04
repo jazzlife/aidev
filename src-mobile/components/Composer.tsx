@@ -12,8 +12,8 @@ type ComposerProps = {
   onSend: (text: string, files: File[]) => boolean | void;
   onAbort: () => void;
   placeholder?: string;
-  /** the draft as typed (ChatScreen pre-judges it) */
-  onDraftChange?: (text: string) => void;
+  /** the draft as typed, with the cursor (ChatScreen pre-judges it and suggests `/` commands and `@` files) */
+  onDraftChange?: (text: string, cursor: number) => void;
   /** text (and files) put back after a send that did not happen, or a message to edit (a new `n` each time) */
   restore?: { text: string; files?: File[]; n: number } | null;
   /** the permission-mode pill: its short label, and what a tap opens */
@@ -43,7 +43,7 @@ export function Composer({ disabled, busy, onSend, onAbort, placeholder, onDraft
   const [files, setFiles] = useState<File[]>([]);
   // why a picked file was not taken (count or size), until the next pick
   const [fileError, setFileError] = useState<string | null>(null);
-  const setValue = (next: string) => { setValueState(next); onDraftChange?.(next); };
+  const setValue = (next: string, cursor = next.length) => { setValueState(next); onDraftChange?.(next, cursor); };
   const ref = useRef<HTMLTextAreaElement>(null);
   const picker = useRef<HTMLInputElement>(null);
   const thumbs = useThumbs(files);
@@ -51,7 +51,7 @@ export function Composer({ disabled, busy, onSend, onAbort, placeholder, onDraft
   useEffect(() => {
     if (!restore) return;
     setValueState(restore.text);
-    onDraftChange?.(restore.text);
+    onDraftChange?.(restore.text, restore.text.length);
     if (restore.files) setFiles(restore.files);
     requestAnimationFrame(() => { grow(); ref.current?.focus(); });
   }, [restore]);   // eslint-disable-line react-hooks/exhaustive-deps -- only a new restore
@@ -98,7 +98,8 @@ export function Composer({ disabled, busy, onSend, onAbort, placeholder, onDraft
             ))}
           </ul>
         ) : null}
-        <textarea ref={ref} rows={1} value={value} placeholder={placeholder ?? '명령을 입력하세요'} disabled={disabled} onChange={(event) => { setValue(event.target.value); grow(); }} onKeyDown={onKey}
+        <textarea ref={ref} rows={1} value={value} placeholder={placeholder ?? '명령을 입력하세요'} disabled={disabled} onChange={(event) => { setValue(event.target.value, event.target.selectionStart ?? event.target.value.length); grow(); }} onKeyDown={onKey}
+          onSelect={(event) => onDraftChange?.(event.currentTarget.value, event.currentTarget.selectionStart ?? event.currentTarget.value.length)}
           className="w-full resize-none bg-transparent outline-none text-[16px] leading-6 px-1.5 py-1.5 max-h-40 placeholder:text-muted" />
         <div className="flex items-center gap-1 pb-1">
           <input ref={picker} type="file" multiple hidden data-testid="composer-file-input" onChange={(event) => pick(event.target.files)} />
