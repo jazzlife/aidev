@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
 import { Clock, Download, Gauge, MoreHorizontal, Search } from 'lucide-react';
 
@@ -19,6 +19,7 @@ import { ScheduleSheet, useScheduledMessages } from '@m/components/ScheduleSheet
 import { ComposerAssist } from '@m/components/ComposerAssist';
 import { CommandResultSheet, type CommandResult } from '@m/components/CommandResultSheet';
 import { MicButton } from '@m/components/MicButton';
+import { TodoProgress, latestTodos } from '@m/components/ToolCards';
 import { trackCommandUse, type SlashCommand } from '@m/lib/composerAssist';
 import { exportConversation } from '@m/lib/exportMarkdown';
 import { MessageActions, type MessageTarget } from '@m/components/MessageActions';
@@ -394,6 +395,7 @@ export function ChatScreen() {
   };
 
   const messages = sessionId ? sessionStore.getMessages(sessionId) : [];
+  const todos = useMemo(() => latestTodos(messages), [messages]);
   // an echo's image previews go once the server's copy has replaced it
   useEffect(() => {
     for (const [echoId, entry] of echoPreviewsRef.current) {
@@ -488,6 +490,7 @@ export function ChatScreen() {
           <span className="shrink-0 text-accent">열기</span>
         </button>
       ) : null}
+      <TodoProgress todos={todos} />
       {voiceError ? <div className="px-4 py-1 text-[13px] text-danger" role="alert">{voiceError}</div> : null}
       <ComposerAssist draft={draft} cursor={cursor} project={assistProject} provider={provider} onInsert={(text) => setRestore({ text, n: Date.now() })} onCommand={(command) => { void runCommand(command); }} />
       <Composer busy={busy} restore={restore} disabled={!isConnected} onDraftChange={(text, at) => { setDraft(text); setCursor(at); }}

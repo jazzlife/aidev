@@ -5,6 +5,7 @@ import { api, parseToolPayload, type NormalizedMessage } from '@/modules/chat-co
 import { Prose } from '@m/lib/markdown';
 import { clampText, summarizeToolInput as summarizeInput } from '@m/lib/format';
 import { useLongPress } from '@m/lib/useLongPress';
+import { toolCardFor } from '@m/components/ToolCards';
 import { fileEditFromTool, filePathFromTool, type FileEdit, type FileRef } from '@m/lib/peek';
 
 type MessageImage = NonNullable<NormalizedMessage['images']>[number];
@@ -72,6 +73,9 @@ export function MessageBubble({ message, result, onLongPress, onPeekFile, onPeek
     );
   }
   if (message.kind === 'tool_use') {
+    // checklists, subagents, plans and answered questions get their own card
+    const card = toolCardFor(message, result);
+    if (card) return card;
     const isError = Boolean(result?.toolResult?.isError);
     const edit = fileEditFromTool(message.toolName, message.toolInput);
     const readPath = edit?.path ?? filePathFromTool(message.toolName, message.toolInput);
