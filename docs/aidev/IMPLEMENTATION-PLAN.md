@@ -534,6 +534,8 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 
 서버 쪽 준비(1회): `~/aidev/ship-secrets/github-token`(contents:write, 사용자가 설치), 계정 역할 `manage-users role <user> admin`, 볼륨 `aidev_ship`(첫 배포 때 자동). 러너 바이너리는 현재 운영 릴리스의 것을 그대로 넘겨받는다 — 러너 갱신은 GitHub CI(`runner-v<버전>` 태그, 공개 release가 있으면 옮기지 않음)와 `aidev-runner update`.
 
+**채팅 밖에서(예: Mac의 Claude Code).** GitHub main에 push한 뒤 `ops/relay.sh ship <관리자> [ref]` — 서버의 `ship-request.sh`가 같은 배포를 요청하고 따라간다(빌드·배포는 서버, Mac은 요청만). 서버에서 직접: `bash ~/aidev/deploy/release/ship-request.sh <관리자> [ref]`. 서버 GitHub 토큰은 사용자가 `ops/relay.sh github-token`으로 한 번 설치.
+
 **비상 — Mac 중계(서버 자체 배포가 망가졌을 때만).** 깨끗한 체크아웃에서 `bash deploy/aidev/release/pack.sh ../ops/releases` → `cd ops && ./relay.sh deploy releases/release-<sha12>.tgz` → `./relay.sh status` · `./relay.sh verify jazzlife`; 되돌리기 `./relay.sh rollback [sha]`. 도구 이미지 변경 시 `laya-image.sh build` / `runtime-image.sh build`.
 
 ---

@@ -5,7 +5,10 @@
 # 서버에는 저장소도, 이미지 빌드도 없다. 단일 명령:
 #
 #   ./relay.sh bootstrap <payload-dir>        최초 1회: 볼륨 모델로 마이그레이션 (bootstrap-*/ 디렉터리 전체를 스트림)
-#   ./relay.sh deploy <release-<sha>.tgz> [restart opts]
+#   ./relay.sh ship <admin-user> [ref]       기본 배포(OPS-02): 서버가 GitHub <ref>(기본 main)를 스스로 검사·빌드·배포·확인
+#                                             (서버의 ship-request.sh → runtime-manager의 aidev-ship 컨테이너). Mac은 요청만 보낸다
+#   ./relay.sh github-token                   서버 자체 배포가 GitHub main에 push할 토큰을 설치 (사용자가 직접: gh auth token 또는 stdin)
+#   ./relay.sh deploy <release-<sha>.tgz> [restart opts]   (비상용: Mac에서 만든 릴리스를 직접 배포)
 #                                             일반 배포: tgz 바이트 | ssh 'deploy.sh -'  → install/diff/activate/restart
 #   ./relay.sh rollback [sha]                 이전 릴리스로 원자 전환 + 변경 컴포넌트 재시작
 #   ./relay.sh status | list                  서버 릴리스 상태
@@ -167,6 +170,19 @@ do_scripts() {
   # COPYFILE_DISABLE: no macOS ._* metadata files on the server
   logto "scripts-$(stamp)" bash -c "COPYFILE_DISABLE=1 tar cz --exclude='._*' --exclude='.DS_Store' -C '$dir' . | ssh -S '$SOCK' '$HOST' 'set -e; tar xz -C $REMOTE_DEPLOY/release/; chmod +x $REMOTE_DEPLOY/release/*.sh; ls -la $REMOTE_DEPLOY/release/'"
 }
+do_ship() {
+  local user="${1:?admin username}" ref="${2:-main}"
+  ensure_master
+  logto "ship-$(stamp)" rsh "bash $REMOTE_DEPLOY/release/ship-request.sh '$user' '$ref'"
+}
+do_github_token() {
+  # the token never passes through Claude: the user runs this; it comes from `gh auth token` or stdin
+  local token
+  if [ -t 0 ]; then token=$(gh auth token 2>/dev/null) || { echo "gh auth login 먼저, 또는: echo <token> | ./relay.sh github-token"; exit 1; }; else token=$(cat); fi
+  [ -n "$token" ] || { echo "빈 토큰"; exit 1; }
+  ensure_master
+  printf '%s' "$token" | rsh 'umask 077; mkdir -p ~/aidev/ship-secrets && cat > ~/aidev/ship-secrets/github-token && echo "installed ~/aidev/ship-secrets/github-token ($(wc -c < ~/aidev/ship-secrets/github-token) bytes)"'
+}
 do_sh() {
   local script="${1:?local script}"; shift || true; [ -f "$script" ] || { echo "$script 없음"; exit 1; }
   ensure_master
@@ -209,6 +225,8 @@ case "${1:-}" in
   bootstrap) do_bootstrap "${2:-}" ;;
   scripts)   do_scripts "${2:-}" ;;
   sh)        shift; do_sh "$@" ;;
+  ship)      shift; do_ship "$@" ;;
+  github-token) do_github_token ;;
   verify)    shift; do_verify "$@" ;;
   claude-token) shift; do_claude_token "$@" ;;
   logs)      shift; do_logs "$@" ;;
@@ -221,5 +239,5 @@ case "${1:-}" in
   gpu)       do_gpu ;;
   fetch)     do_fetch ;;
   watch)     do_watch ;;
-  *) sed -n '3,24p' "$0"; exit 1 ;;
+  *) sed -n '3,27p' "$0"; exit 1 ;;
 esac
