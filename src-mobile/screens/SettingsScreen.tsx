@@ -5,6 +5,7 @@ import { aidevApi, claudeAuth, routingStore, useClaudeAuth, useRoutingState, typ
 import { EffortCapControl } from '@m/components/EffortCapControl';
 import { ClaudeLoginSheet } from '@m/components/ClaudeLoginSheet';
 import { KnowledgeSection } from '@m/components/KnowledgeSection';
+import { PermissionRulesSection, VoiceSection } from '@m/components/SettingsSections';
 import { disablePush, enablePush, pushState, type PushState } from '@m/lib/push';
 
 const PUSH_LABEL: Record<PushState, string> = { on: '켜짐', off: '꺼짐', denied: '브라우저에서 차단됨 (설정에서 허용)', needs_install: '홈 화면에 추가한 앱에서 켤 수 있습니다', unsupported: '이 브라우저는 지원하지 않습니다' };
@@ -17,7 +18,7 @@ const MODES: Array<{ value: RoutingMode; label: string; hint: string }> = [
   { value: 'off', label: '끄기', hint: '라우팅 없이 기본 설정으로 전송' },
 ];
 
-/** Mobile settings: routing mode, engine status, UI switch, sign out. */
+/** Mobile settings: routing mode, effort cap, engines, saved permission rules, voice, notifications, UI switch, sign out. */
 export function SettingsScreen() {
   const { user, logout } = useAuth();
   useParent('/');
@@ -79,6 +80,8 @@ export function SettingsScreen() {
           </div>
           {engines ? <div className="text-[12px] text-muted mt-2">기본 엔진: {engines.default_engine ?? '자동 선택'}</div> : null}
         </section>
+        <PermissionRulesSection />
+        <VoiceSection />
         <section>
           <div className="text-[12px] uppercase tracking-wide text-muted mb-2">알림</div>
           <div className="rounded-xl2 border border-line bg-surface divide-y divide-line">

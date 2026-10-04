@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { api, readUserPreference, subscribeToUserPreferences, writeUserPreference } from '@/modules/chat-core';
 import { transcribeVoice } from '@/shared/api';
-import { readVoiceConfig, VOICE_CONFIG_SYNC_EVENT } from '@/shared/voiceConfig';
+import { readVoiceConfig, VOICE_CONFIG_STORAGE_KEY, VOICE_CONFIG_SYNC_EVENT, type VoiceConfig } from '@/shared/voiceConfig';
 
 /**
  * Voice on the phone (C-12.6, C-12.9), judged like the workbench's `useVoiceAvailable` without its UI-preferences
@@ -44,7 +44,7 @@ export function useVoiceStatus(): VoiceStatus {
     let alive = true;
     const check = () => {
       if (readVoiceConfig().baseUrl.trim()) { setBackend('own'); return; }
-      setBackend('checking');
+      // a re-check (a voice setting changed) keeps showing the last answer until the new one arrives
       void checkVoiceHealth().then((ok) => { if (alive) setBackend(ok ? 'server' : 'none'); });
     };
     check();
@@ -122,4 +122,14 @@ export function useDictation(onText: (text: string) => void) {
 
   const stop = useCallback(() => { if (recorder.current?.state === 'recording') recorder.current.stop(); }, []);
   return { state, error, start, stop };
+}
+
+/** Used by the settings screen: the read-aloud voice on this device (the workbench's voice settings key). */
+export function writeVoiceConfig(patch: Partial<VoiceConfig>) {
+  try {
+    const next: Partial<VoiceConfig> = { ...readVoiceConfig(), ...patch };
+    if (!next.ttsFormat?.trim()) delete next.ttsFormat;
+    localStorage.setItem(VOICE_CONFIG_STORAGE_KEY, JSON.stringify(next));
+    window.dispatchEvent(new Event(VOICE_CONFIG_SYNC_EVENT));
+  } catch { /* storage off */ }
 }
