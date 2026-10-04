@@ -5,7 +5,7 @@ import { api, readApiJson } from '@/shared/api';
 import { copyTextToClipboard } from '@/shared/utils';
 import type { RunnerFile } from '@/shared/types';
 import { DevicesSection } from '@/modules/remote-target/DevicesSection';
-import { guessPlatform, pairingSteps } from '@/modules/remote-target/utils/runnerPairing';
+import { guessPlatform, pairingSteps } from '@/shared/runnerPairing';
 
 /** A developer PC registered for remote run/debug, as the gateway reports it (GET /api/aidev/targets). */
 type Target = {

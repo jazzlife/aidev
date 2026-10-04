@@ -2,7 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { Check, Copy, Plus, RefreshCw, Share2, Trash2 } from 'lucide-react';
 
 import { api, readApiJson } from '@/modules/chat-core';
-import { pairingSteps } from '@/modules/remote-target';
+import { pairingSteps } from '@/shared/runnerPairing';
 import type { RunnerFile } from '@/shared/types';
 import { BottomSheet } from '@m/components/BottomSheet';
 import { TopBar } from '@m/components/TopBar';

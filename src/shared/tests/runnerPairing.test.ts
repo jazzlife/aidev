@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { guessPlatform, pairingSteps } from '@/modules/remote-target/utils/runnerPairing';
+import { guessPlatform, pairingSteps } from '@/shared/runnerPairing';
 
 const f = (platform: string) => ({ name: `aidev-runner-0.9.0-${platform}${platform.startsWith('win') ? '.exe' : ''}`, platform, version: '0.9.0', size: 1, sha256: 'x' });
 const shipped = ['linux-arm64', 'linux-armv7', 'linux-x64', 'win-x64'].map(f);

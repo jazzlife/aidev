@@ -63,11 +63,13 @@ export type PeekHandlers = {
 export function MessageBubble({ message, result, onLongPress, onPeekFile, onPeekDiff }: { message: NormalizedMessage; result?: NormalizedMessage | null; /** text messages: long-press opens the copy sheet (text selection is off in the app) */ onLongPress?: (text: string, message: NormalizedMessage) => void } & PeekHandlers) {
   const [open, setOpen] = useState(false);
   const text = message.kind === 'text' || message.kind === 'stream_delta' ? String((message.role === 'user' ? message.displayText || message.content : message.content) ?? '') : '';
-  const press = useLongPress(() => { if (text) onLongPress?.(text, message); });
+  const hasAttachments = Boolean(message.images?.length || message.files?.length);
+  // a message of attachments only can be held too (its actions: fork here)
+  const press = useLongPress(() => { if (text || hasAttachments) onLongPress?.(text, message); });
   if (message.kind === 'text' && message.role === 'user') {
     return (
       <div className="flex flex-col items-end gap-1 px-3 py-1">
-        <SentAttachments message={message} />
+        <div {...press}><SentAttachments message={message} /></div>
         {text ? <div className="max-w-[85%] rounded-2xl rounded-br-md bg-accent text-accent-ink px-3.5 py-2 text-[15px] whitespace-pre-wrap break-words" {...press}>{text}</div> : null}
       </div>
     );

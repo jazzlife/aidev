@@ -29,6 +29,8 @@ import { MODE_LABELS, adoptDraftPermissionMode, buildSendOptions, uploadAttachme
 type SessionMeta = { id: string; provider: LLMProvider; projectId: string; projectPath: string; projectName: string; title: string };
 /** A send waiting for the agent to finish (typed while it answered). */
 type Queued = { text: string; files: File[] };
+/** What the router (and the title) reads for a send of attachments only: the server takes an empty text, the router cannot. */
+const attachmentLabel = (names: string[]) => `첨부 ${names.length}개 (${names.slice(0, 3).join(', ')}${names.length > 3 ? ' …' : ''})`;
 const isImage = (a: { mimeType?: string; name?: string; path?: string }) => Boolean(a.mimeType?.startsWith('image/')) || /\.(gif|jpe?g|png|webp|heic)$/i.test(a.name || a.path || '');
 const PROVIDER_KEY = 'm.provider';
 const readProvider = (): LLMProvider => { try { const value = localStorage.getItem(PROVIDER_KEY); return value === 'codex' ? 'codex' : 'claude'; } catch { return 'claude'; } };
@@ -91,6 +93,11 @@ export function ChatScreen() {
   const [diffPeek, setDiffPeek] = useState<FileEdit | null>(null);
   // §3.1 clarify: a routed command held back until the user adds the missing detail or lets it go as is
   const [clarify, setClarify] = useState<{ text: string; decoration: AidevSendDecoration; attachments: UploadedAttachment[]; previews: string[] } | null>(null);
+  // object URLs of picked images shown in the phone's own copy of a sent message, per echo; let go once the server's
+  // copy replaces the echo (`seen` first, so an echo not rendered yet is not mistaken for a replaced one) or on leaving
+  const echoPreviewsRef = useRef(new Map<string, { urls: string[]; seen: boolean }>());
+  // previews made for a send that has not become an echo yet (routing, a held clarify)
+  const pendingPreviewsRef = useRef(new Set<string>());
   const streamTimerRef = useRef<number | null>(null);
   const accumulatedStreamRef = useRef('');
   const lastSeqRef = useRef(new Map<string, number>());
@@ -186,10 +193,10 @@ export function ChatScreen() {
       // The router's engine choice decides the provider of a brand-new session (§0: sessions are provider-bound).
       const engine = (decoration?.route.plan.engine ?? provider) as Engine;
       try {
-        const response = await api.providers.createSession({ provider: engine, projectPath: project.fullPath, initialMessage: text });
+        const response = await api.providers.createSession({ provider: engine, projectPath: project.fullPath, initialMessage: text || attachmentLabel(attachments.map((a) => a.name ?? '파일')) });
         const body = await response.json() as { data?: { sessionId?: string } };
         if (!response.ok || !body.data?.sessionId) throw new Error('세션을 만들지 못했습니다');
-        target = { id: body.data.sessionId, provider: engine, projectId: project.projectId, projectPath: project.fullPath, projectName: project.displayName, title: text.slice(0, 60) };
+        target = { id: body.data.sessionId, provider: engine, projectId: project.projectId, projectPath: project.fullPath, projectName: project.displayName, title: (text || attachmentLabel(attachments.map((a) => a.name ?? '파일'))).slice(0, 60) };
         try { localStorage.setItem(PROVIDER_KEY, engine); } catch { /* ignore */ }
         adoptDraftPermissionMode(target.id);
         setMeta(target);
@@ -200,6 +207,7 @@ export function ChatScreen() {
       }
     }
     if (!target) return false;
+    const label = text || attachmentLabel(attachments.map((a) => a.name ?? a.path?.split(/[\\/]/).pop() ?? '파일'));
     // the phone's own copy shows the picked images at once (object URLs of the files just sent)
     const images = attachments.map((a, index) => ({ a, preview: previews[index] })).filter(({ a }) => isImage(a)).map(({ a, preview }) => ({ path: a.path, name: a.name, ...(preview ? { data: preview } : {}) }));
     const files = attachments.filter((a) => !isImage(a));
@@ -207,6 +215,11 @@ export function ChatScreen() {
     const anchorId = target.id === meta?.id ? editingAnchorId : null;
     const echo: NormalizedMessage = { id: `local_${Date.now()}`, sessionId: target.id, timestamp: new Date().toISOString(), provider: target.provider, kind: 'text', role: 'user', content: text, ...(images.length ? { images } : {}), ...(files.length ? { files } : {}), ...(anchorId ? { replacesAnchorId: anchorId } : {}) };
     sessionStore.appendRealtime(target.id, echo);
+    const shown = previews.filter(Boolean);
+    if (shown.length) {
+      echoPreviewsRef.current.set(echo.id, { urls: shown, seen: false });
+      for (const url of shown) pendingPreviewsRef.current.delete(url);
+    }
     setBusy(true);
     setLastRunFinished(null);
     setEditingAnchorId(null);
@@ -218,7 +231,7 @@ export function ChatScreen() {
         ...(decoration?.model ? { model: decoration.model } : {}),
         ...(decoration?.effort ? { effort: decoration.effort } : {}),
         ...(decoration ? { aidev: decoration.aidev } : {}),
-        sessionSummary: text.slice(0, 80),
+        sessionSummary: label.slice(0, 80),
         attachments,
       },
     });
@@ -231,7 +244,9 @@ export function ChatScreen() {
     if (!meta && !project) { setPickingProject(true); setRestore({ text, files, n: Date.now() }); return; }
     setClarify(null);
     sendingRef.current = true;
-    setSending(text);
+    // attachments only: the router and the title read a short description of them
+    const routed = text || attachmentLabel(files.map((file) => file.name));
+    setSending(routed);
     let previews: string[] = [];
     try {
       let attachments: UploadedAttachment[] = [];
@@ -242,11 +257,15 @@ export function ChatScreen() {
           return;
         }
         previews = files.map((file) => (file.type.startsWith('image/') ? URL.createObjectURL(file) : ''));
+        for (const url of previews) if (url) pendingPreviewsRef.current.add(url);
       }
-      const decoration = await beforeSend(text, { sessionId: meta?.id ?? null, provider, isNewSession: !meta, projectHint: (meta?.projectName || project?.displayName) ?? null, userPinnedModel: false });
+      const decoration = await beforeSend(routed, { sessionId: meta?.id ?? null, provider, isNewSession: !meta, projectHint: (meta?.projectName || project?.displayName) ?? null, userPinnedModel: false });
       // §3.1: essential detail missing from a deeper command → ask once (not for agent creation or the app's re-sends)
       if (shouldAskClarify(decoration)) { setClarify({ text, decoration, attachments, previews }); return; }
-      if (!(await dispatch(text, decoration, attachments, previews))) setRestore({ text, files, n: Date.now() });
+      if (!(await dispatch(text, decoration, attachments, previews))) {
+        for (const url of previews) if (url) { URL.revokeObjectURL(url); pendingPreviewsRef.current.delete(url); }
+        setRestore({ text, files, n: Date.now() });
+      }
     } finally {
       sendingRef.current = false;
       setSending(null);
@@ -321,6 +340,19 @@ export function ChatScreen() {
   };
 
   const messages = sessionId ? sessionStore.getMessages(sessionId) : [];
+  // an echo's image previews go once the server's copy has replaced it
+  useEffect(() => {
+    for (const [echoId, entry] of echoPreviewsRef.current) {
+      const present = messages.some((message) => message.id === echoId);
+      if (present) entry.seen = true;
+      else if (entry.seen) { for (const url of entry.urls) URL.revokeObjectURL(url); echoPreviewsRef.current.delete(echoId); }
+    }
+  }, [messages]);
+  useEffect(() => () => {
+    for (const entry of echoPreviewsRef.current.values()) for (const url of entry.urls) URL.revokeObjectURL(url);
+    for (const url of pendingPreviewsRef.current) URL.revokeObjectURL(url);
+    echoPreviewsRef.current.clear(); pendingPreviewsRef.current.clear();
+  }, []);
   const slot = sessionId ? sessionStore.getSessionSlot(sessionId) : undefined;
   const peekProject = meta?.projectId ? { projectId: meta.projectId, projectPath: meta.projectPath } : !meta && project ? { projectId: project.projectId, projectPath: project.fullPath } : null;
   const openFile = (file: FileRef | null) => { setDiffPeek(null); setFilePeek({ open: true, file, fromSearch: false }); };
@@ -352,7 +384,7 @@ export function ChatScreen() {
       {!isConnected ? <div className="px-4 py-1 text-[12px] text-warn bg-warn/10">연결 중…</div> : null}
       <MessageList messages={messages} loading={slot?.status === 'loading'} hasMore={Boolean(slot?.hasMore)} onLoadOlder={() => (sessionId ? sessionStore.fetchMore(sessionId) : Promise.resolve())} onMessageLongPress={(text, message) => setMessageTarget({ text, message })} onPeekFile={openFile} onPeekDiff={setDiffPeek} footer={sessionId ? <SessionResults sessionId={sessionId} refreshKey={lastRunFinished ?? 0} /> : null} />
       <MessageActions target={messageTarget} onClose={() => setMessageTarget(null)}
-        canEdit={canRewind(messageTarget) && Boolean(providerCaps?.supportsMessageEditing) && !busy}
+        canEdit={canRewind(messageTarget) && Boolean(messageTarget?.text) && Boolean(providerCaps?.supportsMessageEditing) && !busy}
         canFork={canRewind(messageTarget) && Boolean(providerCaps?.supportsSessionForking)}
         onEdit={editMessage} onFork={(target) => { void forkHere(target); }} />
       <ConversationActions target={conversationSheet && meta ? { sessionId: meta.id, title: meta.title, provider: meta.provider } : null} onClose={() => setConversationSheet(false)} onChange={conversationChanged} />
@@ -360,7 +392,7 @@ export function ChatScreen() {
       {agentCreation.pending ? <div className="m-scroll max-h-[45dvh]"><AgentCreateCard compact pending={agentCreation.pending} onApprove={(draft) => { void agentCreation.approve(draft); }} onSelfCheck={agentCreation.runSelfCheck} onDismiss={agentCreation.dismiss} /></div> : null}
       {escalation.escalation && !busy ? <EscalationPrompt next={escalation.escalation.next} label={escalation.label} busy={escalation.busy} error={escalation.error} onRun={() => { void escalation.run(); }} onDismiss={escalation.dismiss} /> : null}
       {lastRunFinished && !busy ? <RunFeedback key={lastRunFinished} onFeedback={(value) => { void reportOutcome({ user_feedback: value }); }} /> : null}
-      {clarify ? <ClarifyPrompt key={clarify.decoration.route.decision_id} text={clarify.text} question={clarify.decoration.route.scope.clarify_question} onProceed={() => { setClarify(null); void dispatch(clarify.text, clarify.decoration, clarify.attachments, clarify.previews); }} onAnswer={(answer) => { setClarify(null); void dispatch(`${clarify.text}\n\n(추가 정보) ${answer}`, clarify.decoration, clarify.attachments, clarify.previews); }} /> : null}
+      {clarify ? <ClarifyPrompt key={clarify.decoration.route.decision_id} text={clarify.text || attachmentLabel(clarify.attachments.map((a) => a.name ?? '파일'))} question={clarify.decoration.route.scope.clarify_question} onProceed={() => { setClarify(null); void dispatch(clarify.text, clarify.decoration, clarify.attachments, clarify.previews); }} onAnswer={(answer) => { setClarify(null); void dispatch(`${clarify.text}\n\n(추가 정보) ${answer}`, clarify.decoration, clarify.attachments, clarify.previews); }} /> : null}
       <RouterChip sessionId={sessionId} />
       {sending ? (
         <div className="mx-3 mb-1 flex items-center gap-2 rounded-xl border border-accent/30 bg-accent/5 px-3 py-2 text-[13px]" role="status" data-testid="chat-sending">

@@ -52,7 +52,8 @@ export function Composer({ disabled, busy, onSend, onAbort, placeholder, onDraft
     if (restore.files) setFiles(restore.files);
     requestAnimationFrame(() => { grow(); ref.current?.focus(); });
   }, [restore]);   // eslint-disable-line react-hooks/exhaustive-deps -- only a new restore
-  const canSend = Boolean(value.trim()) && !disabled;
+  // attachments alone can go too (the server takes an empty text; ChatScreen describes them to the router)
+  const canSend = Boolean(value.trim() || files.length) && !disabled;
   const send = () => {
     const text = value.trim();
     if (!canSend) return;

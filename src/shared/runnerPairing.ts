@@ -4,8 +4,8 @@
  * service (LaunchAgent / systemd user unit / logon task) keeps pointing at a file that stays put:
  *   macOS, Linux  ~/.aidev/bin/aidev-runner           (bash and zsh; no `#` comments — zsh treats them as words)
  *   Windows       $HOME\.aidev\bin\aidev-runner.exe   (PowerShell; `&` runs a quoted path)
- * Used by remote-target's TargetsPanel and the mobile app's PC screen (pairingSteps), kept apart so the generated lines
- * can be tested in real shells.
+ * Used by remote-target's TargetsPanel and the mobile app's PC screen (pairingSteps). Shared rather than exported from
+ * remote-target, whose barrel also carries the run console (xterm) the phone's pairing screen must not download.
  */
 import type { RunnerFile } from '@/shared/types';
 

@@ -1,16 +1,18 @@
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { Suspense, lazy, useCallback, useEffect, useRef, useState } from 'react';
 import { Archive, ArrowLeft, MoreHorizontal, Plus, Search, Sparkles } from 'lucide-react';
 
 import { api } from '@/modules/chat-core';
 import { aidevApi, useCreateProposals, type UnreadSession } from '@/modules/aidev-router';
 import { ConversationActions, type ConversationChange } from '@m/components/ConversationActions';
-import { ConversationSearch } from '@m/components/ConversationSearch';
 import { HomeTabs } from '@m/components/HomeTabs';
 import { ListSkeleton } from '@m/components/Skeleton';
 import { TopBar } from '@m/components/TopBar';
 import { relativeTime } from '@m/lib/format';
 import { useLongPress } from '@m/lib/useLongPress';
 import { useBackOverlay, useGo, useParent } from '@m/lib/nav';
+
+// the search loads when 🔍 is first tapped: the conversation list is the first screen (main chunk)
+const ConversationSearch = lazy(() => import('@m/components/ConversationSearch').then((m) => ({ default: m.ConversationSearch })));
 
 type Conversation = { sessionId: string; provider?: string; projectId?: string | null; projectDisplayName?: string; sessionTitle?: string; lastActivity?: string | null };
 type View = 'active' | 'hidden';
@@ -134,7 +136,7 @@ export function SessionsScreen() {
       </main>
 
       <ConversationActions target={target ? { sessionId: target.sessionId, title: target.sessionTitle ?? '', provider: target.provider, hidden } : null} onClose={() => setTarget(null)} onChange={changed} />
-      {searching ? <ConversationSearch onClose={() => setSearching(false)} /> : null}
+      {searching ? <Suspense fallback={null}><ConversationSearch onClose={() => setSearching(false)} /></Suspense> : null}
 
       {toast ? (
         <div className="fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+88px)] z-30 flex items-center gap-3 rounded-xl bg-ink text-bg px-4 py-3 text-[14px] shadow-lg" role="status">

@@ -33,10 +33,10 @@ export function MessageActions({ target, onClose, canEdit, canFork, onEdit, onFo
   const copy = async () => { await copyToClipboard(target.text); setCopied(true); setTimeout(onClose, 700); };
   return (
     <BottomSheet open onClose={onClose} title="메시지">
-      <div className="text-[13px] text-muted line-clamp-4 whitespace-pre-wrap mb-2">{target.text}</div>
+      {target.text ? <div className="text-[13px] text-muted line-clamp-4 whitespace-pre-wrap mb-2">{target.text}</div> : null}
       <div className="space-y-1" data-testid="message-actions">
-        <button type="button" className={sheetButton} onClick={() => { void copy(); }}><Copy size={18} /> {copied ? '복사했습니다' : '복사'}</button>
-        {isAssistant ? (
+        {target.text ? <button type="button" className={sheetButton} onClick={() => { void copy(); }}><Copy size={18} /> {copied ? '복사했습니다' : '복사'}</button> : null}
+        {isAssistant && target.text ? (
           // unlock in the tap itself: iOS plays audio only from a user gesture
           <button type="button" className={sheetButton} onClick={() => { voicePlayer.unlock(); voicePlayer.toggle(target.text); onClose(); }}><Volume2 size={18} /> 읽어 주기</button>
         ) : null}
