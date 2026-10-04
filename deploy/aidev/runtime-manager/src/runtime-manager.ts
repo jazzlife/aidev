@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import http from 'node:http';
 import jwt from 'jsonwebtoken';
+import { checkShipRequest, readShipLog, validRuntimeName, type ShipRequest } from './ship.js';
 
 const token = fs.readFileSync(process.env.RUNTIME_MANAGER_TOKEN_FILE ?? '/run/secrets/runtime-token', 'utf8').trim();
 if (token.length < 32) throw new Error('Runtime token too short');
@@ -16,7 +17,7 @@ const peers = ['aidev-runtime-manager', 'aidev-auth-gateway'];
 const tails = new Map<string, Promise<unknown>>();
 const label = 'work.nado.aidev.runtime';
 const managedLabel = 'work.nado.aidev.managed';
-const valid = (name: string) => /^(user\d{2}|u[a-f0-9]{24})$/.test(name);
+const valid = validRuntimeName;
 const containerName = (name: string) => `aidev-cloudcli-${name}`;
 const networkName = (name: string, egress = false) => `aidev-${name}-${egress ? 'egress' : 'net'}`;
 const labels = (name: string) => ({ [label]: name, [managedLabel]: 'true' });
@@ -36,6 +37,18 @@ async function docker(method: string, path: string, body?: unknown, accepted = [
     });
     request.setTimeout(15_000, () => request.destroy(new Error('Docker timeout')));
     request.on('error', reject); request.end(body === undefined ? undefined : JSON.stringify(body));
+  });
+}
+/** The same call for endpoints that answer with text (container logs). */
+async function dockerText(path: string) {
+  return await new Promise<string>((resolve, reject) => {
+    const request = http.request({ socketPath, path: `/${apiVersion}${path}`, method: 'GET' }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on('data', chunk => chunks.push(Buffer.from(chunk)));
+      response.on('end', () => (response.statusCode === 200 ? resolve(Buffer.concat(chunks).toString()) : reject(new Error(`GET ${path}: ${response.statusCode}`))));
+    });
+    request.setTimeout(15_000, () => request.destroy(new Error('Docker timeout')));
+    request.on('error', reject); request.end();
   });
 }
 async function lookup(kind: 'containers' | 'networks' | 'volumes', name: string) {
@@ -157,6 +170,84 @@ async function run(name: string, operation: string) {
   tails.set(name, job);
   try { return await job; } finally { if (tails.get(name) === job) tails.delete(name); }
 }
+// ---- OPS-02: the platform ships itself (deploy/aidev/release/ship.sh) ------------------------------------------
+// One `aidev-ship-<id>` container at a time, from node:22-bookworm (git and the build tools for native modules). It
+// gets the Docker socket and the host's docker CLI (install/activate/restart like deploy.sh on the host), the host's
+// /tmp (the release lock), the build volume, the active release (read-only: runner binaries), the ship secrets
+// (GitHub token) and, when an agent shipped from its workspace, that runtime's workspace read-only. ship.sh comes from
+// the commit being shipped, so a ship that changes the pipeline runs the new pipeline.
+const shipImage = process.env.SHIP_IMAGE ?? 'node:22-bookworm';
+const shipVolume = process.env.SHIP_VOLUME ?? 'aidev_ship';
+const hostShipSecrets = process.env.HOST_SHIP_SECRETS_DIR ?? '/home/turtlelab/aidev/ship-secrets';
+const hostDockerCli = process.env.HOST_DOCKER_CLI ?? '/usr/bin/docker';
+const shipLabel = 'work.nado.aidev.ship';
+const SHIP_KEEP = 10;
+const SHIP_BOOT = [
+  'set -e',
+  'git config --global --add safe.directory "*"',
+  'url="https://github.com/${SHIP_GITHUB_REPO:-jazzlife/aidev}.git"',
+  '[ -d /ship/src/.git ] || git clone -q "$url" /ship/src',
+  'cd /ship/src && git fetch -q "$url" main:refs/remotes/origin/main',
+  'if [ -n "${SHIP_FROM:-}" ]; then git fetch -q "/from/$SHIP_FROM" "${SHIP_REF:-HEAD}"; at=FETCH_HEAD; else at="$(git rev-parse -q --verify "origin/${SHIP_REF:-main}" || echo "${SHIP_REF:-main}")"; fi',
+  'git show "$at:deploy/aidev/release/ship.sh" > /tmp/aidev-ship-$SHIP_ID.sh',
+  'exec bash /tmp/aidev-ship-$SHIP_ID.sh',
+].join('\n');
+async function shipContainers(running = false) {
+  const filters = encodeURIComponent(JSON.stringify({ label: [shipLabel], ...(running ? { status: ['running'] } : {}) }));
+  return await docker('GET', `/containers/json?all=1&filters=${filters}`) as Array<{ Id: string; Names: string[]; State: string; Created: number; Labels: Record<string, string> }>;
+}
+async function shipStart(request: ShipRequest) {
+  const busy = await shipContainers(true);
+  if (busy.length) throw Object.assign(new Error(`a ship is already running (${busy[0].Labels[shipLabel]})`), { status: 409 });
+  if (!(await lookup('volumes', shipVolume))) await docker('POST', '/volumes/create', { Name: shipVolume, Labels: { [shipLabel]: 'build' } });
+  const name = `aidev-ship-${request.id}`;
+  await docker('POST', `/containers/create?name=${name}`, {
+    Image: shipImage,
+    Cmd: ['bash', '-c', SHIP_BOOT],
+    Tty: true,
+    Env: [`SHIP_ID=${request.id}`, `SHIP_REQUESTER=${request.requester}`, ...(request.from ? [`SHIP_FROM=${request.from}`] : []), ...(request.ref ? [`SHIP_REF=${request.ref}`] : []), 'SHIP_TOKEN_FILE=/run/ship-secrets/github-token'],
+    Labels: { [shipLabel]: request.id, [`${shipLabel}.requester`]: request.requester, [`${shipLabel}.runtime`]: request.runtime },
+    HostConfig: {
+      Mounts: [
+        { Type: 'bind', Source: '/var/run/docker.sock', Target: '/var/run/docker.sock' },
+        { Type: 'bind', Source: hostDockerCli, Target: '/usr/local/bin/docker', ReadOnly: true },
+        { Type: 'bind', Source: '/tmp', Target: '/tmp' },
+        { Type: 'bind', Source: hostShipSecrets, Target: '/run/ship-secrets', ReadOnly: true },
+        { Type: 'volume', Source: shipVolume, Target: '/ship' },
+        { Type: 'volume', Source: appVolume, Target: '/srv/app', ReadOnly: true },
+        ...(request.from ? [{ Type: 'volume', Source: `aidev_${request.runtime}-workspace`, Target: '/from', ReadOnly: true }] : []),
+      ],
+    },
+  });
+  await docker('POST', `/containers/${name}/start`);
+  // the newest SHIP_KEEP finished ships keep their logs; older containers go
+  const done = (await shipContainers()).filter((c) => c.State !== 'running').sort((a, b) => b.Created - a.Created).slice(SHIP_KEEP);
+  for (const c of done) await docker('DELETE', `/containers/${c.Id}?force=true`).catch(() => undefined);
+  return await shipStatus(request.id);
+}
+async function shipStatus(id: string) {
+  if (!/^[a-z0-9]{8,32}$/.test(id)) throw Object.assign(new Error('bad ship id'), { status: 400 });
+  const info = await lookup('containers', `aidev-ship-${id}`);
+  if (!info || info.Config?.Labels?.[shipLabel] !== id) throw Object.assign(new Error('no such ship'), { status: 404 });
+  const log = await dockerText(`/containers/aidev-ship-${id}/logs?stdout=1&stderr=1&tail=300`);
+  const { step, result } = readShipLog(log);
+  return {
+    id, requester: info.Config.Labels[`${shipLabel}.requester`] ?? null, running: Boolean(info.State?.Running),
+    exitCode: info.State?.Running ? null : info.State?.ExitCode ?? null, startedAt: info.State?.StartedAt ?? null, finishedAt: info.State?.Running ? null : info.State?.FinishedAt ?? null,
+    step, result: result ?? (info.State?.Running ? null : { status: 'failed', sha: 'none', text: `ship ended without a result (exit ${info.State?.ExitCode})` }),
+    log: log.replace(/\r/g, '').split('\n').slice(-120).join('\n'),
+  };
+}
+async function shipList() {
+  const all = (await shipContainers()).sort((a, b) => b.Created - a.Created);
+  return { ships: all.map((c) => ({ id: c.Labels[shipLabel], requester: c.Labels[`${shipLabel}.requester`] ?? null, running: c.State === 'running', created: c.Created * 1000 })) };
+}
+async function readBody(req: http.IncomingMessage, limit = 8192) {
+  const chunks: Buffer[] = []; let size = 0;
+  for await (const chunk of req) { size += Buffer.byteLength(chunk); if (size > limit) throw Object.assign(new Error('Body too large'), { status: 413 }); chunks.push(Buffer.from(chunk)); }
+  return JSON.parse(Buffer.concat(chunks).toString() || '{}') as Record<string, unknown>;
+}
+
 const server = http.createServer(async (req, res) => {
   const reply = (status: number, body: unknown) => { res.writeHead(status, { 'content-type': 'application/json' }); res.end(JSON.stringify(body)); };
   if (req.method === 'GET' && req.url === '/health') return reply(200, { status: 'ok' });
@@ -175,6 +266,19 @@ const server = http.createServer(async (req, res) => {
       if (typeof claims === 'string' || claims.username !== verifyMatch[1]) return reply(401, { error: 'Invalid runtime token' });
       return reply(200, { ok: true, runtime: verifyMatch[1] });
     } catch { return reply(401, { error: 'Invalid runtime token' }); }
+  }
+  if (req.url === '/v1/ship' || req.url?.startsWith('/v1/ship/')) {
+    try {
+      if (req.method === 'POST' && req.url === '/v1/ship') return reply(202, await shipStart(checkShipRequest(await readBody(req) as Partial<ShipRequest>)));
+      if (req.method === 'GET' && req.url === '/v1/ship') return reply(200, await shipList());
+      const shipMatch = /^\/v1\/ship\/([a-z0-9]+)$/.exec(req.url);
+      if (req.method === 'GET' && shipMatch) return reply(200, await shipStatus(shipMatch[1]));
+      return reply(404, { error: 'Not found' });
+    } catch (error) {
+      const status = (error as { status?: number }).status ?? (error instanceof Error && /^bad /.test(error.message) ? 400 : 503);
+      console.error('[runtime-manager] ship', error instanceof Error ? error.message : error);
+      return reply(status, { error: error instanceof Error ? error.message : 'Ship failed' });
+    }
   }
   const match = /^\/v1\/runtimes\/([^/]+)\/(provision|start|delete)$/.exec(req.url ?? '');
   if (req.method !== 'POST' || !match || !valid(match[1])) return reply(404, { error: 'Not found' });

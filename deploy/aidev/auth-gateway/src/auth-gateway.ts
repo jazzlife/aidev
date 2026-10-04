@@ -17,6 +17,7 @@ import { createPreview } from './preview.js';
 import { startTierPolicySchedule } from './tier-policy.js';
 import { startBackupSchedule } from './db-backup.js';
 import { seedAgents } from './seed-agents.js';
+import { createPlatformShip } from './platform-ship.js';
 
 const port = Number(process.env.PORT ?? 8080);
 // The release this process was started from; differs from /srv/app/current/RELEASE until restarted.
@@ -183,8 +184,14 @@ const debug = createDebugHub({ store, runners });
 const consoles = createConsoleHub({ runners });
 // C-06: open chat connections (/ws) per user — while an app is open its news is on screen, so no push
 const openChats = new Map<number, number>();
+// OPS-02: ships run in runtime-manager; the gateway relays them and tells the requester by push
+const ship = createPlatformShip({
+  managerUrl, managerToken, push,
+  userIdByName: (username) => (store.db.prepare('SELECT id FROM accounts WHERE username = ? AND active = 1').get(username) as { id: number } | undefined)?.id ?? null,
+});
+ship.startWatcher();
 const aidev = createAidevApi({
-  runners, gate, preview, debug, console: consoles, publicOrigin: origin, ui: createUiControl(),
+  runners, gate, preview, debug, console: consoles, publicOrigin: origin, ui: createUiControl(), ship,
   isOnline: (userId) => (openChats.get(userId) ?? 0) > 0,
   store, laya, json, push,
   async runtimeFetch(session, path, init, timeoutMs = 10_000) {

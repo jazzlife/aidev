@@ -3,6 +3,7 @@ import express from 'express';
 import { aidevToolsService, DEBUG_ADAPTERS } from '@/modules/aidev-tools/aidev-tools.service.js';
 import { remotePull, remoteSync } from '@/modules/aidev-tools/remote-sync.service.js';
 import { appSettingsGet, appSettingsSet, appShow } from '@/modules/aidev-tools/app-control.service.js';
+import { platformShip, platformShipStatus } from '@/modules/aidev-tools/platform-ship.service.js';
 
 /**
  * Local HTTP endpoint used only by the aidev-tools stdio MCP process
@@ -71,6 +72,16 @@ router.post('/tools/:toolName', async (req, res) => {
         }, readTurn(input));
         break;
       }
+      case 'platform_ship':
+        result = await platformShip({
+          dir: typeof input.path === 'string' && input.path.trim() ? input.path.trim() : readTurn(input).cwd,
+          ref: typeof input.ref === 'string' && input.ref.trim() ? input.ref.trim().slice(0, 100) : undefined,
+          fromGithub: input.fromGithub === true,
+        });
+        break;
+      case 'platform_ship_status':
+        result = await platformShipStatus({ id: String(input.id ?? ''), waitSec: typeof input.waitSec === 'number' ? input.waitSec : undefined });
+        break;
       case 'nadovibe_settings':
         if (input.action === 'get') result = await appSettingsGet();
         else if (input.action === 'set') {

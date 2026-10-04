@@ -20,6 +20,7 @@ import '../../load-env.js';
  *   remote_debug_start / _step / _eval / _breakpoints / _stop — debug a program on a target over DAP (F-09, F-09b: 14 adapters)
  *   remote_console_start / _send / _read / _stop — drive any command-line debugger or REPL on a target (F-09c)
  *   remote_agent / remote_agent_result — delegate a task to an agent CLI on the target (Claude Code, Codex, Gemini CLI) (F-09d)
+ *   platform_ship / platform_ship_status — administrators: ship NadoVibe itself from the AI-PC (test, deploy, verify, push) (OPS-02)
  * The turn context (chat run id, routed target, agent) comes from this process's env and is sent
  * with every call, so remote results count toward the run's outcome.
  */
@@ -59,7 +60,7 @@ const turnContext = {
   cwd: process.cwd(),
 };
 // approvals can take minutes and a build or test run longer: remote tools get their own ceiling
-const LONG_TOOLS = new Set(['remote_agent', 'remote_agent_result', 'remote_exec', 'remote_logs', 'remote_sync', 'remote_pull', 'remote_debug_start', 'remote_debug_step', 'remote_console_start', 'remote_console_send', 'remote_console_read']);
+const LONG_TOOLS = new Set(['platform_ship_status', 'remote_agent', 'remote_agent_result', 'remote_exec', 'remote_logs', 'remote_sync', 'remote_pull', 'remote_debug_start', 'remote_debug_step', 'remote_console_start', 'remote_console_send', 'remote_console_read']);
 const LONG_TIMEOUT_MS = 45 * 60_000;
 
 async function callApi(toolName: string, input: Record<string, unknown>) {
@@ -143,6 +144,28 @@ const tools: ToolDefinition[] = [
       },
       required: ['action'],
     },
+  },
+  {
+    name: 'platform_ship',
+    description: [
+      'Administrators only: release NadoVibe itself (the platform this chat runs on) from the AI-PC server — no other machine is involved.',
+      'Commit your change in a clone of the platform repository (github.com/jazzlife/aidev) under /workspace first; only committed work ships, and only commits that continue GitHub main (rebase onto origin/main otherwise).',
+      'The server then fetches that commit, runs typecheck, lint, client and server tests, packs the release, deploys it, checks that the new release is live (rolling back if not) and pushes the commit to GitHub main. No approval is asked; the checks are the gate.',
+      'Returns a ship `id`; follow it with platform_ship_status{id, waitSec}. A frontend-only release restarts nothing; a server change restarts runtimes once their chats are idle, so this chat keeps running.',
+    ].join(' '),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        path: { type: 'string', description: 'The repository folder (default: this session\'s project folder).' },
+        ref: { type: 'string', description: 'Commit to ship (default HEAD).' },
+        fromGithub: { type: 'boolean', description: 'Ship what is on GitHub main instead of a workspace commit (e.g. to redeploy).' },
+      },
+    },
+  },
+  {
+    name: 'platform_ship_status',
+    description: 'Progress of a platform_ship: the current step (fetch, deps, checks, pack, deploy, verify, push), the result once there is one (ok | failed | rolled_back | push_failed, with the reason) and the log tail. waitSec (≤600) waits for the result.',
+    inputSchema: { type: 'object', properties: { id: { type: 'string' }, waitSec: { type: 'number' } }, required: ['id'] },
   },
   {
     name: 'remote_targets',
@@ -514,6 +537,8 @@ async function callTool(name: string, args: Record<string, unknown>) {
       return jsonResponse(await callApi(name, args));
     case 'remote_targets':
       return jsonResponse(await callApi(name, {}));
+    case 'platform_ship':
+    case 'platform_ship_status':
     case 'remote_exec':
     case 'nadovibe_show':
     case 'nadovibe_settings':

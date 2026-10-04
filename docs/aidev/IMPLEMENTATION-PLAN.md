@@ -14,8 +14,8 @@
 사용자 명령 → **범위·깊이·작업 성격 판정(Laya)** → **전문 agent 선택**(없으면 생성) → **계정이 쓸 수 있는 엔진(Claude Code / Codex)** 중 작업 성격·깊이에 맞는 **모델·추론 강도**로 실행 → 필요하면 **사용자가 지정한 원격 PC에서 실행·테스트·디버깅**하고 그 화면을 그대로 보여줌 → 결과·실패 신호를 기록 → **교훈과 검증된 최신 지식이 agent에 축적**되어 다음 실행이 좋아지는 AI 코딩 플랫폼. 모바일(채팅 중심)·태블릿·데스크탑(IDE 작업대) 대응.
 
 ### 원칙 (어기면 안 됨)
-1. **원격 서버 AI-PC(100.64.0.9, `ai-turtle`)에서만 운영.** 로컬(Mac)에서 서비스를 돌리지 않는다. Mac은 `ops/relay.sh`로 SSH 중계만, 클라우드 작업공간(`/home/claude/aidev`)은 빌드만.
-2. **저장소 연동 없음, 이미지 재빌드 없음.** 배포 = `pack.sh` → `release-<sha>.tgz` → `relay.sh deploy` → 서버 `deploy.sh`가 볼륨 `releases/<sha>/`에 풀고 `current` 원자 교체 → 바뀐 프로세스만 재시작. 도구 이미지(`cloudcli-runtime`, `laya-runtime`)는 도구 버전이 바뀔 때만.
+1. **원격 서버 AI-PC(100.64.0.9, `ai-turtle`)에서만 운영 — 고치고 빌드하고 배포하는 것까지 서버 안에서 스스로.** 로컬(Mac)에서 서비스를 돌리지 않는다. 플랫폼은 관리자 agent가 서버에서 스스로 배포한다(OPS-02, 2026-10-04 사용자 결정: "ai-turtle 에이전트 서버에서 모든 게 자체적으로 돌아가야 한다"). 원격 PC 러너는 OS별 실행·테스트용일 뿐 배포 경로가 아니다. Mac `ops/relay.sh`는 서버 자체 배포가 망가졌을 때의 비상 경로로만 남긴다.
+2. **원본은 GitHub `jazzlife/aidev`, 서버가 직접 pull/push. 이미지 재빌드 없음.** 배포 = 서버의 `aidev-ship-<id>` 컨테이너(runtime-manager가 띄움)가 `deploy/aidev/release/ship.sh` 실행: 커밋 받기(GitHub main을 잇는 것만) → typecheck·lint·클라이언트·서버 테스트 → `pack.sh` → `deploy.sh`(볼륨 `releases/<sha>/`에 풀고 `current` 원자 교체 → 바뀐 프로세스만 재시작) → 새 릴리스가 서비스되는지 확인(아니면 자동 롤백) → GitHub main push. 승인 없음 — 검사가 관문(2026-10-04 사용자 결정). 도구 이미지(laya, cloudcli-runtime)만 별도 빌드.
 3. **기존 인프라 불변**: NPM(4.conf), Portainer, 인증서, 네트워크(npm_bridge/aidev-control-net/aidev-<user>-net), 시크릿, 사용자 볼륨, `~/aidev/source`. NPM에 무언가를 **추가**하는 것은 §7 결정 후에만.
 4. **CloudUI upstream 수정 최소화.** 본체 수정 허용 지점: `server/modules/providers/list/claude/claude-runtime.provider.js`, `server/modules/providers/list/codex/codex-runtime.provider.ts`, `src/modules/chat/hooks/useChatComposerState.ts`, `src/modules/chat/ChatInterface.tsx`, `src/modules/project-workspace/ProjectWorkspaceRoute.tsx`(작업대 분기 1곳), `src/shared/types.ts`(`AppTab` 확장), `vite.config.ts`(mobile 빌드 추가), `public/sw.js`(정상 응답만·작업대 `/assets/`만 캐시 — 2026-10-01, 오류 응답을 영구 캐시해 모바일 앱이 빈 화면이 된 버그). `src/modules/chat/`에서 비시각 로직을 `src/modules/chat-core/`로 뽑아낼 때는 **이동이 아니라 re-export**(upstream 파일 위치 유지). 나머지는 새 모듈 `src/modules/aidev-router/`, `src/modules/chat-core/`, `src/modules/workbench/`, `src/modules/remote-target/`, 모바일 앱 `src-mobile/`, 서버 `server/modules/aidev-tools/`, 게이트웨이(`deploy/aidev/auth-gateway`), 러너(`deploy/aidev/runner`)에.
 5. **Laya는 결정만, 생성은 LLM.** 텍스트가 필요한 모든 것(agent 프롬프트, 지식, 교훈)은 계정이 쓸 수 있는 엔진이 만든다.
@@ -23,7 +23,7 @@
 7. **검증되지 않은 지식은 주입하지 않는다.** verified(테스트/승인) · sourced(공식 출처+날짜) · unverified(보관만).
 8. **원격 PC는 밖으로만 연결한다.** 사용자 PC에 인바운드 포트를 열지 않는다. 러너가 `wss://dev.nado.work`로 접속하고, 게이트웨이가 브라우저·런타임과 중계한다. 파괴적 명령은 사용자 승인 없이 원격 PC에서 실행하지 않는다.
 9. 서버에서 실제로 동작 확인한 것만 "완료". 로그는 `ops/inbox/`로 회수해 읽는다.
-10. 비밀번호·토큰은 Claude가 입력하지 않는다. 배포는 Claude가 `ops/relay.sh`(키체인 SSH 키, 비밀번호 없음)로 직접 한다 — 사용자가 relay.sh 실행 권한을 허용(2026-10-01). 절차는 §5.
+10. 비밀번호·토큰은 Claude가 입력하지 않는다. 서버의 GitHub 토큰(`~/aidev/ship-secrets/github-token`)은 사용자가 한 번 설치한다. 배포 절차는 §5.
 
 ### 확정된 결정
 - 결정 모델: **Laya multilingual** (jev 대체). 서버 iGPU(Radeon 890M, `HSA_OVERRIDE_GFX_VERSION=11.5.0`)에서 `/route` ≈150ms.
@@ -515,21 +515,25 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 
 **E 완료 기준**: E-09 확인, 벤치마크 보정 전후 비교표.
 
+### OPS. 운영
+- [ ] OPS-02 서버 자체 배포(2026-10-04 사용자 결정: 모든 것이 ai-turtle 서버에서 스스로, 승인 없음, GitHub 유지, Mac은 비상용): `deploy/aidev/release/ship.sh`, runtime-manager `/v1/ship`(작업 컨테이너), 게이트웨이 `/api/aidev/platform/ship`(관리자)·결과 푸시, MCP `platform_ship`/`platform_ship_status`
+
 ---
 
 ## 5. 매 릴리스 절차
 
-변경은 묻지 않고 커밋·푸시·배포·검증까지 끝낸다(2026-10-01 사용자 지시). 되돌릴 수 없는 일(공개된 GitHub release 태그 재지정, 데이터 삭제)만 먼저 알린다. 경로: 저장소 `NadoVibe/aidev`(origin `jazzlife/aidev`), 운영 폴더 `NadoVibe/ops`, 서버 `turtlelab@100.64.0.9`(SSH 키는 macOS 키체인).
+변경은 묻지 않고 커밋부터 배포·검증까지 끝낸다. 되돌릴 수 없는 일(공개된 GitHub release 태그 재지정, 데이터 삭제)만 먼저 알린다.
 
-1. 검증: `npx tsc --noEmit -p tsconfig.json`, 관련 테스트(`npx vitest run src-mobile`, `npm run test:client`, 서버를 고쳤으면 `npm test`), `npm run typecheck`, `npm run lint`, `npm run build`(작업대 `dist` + 모바일 `dist-mobile` 번들 예산 + 서버). 러너를 고쳤으면 `ops/runner/build.sh`.
-2. 커밋 → `git push origin main`(이 Mac은 직접 푸시된다. `ops/push-source.sh`는 푸시 권한 없는 클라우드 세션의 체크포인트 번들용). 백업: `git bundle create ops/backups/aidev-ckpt_<항목>-<날짜>.bundle <이전 배포 커밋>..main`.
-3. 릴리스: 깨끗한 체크아웃(`git status` 비어 있음, 원본 `NadoVibe/aidev`는 `git pull --ff-only`로 맞춘 뒤)에서 `bash deploy/aidev/release/pack.sh ../ops/releases` → `ops/releases/release-<sha12>.tgz`(이름에 `-dirty`가 붙으면 배포하지 않는다).
-4. 배포: `cd ops && ./relay.sh deploy releases/release-<sha12>.tgz`. 서버가 바뀐 컴포넌트(gateway·runtime-manager·runtimes·laya)만 재시작하고, 프런트만 바뀌면 재시작 없음. 런타임 코드가 바뀌었는데 재시작이 필요하면 `./relay.sh run restart --drain runtimes`. 서버 스크립트(`ops/scripts/*.sh`)가 바뀐 경우에만 `./relay.sh scripts`.
-5. 확인: `./relay.sh status`(current release = 새 sha), `./relay.sh verify jazzlife`(로그 `ops/inbox/verify-*.log`), 프런트는 `curl -s https://dev.nado.work/m/`의 `assets/index-*.js`가 `dist-mobile/index.html`과 같은지. 결과를 체크리스트에 기록(릴리스 ID 포함).
-6. 문제 시 `./relay.sh rollback [sha]`.
-7. 도구 이미지가 바뀌는 경우에만 `laya-image.sh build` / `runtime-image.sh build`. 러너 갱신: `ops/runner/build.sh` → `aidev-runner update`(게이트웨이 `/_runner/release`에서 버전 확인, 자기 교체는 2단계). 러너 CI 태그 `runner-v<버전>`은 공개 release가 있으면 옮기지 않는다.
+**기본 — 서버 자체 배포(OPS-02).** 관리자 계정의 agent가 NadoVibe 채팅 안에서:
+1. 런타임 작업공간의 저장소 클론(`/workspace/<폴더>`, origin = `jazzlife/aidev`)에서 고치고, 테스트하고, 커밋한다(GitHub main 위에 — 아니면 rebase).
+2. `platform_ship`(MCP) → 게이트웨이 `POST /api/aidev/platform/ship`(관리자만) → runtime-manager가 `aidev-ship-<id>` 컨테이너로 `ship.sh` 실행. `platform_ship_status{id, waitSec}`로 단계(fetch·deps·checks·pack·deploy·verify·push)와 결과를 본다. 결과는 요청자에게 푸시 알림.
+3. 결과: `ok`(서비스 중 + GitHub main 반영) · `failed`(검사 실패, 아무것도 안 바뀜) · `rolled_back`(배포 후 확인 실패, 이전 릴리스로 복귀) · `push_failed`(서비스 중이나 GitHub main이 앞서 나감 — 손으로 push).
+4. 이미 GitHub main에 있는 것을 다시 배포: `platform_ship{fromGithub:true}`. 진행 중인 배포는 한 번에 하나.
+5. 체크리스트에 결과와 릴리스 ID를 기록한다.
 
-예전 방식(클라우드 세션이 `pack.sh /mnt/user-data/outputs/rel` → Mac 전달 → `ops/outbox/<id>.job` + `./relay.sh watch`)은 Mac에서 직접 작업할 수 없을 때만 쓴다.
+서버 쪽 준비(1회): `~/aidev/ship-secrets/github-token`(contents:write, 사용자가 설치), 계정 역할 `manage-users role <user> admin`, 볼륨 `aidev_ship`(첫 배포 때 자동). 러너 바이너리는 현재 운영 릴리스의 것을 그대로 넘겨받는다 — 러너 갱신은 GitHub CI(`runner-v<버전>` 태그, 공개 release가 있으면 옮기지 않음)와 `aidev-runner update`.
+
+**비상 — Mac 중계(서버 자체 배포가 망가졌을 때만).** 깨끗한 체크아웃에서 `bash deploy/aidev/release/pack.sh ../ops/releases` → `cd ops && ./relay.sh deploy releases/release-<sha12>.tgz` → `./relay.sh status` · `./relay.sh verify jazzlife`; 되돌리기 `./relay.sh rollback [sha]`. 도구 이미지 변경 시 `laya-image.sh build` / `runtime-image.sh build`.
 
 ---
 

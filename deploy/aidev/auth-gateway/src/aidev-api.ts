@@ -18,6 +18,7 @@ import fs from 'node:fs';
 import type { Preview } from './preview.js';
 import { launchCommand, validateLaunch, type DebugHub } from './debug-hub.js';
 import type { ConsoleHub } from './console-hub.js';
+import { ShipError, type PlatformShip } from './platform-ship.js';
 import { CODEX_JUDGE_WAIT_MS, evaluateRouting, prejudge, route, TIER_TABLE, type EngineAvailability, type JudgeVerdict, type RouteInput, type SpecialistJudge } from './routing.js';
 /** Hard limit of one judge call in the runtime; a send waits less (routing.ts AIDEV_JUDGE_WAIT_MS) and the rest is cached. */
 const JUDGE_TIMEOUT_MS = Number(process.env.AIDEV_JUDGE_TIMEOUT_MS ?? 60_000);
@@ -51,6 +52,8 @@ export type AidevDeps = {
   console?: ConsoleHub;
   /** https://<host> the browser uses (preview URLs). */
   publicOrigin?: string;
+  /** OPS-02: the platform ships itself (runtime-manager runs ship.sh); administrators only. */
+  ship?: PlatformShip;
 };
 
 /**
@@ -336,6 +339,24 @@ export function createAidevApi(deps: AidevDeps) {
         // a refused turn is worth telling at once; expiry reminders follow their own schedule
         if (report.failureAt) void deps.push.claudeReminders().catch(() => undefined);
         return json(res, 200, { ok: true }), true;
+      }
+      // ---- OPS-02: ship the platform from the AI-PC itself (administrators; an admin's agent through /internal/aidev) --
+      if (rest === '/platform/ship' || rest === '/platform/ships' || rest.startsWith('/platform/ship/')) {
+        requireAdmin(session);
+        if (!deps.ship) throw new HttpError(503, 'Platform shipping is not configured');
+        try {
+          if (rest === '/platform/ship' && m === 'POST') {
+            const b = await readJson(req);
+            return json(res, 202, await deps.ship.start({ runtime: session.user.runtime, requester: session.user.username, from: optStr(b.from, 300) || undefined, ref: optStr(b.ref, 100) || undefined })), true;
+          }
+          if (rest === '/platform/ships' && m === 'GET') return json(res, 200, await deps.ship.list()), true;
+          const shipMatch = /^\/platform\/ship\/([a-z0-9]{8,32})$/.exec(rest);
+          if (shipMatch && m === 'GET') return json(res, 200, await deps.ship.status(shipMatch[1])), true;
+        } catch (error) {
+          if (error instanceof ShipError) throw new HttpError(error.status, error.message);
+          throw error;
+        }
+        throw new HttpError(404, 'Not found');
       }
       if (rest === '/engines' && m === 'GET') {
         const acct = store.accountEngines(uid);
