@@ -28,3 +28,5 @@ export { buildClaudeToolPermissionEntry, grantClaudeToolPermission } from '@/mod
 export { getClaudeSettings } from '@/modules/chat/utils/chatStorage';
 export { readUserPreference, writeUserPreference, subscribeToUserPreferences } from '@/shared/userSettings';
 export type { PermissionMode, Question } from '@/shared/types';
+// Read-aloud (C-12.3): the app-level player the workbench uses, so playback outlives the message sheet.
+export { voicePlayer, voiceId } from '@/modules/chat/utils/voicePlayer';

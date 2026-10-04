@@ -46,10 +46,15 @@ function loadCaps() {
   return capsRequest;
 }
 
-/** Used by the conversation sheet and the chat: each engine's capabilities (null until loaded). */
-export function useCapsMap() {
+/** Used by the conversation sheet and the chat: each engine's capabilities (null until loaded; asked once `enabled`). */
+export function useCapsMap(enabled = true) {
   const [caps, setCaps] = useState<Record<string, ProviderCaps> | null>(null);
-  useEffect(() => { let alive = true; void loadCaps().then((map) => { if (alive) setCaps(map); }); return () => { alive = false; }; }, []);
+  useEffect(() => {
+    if (!enabled) return undefined;
+    let alive = true;
+    void loadCaps().then((map) => { if (alive) setCaps(map); });
+    return () => { alive = false; };
+  }, [enabled]);
   return caps;
 }
 

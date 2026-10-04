@@ -4,20 +4,11 @@ import { ArrowUp, Folder, FolderPlus, GitBranch } from 'lucide-react';
 import { api } from '@/modules/chat-core';
 import { BottomSheet } from '@m/components/BottomSheet';
 import type { CurrentProject } from '@m/lib/current';
+import { failureText as failure } from '@m/lib/http';
 
 type Suggestion = { name: string; path: string };
 type ServerProject = CurrentProject & { isArchived?: boolean };
 type Tab = 'folder' | 'clone';
-
-/** The server's own wording for a failed request ("실패했습니다 (상태코드)" when it has none). */
-async function failure(response: Response): Promise<string> {
-  const body = await response.json().catch(() => null) as { error?: unknown; details?: unknown; message?: unknown } | null;
-  const error = body?.error && typeof body.error === 'object' ? body.error as { message?: unknown; details?: unknown } : null;
-  for (const candidate of [body?.details, typeof body?.error === 'string' ? body.error : null, error?.details, error?.message, body?.message]) {
-    if (typeof candidate === 'string' && candidate.trim()) return candidate;
-  }
-  return `실패했습니다 (${response.status})`;
-}
 
 const parentOf = (path: string) => {
   const trimmed = path.replace(/[\\/]+$/, '');

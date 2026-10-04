@@ -56,6 +56,7 @@ export function forgetProject(projectId: string) {
 }
 
 export const readCurrentProject = () => project;
+export const readCurrentConversation = () => conversation;
 
 export function useCurrentProject() {
   return useSyncExternalStore(subscribe, () => project);

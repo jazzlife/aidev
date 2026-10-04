@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { Archive, ArrowLeft, EyeOff, MoreHorizontal, Plus, RotateCcw, Sparkles, Trash2 } from 'lucide-react';
+import { Archive, ArrowLeft, MoreHorizontal, Plus, Search, Sparkles } from 'lucide-react';
 
 import { api } from '@/modules/chat-core';
 import { aidevApi, useCreateProposals, type UnreadSession } from '@/modules/aidev-router';
-import { BottomSheet } from '@m/components/BottomSheet';
+import { ConversationActions, type ConversationChange } from '@m/components/ConversationActions';
+import { ConversationSearch } from '@m/components/ConversationSearch';
 import { HomeTabs } from '@m/components/HomeTabs';
 import { ListSkeleton } from '@m/components/Skeleton';
 import { TopBar } from '@m/components/TopBar';
@@ -42,9 +43,9 @@ function ConversationRow({ item, unread, onOpen, onActions }: { item: Conversati
 }
 
 /**
- * Mobile home: recent conversations across projects, newest first. Long-press (or ⋯) a row to hide
- * it (archive — reversible, with undo) or delete it for good after a confirmation; the archive
- * button in the top bar lists hidden conversations to restore or delete.
+ * Mobile home: recent conversations across projects, newest first. Long-press (or ⋯) a row for the conversation sheet
+ * (rename, fork, hide — with undo — or delete); 🔍 searches titles and content; the archive button lists hidden
+ * conversations to restore or delete.
  */
 export function SessionsScreen() {
   const navigate = useGo();
@@ -55,8 +56,8 @@ export function SessionsScreen() {
   const [items, setItems] = useState<Conversation[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [target, setTarget] = useState<Conversation | null>(null);
-  const [confirmDelete, setConfirmDelete] = useState(false);
-  const [busy, setBusy] = useState(false);
+  // the search over every conversation (🔍), full screen
+  const [searching, setSearching] = useState(false);
   const [toast, setToast] = useState<Toast | null>(null);
   const toastTimer = useRef<number | null>(null);
   // C-06: sessions with news (run finished / failed / waiting for approval) since they were last opened
@@ -85,41 +86,28 @@ export function SessionsScreen() {
     setToast(next);
     toastTimer.current = window.setTimeout(() => setToast(null), 5000);
   };
-  const closeSheet = () => { setTarget(null); setConfirmDelete(false); };
   const drop = (sessionId: string) => setItems((list) => list?.filter((entry) => entry.sessionId !== sessionId) ?? null);
-
-  const act = async (action: 'hide' | 'restore' | 'delete') => {
-    if (!target) return;
-    const item = target;
-    setBusy(true);
-    try {
-      const response = action === 'hide' ? await api.deleteSession(item.sessionId, false)
-        : action === 'restore' ? await api.restoreSession(item.sessionId)
-          : await api.deleteSession(item.sessionId, true);
-      if (!response.ok) throw new Error(`실패했습니다 (${response.status})`);
-      drop(item.sessionId);
-      closeSheet();
-      if (action === 'hide') {
-        showToast({ text: '대화를 숨겼습니다', undo: () => { void api.restoreSession(item.sessionId).then(() => { setToast(null); load('active'); }); } });
-      } else {
-        showToast({ text: action === 'restore' ? '대화를 다시 표시합니다' : '대화를 삭제했습니다' });
-      }
-    } catch (err) {
-      showToast({ text: err instanceof Error ? err.message : '실패했습니다' });
-    } finally {
-      setBusy(false);
+  const changed = (change: ConversationChange) => {
+    if (change.kind === 'renamed') setItems((list) => list?.map((entry) => (entry.sessionId === change.sessionId ? { ...entry, sessionTitle: change.title } : entry)) ?? null);
+    else if (change.kind === 'forked') navigate(`/session/${encodeURIComponent(change.forkId)}`);
+    else {
+      drop(change.sessionId);
+      if (change.kind === 'hidden') showToast({ text: '대화를 숨겼습니다', undo: () => { void api.restoreSession(change.sessionId).then(() => { setToast(null); load('active'); }); } });
+      else showToast({ text: change.kind === 'restored' ? '대화를 다시 표시합니다' : '대화를 삭제했습니다' });
     }
   };
 
   const hidden = view === 'hidden';
-  const sheetButton = 'w-full h-12 rounded-xl flex items-center gap-3 px-4 text-[15px] active:bg-elevated disabled:opacity-50';
   return (
     <div className="m-app">
       <TopBar
         title={hidden ? '숨긴 대화' : <HomeTabs active="conversations" />}
         left={hidden ? <button type="button" aria-label="대화 목록" onClick={() => setView('active')} className="m-touch flex items-center justify-center rounded-full"><ArrowLeft size={20} /></button> : undefined}
         right={hidden ? null : (
-          <button type="button" aria-label="숨긴 대화" onClick={() => setView('hidden')} className="m-touch flex items-center justify-center rounded-full text-muted"><Archive size={19} /></button>
+          <>
+            <button type="button" aria-label="대화 검색" onClick={() => setSearching(true)} className="m-touch flex items-center justify-center rounded-full text-muted"><Search size={19} /></button>
+            <button type="button" aria-label="숨긴 대화" onClick={() => setView('hidden')} className="m-touch flex items-center justify-center rounded-full text-muted"><Archive size={19} /></button>
+          </>
         )}
       />
       <main className="m-scroll flex-1 pb-24">
@@ -137,30 +125,16 @@ export function SessionsScreen() {
             </div>
           </div>
         )) : null}
-        {items && items.length > 0 && !hidden ? <div className="px-4 pt-2 pb-1 text-[11px] text-muted">길게 누르면 숨기기·삭제</div> : null}
+        {items && items.length > 0 && !hidden ? <div className="px-4 pt-2 pb-1 text-[11px] text-muted">길게 누르면 이름 변경·분기·숨기기·삭제</div> : null}
         <ul>
           {items?.map((item) => (
-            <ConversationRow key={item.sessionId} item={item} unread={hidden ? undefined : unread.get(item.sessionId)} onOpen={() => navigate(`/session/${encodeURIComponent(item.sessionId)}`)} onActions={() => { setConfirmDelete(false); setTarget(item); }} />
+            <ConversationRow key={item.sessionId} item={item} unread={hidden ? undefined : unread.get(item.sessionId)} onOpen={() => navigate(`/session/${encodeURIComponent(item.sessionId)}`)} onActions={() => setTarget(item)} />
           ))}
         </ul>
       </main>
 
-      <BottomSheet open={Boolean(target)} onClose={closeSheet} title={<span className="block truncate">{target?.sessionTitle || '(제목 없음)'}</span>}>
-        {!confirmDelete ? (
-          <div className="space-y-1">
-            {hidden
-              ? <button type="button" className={sheetButton} disabled={busy} onClick={() => { void act('restore'); }}><RotateCcw size={18} /> 다시 표시</button>
-              : <button type="button" className={sheetButton} disabled={busy} onClick={() => { void act('hide'); }}><EyeOff size={18} /> 숨기기<span className="ml-auto text-[12px] text-muted">되돌릴 수 있음</span></button>}
-            <button type="button" className={`${sheetButton} text-danger`} disabled={busy} onClick={() => setConfirmDelete(true)}><Trash2 size={18} /> 삭제</button>
-          </div>
-        ) : (
-          <div className="space-y-3">
-            <p className="text-[14px] text-muted">대화 기록까지 영구 삭제합니다. 되돌릴 수 없습니다.</p>
-            <button type="button" className="w-full h-12 rounded-xl bg-danger text-white text-[15px] font-medium disabled:opacity-50" disabled={busy} onClick={() => { void act('delete'); }}>{busy ? '삭제 중…' : '영구 삭제'}</button>
-            <button type="button" className="w-full h-12 rounded-xl border border-line text-[15px]" onClick={() => setConfirmDelete(false)}>취소</button>
-          </div>
-        )}
-      </BottomSheet>
+      <ConversationActions target={target ? { sessionId: target.sessionId, title: target.sessionTitle ?? '', provider: target.provider, hidden } : null} onClose={() => setTarget(null)} onChange={changed} />
+      {searching ? <ConversationSearch onClose={() => setSearching(false)} /> : null}
 
       {toast ? (
         <div className="fixed inset-x-4 bottom-[calc(env(safe-area-inset-bottom)+88px)] z-30 flex items-center gap-3 rounded-xl bg-ink text-bg px-4 py-3 text-[14px] shadow-lg" role="status">

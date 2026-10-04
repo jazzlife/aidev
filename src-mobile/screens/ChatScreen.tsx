@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
-import { Search } from 'lucide-react';
+import { MoreHorizontal, Search } from 'lucide-react';
 
 import { api, grantClaudeToolPermission, buildClaudeToolPermissionEntry, useChatRealtimeHandlers, useSessionStore, useWebSocket, type LLMProvider, type NormalizedMessage, type PendingPermissionRequest, type ProjectSession } from '@/modules/chat-core';
 import { AgentCreateCard, aidevApi, routingStore, shouldAskClarify, useAgentCreation, useAidevRouting, useEscalation, usePrejudge, type AidevSendDecoration, type Engine } from '@/modules/aidev-router';
@@ -14,7 +14,8 @@ import { SessionResults } from '@m/components/SessionResults';
 import { TopBar } from '@m/components/TopBar';
 import { usePreviewList } from '@/modules/remote-preview';
 import { useDebugSessions } from '@/modules/remote-debug';
-import { BottomSheet } from '@m/components/BottomSheet';
+import { ConversationActions, type ConversationChange } from '@m/components/ConversationActions';
+import { MessageActions, type MessageTarget } from '@m/components/MessageActions';
 import { EscalationPrompt } from '@m/components/EscalationPrompt';
 import { ProjectPicker, readLastProject, type PickedProject } from '@m/components/ProjectPicker';
 import { ClarifyPrompt } from '@m/components/ClarifyPrompt';
@@ -69,7 +70,14 @@ export function ChatScreen() {
   const [pendingPermissionRequests, setPendingPermissionRequests] = useState<PendingPermissionRequest[]>([]);
   const [, setTokenBudget] = useState<Record<string, unknown> | null>(null);
   const [lastRunFinished, setLastRunFinished] = useState<number | null>(null);
-  const [copyText, setCopyText] = useState<string | null>(null);
+  // the message held down (its sheet: copy, read aloud, edit, fork here)
+  const [messageTarget, setMessageTarget] = useState<MessageTarget | null>(null);
+  // the conversation sheet (⋯ in the top bar)
+  const [conversationSheet, setConversationSheet] = useState(false);
+  // a sent message being edited: the next send replaces it (and what followed it)
+  const [editingAnchorId, setEditingAnchorId] = useState<string | null>(null);
+  // a fork or other conversation action that failed, shown above the composer
+  const [actionError, setActionError] = useState<string | null>(null);
   // previews an agent opens while the chat is open get a banner; this is the newest one already seen/dismissed
   const [previewSeen, setPreviewSeen] = useState(() => Date.now());
   const { previews } = usePreviewList(true, 8000);
@@ -78,21 +86,11 @@ export function ChatScreen() {
   const [debugSeen, setDebugSeen] = useState(() => Date.now());
   const { sessions: debugSessions } = useDebugSessions(true, 8000);
   const agentDebug = debugSessions.find((d) => d.origin === 'agent' && d.createdAt > debugSeen && d.state !== 'ended' && d.state !== 'failed') ?? null;
-  const [copied, setCopied] = useState(false);
   // C-05 peeks: the file sheet (null file = search) and the diff of one file tool call
   const [filePeek, setFilePeek] = useState<{ open: boolean; file: FileRef | null; fromSearch: boolean }>({ open: false, file: null, fromSearch: false });
   const [diffPeek, setDiffPeek] = useState<FileEdit | null>(null);
   // §3.1 clarify: a routed command held back until the user adds the missing detail or lets it go as is
   const [clarify, setClarify] = useState<{ text: string; decoration: AidevSendDecoration; attachments: UploadedAttachment[]; previews: string[] } | null>(null);
-  const copyMessage = async () => {
-    if (!copyText) return;
-    try { await navigator.clipboard.writeText(copyText); }
-    catch {
-      // older WebViews: a temporary textarea (selection is allowed in text fields)
-      const area = document.createElement('textarea'); area.value = copyText; document.body.appendChild(area); area.select(); document.execCommand('copy'); area.remove();
-    }
-    setCopied(true); setTimeout(() => { setCopied(false); setCopyText(null); }, 700);
-  };
   const streamTimerRef = useRef<number | null>(null);
   const accumulatedStreamRef = useRef('');
   const lastSeqRef = useRef(new Map<string, number>());
@@ -205,12 +203,15 @@ export function ChatScreen() {
     // the phone's own copy shows the picked images at once (object URLs of the files just sent)
     const images = attachments.map((a, index) => ({ a, preview: previews[index] })).filter(({ a }) => isImage(a)).map(({ a, preview }) => ({ path: a.path, name: a.name, ...(preview ? { data: preview } : {}) }));
     const files = attachments.filter((a) => !isImage(a));
-    const echo: NormalizedMessage = { id: `local_${Date.now()}`, sessionId: target.id, timestamp: new Date().toISOString(), provider: target.provider, kind: 'text', role: 'user', content: text, ...(images.length ? { images } : {}), ...(files.length ? { files } : {}) };
+    // an edit replaces a sent message: the server rewinds to it, and the echo says which one it stands in for
+    const anchorId = target.id === meta?.id ? editingAnchorId : null;
+    const echo: NormalizedMessage = { id: `local_${Date.now()}`, sessionId: target.id, timestamp: new Date().toISOString(), provider: target.provider, kind: 'text', role: 'user', content: text, ...(images.length ? { images } : {}), ...(files.length ? { files } : {}), ...(anchorId ? { replacesAnchorId: anchorId } : {}) };
     sessionStore.appendRealtime(target.id, echo);
     setBusy(true);
     setLastRunFinished(null);
+    setEditingAnchorId(null);
     sendMessage({
-      type: 'chat.send', sessionId: target.id, content: text,
+      type: anchorId ? 'chat.edit-send' : 'chat.send', sessionId: target.id, content: text, ...(anchorId ? { anchorId } : {}),
       options: {
         // the conversation's permission mode (a new chat: the draft's) and the saved allow/deny rules, as the workbench sends them
         ...buildSendOptions(target.provider, permission.mode),
@@ -222,7 +223,7 @@ export function ChatScreen() {
       },
     });
     return true;
-  }, [meta, navigate, permission.mode, project, provider, sendMessage, sessionStore]);
+  }, [editingAnchorId, meta, navigate, permission.mode, project, provider, sendMessage, sessionStore]);
 
   const send = useCallback(async (text: string, files: File[] = []) => {
     // a send in flight (routing can take seconds): a repeated tap is not a second send
@@ -295,6 +296,30 @@ export function ChatScreen() {
   const waiting = pendingPermissionRequests[0] ?? null;
   const sheetRequest = waiting && waiting.requestId !== laterRequestId ? waiting : null;
 
+  const providerCaps = caps?.[provider];
+  const canRewind = (target: MessageTarget | null) => Boolean(target && target.message.role === 'user' && target.message.transcriptAnchorId && meta);
+  const editMessage = (target: MessageTarget) => {
+    setEditingAnchorId(target.message.transcriptAnchorId ?? null);
+    setRestore({ text: target.text, n: Date.now() });
+  };
+  const forkHere = async (target: MessageTarget) => {
+    if (!meta || !target.message.transcriptAnchorId) return;
+    setActionError(null);
+    try {
+      const response = await api.forkSession(meta.id, { upToAnchorId: target.message.transcriptAnchorId });
+      const body = await response.json().catch(() => ({})) as { data?: { sessionId?: string }; message?: string };
+      if (!response.ok || !body.data?.sessionId) throw new Error(body.message || `실패했습니다 (${response.status})`);
+      navigate(`/session/${encodeURIComponent(body.data.sessionId)}`);
+    } catch (error) {
+      setActionError(error instanceof Error ? error.message : '분기하지 못했습니다');
+    }
+  };
+  const conversationChanged = (change: ConversationChange) => {
+    if (change.kind === 'renamed') setMeta((current) => (current ? { ...current, title: change.title } : current));
+    else if (change.kind === 'forked') navigate(`/session/${encodeURIComponent(change.forkId)}`);
+    else if (change.kind === 'hidden' || change.kind === 'deleted') navigate(meta?.projectId ? `/projects/${encodeURIComponent(meta.projectId)}` : '/');
+  };
+
   const messages = sessionId ? sessionStore.getMessages(sessionId) : [];
   const slot = sessionId ? sessionStore.getSessionSlot(sessionId) : undefined;
   const peekProject = meta?.projectId ? { projectId: meta.projectId, projectPath: meta.projectPath } : !meta && project ? { projectId: project.projectId, projectPath: project.fullPath } : null;
@@ -308,7 +333,7 @@ export function ChatScreen() {
 
   return (
     <div className="m-app">
-      <TopBar title={title} subtitle={subtitle} back onSubtitle={projectPath ? () => navigate(projectPath) : undefined} right={<div className="flex items-center">{peekProject ? <button type="button" aria-label="파일 찾기" onClick={() => openFile(null)} className="m-touch flex items-center justify-center rounded-full text-muted"><Search size={19} /></button> : null}{!meta ? <button type="button" className="text-[13px] text-accent px-3 m-touch" onClick={() => setPickingProject(true)}>프로젝트</button> : null}</div>} />
+      <TopBar title={title} subtitle={subtitle} back onSubtitle={projectPath ? () => navigate(projectPath) : undefined} right={<div className="flex items-center">{peekProject ? <button type="button" aria-label="파일 찾기" onClick={() => openFile(null)} className="m-touch flex items-center justify-center rounded-full text-muted"><Search size={19} /></button> : null}{!meta ? <button type="button" className="text-[13px] text-accent px-3 m-touch" onClick={() => setPickingProject(true)}>프로젝트</button> : null}{meta ? <button type="button" aria-label="대화 메뉴" onClick={() => setConversationSheet(true)} className="m-touch flex items-center justify-center rounded-full text-muted"><MoreHorizontal size={20} /></button> : null}</div>} />
       {agentPreview ? (
         <div className="flex items-center gap-2 border-b border-line bg-accent/10 px-4 py-2 text-[13px]">
           <span className="min-w-0 flex-1 truncate">미리보기가 열렸습니다 · {agentPreview.label ?? agentPreview.targetName}:{agentPreview.port}</span>
@@ -325,11 +350,13 @@ export function ChatScreen() {
       ) : null}
       {loadError ? <div className="px-4 py-2 text-danger text-sm">{loadError}</div> : null}
       {!isConnected ? <div className="px-4 py-1 text-[12px] text-warn bg-warn/10">연결 중…</div> : null}
-      <MessageList messages={messages} loading={slot?.status === 'loading'} hasMore={Boolean(slot?.hasMore)} onLoadOlder={() => (sessionId ? sessionStore.fetchMore(sessionId) : Promise.resolve())} onMessageLongPress={(text) => { setCopied(false); setCopyText(text); }} onPeekFile={openFile} onPeekDiff={setDiffPeek} footer={sessionId ? <SessionResults sessionId={sessionId} refreshKey={lastRunFinished ?? 0} /> : null} />
-      <BottomSheet open={copyText !== null} onClose={() => setCopyText(null)} title="메시지">
-        <div className="text-[13px] text-muted line-clamp-4 whitespace-pre-wrap mb-3">{copyText}</div>
-        <button type="button" className="w-full h-12 rounded-xl bg-accent text-accent-ink text-[15px] font-medium" onClick={() => { void copyMessage(); }}>{copied ? '복사했습니다' : '복사'}</button>
-      </BottomSheet>
+      <MessageList messages={messages} loading={slot?.status === 'loading'} hasMore={Boolean(slot?.hasMore)} onLoadOlder={() => (sessionId ? sessionStore.fetchMore(sessionId) : Promise.resolve())} onMessageLongPress={(text, message) => setMessageTarget({ text, message })} onPeekFile={openFile} onPeekDiff={setDiffPeek} footer={sessionId ? <SessionResults sessionId={sessionId} refreshKey={lastRunFinished ?? 0} /> : null} />
+      <MessageActions target={messageTarget} onClose={() => setMessageTarget(null)}
+        canEdit={canRewind(messageTarget) && Boolean(providerCaps?.supportsMessageEditing) && !busy}
+        canFork={canRewind(messageTarget) && Boolean(providerCaps?.supportsSessionForking)}
+        onEdit={editMessage} onFork={(target) => { void forkHere(target); }} />
+      <ConversationActions target={conversationSheet && meta ? { sessionId: meta.id, title: meta.title, provider: meta.provider } : null} onClose={() => setConversationSheet(false)} onChange={conversationChanged} />
+      {actionError ? <div className="px-4 py-1 text-[13px] text-danger" role="alert">{actionError}</div> : null}
       {agentCreation.pending ? <div className="m-scroll max-h-[45dvh]"><AgentCreateCard compact pending={agentCreation.pending} onApprove={(draft) => { void agentCreation.approve(draft); }} onSelfCheck={agentCreation.runSelfCheck} onDismiss={agentCreation.dismiss} /></div> : null}
       {escalation.escalation && !busy ? <EscalationPrompt next={escalation.escalation.next} label={escalation.label} busy={escalation.busy} error={escalation.error} onRun={() => { void escalation.run(); }} onDismiss={escalation.dismiss} /> : null}
       {lastRunFinished && !busy ? <RunFeedback key={lastRunFinished} onFeedback={(value) => { void reportOutcome({ user_feedback: value }); }} /> : null}
@@ -364,7 +391,8 @@ export function ChatScreen() {
           void send(text, files); return true;
         }}
         onAbort={abort} placeholder={meta ? undefined : '무엇을 만들까요?'}
-        mode={{ label: MODE_LABELS[permission.mode]?.short ?? permission.mode, onOpen: () => setModeSheet(true) }} />
+        mode={{ label: MODE_LABELS[permission.mode]?.short ?? permission.mode, onOpen: () => setModeSheet(true) }}
+        editing={editingAnchorId ? { onCancel: () => { setEditingAnchorId(null); setRestore({ text: '', n: Date.now() }); } } : null} />
       <PermissionSheet request={sheetRequest} provider={provider} onDecide={decidePermission} onAlwaysAllow={alwaysAllow} onLater={() => setLaterRequestId(waiting?.requestId ?? null)} />
       <PermissionModeSheet open={modeSheet} onClose={() => setModeSheet(false)} modes={permission.modes} mode={permission.mode} onChoose={permission.choose} />
       <FilePeek open={filePeek.open} onClose={() => setFilePeek({ open: false, file: null, fromSearch: false })} project={peekProject} file={filePeek.file} fromSearch={filePeek.fromSearch} onFile={(file) => setFilePeek({ open: true, file, fromSearch: file !== null })} />
