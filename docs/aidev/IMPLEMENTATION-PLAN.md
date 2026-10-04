@@ -517,6 +517,7 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 
 ### OPS. 운영
 - [ ] OPS-02 서버 자체 배포(2026-10-04 사용자 결정: 모든 것이 ai-turtle 서버에서 스스로, 승인 없음, GitHub 유지, Mac은 비상용): `deploy/aidev/release/ship.sh`, runtime-manager `/v1/ship`(작업 컨테이너), 게이트웨이 `/api/aidev/platform/ship`(관리자)·결과 푸시, MCP `platform_ship`/`platform_ship_status`
+  - 부트스트랩(2026-10-04): 이 기능이 든 릴리스 `ceef11c18fa2`만 Mac 비상 경로로 배포(게이트웨이·runtime-manager·런타임 재시작 정상). 서버 준비: `~/aidev/ship-secrets`(700), `jazzlife` → admin. 이 줄이 든 커밋이 서버 자체 배포의 첫 시험
 
 ---
 
