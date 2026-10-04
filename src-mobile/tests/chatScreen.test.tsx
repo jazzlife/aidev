@@ -22,6 +22,12 @@ const api = {
   providers: {
     capabilities: vi.fn(() => json({ success: true, data: { providers: [{ provider: 'claude', permissionModes: ['default', 'plan'], defaultPermissionMode: 'default', supportsMessageEditing: true, supportsSessionForking: true }] } })),
     createSession: vi.fn(),
+    sessionTokenUsage: vi.fn((_id: string) => json({ success: true, data: { used: 170_000, total: 200_000 } })),
+  },
+  scheduledMessages: {
+    list: vi.fn((_id?: string) => json({ success: true, data: [{ id: 'm1', sessionId: 's1', content: '배포 확인', options: {}, scheduledFor: '2026-10-05T00:00:00.000Z', status: 'pending', failureReason: null, createdAt: '' }] })),
+    create: vi.fn((_body: unknown) => json({ success: true, data: {} }, 201)),
+    cancel: vi.fn((_id: string) => json({ success: true })),
   },
   forkSession: vi.fn((_id: string, _body?: unknown) => json({ success: true, data: { sessionId: 's9' } }, 201)),
   assets: { uploadFiles: vi.fn((_form: FormData) => json({ attachments: [{ path: '/assets/1-shot.png', name: 'shot.png', mimeType: 'image/png', size: 3 }] })), image: vi.fn(() => json({}, 404)) },
@@ -182,5 +188,38 @@ describe('chat screen', () => {
     act(() => store.set('s1', [userTurn({ id: 'server-1', content: '', images: [{ path: '/assets/1-shot.png', name: 'shot.png' }] })]));
     await settle();
     expect(URL.revokeObjectURL).toHaveBeenCalledWith(preview);
+  });
+
+  it('shows the context use in the conversation sheet and warns above the composer past 80%', async () => {
+    open();
+    await settle();
+    expect(screen.getByTestId('context-warning').textContent).toContain('85%');
+    fireEvent.click(screen.getByLabelText('대화 메뉴'));
+    await settle();
+    expect(screen.getByTestId('token-usage').textContent).toContain('170,000 / 200,000 (85%)');
+    expect(screen.getByTestId('conversation-actions').textContent).toContain('예약된 메시지1');
+  });
+
+  it('the send button held down schedules the text with the send options; the list cancels one', async () => {
+    open();
+    await settle();
+    type('배포 결과 알려줘');
+    await hold(screen.getByLabelText('보내기'));
+    expect(screen.getByTestId('schedule-create').textContent).toContain('배포 결과 알려줘');
+    fireEvent.click(screen.getByText('1시간 뒤'));
+    fireEvent.click(screen.getByText(/에 보내기$/));
+    await settle();
+    const body = api.scheduledMessages.create.mock.calls[0]?.[0] as { sessionId: string; content: string; scheduledFor: string; options: Record<string, unknown> };
+    expect(body).toMatchObject({ sessionId: 's1', content: '배포 결과 알려줘', options: { permissionMode: 'default', skipPermissions: false } });
+    expect(new Date(body.scheduledFor).getTime()).toBeGreaterThan(Date.now() + 55 * 60_000);
+    expect((screen.getByPlaceholderText('명령을 입력하세요') as HTMLTextAreaElement).value).toBe('');
+    expect(sent()).toHaveLength(0);
+    fireEvent.click(screen.getByLabelText('대화 메뉴'));
+    await settle();
+    fireEvent.click(screen.getByText('예약된 메시지'));
+    await settle();
+    fireEvent.click(screen.getByLabelText('예약 취소'));
+    await settle();
+    expect(api.scheduledMessages.cancel).toHaveBeenCalledWith('m1');
   });
 });

@@ -3,20 +3,9 @@ import { AlertTriangle, ChevronDown, ChevronRight, FileDiff, FileText, Paperclip
 
 import { api, parseToolPayload, type NormalizedMessage } from '@/modules/chat-core';
 import { Prose } from '@m/lib/markdown';
-import { clampText } from '@m/lib/format';
+import { clampText, summarizeToolInput as summarizeInput } from '@m/lib/format';
 import { useLongPress } from '@m/lib/useLongPress';
 import { fileEditFromTool, filePathFromTool, type FileEdit, type FileRef } from '@m/lib/peek';
-
-function summarizeInput(input: unknown): string {
-  const parsed = parseToolPayload(input);
-  if (!parsed || typeof parsed !== 'object') return typeof parsed === 'string' ? clampText(parsed, 120) : '';
-  const record = parsed as Record<string, unknown>;
-  const keys = ['file_path', 'path', 'command', 'pattern', 'query', 'url', 'description'];
-  for (const key of keys) {
-    if (typeof record[key] === 'string') return clampText(record[key] as string, 120);
-  }
-  return clampText(JSON.stringify(record), 120);
-}
 
 type MessageImage = NonNullable<NormalizedMessage['images']>[number];
 

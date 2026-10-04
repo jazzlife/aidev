@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNod
 import { ArrowUp, FileText, Paperclip, Pencil, ShieldCheck, Square, X } from 'lucide-react';
 
 import { attachmentProblem } from '@m/lib/chatOptions';
+import { useLongPress } from '@m/lib/useLongPress';
 
 type ComposerProps = {
   disabled?: boolean;
@@ -21,6 +22,8 @@ type ComposerProps = {
   editing?: { onCancel: () => void } | null;
   /** extra controls in the row (e.g. the microphone) */
   extra?: ReactNode;
+  /** the send button held down: send this later ("예약 보내기"); the text stays until it is scheduled */
+  onSchedule?: (text: string, files: File[]) => void;
 };
 
 /** Thumbnails of picked images; their object URLs are let go when the files change or the composer goes. */
@@ -34,7 +37,7 @@ function useThumbs(files: File[]) {
  * Used by ChatScreen: bottom-anchored input with auto-grow; one row under it — 📎 attach (the phone offers camera,
  * photos and files), the permission-mode pill, then stop (while answering) and send. Safe-area padding.
  */
-export function Composer({ disabled, busy, onSend, onAbort, placeholder, onDraftChange, restore, mode, editing, extra }: ComposerProps) {
+export function Composer({ disabled, busy, onSend, onAbort, placeholder, onDraftChange, restore, mode, editing, extra, onSchedule }: ComposerProps) {
   const [value, setValueState] = useState('');
   // files picked for the next send (uploaded when it goes)
   const [files, setFiles] = useState<File[]>([]);
@@ -61,6 +64,7 @@ export function Composer({ disabled, busy, onSend, onAbort, placeholder, onDraft
     setValue(''); setFiles([]); setFileError(null);
     requestAnimationFrame(grow);
   };
+  const holdSend = useLongPress(() => { const text = value.trim(); if (text && onSchedule && !disabled) onSchedule(text, files); });
   const onKey = (event: KeyboardEvent<HTMLTextAreaElement>) => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); send(); } };
   const pick = (list: FileList | null) => {
     const next = [...files];
@@ -107,7 +111,7 @@ export function Composer({ disabled, busy, onSend, onAbort, placeholder, onDraft
           ) : null}
           <span className="flex-1" />
           {busy ? <button type="button" onClick={onAbort} aria-label="중지" className="m-touch w-9 h-9 min-w-9 min-h-9 rounded-full bg-ink text-bg flex items-center justify-center"><Square size={14} /></button> : null}
-          <button type="button" onClick={send} disabled={!canSend} aria-label={busy ? '대기열에 넣기' : '보내기'} className="w-9 h-9 min-w-9 min-h-9 ml-1 rounded-full bg-accent text-accent-ink flex items-center justify-center disabled:opacity-40"><ArrowUp size={18} /></button>
+          <button type="button" onClick={send} disabled={!canSend} {...(onSchedule ? holdSend : {})} aria-label={busy ? '대기열에 넣기' : '보내기'} className="w-9 h-9 min-w-9 min-h-9 ml-1 rounded-full bg-accent text-accent-ink flex items-center justify-center disabled:opacity-40"><ArrowUp size={18} /></button>
         </div>
       </div>
       {fileError ? <div className="px-2 pt-1 text-[12px] text-danger" role="alert">{fileError}</div> : null}

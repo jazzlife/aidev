@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { useLocation, useParams } from 'react-router-dom';
-import { MoreHorizontal, Search } from 'lucide-react';
+import { Clock, Download, Gauge, MoreHorizontal, Search } from 'lucide-react';
 
 import { api, grantClaudeToolPermission, buildClaudeToolPermissionEntry, useChatRealtimeHandlers, useSessionStore, useWebSocket, type LLMProvider, type NormalizedMessage, type PendingPermissionRequest, type ProjectSession } from '@/modules/chat-core';
 import { AgentCreateCard, aidevApi, routingStore, shouldAskClarify, useAgentCreation, useAidevRouting, useEscalation, usePrejudge, type AidevSendDecoration, type Engine } from '@/modules/aidev-router';
@@ -14,7 +14,9 @@ import { SessionResults } from '@m/components/SessionResults';
 import { TopBar } from '@m/components/TopBar';
 import { usePreviewList } from '@/modules/remote-preview';
 import { useDebugSessions } from '@/modules/remote-debug';
-import { ConversationActions, type ConversationChange } from '@m/components/ConversationActions';
+import { ConversationActions, sheetButton, type ConversationChange } from '@m/components/ConversationActions';
+import { ScheduleSheet, useScheduledMessages } from '@m/components/ScheduleSheet';
+import { exportConversation } from '@m/lib/exportMarkdown';
 import { MessageActions, type MessageTarget } from '@m/components/MessageActions';
 import { EscalationPrompt } from '@m/components/EscalationPrompt';
 import { ProjectPicker, readLastProject, type PickedProject } from '@m/components/ProjectPicker';
@@ -70,7 +72,10 @@ export function ChatScreen() {
   const [modeSheet, setModeSheet] = useState(false);
   const [loadError, setLoadError] = useState<string | null>(null);
   const [pendingPermissionRequests, setPendingPermissionRequests] = useState<PendingPermissionRequest[]>([]);
-  const [, setTokenBudget] = useState<Record<string, unknown> | null>(null);
+  // the conversation's context use ({used, total}): fetched on open and after each run, updated live while it runs
+  const [tokenBudget, setTokenBudget] = useState<Record<string, unknown> | null>(null);
+  // the scheduling sheet: making one (the send button held, with the text to send) or the list (conversation sheet)
+  const [scheduleSheet, setScheduleSheet] = useState<{ mode: 'create' | 'list'; text: string } | null>(null);
   const [lastRunFinished, setLastRunFinished] = useState<number | null>(null);
   // the message held down (its sheet: copy, read aloud, edit, fork here)
   const [messageTarget, setMessageTarget] = useState<MessageTarget | null>(null);
@@ -134,6 +139,20 @@ export function ChatScreen() {
     setCurrentConversation({ sessionId: meta.id, title: meta.title, projectId: meta.projectId, projectName: meta.projectName, provider: meta.provider });
     if (meta.projectId) setCurrentProject({ projectId: meta.projectId, displayName: meta.projectName, fullPath: meta.projectPath });
   }, [meta]);
+
+  useEffect(() => {
+    if (!sessionId) { setTokenBudget(null); return undefined; }
+    let alive = true;
+    api.providers.sessionTokenUsage(sessionId).then(async (response) => {
+      const body = await response.json().catch(() => null) as { data?: Record<string, unknown> } | null;
+      if (alive) setTokenBudget(response.ok ? body?.data ?? null : null);
+    }).catch(() => undefined);
+    return () => { alive = false; };
+  }, [sessionId, lastRunFinished]);
+  const used = typeof tokenBudget?.used === 'number' ? tokenBudget.used : null;
+  const total = typeof tokenBudget?.total === 'number' && tokenBudget.total > 0 ? tokenBudget.total : null;
+  const contextShare = used !== null && total ? used / total : null;
+  const scheduled = useScheduledMessages(meta?.id ?? null);
 
   // ---- history + live subscription ---------------------------------------------------------
   useEffect(() => {
@@ -387,7 +406,25 @@ export function ChatScreen() {
         canEdit={canRewind(messageTarget) && Boolean(messageTarget?.text) && Boolean(providerCaps?.supportsMessageEditing) && !busy}
         canFork={canRewind(messageTarget) && Boolean(providerCaps?.supportsSessionForking)}
         onEdit={editMessage} onFork={(target) => { void forkHere(target); }} />
-      <ConversationActions target={conversationSheet && meta ? { sessionId: meta.id, title: meta.title, provider: meta.provider } : null} onClose={() => setConversationSheet(false)} onChange={conversationChanged} />
+      <ConversationActions target={conversationSheet && meta ? { sessionId: meta.id, title: meta.title, provider: meta.provider } : null} onClose={() => setConversationSheet(false)} onChange={conversationChanged}
+        extra={(
+          <>
+            {used !== null && !tokenBudget?.unsupported ? (
+              <div className={`${sheetButton} active:bg-transparent`} data-testid="token-usage">
+                <Gauge size={18} /> 컨텍스트<span className="ml-auto text-[13px] text-muted">{used.toLocaleString()}{total ? ` / ${total.toLocaleString()} (${Math.round((contextShare ?? 0) * 100)}%)` : ''}</span>
+              </div>
+            ) : null}
+            <button type="button" className={sheetButton} onClick={() => { setConversationSheet(false); void exportConversation(meta?.title ?? '대화', messages).catch(() => setActionError('내보내지 못했습니다')); }}><Download size={18} /> 내보내기<span className="ml-auto text-[12px] text-muted">Markdown</span></button>
+            <button type="button" className={sheetButton} onClick={() => { setConversationSheet(false); setScheduleSheet({ mode: 'list', text: '' }); }}><Clock size={18} /> 예약된 메시지<span className="ml-auto text-[13px] text-muted">{scheduled.pending.length}</span></button>
+          </>
+        )} />
+      <ScheduleSheet mode={scheduleSheet?.mode ?? null} text={scheduleSheet?.text ?? ''} scheduled={scheduled.pending} onClose={() => setScheduleSheet(null)}
+        onSchedule={async (at) => {
+          // the send options of a send now (mode and saved rules); model and effort are the router's when it goes
+          await scheduled.schedule(scheduleSheet?.text ?? '', at, { ...buildSendOptions(provider, permission.mode), sessionSummary: (scheduleSheet?.text ?? '').slice(0, 80) });
+          setRestore({ text: '', n: Date.now() });
+        }}
+        onCancel={scheduled.cancel} />
       {actionError ? <div className="px-4 py-1 text-[13px] text-danger" role="alert">{actionError}</div> : null}
       {agentCreation.pending ? <div className="m-scroll max-h-[45dvh]"><AgentCreateCard compact pending={agentCreation.pending} onApprove={(draft) => { void agentCreation.approve(draft); }} onSelfCheck={agentCreation.runSelfCheck} onDismiss={agentCreation.dismiss} /></div> : null}
       {escalation.escalation && !busy ? <EscalationPrompt next={escalation.escalation.next} label={escalation.label} busy={escalation.busy} error={escalation.error} onRun={() => { void escalation.run(); }} onDismiss={escalation.dismiss} /> : null}
@@ -409,6 +446,7 @@ export function ChatScreen() {
           <button type="button" className="shrink-0 px-1 text-muted" onClick={() => setQueued(null)}>취소</button>
         </div>
       ) : null}
+      {contextShare !== null && contextShare >= 0.8 ? <div className="mx-3 mb-1 rounded-lg bg-warn/10 px-3 py-1.5 text-[12px] text-warn" role="status" data-testid="context-warning">컨텍스트 {Math.round(contextShare * 100)}% 사용 · 곧 자동으로 요약됩니다</div> : null}
       {waiting && !sheetRequest ? (
         <button type="button" onClick={() => setLaterRequestId(null)} className="mx-3 mb-1 flex items-center gap-2 rounded-xl border border-warn/50 bg-warn/10 px-3 py-2 text-left text-[13px]" data-testid="permission-waiting">
           <span className="min-w-0 flex-1 truncate">{waiting.toolName === 'AskUserQuestion' ? 'agent가 답을 기다립니다' : waiting.toolName === 'ExitPlanMode' ? '계획 승인을 기다립니다' : `${waiting.toolName} 허용을 기다립니다`}</span>
@@ -424,7 +462,12 @@ export function ChatScreen() {
         }}
         onAbort={abort} placeholder={meta ? undefined : '무엇을 만들까요?'}
         mode={{ label: MODE_LABELS[permission.mode]?.short ?? permission.mode, onOpen: () => setModeSheet(true) }}
-        editing={editingAnchorId ? { onCancel: () => { setEditingAnchorId(null); setRestore({ text: '', n: Date.now() }); } } : null} />
+        editing={editingAnchorId ? { onCancel: () => { setEditingAnchorId(null); setRestore({ text: '', n: Date.now() }); } } : null}
+        onSchedule={meta ? (text, files) => {
+          if (files.length) { setActionError('예약 메시지에는 첨부를 넣을 수 없습니다'); return; }
+          setActionError(null);
+          setScheduleSheet({ mode: 'create', text });
+        } : undefined} />
       <PermissionSheet request={sheetRequest} provider={provider} onDecide={decidePermission} onAlwaysAllow={alwaysAllow} onLater={() => setLaterRequestId(waiting?.requestId ?? null)} />
       <PermissionModeSheet open={modeSheet} onClose={() => setModeSheet(false)} modes={permission.modes} mode={permission.mode} onChoose={permission.choose} />
       <FilePeek open={filePeek.open} onClose={() => setFilePeek({ open: false, file: null, fromSearch: false })} project={peekProject} file={filePeek.file} fromSearch={filePeek.fromSearch} onFile={(file) => setFilePeek({ open: true, file, fromSearch: file !== null })} />
