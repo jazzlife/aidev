@@ -33,5 +33,15 @@
       "type": "image/png",
       "purpose": "maskable"
     }
-  ]
+  ],
+  "color_scheme_dark": {
+    "theme_color": "#0e0e0f",
+    "background_color": "#0e0e0f"
+  },
+  "user_preferences": {
+    "color_scheme_dark": {
+      "theme_color": "#0e0e0f",
+      "background_color": "#0e0e0f"
+    }
+  }
 }

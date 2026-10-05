@@ -81,6 +81,8 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
   const liveOn = (id: string) => Boolean(live[id]?.open && live[id].mode !== 'min');
   // Tablet drawer for sessions; closes itself once a session is picked.
   const [drawerOpen, setDrawerOpen] = useState(false);
+  // no project yet: which tool fills the main area beside the sessions list (PC pairing or the agent catalog), if any
+  const [emptyView, setEmptyView] = useState<'targets' | 'catalog' | null>(null);
   useEffect(() => { setDrawerOpen(false); }, [selectedSession?.id, selectedProject?.projectId]);
   useEffect(() => {
     if (!drawerOpen) return undefined;
@@ -240,11 +242,28 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
   const settingsButton = <button type="button" title="설정" aria-label="설정" onClick={() => onShowSettings?.()} className="p-2 rounded text-muted-foreground hover:text-foreground hover:bg-muted"><Settings size={isTablet ? 16 : 18} /></button>;
 
   if (noProject) {
-    // No project yet: the sessions list is the only useful thing on screen, so it is always shown.
+    // No project yet: the sessions list stays on screen, and the main area keeps the same top bar as with a project —
+    // settings, quick settings, the live windows, PC pairing and the agent catalog (without it a tablet had no way in).
+    const viewButton = (id: 'targets' | 'catalog', title: string, Icon: typeof Bot) => (
+      <button type="button" title={title} aria-label={title} aria-pressed={emptyView === id} onClick={() => setEmptyView((current) => (current === id ? null : id))}
+        className={`p-2 rounded ${emptyView === id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}><Icon size={isTablet ? 16 : 18} /></button>
+    );
     return (
-      <div className="flex h-full min-h-0">
+      <div className="relative flex h-full min-h-0">
         <div className="aidev-chrome shrink-0 border-r border-border overflow-hidden" style={{ width: isTablet ? 300 : layout.sideWidth }}>{sessionsPanel}</div>
-        <div className="flex-1 min-w-0">{stateView}</div>
+        <div className="flex min-w-0 flex-1 flex-col">
+          <div className="aidev-chrome flex h-10 shrink-0 items-center gap-1 border-b border-border bg-muted/30 px-2" data-testid="workbench-empty-bar">
+            {emptyView ? <button type="button" onClick={() => setEmptyView(null)} aria-label="닫기" title="닫기" className="p-2 rounded text-muted-foreground hover:text-foreground hover:bg-muted"><X size={16} /></button> : null}
+            <div className="min-w-0 flex-1 truncate text-sm font-medium">{emptyView === 'targets' ? '원격 대상' : emptyView === 'catalog' ? 'Agent 카탈로그' : '프로젝트를 고르거나 추가하세요'}</div>
+            {liveSpecs.map((w) => <button key={w.id} type="button" title={w.title} aria-label={w.title} aria-pressed={liveOn(w.id)} onClick={() => liveWindows.toggle(w.id)} className={`p-2 rounded ${liveOn(w.id) ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:text-foreground hover:bg-muted'}`}><w.icon size={isTablet ? 16 : 18} /></button>)}
+            {viewButton('targets', '원격 대상', MonitorSmartphone)}
+            {viewButton('catalog', 'Agent 카탈로그', Bot)}
+            {quickSettingsButton}
+            {settingsButton}
+          </div>
+          <div className="min-h-0 flex-1">{emptyView === 'targets' ? <TargetsPanel /> : emptyView === 'catalog' ? <AgentCatalog /> : stateView}</div>
+        </div>
+        <LiveWindowHost windows={liveSpecs} compact={compactLive} />
       </div>
     );
   }

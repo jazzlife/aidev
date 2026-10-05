@@ -2,6 +2,7 @@ import express from 'express';
 
 import { createProject, updateProjectDisplayName } from '@/modules/projects/services/project-management.service.js';
 import { startCloneProject } from '@/modules/projects/services/project-clone.service.js';
+import { listGithubRepos } from '@/modules/projects/services/github-repos.service.js';
 import { getProjectTaskMaster } from '@/modules/projects/services/projects-has-taskmaster.service.js';
 import { AppError, asyncHandler, createApiSuccessResponse } from '@/shared/utils.js';
 import { getArchivedProjectsWithSessions, getProjectSessionsPage, getProjectsWithSessions } from '@/modules/projects/services/projects-with-sessions-fetch.service.js';
@@ -150,6 +151,21 @@ router.post(
       : [];
     const { updated } = applyLegacyStarredProjectIds(projectIds);
     res.json({ success: true, updated });
+  }),
+);
+
+/** The connected GitHub account's repositories, to pick one to clone instead of typing its URL. */
+router.get(
+  '/github/repos',
+  asyncHandler(async (req, res) => {
+    const userId = Number((req as typeof req & { user?: AuthenticatedUser }).user?.id);
+    if (!Number.isFinite(userId)) throw new AppError('Authenticated user is required', { code: 'AUTHENTICATION_REQUIRED', statusCode: 401 });
+    const queryParams = req.query as Record<string, unknown>;
+    res.json(createApiSuccessResponse(await listGithubRepos({
+      userId,
+      tokenId: readOptionalNumericQueryValue(queryParams.tokenId),
+      page: readOptionalNumericQueryValue(queryParams.page) ?? 1,
+    })));
   }),
 );
 

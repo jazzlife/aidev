@@ -15,7 +15,12 @@ const api = {
   createFolder: vi.fn(),
   createProject: vi.fn((_body: unknown) => json({ success: true, project: { projectId: 'p3', displayName: 'new', fullPath: '/w/new', isArchived: false } })),
   restoreProject: vi.fn(() => json({ success: true })),
-  settings: { credentials: vi.fn(() => json({ credentials: [] })) },
+  settings: { credentials: vi.fn(() => json({ credentials: [] })), createCredential: vi.fn((_body: unknown) => json({ success: true })) },
+  githubRepos: vi.fn((_params?: unknown) => json({ success: true, data: { account: { login: 'jazzlife' }, tokenId: 7, tokens: [{ id: 7, name: 'GitHub' }], page: 1, hasMore: false, repos: [
+    { fullName: 'jazzlife/aidev', name: 'aidev', private: false, description: 'NadoVibe', cloneUrl: 'https://github.com/jazzlife/aidev.git', pushedAt: '2026-10-04T00:00:00Z', archived: false, fork: false },
+    { fullName: 'jazzlife/secret-app', name: 'secret-app', private: true, description: null, cloneUrl: 'https://github.com/jazzlife/secret-app.git', pushedAt: null, archived: false, fork: false },
+  ] } })),
+  cloneProjectProgressUrl: vi.fn((params: Record<string, unknown>) => `/clone?${new URLSearchParams(params as Record<string, string>).toString()}`),
   targets: {
     list: vi.fn(() => json({ targets: [{ id: 7, name: 'my-pc', description: '', platform: null, online: false, paired: false, last_seen: null, pairing_code: 'AB12CD', pairing_expires: Date.now() + 9 * 60_000, capabilities: null }] })),
     runnerDownloads: vi.fn(() => json({ files: [{ name: 'aidev-runner-0.13.1-win-x64.exe', version: '0.13.1', platform: 'win-x64', size: 1, sha256: null }] })),
@@ -205,18 +210,49 @@ describe('adding a project', () => {
     expect(screen.getByTestId('where').textContent).toBe('/projects/p4');
   });
 
-  it('a clone shows where it lands', async () => {
+  it("clones a repository picked from the connected GitHub account into a chosen folder", async () => {
     const { repoFolderName } = await import('@m/components/AddProjectSheet');
     expect(repoFolderName('https://github.com/a/b.git/')).toBe('b');
     expect(repoFolderName('git@github.com:a/c.git')).toBe('c');
+    class FakeSource { static last: FakeSource | null = null; onmessage: ((e: { data: string }) => void) | null = null; onerror: (() => void) | null = null; constructor(public url: string) { FakeSource.last = this; } close() {} }
+    vi.stubGlobal('EventSource', FakeSource);
     at('/projects');
     await settle();
     fireEvent.click(screen.getByLabelText('프로젝트 추가'));
     await settle();
     fireEvent.click(screen.getByRole('tab', { name: 'Git 복제' }));
-    fireEvent.change(screen.getByLabelText('저장소 주소'), { target: { value: 'https://github.com/a/repo.git' } });
     await settle();
-    expect(screen.getByTestId('clone-target').textContent).toBe('→ /w/repo');
+    expect(screen.getByTestId('repo-picker').textContent).toContain('@jazzlife');
+    fireEvent.change(screen.getByLabelText('저장소 찾기'), { target: { value: 'secret' } });
+    expect(screen.getByTestId('repo-list').textContent).not.toContain('jazzlife/aidev');
+    fireEvent.click(screen.getByText('jazzlife/secret-app'));
+    await settle();
+    expect(screen.getByTestId('clone-source').textContent).toContain('jazzlife/secret-app');
+    expect(screen.getByTestId('clone-target').textContent).toBe('→ /w/secret-app');
+    fireEvent.click(screen.getByText('new'));
+    await settle();
+    expect(screen.getByTestId('clone-target').textContent).toBe('→ /w/new/secret-app');
+    fireEvent.click(screen.getByRole('button', { name: '복제하고 추가' }));
+    expect(api.cloneProjectProgressUrl).toHaveBeenCalledWith({ path: '/w/new', githubUrl: 'https://github.com/jazzlife/secret-app.git', githubTokenId: 7, newGithubToken: null });
+    act(() => FakeSource.last!.onmessage!({ data: JSON.stringify({ type: 'complete', project: { projectId: 'p9', displayName: 'secret-app', fullPath: '/w/new/secret-app' } }) }));
+    await settle();
+    expect(screen.getByTestId('where').textContent).toBe('/projects/p9');
+  });
+
+  it('without a connected account it connects one with a token, then lists the repositories', async () => {
+    api.githubRepos.mockImplementationOnce(() => json({ success: false, error: { code: 'GITHUB_NOT_CONNECTED', message: '연결된 GitHub 계정이 없습니다' } }, 404));
+    at('/projects');
+    await settle();
+    fireEvent.click(screen.getByLabelText('프로젝트 추가'));
+    await settle();
+    fireEvent.click(screen.getByRole('tab', { name: 'Git 복제' }));
+    await settle();
+    expect(screen.getByTestId('github-connect')).toBeTruthy();
+    fireEvent.change(screen.getByLabelText('GitHub 토큰'), { target: { value: 'ghp_test' } });
+    fireEvent.click(screen.getByRole('button', { name: '연결' }));
+    await settle();
+    expect(api.settings.createCredential).toHaveBeenCalledWith({ credentialName: 'GitHub', credentialType: 'github_token', credentialValue: 'ghp_test', description: 'NadoVibe에서 연결' });
+    expect(screen.getByTestId('repo-list').textContent).toContain('jazzlife/aidev');
   });
 });
 

@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { ArrowUp, Folder, FolderPlus, GitBranch } from 'lucide-react';
+import { ArrowUp, Folder, FolderPlus, GitBranch, Link2, Lock, Search } from 'lucide-react';
 
 import { api } from '@/modules/chat-core';
 import { BottomSheet } from '@m/components/BottomSheet';
 import type { CurrentProject } from '@m/lib/current';
 import { failureText as failure } from '@m/lib/http';
+import { relativeTime } from '@m/lib/format';
 
 type Suggestion = { name: string; path: string };
 type ServerProject = CurrentProject & { isArchived?: boolean };
@@ -89,6 +90,131 @@ function FolderBrowser({ path, onPath }: { path: string; onPath: (path: string) 
   );
 }
 
+type Repo = { fullName: string; name: string; private: boolean; description: string | null; cloneUrl: string; pushedAt: string | null; archived: boolean; fork: boolean };
+type RepoPage = { account: { login: string }; tokenId: number; tokens: Array<{ id: number; name: string }>; repos: Repo[]; page: number; hasMore: boolean };
+/** What is cloned: a repository picked from the account (with its token) or a typed address. */
+type CloneSource = { url: string; label: string; tokenId: number | null; private: boolean };
+
+/**
+ * The repositories of the GitHub account connected on the runtime, newest pushed first, searchable; picking one moves
+ * on to where it goes. Without a connected account it connects one here (the token is stored on the runtime like the
+ * workbench's, and used for private repositories). A typed address stays available for anything else.
+ */
+function RepoPicker({ onPick }: { onPick: (source: CloneSource) => void }) {
+  // the account and the repositories loaded so far (null: loading)
+  const [data, setData] = useState<RepoPage | null>(null);
+  // no GitHub account connected yet (show the connect form)
+  const [notConnected, setNotConnected] = useState(false);
+  // the token being typed to connect an account, and the typed address for "주소로 복제"
+  const [token, setToken] = useState('');
+  const [typedUrl, setTypedUrl] = useState<string | null>(null);
+  // the filter typed over the list
+  const [filter, setFilter] = useState('');
+  // a request in flight, and what went wrong
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback(async (tokenId?: number, page = 1) => {
+    setLoading(true); setError(null);
+    try {
+      const response = await api.githubRepos({ tokenId, page });
+      const body = await response.json().catch(() => ({})) as { success?: boolean; data?: RepoPage; error?: { code?: string; message?: string } | string };
+      const code = typeof body.error === 'object' ? body.error?.code : undefined;
+      if (code === 'GITHUB_NOT_CONNECTED' || code === 'GITHUB_TOKEN_INVALID') {
+        setNotConnected(true);
+        if (code === 'GITHUB_TOKEN_INVALID') setError(typeof body.error === 'object' ? body.error?.message ?? null : null);
+        return;
+      }
+      if (!response.ok || !body.data) throw new Error(typeof body.error === 'object' ? body.error?.message : body.error || `실패했습니다 (${response.status})`);
+      const next = body.data;
+      setNotConnected(false);
+      setData((current) => (page > 1 && current ? { ...next, repos: [...current.repos, ...next.repos] } : next));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : '저장소 목록을 불러오지 못했습니다');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+  useEffect(() => { void load(); }, [load]);
+
+  const connect = async () => {
+    const value = token.trim();
+    if (!value) return;
+    setLoading(true); setError(null);
+    try {
+      const response = await api.settings.createCredential({ credentialName: 'GitHub', credentialType: 'github_token', credentialValue: value, description: 'NadoVibe에서 연결' });
+      if (!response.ok) throw new Error(await failure(response));
+      setToken('');
+      await load();
+    } catch (err) {
+      setLoading(false);
+      setError(err instanceof Error ? err.message : '연결하지 못했습니다');
+    }
+  };
+
+  const field = 'w-full h-11 rounded-xl border border-line bg-bg px-3 text-[15px] outline-none focus:border-accent';
+  if (typedUrl !== null) {
+    const name = repoFolderName(typedUrl);
+    return (
+      <div className="space-y-2">
+        <input autoFocus value={typedUrl} onChange={(e) => setTypedUrl(e.target.value)} placeholder="https://github.com/사용자/저장소" aria-label="저장소 주소" autoCapitalize="off" autoCorrect="off" inputMode="url" className={field} />
+        <div className="flex gap-2">
+          <button type="button" onClick={() => setTypedUrl(null)} className="h-11 flex-1 rounded-xl border border-line text-[15px]">목록으로</button>
+          <button type="button" disabled={!name} onClick={() => onPick({ url: typedUrl.trim(), label: name, tokenId: data?.tokenId ?? null, private: false })} className="h-11 flex-1 rounded-xl bg-accent text-[15px] font-medium text-accent-ink disabled:opacity-40">다음</button>
+        </div>
+      </div>
+    );
+  }
+  if (notConnected) {
+    return (
+      <div className="space-y-2" data-testid="github-connect">
+        <p className="text-[14px]">GitHub 계정을 연결하면 저장소 목록에서 골라 복제합니다.</p>
+        <p className="text-[12px] text-muted">GitHub → Settings → Developer settings → Personal access tokens에서 <b>repo</b> 권한(세분화 토큰은 Contents 읽기)으로 만든 토큰을 붙여 넣으세요. 이 서버에만 저장됩니다.</p>
+        <input type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="ghp_… 또는 github_pat_…" aria-label="GitHub 토큰" autoCapitalize="off" autoCorrect="off" className={field} />
+        {error ? <div className="text-[13px] text-danger" role="alert">{error}</div> : null}
+        <button type="button" disabled={loading || !token.trim()} onClick={() => { void connect(); }} className="h-11 w-full rounded-xl bg-accent text-[15px] font-medium text-accent-ink disabled:opacity-40">{loading ? '연결 중…' : '연결'}</button>
+        <button type="button" onClick={() => setTypedUrl('')} className="flex h-10 w-full items-center justify-center gap-1.5 text-[13px] text-muted"><Link2 size={14} /> 공개 저장소 주소로 복제</button>
+      </div>
+    );
+  }
+  const q = filter.trim().toLowerCase();
+  const shown = (data?.repos ?? []).filter((r) => !q || r.fullName.toLowerCase().includes(q) || r.description?.toLowerCase().includes(q));
+  return (
+    <div className="space-y-2" data-testid="repo-picker">
+      {data ? (
+        <div className="flex items-center gap-2 text-[13px] text-muted">
+          <GitBranch size={14} /> <span className="min-w-0 flex-1 truncate">@{data.account.login}</span>
+          {data.tokens.length > 1 ? (
+            <select value={data.tokenId} onChange={(e) => { setData(null); void load(Number(e.target.value)); }} aria-label="GitHub 계정" className="h-8 rounded-lg border border-line bg-bg px-2 text-[13px] text-ink">
+              {data.tokens.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+            </select>
+          ) : null}
+        </div>
+      ) : null}
+      <div className="flex h-10 items-center gap-2 rounded-xl border border-line bg-bg px-3">
+        <Search size={15} className="shrink-0 text-muted" />
+        <input value={filter} onChange={(e) => setFilter(e.target.value)} placeholder="저장소 찾기" aria-label="저장소 찾기" autoCapitalize="off" autoCorrect="off" className="min-w-0 flex-1 bg-transparent text-[15px] outline-none" />
+      </div>
+      <ul className="max-h-[42dvh] overflow-y-auto rounded-xl border border-line" data-testid="repo-list">
+        {!data && loading ? <li className="px-3 py-2 text-[13px] text-muted m-pulse">저장소 불러오는 중…</li> : null}
+        {data && shown.length === 0 ? <li className="px-3 py-2 text-[13px] text-muted">{q ? '맞는 저장소가 없습니다' : '저장소가 없습니다'}</li> : null}
+        {shown.map((repo) => (
+          <li key={repo.fullName} className="border-b border-line last:border-b-0">
+            <button type="button" onClick={() => onPick({ url: repo.cloneUrl, label: repo.fullName, tokenId: data?.tokenId ?? null, private: repo.private })} className="w-full px-3 py-2.5 text-left active:bg-elevated">
+              <span className="flex items-center gap-1.5 text-[14px]"><span className="min-w-0 truncate">{repo.fullName}</span>{repo.private ? <Lock size={12} className="shrink-0 text-muted" aria-label="비공개" /> : null}{repo.archived ? <span className="shrink-0 text-[11px] text-muted">보관됨</span> : null}</span>
+              {repo.description ? <span className="block truncate text-[12px] text-muted">{repo.description}</span> : null}
+              {repo.pushedAt ? <span className="block text-[11px] text-muted">{relativeTime(repo.pushedAt)}</span> : null}
+            </button>
+          </li>
+        ))}
+        {data?.hasMore && !q ? <li><button type="button" disabled={loading} onClick={() => { void load(data.tokenId, data.page + 1); }} className="w-full py-2 text-[13px] text-accent disabled:text-muted">{loading ? '불러오는 중…' : '더 보기'}</button></li> : null}
+      </ul>
+      {error ? <div className="text-[13px] text-danger" role="alert">{error}</div> : null}
+      <button type="button" onClick={() => setTypedUrl('')} className="flex h-9 w-full items-center justify-center gap-1.5 text-[13px] text-muted"><Link2 size={14} /> 다른 주소로 복제</button>
+    </div>
+  );
+}
+
 /**
  * Used by the projects tab (+): adds a project from a folder on the runtime (the server creates a missing one) or by
  * cloning a Git repository there. A path that was removed earlier comes back archived from the server, so it is
@@ -98,9 +224,8 @@ export function AddProjectSheet({ open, onClose, onAdded }: { open: boolean; onC
   const [tab, setTab] = useState<Tab>('folder');
   const [path, setPath] = useState('');
   const [name, setName] = useState('');
-  const [repo, setRepo] = useState('');
-  const [tokens, setTokens] = useState<Array<{ id: number; credential_name: string }>>([]);
-  const [tokenId, setTokenId] = useState<string>('');
+  // the repository picked to clone (the clone tab's second step: where it goes)
+  const [source, setSource] = useState<CloneSource | null>(null);
   const [busy, setBusy] = useState(false);
   const [progress, setProgress] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -108,17 +233,8 @@ export function AddProjectSheet({ open, onClose, onAdded }: { open: boolean; onC
 
   const stopClone = () => { sourceRef.current?.close(); sourceRef.current = null; };
   // closing the sheet ends the stream, which cancels the clone on the server
-  const close = () => { stopClone(); setBusy(false); setProgress(null); setError(null); onClose(); };
+  const close = () => { stopClone(); setBusy(false); setProgress(null); setError(null); setSource(null); onClose(); };
   useEffect(() => () => stopClone(), []);
-  useEffect(() => {
-    if (!open || tab !== 'clone') return;
-    api.settings.credentials('github_token').then(async (response) => {
-      const body = await response.json() as { credentials?: Array<{ id: number; credential_name: string; is_active: boolean }> };
-      const active = (body.credentials ?? []).filter((c) => c.is_active);
-      setTokens(active);
-      setTokenId((current) => current || (active[0] ? String(active[0].id) : ''));
-    }).catch(() => setTokens([]));
-  }, [open, tab]);
 
   const finish = async (project: ServerProject | undefined) => {
     if (!project?.projectId) throw new Error('프로젝트 정보를 받지 못했습니다');
@@ -145,25 +261,25 @@ export function AddProjectSheet({ open, onClose, onAdded }: { open: boolean; onC
   };
 
   const clone = () => {
-    if (!path.trim() || !repo.trim()) return;
+    if (!path.trim() || !source) return;
     setBusy(true); setError(null); setProgress('복제를 시작합니다…');
     stopClone();
-    const source = new EventSource(api.cloneProjectProgressUrl({ path: path.trim(), githubUrl: repo.trim(), githubTokenId: tokenId || null, newGithubToken: null }));
-    sourceRef.current = source;
-    source.onmessage = (event) => {
+    const stream = new EventSource(api.cloneProjectProgressUrl({ path: path.trim(), githubUrl: source.url, githubTokenId: source.tokenId, newGithubToken: null }));
+    sourceRef.current = stream;
+    stream.onmessage = (event) => {
       let payload: { type?: string; message?: string; project?: ServerProject };
       try { payload = JSON.parse(event.data as string) as typeof payload; } catch { return; }
       if (payload.type === 'progress' && payload.message) setProgress(payload.message);
       else if (payload.type === 'complete') { stopClone(); void finish(payload.project).catch((err: Error) => { setBusy(false); setError(err.message); }); }
       else if (payload.type === 'error') { stopClone(); setBusy(false); setProgress(null); setError(payload.message || '복제하지 못했습니다'); }
     };
-    source.onerror = () => {
-      if (sourceRef.current !== source) return;
+    stream.onerror = () => {
+      if (sourceRef.current !== stream) return;
       stopClone(); setBusy(false); setProgress(null); setError('복제 중 연결이 끊겼습니다');
     };
   };
 
-  const folderName = repoFolderName(repo);
+  const folderName = source ? repoFolderName(source.url) : '';
   const tabButton = (key: Tab, label: string, icon: React.ReactNode) => (
     <button type="button" role="tab" aria-selected={tab === key} disabled={busy} onClick={() => { setTab(key); setError(null); }}
       className={`flex h-10 flex-1 items-center justify-center gap-1.5 rounded-lg text-[14px] ${tab === key ? 'bg-surface font-medium shadow-sm' : 'text-muted'}`}>{icon}{label}</button>
@@ -172,34 +288,27 @@ export function AddProjectSheet({ open, onClose, onAdded }: { open: boolean; onC
     <BottomSheet open={open} onClose={close} title="프로젝트 추가">
       <div className="space-y-3" data-testid="add-project">
         <div role="tablist" className="flex gap-1 rounded-xl bg-elevated p-1">{tabButton('folder', '폴더', <Folder size={15} />)}{tabButton('clone', 'Git 복제', <GitBranch size={15} />)}</div>
-        {tab === 'clone' ? (
-          <input value={repo} onChange={(e) => setRepo(e.target.value)} placeholder="https://github.com/사용자/저장소" aria-label="저장소 주소" autoCapitalize="off" autoCorrect="off" inputMode="url"
-            className="w-full h-11 rounded-xl border border-line bg-bg px-3 text-[15px] outline-none focus:border-accent" />
+        {tab === 'clone' && !source ? <RepoPicker onPick={(picked) => { setSource(picked); setError(null); }} /> : null}
+        {tab === 'clone' && source ? (
+          <div className="flex items-center gap-2 rounded-xl border border-line bg-bg px-3 py-2" data-testid="clone-source">
+            <GitBranch size={15} className="shrink-0 text-muted" />
+            <span className="min-w-0 flex-1 truncate text-[14px]">{source.label}</span>
+            {source.private ? <Lock size={12} className="shrink-0 text-muted" /> : null}
+            <button type="button" disabled={busy} onClick={() => setSource(null)} className="shrink-0 text-[13px] text-accent disabled:text-muted">바꾸기</button>
+          </div>
         ) : null}
-        {tab === 'clone' ? <div className="text-[12px] text-muted">복제할 위치</div> : null}
-        <FolderBrowser path={path} onPath={setPath} />
+        {tab === 'clone' && source ? <div className="text-[12px] text-muted">어느 폴더에 둘까요? (들어가서 고르거나 새 폴더를 만드세요)</div> : null}
+        {tab === 'folder' || source ? <FolderBrowser path={path} onPath={setPath} /> : null}
         {tab === 'folder' ? (
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="표시 이름 (선택)" aria-label="표시 이름"
             className="w-full h-11 rounded-xl border border-line bg-bg px-3 text-[15px] outline-none focus:border-accent" />
-        ) : (
-          <>
-            {folderName && path ? <div className="truncate text-[12px] text-muted font-mono" data-testid="clone-target">→ {join(path, folderName)}</div> : null}
-            {tokens.length ? (
-              <label className="flex items-center gap-2 text-[13px] text-muted">GitHub 토큰
-                <select value={tokenId} onChange={(e) => setTokenId(e.target.value)} className="h-9 flex-1 rounded-lg border border-line bg-bg px-2 text-[14px] text-ink">
-                  <option value="">없음 (공개 저장소)</option>
-                  {tokens.map((t) => <option key={t.id} value={String(t.id)}>{t.credential_name}</option>)}
-                </select>
-              </label>
-            ) : <div className="text-[12px] text-muted">비공개 저장소는 작업대 설정에서 GitHub 토큰을 저장한 뒤 복제하세요.</div>}
-          </>
-        )}
+        ) : source && folderName && path ? <div className="truncate text-[12px] text-muted font-mono" data-testid="clone-target">→ {join(path, folderName)}</div> : null}
         {progress ? <div className="truncate text-[13px] text-muted m-pulse" role="status">{progress}</div> : null}
         {error ? <div className="text-[13px] text-danger" role="alert">{error}</div> : null}
-        <button type="button" disabled={busy || !path.trim() || (tab === 'clone' && !folderName)} onClick={() => { if (tab === 'folder') void addFolder(); else clone(); }}
+        {tab === 'clone' && !source ? null : <button type="button" disabled={busy || !path.trim() || (tab === 'clone' && !folderName)} onClick={() => { if (tab === 'folder') void addFolder(); else clone(); }}
           className="w-full h-12 rounded-xl bg-accent text-[15px] font-medium text-accent-ink disabled:opacity-40">
           {busy ? (tab === 'clone' ? '복제 중…' : '추가 중…') : tab === 'clone' ? '복제하고 추가' : '추가'}
-        </button>
+        </button>}
       </div>
     </BottomSheet>
   );

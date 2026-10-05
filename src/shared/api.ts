@@ -209,6 +209,9 @@ export const api = {
   // a query parameter on the streaming endpoints below.
   cloneProjectProgressUrl: (params: Record<string, QueryValue>) =>
     `/api/projects/clone-progress${query({ ...params, token: getStoredAuthToken() })}`,
+  // the connected GitHub account and one page of its repositories (to pick one to clone)
+  githubRepos: ({ tokenId, page }: { tokenId?: number | null; page?: number } = {}) =>
+    get(`/api/projects/github/repos${query({ tokenId, page })}`),
   searchConversationsUrl: (searchQuery: string, limit = 50) =>
     `/api/providers/search/sessions${query({
       q: searchQuery,
