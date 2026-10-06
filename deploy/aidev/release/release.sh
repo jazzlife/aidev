@@ -91,10 +91,23 @@ cmd_activate() {
 # 30 s Docker healthcheck interval).
 probe() { docker exec "$1" node -e "fetch('http://127.0.0.1:3001/health',{signal:AbortSignal.timeout(2000)}).then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))" 2>/dev/null; }
 # Established client connections to :3001 (WebSocket chat/terminal sessions count here).
+# A runtime is busy while a chat RUN is in progress there (its own /api/providers/sessions/running, asked with a token
+# signed by its own key) — an app merely left open is not: it reconnects by itself after the restart. Counting open
+# connections (the fallback when the runtime cannot answer) kept a runtime on old code for as long as a phone had the
+# app open (2026-10-06: a new API stayed unknown, the app got index.html back).
 busy_count() { docker exec "$1" node -e '
-  const t=require("fs").readFileSync("/proc/net/tcp","utf8").split("\n").slice(1);
-  let n=0; for (const l of t){ const f=l.trim().split(/\s+/); if(f.length>3 && f[1].endsWith(":0BB9") && f[3]==="01") n++; }
-  console.log(n)' 2>/dev/null || echo 0; }
+  const fs = require("fs");
+  const open = () => { let n = 0; for (const l of fs.readFileSync("/proc/net/tcp", "utf8").split("\n").slice(1)) { const f = l.trim().split(/\s+/); if (f.length > 3 && f[1].endsWith(":0BB9") && f[3] === "01") n++; } return n; };
+  (async () => {
+    try {
+      const jwt = require("/srv/app/current/node_modules/jsonwebtoken");
+      const token = jwt.sign({ userId: 1, username: process.env.AIDEV_RUNTIME }, fs.readFileSync("/run/secrets/runtime-jwt", "utf8").trim(), { expiresIn: "2m", algorithm: "HS256" });
+      const r = await fetch("http://127.0.0.1:3001/api/providers/sessions/running", { headers: { authorization: "Bearer " + token }, signal: AbortSignal.timeout(4000) });
+      const sessions = (await r.json())?.data?.sessions;
+      if (!r.ok || !Array.isArray(sessions)) throw new Error("no answer");
+      console.log(sessions.length);
+    } catch { console.log(open()); }
+  })()' 2>/dev/null || echo 0; }
 running_release() { docker exec "$1" cat /tmp/aidev-release 2>/dev/null || echo '?'; }
 restart_one() { # <container> <want>  (runs in a subshell under xargs)
   local c="$1" want="$2" t0; t0=$(date +%s)

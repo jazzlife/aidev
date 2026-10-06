@@ -239,6 +239,17 @@ describe('adding a project', () => {
     expect(screen.getByTestId('where').textContent).toBe('/projects/p9');
   });
 
+  it('a runtime that does not know the repositories API yet (HTML back) says so instead of a vague failure', async () => {
+    api.githubRepos.mockImplementationOnce(() => Promise.resolve(new Response('<!doctype html><html></html>', { status: 200, headers: { 'content-type': 'text/html' } })));
+    at('/projects');
+    await settle();
+    fireEvent.click(screen.getByLabelText('프로젝트 추가'));
+    await settle();
+    fireEvent.click(screen.getByRole('tab', { name: 'Git 복제' }));
+    await settle();
+    expect(screen.getByRole('alert').textContent).toContain('서버가 아직 이 기능을 모릅니다');
+  });
+
   it('without a connected account it connects one with a token, then lists the repositories', async () => {
     api.githubRepos.mockImplementationOnce(() => json({ success: false, error: { code: 'GITHUB_NOT_CONNECTED', message: '연결된 GitHub 계정이 없습니다' } }, 404));
     at('/projects');

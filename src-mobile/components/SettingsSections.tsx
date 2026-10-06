@@ -1,8 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Volume2, X } from 'lucide-react';
+import { GitBranch, Volume2, X } from 'lucide-react';
 
-import { getClaudeSettings, subscribeToUserPreferences, voicePlayer, writeUserPreference } from '@/modules/chat-core';
+import { api, getClaudeSettings, subscribeToUserPreferences, voicePlayer, writeUserPreference } from '@/modules/chat-core';
 import { readVoiceConfig } from '@/shared/voiceConfig';
+import { failureText } from '@m/lib/http';
 import { useVoiceStatus, writeVoiceConfig, writeVoiceEnabled } from '@m/lib/voice';
 
 const sectionTitle = 'text-[12px] uppercase tracking-wide text-muted mb-2';
@@ -73,6 +74,54 @@ export function VoiceSection() {
         {status.enabled && usable ? (
           <button type="button" className="w-full px-4 py-3 text-left text-[15px] text-accent flex items-center gap-2" onClick={() => { voicePlayer.unlock(); voicePlayer.toggle('안녕하세요. 읽어 주기 목소리입니다.'); }}><Volume2 size={17} /> 들어 보기</button>
         ) : null}
+      </div>
+    </section>
+  );
+}
+
+type GithubToken = { id: number; credential_name: string; is_active: boolean | number; created_at?: string };
+
+/**
+ * Used by the settings screen: the GitHub accounts connected on this runtime (stored `github_token` credentials, the
+ * workbench's too). Adding a project by clone lists the first active one's repositories and clones private ones with it.
+ */
+export function GithubSection() {
+  // the connected tokens (null: loading)
+  const [tokens, setTokens] = useState<GithubToken[] | null>(null);
+  // the token being typed to connect another account
+  const [value, setValue] = useState('');
+  // a request in flight, and the server's words when one failed
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const load = () => api.settings.credentials('github_token').then(async (r) => setTokens(((await r.json()) as { credentials?: GithubToken[] }).credentials ?? [])).catch(() => setTokens([]));
+  useEffect(() => { void load(); }, []);
+  const run = async (action: () => Promise<Response>) => {
+    setBusy(true); setError(null);
+    try { const r = await action(); if (!r.ok) throw new Error(await failureText(r)); await load(); }
+    catch (err) { setError(err instanceof Error ? err.message : '실패했습니다'); }
+    finally { setBusy(false); }
+  };
+  return (
+    <section data-testid="github-settings">
+      <div className={sectionTitle}>GitHub 계정</div>
+      <div className={`${card} divide-y divide-line`}>
+        {tokens === null ? <div className="px-4 py-3 text-[13px] text-muted m-pulse">불러오는 중…</div> : null}
+        {tokens?.map((t) => (
+          <div key={t.id} className="flex items-center gap-2 pl-4 pr-1 py-1.5">
+            <GitBranch size={15} className="shrink-0 text-muted" />
+            <span className="min-w-0 flex-1 truncate text-[15px]">{t.credential_name}{t.is_active ? '' : ' (꺼짐)'}</span>
+            <button type="button" aria-label={`${t.credential_name} 연결 해제`} disabled={busy} onClick={() => { void run(() => api.settings.deleteCredential(String(t.id))); }} className="m-touch flex shrink-0 items-center justify-center text-muted"><X size={16} /></button>
+          </div>
+        ))}
+        <div className="space-y-2 px-4 py-3">
+          {tokens && tokens.length === 0 ? <div className="text-[13px] text-muted">연결된 계정이 없습니다. 프로젝트 추가의 Git 복제가 이 계정의 저장소를 보여 줍니다.</div> : null}
+          <input type="password" value={value} onChange={(e) => setValue(e.target.value)} placeholder="GitHub 토큰 (ghp_… / github_pat_…)" aria-label="GitHub 토큰" autoCapitalize="off" autoCorrect="off"
+            className="w-full h-11 rounded-xl border border-line bg-bg px-3 text-[15px] outline-none focus:border-accent" />
+          <div className="text-[12px] text-muted">GitHub → Settings → Developer settings → Personal access tokens에서 repo 권한으로 만든 토큰. 이 서버에만 저장됩니다.</div>
+          <button type="button" disabled={busy || !value.trim()} onClick={() => { const v = value.trim(); void run(() => api.settings.createCredential({ credentialName: 'GitHub', credentialType: 'github_token', credentialValue: v, description: 'NadoVibe에서 연결' })).then(() => setValue('')); }}
+            className="h-11 w-full rounded-xl bg-accent text-[15px] font-medium text-accent-ink disabled:opacity-40">{busy ? '처리 중…' : '계정 연결'}</button>
+          {error ? <div className="text-[13px] text-danger" role="alert">{error}</div> : null}
+        </div>
       </div>
     </section>
   );

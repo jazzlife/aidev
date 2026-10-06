@@ -118,7 +118,10 @@ function RepoPicker({ onPick }: { onPick: (source: CloneSource) => void }) {
     setLoading(true); setError(null);
     try {
       const response = await api.githubRepos({ tokenId, page });
-      const body = await response.json().catch(() => ({})) as { success?: boolean; data?: RepoPage; error?: { code?: string; message?: string } | string };
+      const text = await response.text();
+      let body: { success?: boolean; data?: RepoPage; error?: { code?: string; message?: string } | string };
+      // not JSON: the runtime does not know this API yet (an update still waiting for its restart)
+      try { body = JSON.parse(text) as typeof body; } catch { throw new Error('서버가 아직 이 기능을 모릅니다 — 업데이트가 적용되는 중일 수 있으니 잠시 뒤 다시 열어 주세요'); }
       const code = typeof body.error === 'object' ? body.error?.code : undefined;
       if (code === 'GITHUB_NOT_CONNECTED' || code === 'GITHUB_TOKEN_INVALID') {
         setNotConnected(true);

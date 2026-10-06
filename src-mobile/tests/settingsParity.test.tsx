@@ -3,11 +3,14 @@ import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 /** C-12.9: saved permission rules and voice in the phone's settings. */
 const json = (body: unknown) => Promise.resolve(new Response(JSON.stringify(body), { status: 200, headers: { 'content-type': 'application/json' } }));
-const store = vi.hoisted(() => ({ prefs: {} as Record<string, unknown>, listeners: new Set<() => void>() }));
+const store = vi.hoisted(() => ({ prefs: {} as Record<string, unknown>, listeners: new Set<() => void>(), tokens: [] as Array<{ id: number; credential_name: string; is_active: number }> }));
 const writeUserPreference = vi.hoisted(() => vi.fn((key: string, value: unknown) => { store.prefs[key] = value; for (const l of store.listeners) l(); }));
 const toggle = vi.hoisted(() => vi.fn());
 vi.mock('@/modules/chat-core', () => ({
-  api: { voice: { health: () => json({ configured: true }) } },
+  api: {
+    voice: { health: () => json({ configured: true }) },
+    settings: { credentials: vi.fn(() => json({ credentials: store.tokens })), createCredential: vi.fn((body: { credentialName: string }) => { store.tokens.push({ id: 9, credential_name: body.credentialName, is_active: 1 }); return json({ success: true }); }), deleteCredential: vi.fn((id: string) => { store.tokens = store.tokens.filter((t) => String(t.id) !== id); return json({ success: true }); }) },
+  },
   readUserPreference: (key: string, fallback: unknown) => store.prefs[key] ?? fallback,
   writeUserPreference,
   subscribeToUserPreferences: (l: () => void) => { store.listeners.add(l); return () => store.listeners.delete(l); },
@@ -18,10 +21,11 @@ vi.mock('@/modules/chat-core', () => ({
   voicePlayer: { unlock: vi.fn(), toggle },
 }));
 
-const { PermissionRulesSection, VoiceSection } = await import('@m/components/SettingsSections');
+const { GithubSection, PermissionRulesSection, VoiceSection } = await import('@m/components/SettingsSections');
+const chatCore = await import('@/modules/chat-core');
 const settle = () => act(async () => { await new Promise((r) => setTimeout(r, 20)); });
 
-beforeEach(() => { vi.clearAllMocks(); localStorage.clear(); store.prefs = {}; store.listeners.clear(); });
+beforeEach(() => { vi.clearAllMocks(); localStorage.clear(); store.prefs = {}; store.listeners.clear(); store.tokens = []; });
 
 describe('permission rules', () => {
   it('lists the saved allow and deny rules and removes one (the workbench list changes too)', () => {
@@ -55,5 +59,22 @@ describe('voice', () => {
     expect(JSON.parse(localStorage.getItem('voiceConfig') ?? '{}').ttsVoice).toBe('nova');
     fireEvent.click(screen.getByText('들어 보기'));
     expect(toggle).toHaveBeenCalled();
+  });
+});
+
+describe('GitHub account', () => {
+  it('connects an account with a token and disconnects it', async () => {
+    render(<GithubSection />);
+    await settle();
+    expect(screen.getByTestId('github-settings').textContent).toContain('연결된 계정이 없습니다');
+    fireEvent.change(screen.getByLabelText('GitHub 토큰'), { target: { value: 'ghp_test' } });
+    fireEvent.click(screen.getByText('계정 연결'));
+    await settle();
+    expect(chatCore.api.settings.createCredential).toHaveBeenCalledWith({ credentialName: 'GitHub', credentialType: 'github_token', credentialValue: 'ghp_test', description: 'NadoVibe에서 연결' });
+    expect((screen.getByLabelText('GitHub 토큰') as HTMLInputElement).value).toBe('');
+    fireEvent.click(screen.getByLabelText('GitHub 연결 해제'));
+    await settle();
+    expect(chatCore.api.settings.deleteCredential).toHaveBeenCalledWith('9');
+    expect(screen.getByTestId('github-settings').textContent).toContain('연결된 계정이 없습니다');
   });
 });
