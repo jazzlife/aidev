@@ -1,7 +1,7 @@
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
-import type { Project, ProjectSession } from '@/shared/types';
+import type { Project, ProjectSession, ProviderUsageLimit } from '@/shared/types';
 
 //----------------- DEPLOYMENT MODE ------------
 
@@ -21,6 +21,25 @@ export const IS_PLATFORM = import.meta.env?.VITE_IS_PLATFORM === 'true';
  */
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+// ---------------------------
+
+//----------------- PROVIDER RUN SIGNALS ------------
+
+/**
+ * Narrows the `usageLimit` field of a provider `complete` event, which crosses the
+ * websocket untyped. Returns null for anything that is not a limit report, so an
+ * ordinary failed run is never mistaken for a refused one.
+ */
+export function parseProviderUsageLimit(value: unknown): ProviderUsageLimit | null {
+  if (!value || typeof value !== 'object') return null;
+  const candidate = value as { type?: unknown; resetsAt?: unknown };
+  if (typeof candidate.type !== 'string') return null;
+  return {
+    type: candidate.type as ProviderUsageLimit['type'],
+    resetsAt: typeof candidate.resetsAt === 'number' ? candidate.resetsAt : null,
+  };
 }
 
 // ---------------------------
