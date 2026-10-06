@@ -18,6 +18,7 @@ import { startTierPolicySchedule } from './tier-policy.js';
 import { startBackupSchedule } from './db-backup.js';
 import { seedAgents } from './seed-agents.js';
 import { createPlatformShip } from './platform-ship.js';
+import { createGithubOauth } from './github-oauth.js';
 
 const port = Number(process.env.PORT ?? 8080);
 // The release this process was started from; differs from /srv/app/current/RELEASE until restarted.
@@ -190,8 +191,16 @@ const ship = createPlatformShip({
   userIdByName: (username) => (store.db.prepare('SELECT id FROM accounts WHERE username = ? AND active = 1').get(username) as { id: number } | undefined)?.id ?? null,
 });
 ship.startWatcher();
+const githubOauth = createGithubOauth({
+  store, publicOrigin: origin,
+  runtimeOf: (userId) => { const a = store.accountById(userId); return a && a.active ? a.runtime : null; },
+  async runtimeFetch(runtimeName, path, init) {
+    const runtime = await ready(runtimeName);
+    return fetch(`${runtime.target}${path}`, { ...init, headers: { ...(init?.headers as Record<string, string> | undefined), authorization: `Bearer ${runtime.token}` }, signal: AbortSignal.timeout(20_000) });
+  },
+});
 const aidev = createAidevApi({
-  runners, gate, preview, debug, console: consoles, publicOrigin: origin, ui: createUiControl(), ship,
+  runners, gate, preview, debug, console: consoles, publicOrigin: origin, ui: createUiControl(), ship, githubOauth,
   isOnline: (userId) => (openChats.get(userId) ?? 0) > 0,
   store, laya, json, push,
   async runtimeFetch(session, path, init, timeoutMs = 10_000) {
@@ -367,6 +376,12 @@ const server = http.createServer(async (req, res) => {
     if (!req.url?.startsWith('/') || req.url.startsWith('//')) return json(res, 400, { error: 'Invalid request path' });
     const url = new URL(req.url, origin);
     if (url.pathname === '/_gateway/health' && req.method === 'GET') return json(res, 200, { status: 'ok' });
+    // GitHub OAuth comes back here from github.com (no session cookie on that cross-site return: the state names the user)
+    if (url.pathname === '/_gateway/github/callback' && req.method === 'GET') {
+      const location = await githubOauth.callback(url.searchParams.get('code'), url.searchParams.get('state'), url.searchParams.get('error'));
+      res.writeHead(302, { location, 'cache-control': 'no-store' });
+      return res.end();
+    }
     // Runner binaries shipped with the release (control/runner): list + download, no session needed.
     if (url.pathname === '/_runner/download' && req.method === 'GET') return json(res, 200, { files: await runnerFiles() });
     if (url.pathname === '/_runner/versions' && req.method === 'GET') return json(res, 200, await runnerVersions(url.searchParams.get('platform') ?? ''));

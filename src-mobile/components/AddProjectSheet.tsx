@@ -3,6 +3,7 @@ import { ArrowUp, Folder, FolderPlus, GitBranch, Link2, Lock, Search } from 'luc
 
 import { api } from '@/modules/chat-core';
 import { BottomSheet } from '@m/components/BottomSheet';
+import { GithubLogin } from '@m/components/GithubLogin';
 import type { CurrentProject } from '@m/lib/current';
 import { failureText as failure } from '@m/lib/http';
 import { relativeTime } from '@m/lib/format';
@@ -105,8 +106,7 @@ function RepoPicker({ onPick }: { onPick: (source: CloneSource) => void }) {
   const [data, setData] = useState<RepoPage | null>(null);
   // no GitHub account connected yet (show the connect form)
   const [notConnected, setNotConnected] = useState(false);
-  // the token being typed to connect an account, and the typed address for "주소로 복제"
-  const [token, setToken] = useState('');
+  // the typed address for "주소로 복제"
   const [typedUrl, setTypedUrl] = useState<string | null>(null);
   // the filter typed over the list
   const [filter, setFilter] = useState('');
@@ -140,20 +140,7 @@ function RepoPicker({ onPick }: { onPick: (source: CloneSource) => void }) {
   }, []);
   useEffect(() => { void load(); }, [load]);
 
-  const connect = async () => {
-    const value = token.trim();
-    if (!value) return;
-    setLoading(true); setError(null);
-    try {
-      const response = await api.settings.createCredential({ credentialName: 'GitHub', credentialType: 'github_token', credentialValue: value, description: 'NadoVibe에서 연결' });
-      if (!response.ok) throw new Error(await failure(response));
-      setToken('');
-      await load();
-    } catch (err) {
-      setLoading(false);
-      setError(err instanceof Error ? err.message : '연결하지 못했습니다');
-    }
-  };
+
 
   const field = 'w-full h-11 rounded-xl border border-line bg-bg px-3 text-[15px] outline-none focus:border-accent';
   if (typedUrl !== null) {
@@ -172,10 +159,8 @@ function RepoPicker({ onPick }: { onPick: (source: CloneSource) => void }) {
     return (
       <div className="space-y-2" data-testid="github-connect">
         <p className="text-[14px]">GitHub 계정을 연결하면 저장소 목록에서 골라 복제합니다.</p>
-        <p className="text-[12px] text-muted">GitHub → Settings → Developer settings → Personal access tokens에서 <b>repo</b> 권한(세분화 토큰은 Contents 읽기)으로 만든 토큰을 붙여 넣으세요. 이 서버에만 저장됩니다.</p>
-        <input type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="ghp_… 또는 github_pat_…" aria-label="GitHub 토큰" autoCapitalize="off" autoCorrect="off" className={field} />
         {error ? <div className="text-[13px] text-danger" role="alert">{error}</div> : null}
-        <button type="button" disabled={loading || !token.trim()} onClick={() => { void connect(); }} className="h-11 w-full rounded-xl bg-accent text-[15px] font-medium text-accent-ink disabled:opacity-40">{loading ? '연결 중…' : '연결'}</button>
+        <GithubLogin returnTo="/m/projects?add=clone" onConnected={() => { void load(); }} />
         <button type="button" onClick={() => setTypedUrl('')} className="flex h-10 w-full items-center justify-center gap-1.5 text-[13px] text-muted"><Link2 size={14} /> 공개 저장소 주소로 복제</button>
       </div>
     );
@@ -223,8 +208,13 @@ function RepoPicker({ onPick }: { onPick: (source: CloneSource) => void }) {
  * cloning a Git repository there. A path that was removed earlier comes back archived from the server, so it is
  * restored here. On success the project becomes the current one (`onAdded`).
  */
-export function AddProjectSheet({ open, onClose, onAdded }: { open: boolean; onClose: () => void; onAdded: (project: CurrentProject) => void }) {
-  const [tab, setTab] = useState<Tab>('folder');
+export function AddProjectSheet({ open, onClose, onAdded, initialTab = 'folder', notice }: {
+  open: boolean; onClose: () => void; onAdded: (project: CurrentProject) => void;
+  /** opened to a tab (back from GitHub login: the clone tab) */ initialTab?: Tab;
+  /** a message to show on top (the GitHub login's outcome) */ notice?: { text: string; error: boolean } | null;
+}) {
+  const [tab, setTab] = useState<Tab>(initialTab);
+  useEffect(() => { if (open) setTab(initialTab); }, [open, initialTab]);
   const [path, setPath] = useState('');
   const [name, setName] = useState('');
   // the repository picked to clone (the clone tab's second step: where it goes)
@@ -290,6 +280,7 @@ export function AddProjectSheet({ open, onClose, onAdded }: { open: boolean; onC
   return (
     <BottomSheet open={open} onClose={close} title="프로젝트 추가">
       <div className="space-y-3" data-testid="add-project">
+        {notice ? <div className={`rounded-lg px-3 py-2 text-[13px] ${notice.error ? 'bg-danger/10 text-danger' : 'bg-ok/10 text-ok'}`} role="status">{notice.text}</div> : null}
         <div role="tablist" className="flex gap-1 rounded-xl bg-elevated p-1">{tabButton('folder', '폴더', <Folder size={15} />)}{tabButton('clone', 'Git 복제', <GitBranch size={15} />)}</div>
         {tab === 'clone' && !source ? <RepoPicker onPick={(picked) => { setSource(picked); setError(null); }} /> : null}
         {tab === 'clone' && source ? (

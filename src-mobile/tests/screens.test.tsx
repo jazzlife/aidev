@@ -16,6 +16,11 @@ const api = {
   createProject: vi.fn((_body: unknown) => json({ success: true, project: { projectId: 'p3', displayName: 'new', fullPath: '/w/new', isArchived: false } })),
   restoreProject: vi.fn(() => json({ success: true })),
   settings: { credentials: vi.fn(() => json({ credentials: [] })), createCredential: vi.fn((_body: unknown) => json({ success: true })) },
+  githubOauth: {
+    config: vi.fn(() => json({ configured: true, callbackUrl: 'https://dev.nado.work/_gateway/github/callback', homepageUrl: 'https://dev.nado.work', admin: false })),
+    save: vi.fn((_body: unknown) => json({ configured: true })),
+    startUrl: (returnTo: string) => `/api/aidev/github/oauth/start?return=${encodeURIComponent(returnTo)}`,
+  },
   githubRepos: vi.fn((_params?: unknown) => json({ success: true, data: { account: { login: 'jazzlife' }, tokenId: 7, tokens: [{ id: 7, name: 'GitHub' }], page: 1, hasMore: false, repos: [
     { fullName: 'jazzlife/aidev', name: 'aidev', private: false, description: 'NadoVibe', cloneUrl: 'https://github.com/jazzlife/aidev.git', pushedAt: '2026-10-04T00:00:00Z', archived: false, fork: false },
     { fullName: 'jazzlife/secret-app', name: 'secret-app', private: true, description: null, cloneUrl: 'https://github.com/jazzlife/secret-app.git', pushedAt: null, archived: false, fork: false },
@@ -250,21 +255,52 @@ describe('adding a project', () => {
     expect(screen.getByRole('alert').textContent).toContain('서버가 아직 이 기능을 모릅니다');
   });
 
-  it('without a connected account it connects one with a token, then lists the repositories', async () => {
+  it('without a connected account: "GitHub로 로그인" goes to GitHub and comes back to the clone tab; a token still works', async () => {
     api.githubRepos.mockImplementationOnce(() => json({ success: false, error: { code: 'GITHUB_NOT_CONNECTED', message: '연결된 GitHub 계정이 없습니다' } }, 404));
+    const assign = vi.fn();
+    vi.stubGlobal('location', { ...window.location, assign, search: '', pathname: '/projects' });
     at('/projects');
     await settle();
     fireEvent.click(screen.getByLabelText('프로젝트 추가'));
     await settle();
     fireEvent.click(screen.getByRole('tab', { name: 'Git 복제' }));
     await settle();
-    expect(screen.getByTestId('github-connect')).toBeTruthy();
+    fireEvent.click(screen.getByText('GitHub로 로그인'));
+    expect(assign).toHaveBeenCalledWith('/api/aidev/github/oauth/start?return=%2Fm%2Fprojects%3Fadd%3Dclone');
+    vi.unstubAllGlobals();
+    fireEvent.click(screen.getByText('토큰으로 연결'));
     fireEvent.change(screen.getByLabelText('GitHub 토큰'), { target: { value: 'ghp_test' } });
-    fireEvent.click(screen.getByRole('button', { name: '연결' }));
+    fireEvent.click(screen.getByRole('button', { name: '토큰으로 연결' }));
     await settle();
     expect(api.settings.createCredential).toHaveBeenCalledWith({ credentialName: 'GitHub', credentialType: 'github_token', credentialValue: 'ghp_test', description: 'NadoVibe에서 연결' });
     expect(screen.getByTestId('repo-list').textContent).toContain('jazzlife/aidev');
   });
+
+  it('back from GitHub, the clone tab opens with the outcome and the address is cleaned', async () => {
+    at('/projects?add=clone&github=connected&account=jazzlife');
+    await settle();
+    expect(screen.getByTestId('add-project').textContent).toContain('GitHub 계정이 연결되었습니다 (@jazzlife)');
+    expect(screen.getByRole('tab', { name: 'Git 복제' }).getAttribute('aria-selected')).toBe('true');
+    expect(window.location.search).toBe('');
+  });
+
+  it('before an administrator sets up GitHub login, an administrator gets the setup', async () => {
+    api.githubRepos.mockImplementationOnce(() => json({ success: false, error: { code: 'GITHUB_NOT_CONNECTED', message: '' } }, 404));
+    api.githubOauth.config.mockImplementationOnce(() => json({ configured: false, callbackUrl: 'https://dev.nado.work/_gateway/github/callback', homepageUrl: 'https://dev.nado.work', admin: true, clientId: null }));
+    at('/projects');
+    await settle();
+    fireEvent.click(screen.getByLabelText('프로젝트 추가'));
+    await settle();
+    fireEvent.click(screen.getByRole('tab', { name: 'Git 복제' }));
+    await settle();
+    expect(screen.getByTestId('github-oauth-setup').textContent).toContain('https://dev.nado.work/_gateway/github/callback');
+    fireEvent.change(screen.getByLabelText('Client ID'), { target: { value: 'Ov23liAbCdEf12345678' } });
+    fireEvent.change(screen.getByLabelText('Client secret'), { target: { value: 's'.repeat(40) } });
+    fireEvent.click(screen.getByRole('button', { name: '저장' }));
+    await settle();
+    expect(api.githubOauth.save).toHaveBeenCalledWith({ clientId: 'Ov23liAbCdEf12345678', clientSecret: 's'.repeat(40) });
+  });
+
 });
 
 describe('agent shows the user something (app control)', () => {

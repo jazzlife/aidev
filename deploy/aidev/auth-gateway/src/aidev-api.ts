@@ -19,6 +19,7 @@ import type { Preview } from './preview.js';
 import { launchCommand, validateLaunch, type DebugHub } from './debug-hub.js';
 import type { ConsoleHub } from './console-hub.js';
 import { ShipError, type PlatformShip } from './platform-ship.js';
+import { GithubOauthError, type GithubOauth } from './github-oauth.js';
 import { CODEX_JUDGE_WAIT_MS, evaluateRouting, prejudge, route, TIER_TABLE, type EngineAvailability, type JudgeVerdict, type RouteInput, type SpecialistJudge } from './routing.js';
 /** Hard limit of one judge call in the runtime; a send waits less (routing.ts AIDEV_JUDGE_WAIT_MS) and the rest is cached. */
 const JUDGE_TIMEOUT_MS = Number(process.env.AIDEV_JUDGE_TIMEOUT_MS ?? 60_000);
@@ -54,6 +55,8 @@ export type AidevDeps = {
   publicOrigin?: string;
   /** OPS-02: the platform ships itself (runtime-manager runs ship.sh); administrators only. */
   ship?: PlatformShip;
+  /** "GitHub로 로그인": the OAuth App settings and the start of a login (the callback is the gateway's own route). */
+  githubOauth?: GithubOauth;
 };
 
 /**
@@ -339,6 +342,23 @@ export function createAidevApi(deps: AidevDeps) {
         // a refused turn is worth telling at once; expiry reminders follow their own schedule
         if (report.failureAt) void deps.push.claudeReminders().catch(() => undefined);
         return json(res, 200, { ok: true }), true;
+      }
+      // ---- GitHub OAuth login (connect the account that cloning and the repository list use) -------------------
+      if (rest === '/github/oauth' || rest === '/github/oauth/start') {
+        if (!deps.githubOauth) throw new HttpError(503, 'GitHub login is not available');
+        const isAdmin = store.accountEngines(uid).role === 'admin';
+        try {
+          if (rest === '/github/oauth' && m === 'GET') return json(res, 200, deps.githubOauth.publicConfig(isAdmin)), true;
+          if (rest === '/github/oauth' && m === 'PUT') { requireAdmin(session); deps.githubOauth.setConfig(await readJson(req)); return json(res, 200, deps.githubOauth.publicConfig(true)), true; }
+          if (rest === '/github/oauth/start' && m === 'GET') {
+            res.writeHead(302, { location: deps.githubOauth.start(uid, url.searchParams.get('return')), 'cache-control': 'no-store' });
+            return res.end(), true;
+          }
+        } catch (error) {
+          if (error instanceof GithubOauthError) throw new HttpError(error.status, error.message);
+          throw error;
+        }
+        throw new HttpError(404, 'Not found');
       }
       // ---- OPS-02: ship the platform from the AI-PC itself (administrators; an admin's agent through /internal/aidev) --
       if (rest === '/platform/ship' || rest === '/platform/ships' || rest.startsWith('/platform/ship/')) {

@@ -9,6 +9,7 @@ const toggle = vi.hoisted(() => vi.fn());
 vi.mock('@/modules/chat-core', () => ({
   api: {
     voice: { health: () => json({ configured: true }) },
+    githubOauth: { config: () => json({ configured: false, callbackUrl: '', homepageUrl: '', admin: false }), save: vi.fn(), startUrl: (r: string) => r },
     settings: { credentials: vi.fn(() => json({ credentials: store.tokens })), createCredential: vi.fn((body: { credentialName: string }) => { store.tokens.push({ id: 9, credential_name: body.credentialName, is_active: 1 }); return json({ success: true }); }), deleteCredential: vi.fn((id: string) => { store.tokens = store.tokens.filter((t) => String(t.id) !== id); return json({ success: true }); }) },
   },
   readUserPreference: (key: string, fallback: unknown) => store.prefs[key] ?? fallback,
@@ -67,11 +68,11 @@ describe('GitHub account', () => {
     render(<GithubSection />);
     await settle();
     expect(screen.getByTestId('github-settings').textContent).toContain('연결된 계정이 없습니다');
+    fireEvent.click(screen.getByText('토큰으로 연결'));
     fireEvent.change(screen.getByLabelText('GitHub 토큰'), { target: { value: 'ghp_test' } });
-    fireEvent.click(screen.getByText('계정 연결'));
+    fireEvent.click(screen.getByRole('button', { name: '토큰으로 연결' }));
     await settle();
     expect(chatCore.api.settings.createCredential).toHaveBeenCalledWith({ credentialName: 'GitHub', credentialType: 'github_token', credentialValue: 'ghp_test', description: 'NadoVibe에서 연결' });
-    expect((screen.getByLabelText('GitHub 토큰') as HTMLInputElement).value).toBe('');
     fireEvent.click(screen.getByLabelText('GitHub 연결 해제'));
     await settle();
     expect(chatCore.api.settings.deleteCredential).toHaveBeenCalledWith('9');

@@ -6,6 +6,7 @@ import { EffortCapControl } from '@m/components/EffortCapControl';
 import { ClaudeLoginSheet } from '@m/components/ClaudeLoginSheet';
 import { KnowledgeSection } from '@m/components/KnowledgeSection';
 import { GithubSection, PermissionRulesSection, VoiceSection } from '@m/components/SettingsSections';
+import { takeGithubReturn } from '@m/lib/githubReturn';
 import { disablePush, enablePush, pushState, type PushState } from '@m/lib/push';
 
 const PUSH_LABEL: Record<PushState, string> = { on: '켜짐', off: '꺼짐', denied: '브라우저에서 차단됨 (설정에서 허용)', needs_install: '홈 화면에 추가한 앱에서 켤 수 있습니다', unsupported: '이 브라우저는 지원하지 않습니다' };
@@ -23,6 +24,8 @@ export function SettingsScreen() {
   const { user, logout } = useAuth();
   useParent('/');
   const routing = useRoutingState();
+  // back from GitHub login started here: its outcome above the accounts
+  const [githubNotice] = useState(takeGithubReturn);
   const [engines, setEngines] = useState<EnginesResult | null>(null);
   const auth = useClaudeAuth();
   const [push, setPush] = useState<PushState | null>(null);
@@ -81,7 +84,7 @@ export function SettingsScreen() {
           {engines ? <div className="text-[12px] text-muted mt-2">기본 엔진: {engines.default_engine ?? '자동 선택'}</div> : null}
         </section>
         <PermissionRulesSection />
-        <GithubSection />
+        <GithubSection notice={githubNotice} />
         <VoiceSection />
         <section>
           <div className="text-[12px] uppercase tracking-wide text-muted mb-2">알림</div>

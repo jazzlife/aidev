@@ -10,6 +10,7 @@ import { TopBar } from '@m/components/TopBar';
 import { setCurrentProject } from '@m/lib/current';
 import { relativeTime } from '@m/lib/format';
 import { useGo, useParent } from '@m/lib/nav';
+import { takeGithubReturn } from '@m/lib/githubReturn';
 import { useLongPress } from '@m/lib/useLongPress';
 
 type ProjectItem = { projectId: string; displayName: string; fullPath: string; isStarred?: boolean; sessions?: Array<{ lastActivity?: string }>; sessionMeta?: { total?: number } };
@@ -46,7 +47,11 @@ export function ProjectsScreen() {
   useParent('/');
   const [items, setItems] = useState<ProjectItem[] | null>(null);
   const [error, setError] = useState<string | null>(null);
-  const [adding, setAdding] = useState(false);
+  // back from GitHub login (?add=clone&github=…): reopen the clone tab with the outcome
+  const [cloneRequested] = useState(() => new URLSearchParams(window.location.search).get('add') === 'clone');
+  const [githubNotice] = useState(takeGithubReturn);
+  const [adding, setAdding] = useState(() => cloneRequested || Boolean(githubNotice));
+  const [addTab] = useState<'folder' | 'clone'>(() => (adding ? 'clone' : 'folder'));
   // the project whose sheet is open (long-press or ⋯)
   const [target, setTarget] = useState<ProjectItem | null>(null);
   useEffect(() => {
@@ -80,7 +85,7 @@ export function ProjectsScreen() {
         <Plus size={26} />
       </button>
       <ProjectActions target={target} onClose={() => setTarget(null)} onChange={changed} />
-      <AddProjectSheet open={adding} onClose={() => setAdding(false)} onAdded={(project) => { setAdding(false); setCurrentProject(project); go(`/projects/${encodeURIComponent(project.projectId)}`, { state: { project } }); }} />
+      <AddProjectSheet open={adding} initialTab={addTab} notice={githubNotice} onClose={() => setAdding(false)} onAdded={(project) => { setAdding(false); setCurrentProject(project); go(`/projects/${encodeURIComponent(project.projectId)}`, { state: { project } }); }} />
     </div>
   );
 }

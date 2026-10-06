@@ -3,6 +3,7 @@ import { GitBranch, Volume2, X } from 'lucide-react';
 
 import { api, getClaudeSettings, subscribeToUserPreferences, voicePlayer, writeUserPreference } from '@/modules/chat-core';
 import { readVoiceConfig } from '@/shared/voiceConfig';
+import { GithubLogin } from '@m/components/GithubLogin';
 import { failureText } from '@m/lib/http';
 import { useVoiceStatus, writeVoiceConfig, writeVoiceEnabled } from '@m/lib/voice';
 
@@ -85,11 +86,9 @@ type GithubToken = { id: number; credential_name: string; is_active: boolean | n
  * Used by the settings screen: the GitHub accounts connected on this runtime (stored `github_token` credentials, the
  * workbench's too). Adding a project by clone lists the first active one's repositories and clones private ones with it.
  */
-export function GithubSection() {
+export function GithubSection({ notice }: { /** the GitHub login's outcome, back from github.com */ notice?: { text: string; error: boolean } | null }) {
   // the connected tokens (null: loading)
   const [tokens, setTokens] = useState<GithubToken[] | null>(null);
-  // the token being typed to connect another account
-  const [value, setValue] = useState('');
   // a request in flight, and the server's words when one failed
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -115,11 +114,8 @@ export function GithubSection() {
         ))}
         <div className="space-y-2 px-4 py-3">
           {tokens && tokens.length === 0 ? <div className="text-[13px] text-muted">연결된 계정이 없습니다. 프로젝트 추가의 Git 복제가 이 계정의 저장소를 보여 줍니다.</div> : null}
-          <input type="password" value={value} onChange={(e) => setValue(e.target.value)} placeholder="GitHub 토큰 (ghp_… / github_pat_…)" aria-label="GitHub 토큰" autoCapitalize="off" autoCorrect="off"
-            className="w-full h-11 rounded-xl border border-line bg-bg px-3 text-[15px] outline-none focus:border-accent" />
-          <div className="text-[12px] text-muted">GitHub → Settings → Developer settings → Personal access tokens에서 repo 권한으로 만든 토큰. 이 서버에만 저장됩니다.</div>
-          <button type="button" disabled={busy || !value.trim()} onClick={() => { const v = value.trim(); void run(() => api.settings.createCredential({ credentialName: 'GitHub', credentialType: 'github_token', credentialValue: v, description: 'NadoVibe에서 연결' })).then(() => setValue('')); }}
-            className="h-11 w-full rounded-xl bg-accent text-[15px] font-medium text-accent-ink disabled:opacity-40">{busy ? '처리 중…' : '계정 연결'}</button>
+          {notice ? <div className={`rounded-lg px-3 py-2 text-[13px] ${notice.error ? 'bg-danger/10 text-danger' : 'bg-ok/10 text-ok'}`} role="status">{notice.text}</div> : null}
+          <GithubLogin returnTo="/m/settings" onConnected={() => { void load(); }} />
           {error ? <div className="text-[13px] text-danger" role="alert">{error}</div> : null}
         </div>
       </div>

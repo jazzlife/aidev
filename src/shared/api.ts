@@ -209,6 +209,12 @@ export const api = {
   // a query parameter on the streaming endpoints below.
   cloneProjectProgressUrl: (params: Record<string, QueryValue>) =>
     `/api/projects/clone-progress${query({ ...params, token: getStoredAuthToken() })}`,
+  // "GitHub로 로그인" (gateway OAuth): whether it is set up, the admin's OAuth App settings, and where a login starts
+  githubOauth: {
+    config: () => get('/api/aidev/github/oauth'),
+    save: (body: { clientId: string; clientSecret: string }) => put('/api/aidev/github/oauth', body),
+    startUrl: (returnTo: string) => `/api/aidev/github/oauth/start${query({ return: returnTo })}`,
+  },
   // the connected GitHub account and one page of its repositories (to pick one to clone)
   githubRepos: ({ tokenId, page }: { tokenId?: number | null; page?: number } = {}) =>
     get(`/api/projects/github/repos${query({ tokenId, page })}`),
