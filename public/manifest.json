@@ -4,7 +4,7 @@
   "description": "NadoVibe — AI 코딩 작업대",
   "start_url": "/",
   "display": "standalone",
-  "background_color": "#f6f4ef",
+  "background_color": "#141414",
   "theme_color": "#f6f4ef",
   "orientation": "portrait-primary",
   "scope": "/",
