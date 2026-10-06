@@ -201,6 +201,20 @@ export type SessionActivitySnapshot = {
  * `protocol_error`). The synthetic `websocket_reconnected` kind is injected
  * client-side when the socket re-opens after a drop.
  */
+/**
+ * A provider refusing to run because the account usage window is exhausted.
+ *
+ * Arrives on the terminal `complete` of the refused run. The chat hands the work
+ * to another engine on it, so it has to be told apart from an ordinary failure:
+ * retrying the same engine cannot succeed until `resetsAt`.
+ */
+export type ProviderUsageLimit = {
+  /** Which window was refused; the `seven_day*` kinds are the weekly limits. */
+  type: 'five_hour' | 'seven_day' | 'seven_day_opus' | 'seven_day_sonnet' | 'overage' | 'unknown';
+  /** Epoch milliseconds when the window resets, when the provider reports it. */
+  resetsAt: number | null;
+};
+
 export type ServerEvent = {
   kind?: string;
   type?: string;

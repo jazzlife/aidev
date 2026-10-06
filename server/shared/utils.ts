@@ -27,6 +27,7 @@ import type {
   ProviderCurrentActiveModel,
   ProviderModelsDefinition,
   ProviderSkillSource,
+  ProviderUsageLimit,
   SubagentActivity,
   WorkspacePathValidationResult,
 } from '@/shared/types.js';
@@ -377,6 +378,7 @@ export function createCompleteMessage(opts: {
   actualSessionId?: string | null;
   exitCode?: number | null;
   aborted?: boolean;
+  usageLimit?: ProviderUsageLimit | null;
 }): NormalizedMessage {
   const exitCode = typeof opts.exitCode === 'number' ? opts.exitCode : 1;
   const aborted = Boolean(opts.aborted);
@@ -389,6 +391,7 @@ export function createCompleteMessage(opts: {
     exitCode,
     success: exitCode === 0 && !aborted,
     aborted,
+    ...(opts.usageLimit ? { usageLimit: opts.usageLimit } : {}),
   });
 }
 

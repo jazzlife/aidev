@@ -30,7 +30,7 @@ import {
 } from '@/modules/providers/list/claude/claude-models.provider.js';
 import { resolveClaudeCodeExecutablePath } from '@/shared/claude-cli-path.js';
 import { aidevToolsService, composeAgentInstructions, sanitizeAidevOptions } from '@/modules/aidev-tools/index.js';
-import { claudeAuthStore, isClaudeAuthFailure } from '@/modules/providers/services/claude-auth-store.service.js';
+import { claudeAuthStore, isClaudeAuthFailure, isClaudeUsageLimit } from '@/modules/providers/services/claude-auth-store.service.js';
 import {
   createNotificationEvent,
   notifyBackgroundWorkCompleted,
@@ -587,6 +587,70 @@ function extractCumulativeTokenBudget(sdkMessage) {
   };
 }
 
+/**
+ * The marker older CLI builds put in the assistant reply instead of emitting a
+ * `rate_limit_event`: `Claude AI usage limit reached|<epoch>`.
+ *
+ * Matched strictly rather than with `isClaudeUsageLimit`, because this runs over
+ * model output — prose that merely discusses rate limits must not be mistaken for
+ * the account actually being refused.
+ *
+ * @param {string} text - normalized assistant content
+ * @returns {{ type: string, resetsAt: number | null } | null}
+ */
+export function parseLegacyUsageLimit(text) {
+  const match = /Claude AI usage limit reached\|(\d{10,13})/i.exec(text);
+  if (!match) return null;
+  const raw = Number(match[1]);
+  const resetsAt = Number.isFinite(raw) && raw > 0 ? (raw < 1e12 ? raw * 1000 : raw) : null;
+  return { type: 'unknown', resetsAt };
+}
+
+/** Human-readable labels for the usage window that refused the run. */
+const USAGE_LIMIT_LABELS = {
+  five_hour: '5시간',
+  seven_day: '주간',
+  seven_day_opus: '주간(Opus)',
+  seven_day_sonnet: '주간(Sonnet)',
+  overage: '추가 사용량',
+};
+
+/**
+ * The error text shown in the transcript when a usage window refuses the turn.
+ * Says which window and when it resets, because the user has to decide whether
+ * to wait or let the work continue on another engine.
+ *
+ * @param {{ type: string, resetsAt: number | null }} limit
+ * @returns {string}
+ */
+export function usageLimitMessage(limit) {
+  const label = USAGE_LIMIT_LABELS[limit?.type] || '사용량';
+  const resetsAt = limit?.resetsAt ? new Date(limit.resetsAt).toLocaleString() : null;
+  return resetsAt
+    ? `Claude ${label} 사용량 한도에 도달했습니다. ${resetsAt}에 초기화됩니다.`
+    : `Claude ${label} 사용량 한도에 도달했습니다.`;
+}
+
+/** Windows the SDK can refuse on; anything else it reports is recorded as `unknown`. */
+const USAGE_LIMIT_TYPES = new Set(['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet', 'overage']);
+
+/**
+ * Normalizes the SDK rate-limit payload into the shape the terminal `complete`
+ * carries. `resetsAt` is reported in seconds or milliseconds depending on the
+ * field, so it is widened to epoch milliseconds for every consumer.
+ *
+ * @param {Object} info - SDK `rate_limit_info`
+ * @returns {{ type: string, resetsAt: number | null }}
+ */
+export function normalizeUsageLimit(info) {
+  const raw = Number(info?.resetsAt ?? info?.overageResetsAt);
+  const resetsAt = Number.isFinite(raw) && raw > 0 ? (raw < 1e12 ? raw * 1000 : raw) : null;
+  return {
+    type: USAGE_LIMIT_TYPES.has(info?.rateLimitType) ? info.rateLimitType : 'unknown',
+    resetsAt,
+  };
+}
+
 // Tool calls that leave work running past the end of a turn. Bash and Agent only
 // count when they are backgrounded; the rest defer or watch work by nature.
 // Workflow belongs here rather than in a branch of its own: its input schema has
@@ -794,6 +858,10 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
   // Set once a turn publishes a budget read from an assistant message, so the
   // turn-ending `result` is only mined for usage when nothing better arrived.
   let assistantBudgetSent = false;
+  // Set when the SDK reports the account is out of usage for a window. The run
+  // cannot proceed on this engine until it resets, so the terminal `complete`
+  // carries it and the client hands the work to another engine (E-03).
+  let blockingUsageLimit = null;
 
   // A new turn supersedes any earlier one still holding this session's process
   // open, so held runs cannot stack up across a conversation.
@@ -1018,6 +1086,9 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
         if (isSubagentPromptEcho(msg)) {
           continue;
         }
+        if (!blockingUsageLimit && typeof msg.content === 'string') {
+          blockingUsageLimit = parseLegacyUsageLimit(msg.content);
+        }
         ws.send(msg);
       }
 
@@ -1037,19 +1108,49 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
         backgroundWorkPending = true;
       }
 
+      // The SDK reports subscription usage windows out of band. A 'rejected' status
+      // means this account cannot run on Claude until the window resets, so the turn
+      // that follows is a refusal, not an answer.
+      if (message.type === 'rate_limit_event') {
+        const info = message.rate_limit_info || {};
+        if (info.status === 'rejected' || info.overageStatus === 'rejected') {
+          blockingUsageLimit = normalizeUsageLimit(info);
+        }
+      }
+
       if (message.type === 'result') {
         // The turn is done as far as the client is concerned.
         const abortPending = sessionKey() ? abortedSessionIds.has(sessionKey()) : false;
+        // A turn the account had no usage left for is a failed run, not an answer:
+        // reporting it as success would tell routing the work was done and leave
+        // the user stuck until the window resets.
+        if (message.terminal_reason === 'blocking_limit' && !blockingUsageLimit) {
+          blockingUsageLimit = normalizeUsageLimit(message.rate_limit_info);
+        }
+        const usageLimit = blockingUsageLimit;
         if (!turnCompleteSent && !abortPending) {
           turnCompleteSent = true;
-          ws.send(createCompleteMessage({ provider: 'claude', sessionId: capturedSessionId || sessionId || null, exitCode: 0 }));
-          notifyRunStopped({
-            userId: ws?.userId || null,
-            provider: 'claude',
-            sessionId: sessionId || capturedSessionId || null,
-            sessionName: sessionSummary,
-            stopReason: 'completed'
-          });
+          if (usageLimit) {
+            ws.send(createNormalizedMessage({ kind: 'error', content: usageLimitMessage(usageLimit), sessionId: capturedSessionId || sessionId || null, provider: 'claude' }));
+          }
+          ws.send(createCompleteMessage({ provider: 'claude', sessionId: capturedSessionId || sessionId || null, exitCode: usageLimit ? 1 : 0, usageLimit }));
+          if (usageLimit) {
+            notifyRunFailed({
+              userId: ws?.userId || null,
+              provider: 'claude',
+              sessionId: sessionId || capturedSessionId || null,
+              sessionName: sessionSummary,
+              error: usageLimitMessage(usageLimit)
+            });
+          } else {
+            notifyRunStopped({
+              userId: ws?.userId || null,
+              provider: 'claude',
+              sessionId: sessionId || capturedSessionId || null,
+              sessionName: sessionSummary,
+              stopReason: 'completed'
+            });
+          }
         } else if (heldForBackgroundWork && !abortPending) {
           // A result after the turn already reported complete means the work we
           // held the process open for has finished and pushed a follow-up turn.
@@ -1141,13 +1242,18 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
       claudeAuthStore.recordFailure(String(error.message));
       void aidevToolsService.reportClaudeAuth({ failure_at: Date.now() });
     }
+    // A limit reached this far as a thrown error rather than a `rate_limit_event`,
+    // so the terminal `complete` still has to name it for the handoff to trigger.
+    if (installed && !blockingUsageLimit && isClaudeUsageLimit(String(error?.message ?? ''))) {
+      blockingUsageLimit = { type: 'unknown', resetsAt: null };
+    }
 
     // Send error to WebSocket, then the terminal complete. A run that already
     // reported completion and then failed during its post-turn hold still
     // surfaces the error, but must not emit a second terminal complete.
     ws.send(createNormalizedMessage({ kind: 'error', content: errorContent, sessionId: capturedSessionId || sessionId || null, provider: 'claude' }));
     if (!turnCompleteSent) {
-      ws.send(createCompleteMessage({ provider: 'claude', sessionId: capturedSessionId || sessionId || null, exitCode: 1 }));
+      ws.send(createCompleteMessage({ provider: 'claude', sessionId: capturedSessionId || sessionId || null, exitCode: 1, usageLimit: blockingUsageLimit }));
     }
     notifyRunFailed({
       userId: ws?.userId || null,

@@ -14,6 +14,7 @@ import type {
   SessionEstablishedContext,
   SessionNavigationOptions,
 } from '@/shared/types';
+import { parseProviderUsageLimit } from '@/shared/utils';
 import { useChatProviderState } from '@/modules/chat/hooks/useChatProviderState';
 import { useScheduledMessages } from '@/modules/chat/composer/useScheduledMessages';
 import { useChatSessionState } from '@/modules/chat/hooks/useChatSessionState';
@@ -81,6 +82,8 @@ function ChatInterface({
     resend: (text) => { handleVoiceTranscriptRef.current?.(text, true); },
   });
   const handleVoiceTranscriptRef = useRef<((text: string, send?: boolean) => void) | null>(null);
+  // Assigned from useEscalation below; the complete subscriber is installed before it exists.
+  const handoffOnUsageLimitRef = useRef<((args: { sessionId: string; blockedEngine: 'claude' | 'codex'; reason: string }) => Promise<unknown>) | null>(null);
   const agentCreationRef = useRef(agentCreation);
   useEffect(() => { agentCreationRef.current = agentCreation; });
   useEffect(() => subscribe((event) => {
@@ -88,6 +91,15 @@ function ChatInterface({
     if (event.sessionId && selectedSession?.id && event.sessionId !== selectedSession.id) return;
     const exitCode = typeof event.exitCode === 'number' ? event.exitCode : (event.isError ? 1 : 0);
     void reportAidevOutcome({ exit_code: exitCode, session_id: event.sessionId ?? selectedSession?.id ?? null });
+    // A usage limit refused this run, so the work continues on the other engine
+    // (claude ↔ codex) instead of stopping — this engine cannot answer again until
+    // the window resets (E-03, no tap). handoffOnUsageLimit blocks instead if the
+    // other engine is not logged in, rather than attempting a handoff that cannot work.
+    const usageLimit = parseProviderUsageLimit(event.usageLimit);
+    const limitedSessionId = event.sessionId ?? selectedSession?.id ?? null;
+    if (usageLimit && limitedSessionId && (event.provider === 'claude' || event.provider === 'codex')) {
+      void handoffOnUsageLimitRef.current?.({ sessionId: limitedSessionId, blockedEngine: event.provider, reason: `${event.provider}_usage_limit:${usageLimit.type}` });
+    }
     // the workbench opens a changed file and brings the right pane forward (C-10)
     announceRunComplete({ sessionId: event.sessionId ?? selectedSession?.id ?? null, exitCode, changedFiles: changedFilesSince(chatMessagesRef.current) });
     // the store applies the final assistant text on the same tick; read it after React commits
@@ -308,6 +320,7 @@ function ChatInterface({
   });
   const takeHandoffRef = useRef(escalation.takeHandoff);
   useEffect(() => { takeHandoffRef.current = escalation.takeHandoff; });
+  useEffect(() => { handoffOnUsageLimitRef.current = escalation.handoffOnUsageLimit; });
   useEffect(() => {
     const id = selectedSession?.id;
     if (!id || (selectedSession?.__provider && selectedSession.__provider !== provider)) return;

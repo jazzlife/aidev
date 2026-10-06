@@ -106,3 +106,16 @@ export const claudeAuthStore = {
 export function isClaudeAuthFailure(message: string) {
   return /failed to authenticate|oauth session expired|could not be refreshed|invalid[_ ]grant|authentication_error|invalid api key|oauth token has expired/i.test(message);
 }
+
+/**
+ * Tells a usage-limit refusal from any other turn error, for the paths where the
+ * limit only reaches us as text (the SDK's thrown error, or the CLI's
+ * "Claude AI usage limit reached|<epoch>" reply). A live run learns it from the
+ * SDK's structured `rate_limit_event` instead; this is the fallback.
+ *
+ * Deliberately separate from `isClaudeAuthFailure`: a limit is a temporary
+ * refusal that another engine can take over, not a reason to re-login.
+ */
+export function isClaudeUsageLimit(message: string) {
+  return /usage limit reached|rate limit (?:reached|exceeded)|rate_limit_error|too many requests/i.test(message);
+}

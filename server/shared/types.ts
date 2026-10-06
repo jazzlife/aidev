@@ -276,6 +276,20 @@ export type CompactionInfo = {
   error?: string | null;
 };
 
+/**
+ * A provider refusing to run because the account usage window is exhausted.
+ *
+ * Carried on the terminal `complete` so the client can hand the work to another
+ * engine instead of stopping: the run failed for a reason that retrying the same
+ * engine cannot fix until `resetsAt`.
+ */
+export type ProviderUsageLimit = {
+  /** Which window was refused; the `seven_day*` kinds are the weekly limits. */
+  type: 'five_hour' | 'seven_day' | 'seven_day_opus' | 'seven_day_sonnet' | 'overage' | 'unknown';
+  /** Epoch milliseconds when the window resets, when the provider reports it. */
+  resetsAt: number | null;
+};
+
 export type NormalizedMessage = {
   id: string;
   /**
@@ -327,6 +341,8 @@ export type NormalizedMessage = {
     toolUseResult?: unknown;
   };
   isError?: boolean;
+  /** Set on a `complete` whose run was refused by the provider usage limit. */
+  usageLimit?: ProviderUsageLimit;
   text?: string;
   tokens?: number;
   canInterrupt?: boolean;

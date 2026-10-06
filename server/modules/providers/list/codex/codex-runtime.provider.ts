@@ -45,6 +45,16 @@ const CODEX_IMAGE_ONLY_PROMPT = 'Please analyze the attached image(s).';
  */
 const PROGRESSIVE_CODEX_ITEM_TYPES = new Set(['command_execution', 'mcp_tool_call', 'todo_list']);
 
+/**
+ * Tells a usage-limit refusal from any other turn failure, for the text-only
+ * signal Codex gives: the SDK has no structured rate-limit event (unlike
+ * Claude's `rate_limit_event`), so this is read off `turn.failed`/the thrown
+ * error message instead.
+ */
+export function isCodexUsageLimit(message: string) {
+  return /rate[_ ]limit|usage limit|quota exceeded|too many requests/i.test(message);
+}
+
 function readUsageNumber(value: unknown) {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
@@ -325,6 +335,10 @@ async function queryCodex(
   let capturedSessionId = providerSessionId;
   let sessionCreatedSent = false;
   let terminalFailure: { message: string } | null = null;
+  // Set once a usage-limit refusal is recognised in the turn failure text. The
+  // run cannot proceed on this engine until it resets, so the terminal `complete`
+  // carries it and the client hands the work to the other engine (E-03).
+  let blockingUsageLimit: { type: 'unknown'; resetsAt: null } | null = null;
   // Codex surfaces API failures as streamed error items/turn.failed events, and
   // then the SDK also throws "Codex Exec exited with code N: <stderr>" once the
   // process dies. Showing both means the rendered error is followed by a raw
@@ -447,6 +461,9 @@ async function queryCodex(
       if (event.type === 'turn.failed' && !terminalFailure) {
         terminalFailure = event.error || new Error('Turn failed');
         errorSurfaced = true;
+        if (isCodexUsageLimit(String(terminalFailure.message ?? ''))) {
+          blockingUsageLimit = { type: 'unknown', resetsAt: null };
+        }
         // Notifications are app-facing, so they carry the app session id.
         notifyRunFailed({
           userId: ws?.userId || null,
@@ -476,6 +493,7 @@ async function queryCodex(
         sessionId: capturedSessionId || sessionId || null,
         actualSessionId: capturedSessionId || thread.id || sessionId || null,
         exitCode: terminalFailure ? 1 : 0,
+        usageLimit: blockingUsageLimit,
       }));
       if (!terminalFailure) {
         notifyRunStopped({
@@ -508,10 +526,16 @@ async function queryCodex(
 
         sendMessage(ws, createNormalizedMessage({ kind: 'error', content: errorContent, sessionId: capturedSessionId || sessionId || null, provider: 'codex' }));
       }
+      // A limit reached this far as the thrown wrapper rather than a `turn.failed`
+      // event, so the terminal `complete` still has to name it for the handoff to trigger.
+      if (!blockingUsageLimit && isCodexUsageLimit(runError.message)) {
+        blockingUsageLimit = { type: 'unknown', resetsAt: null };
+      }
       sendMessage(ws, createCompleteMessage({
         provider: 'codex',
         sessionId: capturedSessionId || sessionId || null,
         exitCode: 1,
+        usageLimit: blockingUsageLimit,
       }));
       if (!terminalFailure) {
         notifyRunFailed({
