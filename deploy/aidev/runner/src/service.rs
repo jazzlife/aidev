@@ -336,6 +336,14 @@ pub fn plist_text(exe: &str, log: &str) -> String {
 
 const BOOT_TASK: &str = "aidev-runner-boot";
 
+/// Windows "시작 앱" (Settings → 앱 → 시작 프로그램, Task Manager's startup tab) lists the Run key and the Startup folder,
+/// never scheduled tasks — so the runner was missing there (2026-10-07). This entry shows it and, at sign-in, starts
+/// the sign-in task (elevated without a UAC prompt; nothing happens when it already runs). conhost --headless: no
+/// console window flashes. The task's own AtLogOn trigger stays: the entry is the visible, second way in.
+pub const STARTUP_NAME: &str = "NadoVibe Runner";
+const RUN_KEY_PS: &str = "HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run";
+const STARTUP_VALUE_PS: &str = "('\"' + $env:SystemRoot + '\\System32\\conhost.exe\" --headless \"' + $env:SystemRoot + '\\System32\\schtasks.exe\" /Run /TN aidev-runner')";
+
 /// PowerShell that registers the Windows tasks. Register-ScheduledTask, not schtasks: schtasks /NP still asks for a
 /// password (CI, 2026-10-02), and its tasks stop after 72 hours by default — these have no time limit.
 pub fn task_script(exe: &str, limited: bool, logon_only: bool, user: &str) -> String {
@@ -360,8 +368,23 @@ pub fn task_script(exe: &str, limited: bool, logon_only: bool, user: &str) -> St
             exe = q(exe), user = q(user),
         ));
     }
+    script.push_str(&format!("Set-ItemProperty -Path '{RUN_KEY_PS}' -Name '{STARTUP_NAME}' -Value {STARTUP_VALUE_PS}\n"));
     script.push_str("Start-ScheduledTask -TaskName aidev-runner");
     script
+}
+
+/// Windows, the sign-in runner of an installed copy: puts the "시작 앱" entry back when it is missing (installs from
+/// before 0.18.4, or one removed by hand and then reinstalled). HKCU needs no administrator. Quiet on failure.
+#[cfg(windows)]
+pub fn ensure_startup_entry() {
+    use crate::proc_util::NoWindow;
+    let run_key = r"HKCU\Software\Microsoft\Windows\CurrentVersion\Run";
+    let quiet = |args: &[&str]| Command::new("reg.exe").args(args).no_window().stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
+    let task = Command::new("schtasks.exe").args(["/Query", "/TN", "aidev-runner"]).no_window().stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().map(|s| s.success()).unwrap_or(false);
+    if !task || quiet(&["query", run_key, "/v", STARTUP_NAME]) { return; }
+    let sys = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".into());
+    let value = format!(r#""{sys}\System32\conhost.exe" --headless "{sys}\System32\schtasks.exe" /Run /TN aidev-runner"#);
+    if quiet(&["add", run_key, "/v", STARTUP_NAME, "/t", "REG_SZ", "/d", &value, "/f"]) { eprintln!("시작 앱에 '{STARTUP_NAME}'을(를) 등록했습니다"); }
 }
 
 /// Windows: re-run `aidev-runner <args>` with administrator rights (one UAC prompt) and wait for it.
@@ -564,6 +587,7 @@ pub fn uninstall() -> Result<String, String> {
                  foreach ($n in 'aidev-runner', '{BOOT_TASK}') {{\n\
                    if (Get-ScheduledTask -TaskName $n -ErrorAction SilentlyContinue) {{ Stop-ScheduledTask -TaskName $n -ErrorAction SilentlyContinue; Unregister-ScheduledTask -TaskName $n -Confirm:$false }}\n\
                  }}\n\
+                 Remove-ItemProperty -Path '{RUN_KEY_PS}' -Name '{STARTUP_NAME}' -ErrorAction SilentlyContinue\n\
                  Get-CimInstance Win32_Process -Filter \"Name='aidev-runner.exe'\" | Where-Object {{ $_.CommandLine -match ' start( |$)' }} | ForEach-Object {{ Stop-Process -Id $_.ProcessId -Force -ErrorAction SilentlyContinue }}"
             );
             println!("서비스(작업 스케줄러 작업)를 지우는 중…");
@@ -596,6 +620,7 @@ mod tests {
         assert!(s.contains("-Execute 'C:\\it''s\\aidev-runner.exe' -Argument 'start --hidden'") && s.contains("-AtLogOn -User 'PC\\me'"));
         assert!(s.contains("-LogonType Interactive -RunLevel Highest") && s.contains("-ExecutionTimeLimit ([TimeSpan]::Zero)"));
         assert!(s.contains("'start --hidden --boot'") && s.contains("-LogonType S4U -RunLevel Highest") && s.contains("-AtStartup"));
+        assert!(s.contains("Set-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' -Name 'NadoVibe Runner'") && s.contains("conhost.exe\" --headless") && s.contains("/Run /TN aidev-runner"));
         let s = super::task_script("x", true, true, "PC\\me");
         assert!(s.contains("-LogonType Interactive -RunLevel Limited") && !s.contains("S4U") && s.contains("Unregister-ScheduledTask -TaskName aidev-runner-boot"));
     }

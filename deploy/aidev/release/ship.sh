@@ -61,10 +61,21 @@ for d in deploy/aidev/auth-gateway deploy/aidev/runtime-manager; do
 done
 
 step pack
-# the runner binaries are built on the PCs they run on (CI, the Mac): keep the ones the active release serves
+# the runner binaries are built by CI (a runner-v* tag publishes a GitHub release): the newest release when it is newer
+# than what the active release serves, else the active release's own (also when GitHub cannot be reached)
 rm -rf deploy/aidev/runner/dist && mkdir -p deploy/aidev/runner/dist
-if [ -d /srv/app/current/control/runner ]; then
-  cp -a /srv/app/current/control/runner/. deploy/aidev/runner/dist/ && rm -rf deploy/aidev/runner/dist/scripts deploy/aidev/runner/dist/source
+serving=$(ls /srv/app/current/control/runner 2>/dev/null | sed -n 's/^aidev-runner-\([0-9][0-9.]*\)-.*/\1/p' | sort -V | tail -1)
+newest=$(curl -fsSL -m 20 "https://api.github.com/repos/${SHIP_GITHUB_REPO:-jazzlife/aidev}/releases?per_page=30" 2>/dev/null \
+  | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{try{const r=JSON.parse(s).find(x=>!x.draft&&!x.prerelease&&/^runner-v[0-9.]+$/.test(x.tag_name));console.log(r?r.tag_name.slice(8):"")}catch{console.log("")}})')
+if [ -n "$newest" ] && [ "$newest" != "$serving" ] && [ "$(printf '%s\n%s\n' "${serving:-0}" "$newest" | sort -V | tail -1)" = "$newest" ] \
+   && bash deploy/aidev/runner/scripts/fetch-release.sh "runner-v$newest" "${SHIP_GITHUB_REPO:-jazzlife/aidev}" --out deploy/aidev/runner/dist; then
+  echo "runner $newest from its GitHub release (was ${serving:-none})"
+else
+  rm -rf deploy/aidev/runner/dist && mkdir -p deploy/aidev/runner/dist
+  if [ -d /srv/app/current/control/runner ]; then
+    cp -a /srv/app/current/control/runner/. deploy/aidev/runner/dist/ && rm -rf deploy/aidev/runner/dist/scripts deploy/aidev/runner/dist/source
+  fi
+  echo "runner ${serving:-none} carried over"
 fi
 mkdir -p "$OUT"
 tgz=$(bash deploy/aidev/release/pack.sh "$OUT" | tail -1 | cut -d' ' -f1) || die "pack.sh"

@@ -316,6 +316,11 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             }
             let mut cfg = config::load()?;
             control::set_boot(boot);
+            // the sign-in runner of an installed copy keeps its "시작 앱" entry (older installs had none)
+            #[cfg(windows)]
+            if !boot && std::env::current_exe().ok().as_deref() == Some(service::installed_path().as_path()) {
+                service::ensure_startup_entry();
+            }
             if config::grant_on_first_run(&mut cfg) {
                 eprintln!("첫 실행: 화면 보기·원격 제어를 허용했습니다 (끄기: aidev-runner consent screen off)");
             }
