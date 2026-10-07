@@ -114,10 +114,11 @@ export const ToolRenderer: React.FC<ToolRendererProps> = memo(({
 
   if (!displayConfig) return null;
 
-  // Bash renders as a Codex-style command row: the command on a single line with
-  // a chevron that expands to show the output inline. The combined view lives on
-  // the input render; the separate result section is suppressed in MessageComponent.
-  if (toolName === 'Bash' && mode === 'input') {
+  // Bash (and Claude's Windows equivalent, PowerShell) renders as a Codex-style
+  // command row: the command on a single line with a chevron that expands to
+  // show the output inline. The combined view lives on the input render; the
+  // separate result section is suppressed in MessageComponent.
+  if ((toolName === 'Bash' || toolName === 'PowerShell') && mode === 'input') {
     const command = typeof parsedData === 'object' && parsedData !== null && 'command' in parsedData
       ? String(parsedData.command || '')
       : typeof toolInput === 'string'

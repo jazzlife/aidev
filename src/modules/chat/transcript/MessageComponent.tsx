@@ -40,7 +40,11 @@ type MessageComponentProps = {
   onForkFromMessage?: (message: ChatMessage) => void;
 };
 
-const COPY_HIDDEN_TOOL_NAMES = new Set(['Bash', 'Edit', 'Write', 'ApplyPatch']);
+const COPY_HIDDEN_TOOL_NAMES = new Set(['Bash', 'PowerShell', 'Edit', 'Write', 'ApplyPatch']);
+
+// Tools whose command row (BashCommandDisplay) already renders their output
+// inline, so the generic "Tool Result Section" below would only repeat it.
+const SHELL_TOOL_NAMES = new Set(['Bash', 'PowerShell']);
 
 /**
  * Rendered by chat's ChatMessagesPane and ToolGroupContainer to draw one
@@ -273,8 +277,8 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
                   />
                 )}
 
-                {/* Tool Result Section — Bash renders its output inside the command row above. */}
-                {message.toolResult && message.toolName !== 'Bash' && !shouldHideToolResult(message.toolName || 'UnknownTool', message.toolResult) && (
+                {/* Tool Result Section — shell tools render their output inside the command row above. */}
+                {message.toolResult && !SHELL_TOOL_NAMES.has(String(message.toolName || '')) && !shouldHideToolResult(message.toolName || 'UnknownTool', message.toolResult) && (
                   message.toolResult.isError ? (
                     // Error results — collapsed red row that expands to the content
                     <div id={`tool-result-${message.toolId}`} className="scroll-mt-4">
