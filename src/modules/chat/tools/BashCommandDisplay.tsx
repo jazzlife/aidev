@@ -10,6 +10,8 @@ import type { ToolStatus } from '@/shared/types';
 type BashCommandDisplayProps = {
   command: string;
   description?: string;
+  /** Shown in place of the command when there is no `description` (e.g. "Bash"). */
+  fallbackLabel: string;
   /** Combined stdout/stderr from the tool result (empty while running). */
   output?: string;
   isError?: boolean;
@@ -19,14 +21,11 @@ type BashCommandDisplayProps = {
 
 /**
  * Codex-in-VSCode style command row: a compact, single-line row with a chevron
- * on the left. When the model supplied a plain-language `description`, that is
- * what the collapsed row shows — raw shell syntax (regex-heavy greps, sed
- * ranges, flag soup) reads as noise to most users, especially on a narrow
- * screen, while "Search the router hooks for pendingCreate handling" reads as
- * what the agent is actually doing. The raw command is never lost: expanding
- * the row always reveals it in full, alongside any output. When no description
- * was given, the row falls back to showing the (truncated) command itself, as
- * before.
+ * on the left. The raw shell command is never shown — regex-heavy greps, sed
+ * ranges, and flag soup read as pure noise, especially on a narrow screen — so
+ * the row always shows the model's plain-language `description` instead (or
+ * `fallbackLabel` when none was given). The command is still captured for the
+ * copy button, for users who want to re-run it, but it is never rendered.
  *
  * Theme-integrated surfaces keep it clean in both light and dark mode;
  * consecutive commands stack tightly into a clean list.
@@ -36,6 +35,7 @@ type BashCommandDisplayProps = {
 export const BashCommandDisplay: React.FC<BashCommandDisplayProps> = ({
   command,
   description,
+  fallbackLabel,
   output,
   isError = false,
   status,
@@ -46,6 +46,7 @@ export const BashCommandDisplay: React.FC<BashCommandDisplayProps> = ({
   const hasOutput = trimmedOutput.length > 0;
   const outputLineCount = hasOutput ? trimmedOutput.split('\n').length : 0;
   const hasDescription = Boolean(description && description.trim());
+  const headline = hasDescription ? (description as string) : fallbackLabel;
   const isRunning = status === 'running';
   // `open` is raised by an effect once output arrives (below). A document is
   // rendered without effects, so it would show every command and no output.
@@ -67,11 +68,12 @@ export const BashCommandDisplay: React.FC<BashCommandDisplayProps> = ({
     }
   }, [hasOutput, defaultOpen]);
 
-  // The row is always expandable: when a description is standing in for the
-  // raw command, expanding is the only way to see what actually ran, and a
-  // truncated command with no output still deserves a way to read it in full.
+  // The raw command is never shown, so there is nothing to reveal by expanding
+  // once output is off the table — the row only toggles when there is output.
   const toggle = () => {
-    setOpen((prev) => !prev);
+    if (hasOutput) {
+      setOpen((prev) => !prev);
+    }
   };
 
   const handleCopy = async (event: React.MouseEvent) => {
@@ -87,52 +89,45 @@ export const BashCommandDisplay: React.FC<BashCommandDisplayProps> = ({
       className={cn(
         'group/cmd overflow-hidden rounded-lg border bg-muted/40 backdrop-blur-sm transition-all duration-200',
         isError ? 'border-red-500/30' : 'border-border/60',
-        !open && 'hover:border-border hover:bg-muted/60',
+        hasOutput && !open && 'hover:border-border hover:bg-muted/60',
         open && 'bg-muted/50 shadow-sm',
       )}
     >
-      {/* Command header — always clickable; expanding is the only way to read
-          the raw command when a description is standing in for it. */}
+      {/* Command header — clickable only when there is output to reveal; the
+          raw command itself is never shown, so a row with no output has
+          nothing left to expand into. */}
       <div
-        role="button"
-        tabIndex={0}
-        aria-expanded={open}
+        role={hasOutput ? 'button' : undefined}
+        tabIndex={hasOutput ? 0 : undefined}
+        aria-expanded={hasOutput ? open : undefined}
         onClick={toggle}
         onKeyDown={(event) => {
-          if (event.key === 'Enter' || event.key === ' ') {
+          if (hasOutput && (event.key === 'Enter' || event.key === ' ')) {
             event.preventDefault();
             toggle();
           }
         }}
-        className="flex cursor-pointer items-center gap-2 px-2.5 py-1.5 outline-none focus-visible:ring-1 focus-visible:ring-ring"
+        className={cn(
+          'flex items-center gap-2 px-2.5 py-1.5 outline-none',
+          hasOutput && 'cursor-pointer focus-visible:ring-1 focus-visible:ring-ring',
+        )}
       >
         <ChevronRight
           className={cn(
             'h-3.5 w-3.5 flex-shrink-0 text-muted-foreground/70 transition-transform duration-200',
             open && 'rotate-90',
+            !hasOutput && 'opacity-0',
           )}
         />
         <span className="flex-shrink-0 select-none font-mono text-xs font-semibold text-emerald-500 dark:text-emerald-400">
           $
         </span>
         {/* Not a <code> tag: the global `.chat-message code` rule forces
-            `white-space: pre-wrap !important`, which would defeat `truncate`
-            and render collapsed multi-line commands in full.
-            Collapsed: a plain-language description (when the model gave one)
-            takes the primary slot instead of raw shell syntax. Expanded: the
-            full command always takes over, since that's the one place the raw
-            text is guaranteed to be reachable. */}
-        <span
-          className={cn(
-            'min-w-0 flex-1 text-xs text-foreground',
-            open
-              ? 'whitespace-pre-wrap break-all font-mono'
-              : hasDescription
-                ? 'truncate'
-                : 'truncate font-mono',
-          )}
-        >
-          {open || !hasDescription ? command : description}
+            `white-space: pre-wrap !important`, which would defeat `truncate`.
+            Always the description (or fallbackLabel) — the raw command is
+            captured only for the copy button and never rendered here. */}
+        <span className="min-w-0 flex-1 truncate text-xs text-foreground">
+          {headline}
         </span>
 
         {isRunning && (
@@ -156,12 +151,17 @@ export const BashCommandDisplay: React.FC<BashCommandDisplayProps> = ({
         </button>
       </div>
 
-      {/* Expanded detail: the description (if the header is now showing the
-          raw command instead) and the output (if any). */}
-      {open && (hasDescription || hasOutput) && (
+      {/* Expanded detail: output, plus the raw command but only in an export.
+          A live row never shows it — the chevron is right there to reveal
+          output, and the raw command is still one copy-button click away — but
+          a static document has no chevron at all, so anything left unprinted
+          here is gone for good once the page is saved. */}
+      {open && (hasOutput || isExporting) && (
         <div className="settings-content-enter border-t border-border/50 bg-background/50">
-          {hasDescription && (
-            <div className="px-3 pt-2 text-[11px] italic text-muted-foreground/70">{description}</div>
+          {isExporting && (
+            <pre className="overflow-auto whitespace-pre-wrap break-all px-3 py-2 font-mono text-xs leading-relaxed text-foreground">
+              <span className="select-none text-emerald-600 dark:text-emerald-500">$ </span>{command}
+            </pre>
           )}
           {hasOutput && (
             <pre

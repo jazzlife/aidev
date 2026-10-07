@@ -138,6 +138,7 @@ export const ToolRenderer: React.FC<ToolRendererProps> = memo(({
       <BashCommandDisplay
         command={command}
         description={description}
+        fallbackLabel={displayName}
         output={output}
         isError={Boolean(toolResult?.isError)}
         status={toolStatus !== 'completed' ? toolStatus : undefined}
