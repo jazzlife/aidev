@@ -1,8 +1,8 @@
 import { memo, useEffect, useRef } from 'react';
-import { Check, ChevronDown, ChevronRight, Edit3, Star, Trash2, X } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Edit3, Loader2, Star, Trash2, X } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
-import { Button } from '@/shared/ui';
+import { Button, Tooltip } from '@/shared/ui';
 import { cn } from '@/shared/utils';
 import type { LLMProvider, MCPServerStatus, Project, ProjectSession, SessionWithProvider } from '@/shared/types';
 import { getTaskIndicatorStatus } from '@/modules/sidebar/utils/sidebarProjectFormatting';
@@ -50,6 +50,28 @@ type SidebarProjectItemProps = {
   onSaveEditingSession: (projectName: string, sessionId: string, summary: string, provider: LLMProvider) => void;
   t: TFunction;
 };
+
+/** Spinner (and count when more than one) shown beside the project name while any of its sessions is producing a response. */
+function ProjectRunningIndicator({ count, t }: { count: number; t: TFunction }) {
+  if (count === 0) {
+    return null;
+  }
+
+  const label = t('tooltips.runningSessionsIndicator', { count, defaultValue: '{{count}} session(s) processing' });
+
+  return (
+    <Tooltip content={label} position="top">
+      <span
+        role="status"
+        aria-label={label}
+        className="ml-1.5 inline-flex flex-shrink-0 items-center gap-0.5 text-blue-500"
+      >
+        <Loader2 className="h-3 w-3 animate-spin" />
+        {count > 1 && <span className="text-[10px] font-medium tabular-nums">{count}</span>}
+      </span>
+    </Tooltip>
+  );
+}
 
 const getSessionCountDisplay = (project: Project, sessions: SessionWithProvider[]): string => {
   const total = Number(project.sessionMeta?.total ?? sessions.length);
@@ -101,6 +123,11 @@ function SidebarProjectItem({
   const sessionCountDisplay = getSessionCountDisplay(project, sessions);
   const sessionCountLabel = `${sessionCountDisplay} session${totalSessionCount === 1 ? '' : 's'}`;
   const taskStatus = getTaskIndicatorStatus(project, mcpServerStatus);
+  // Sessions of this project currently producing a response; shown on the collapsed row too.
+  const runningSessionCount = sessions.reduce(
+    (count, session) => (activeSessions.has(session.id) ? count + 1 : count),
+    0,
+  );
   const mobileRenameInputRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -212,7 +239,10 @@ function SidebarProjectItem({
                   ) : (
                     <>
                       <div className="flex min-w-0 flex-1 items-center justify-between">
-                        <h3 className="truncate text-sm font-normal text-foreground">{project.displayName}</h3>
+                        <span className="flex min-w-0 items-center">
+                          <h3 className="truncate text-sm font-normal text-foreground">{project.displayName}</h3>
+                          <ProjectRunningIndicator count={runningSessionCount} t={t} />
+                        </span>
                         {tasksEnabled && (
                           <TaskIndicator
                             status={taskStatus}
@@ -350,8 +380,11 @@ function SidebarProjectItem({
                 </div>
               ) : (
                 <div>
-                  <div className="truncate text-sm font-normal text-foreground" title={project.displayName}>
-                    {project.displayName}
+                  <div className="flex min-w-0 items-center">
+                    <span className="truncate text-sm font-normal text-foreground" title={project.displayName}>
+                      {project.displayName}
+                    </span>
+                    <ProjectRunningIndicator count={runningSessionCount} t={t} />
                   </div>
                   <div className="text-xs text-muted-foreground">
                     {sessionCountDisplay}

@@ -58,8 +58,15 @@ function SidebarSessionItem({
   const isSelected = selectedSession?.id === session.id;
   const compactSessionAge = formatCompactAge(sessionView.sessionTime, currentTime);
   const [isMobileOptionsOpen, setIsMobileOptionsOpen] = useState(false);
+  // Left-edge dot priority: attention (amber) > processing (blue) > recently active (green).
   const showAttentionIndicator = needsAttention && !isSelected;
+  const showProcessingIndicator = !showAttentionIndicator && isProcessing;
   const showRecentIndicator = !showAttentionIndicator && !isProcessing && sessionView.isActive;
+  const indicatorLabel = showAttentionIndicator
+    ? t('tooltips.attentionRequiredIndicator', { defaultValue: 'Session needs attention' })
+    : showProcessingIndicator
+      ? t('tooltips.processingSessionIndicator', 'Processing session')
+      : t('tooltips.activeSessionIndicator');
   const providerLabel = PROVIDER_LABELS[session.__provider];
 
   // The desktop controls live in SessionOptions, which owns the rename panel and
@@ -102,22 +109,15 @@ function SidebarSessionItem({
 
   return (
     <div className="group relative">
-      {(showAttentionIndicator || showRecentIndicator) && (
+      {(showAttentionIndicator || showProcessingIndicator || showRecentIndicator) && (
         <div className="absolute left-0 top-1/2 -translate-x-1 -translate-y-1/2 transform">
-          <Tooltip
-            content={showAttentionIndicator
-              ? t('tooltips.attentionRequiredIndicator', { defaultValue: 'Session needs attention' })
-              : t('tooltips.activeSessionIndicator')}
-            position="right"
-          >
+          <Tooltip content={indicatorLabel} position="right">
             <div
               role="status"
-              aria-label={showAttentionIndicator
-                ? t('tooltips.attentionRequiredIndicator', { defaultValue: 'Session needs attention' })
-                : t('tooltips.activeSessionIndicator')}
+              aria-label={indicatorLabel}
               className={cn(
                 'h-2 w-2 animate-pulse rounded-full',
-                showAttentionIndicator ? 'bg-amber-500' : 'bg-green-500',
+                showAttentionIndicator ? 'bg-amber-500' : showProcessingIndicator ? 'bg-blue-500' : 'bg-green-500',
               )}
             />
           </Tooltip>
@@ -131,7 +131,7 @@ function SidebarSessionItem({
             'p-2 mx-3 my-0.5 rounded-md bg-card border active:scale-[0.98] transition-all duration-150 relative',
             isSelected ? 'bg-primary/5 border-primary/20' : '',
             !isSelected && isProcessing
-              ? 'border-border/60 bg-muted/20'
+              ? 'border-blue-500/30 bg-blue-50/5 dark:bg-blue-900/5'
               : !isSelected && sessionView.isActive
               ? 'border-green-500/30 bg-green-50/5 dark:bg-green-900/5'
               : 'border-border/30',
@@ -159,7 +159,7 @@ function SidebarSessionItem({
                 {isProcessing ? (
                   <span className="ml-auto flex-shrink-0">
                     <Tooltip content={t('tooltips.processingSessionIndicator', 'Processing session')} position="top">
-                      <span className="flex h-5 w-5 items-center justify-center rounded-md text-muted-foreground">
+                      <span className="flex h-5 w-5 items-center justify-center rounded-md text-blue-500">
                         <Loader2 className="h-3 w-3 animate-spin" />
                       </span>
                     </Tooltip>
@@ -333,7 +333,7 @@ function SidebarSessionItem({
             'h-auto w-full justify-start rounded-md border bg-card p-2 pr-11 text-left font-normal transition-all duration-150',
             isSelected ? 'border-primary/20 bg-primary/5' : 'border-border/30',
             !isSelected && isProcessing
-              ? 'border-border/60 bg-muted/20 hover:bg-muted/25'
+              ? 'border-blue-500/30 bg-blue-50/5 hover:bg-blue-50/10 dark:bg-blue-900/5 dark:hover:bg-blue-900/10'
               : !isSelected && sessionView.isActive
                 ? 'border-green-500/30 bg-green-50/5 hover:bg-green-50/10 dark:bg-green-900/5 dark:hover:bg-green-900/10'
                 : 'hover:bg-accent/50',
@@ -371,7 +371,7 @@ function SidebarSessionItem({
                     )}
                   >
                     <Tooltip content={t('tooltips.processingSessionIndicator', 'Processing session')} position="top">
-                      <span className="flex h-5 w-5 items-center justify-center rounded-md text-muted-foreground">
+                      <span className="flex h-5 w-5 items-center justify-center rounded-md text-blue-500">
                         <Loader2 className="h-3 w-3 animate-spin" />
                       </span>
                     </Tooltip>

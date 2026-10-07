@@ -50,7 +50,10 @@
     "cancel": "Cancel",
     "clearSearch": "Clear search",
     "openCommandPalette": "Open command palette",
-    "attentionRequiredIndicator": "Session needs attention"
+    "attentionRequiredIndicator": "Session needs attention",
+    "processingSessionIndicator": "Session is processing",
+    "runningSessionsIndicator_one": "{{count}} session processing",
+    "runningSessionsIndicator_other": "{{count}} sessions processing"
   },
   "navigation": {
     "chat": "Chat",
