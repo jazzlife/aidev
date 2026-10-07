@@ -3,7 +3,7 @@ import { useTranslation } from 'react-i18next';
 import { GitBranchIcon, PencilIcon } from 'lucide-react';
 
 import type { ChatMessage, ClaudePermissionSuggestion, PermissionGrantResult, LLMProvider,DiffLine,Project } from '@/shared/types';
-import { formatUsageLimitText, stripProposedPlanEnvelope } from '@/modules/chat/utils/chatFormatting';
+import { formatUsageLimitText, stripAgentArchitectBlock, stripProposedPlanEnvelope } from '@/modules/chat/utils/chatFormatting';
 import { ToolRenderer, ToolErrorDisplay, SubagentPanel, shouldHideToolResult } from '@/modules/chat/tools';
 import { LLMProviderLogo } from '@/shared/ui';
 import { Reasoning, ReasoningContent, ReasoningTrigger } from '@/modules/chat/transcript/Reasoning';
@@ -61,10 +61,12 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
   const userCopyContent = String(message.content || '');
   const formattedMessageContent = useMemo(
     () => {
-      const content = formatUsageLimitText(String(message.content || ''));
-      return provider === 'codex' && message.type === 'assistant' && !message.isThinking
-        ? stripProposedPlanEnvelope(content)
-        : content;
+      let content = formatUsageLimitText(String(message.content || ''));
+      if (message.type === 'assistant' && !message.isThinking) {
+        if (provider === 'codex') content = stripProposedPlanEnvelope(content);
+        content = stripAgentArchitectBlock(content);
+      }
+      return content;
     },
     [message.content, message.isThinking, message.type, provider]
   );
@@ -91,6 +93,15 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
   const shouldHideThinkingMessage = Boolean(message.isThinking && !showThinking);
 
   if (shouldHideThinkingMessage) {
+    return null;
+  }
+
+  // The architect's reply was nothing but the <aidev-agent> design block (by design — the
+  // AgentCreateCard already shows it): once stripped there is no bubble left to draw.
+  const isEmptyAfterArchitectStrip = message.type === 'assistant' && !message.isToolUse && !message.isThinking &&
+    !message.isSubagentContainer && !message.compact && !message.isTaskNotification &&
+    formattedMessageContent.trim().length === 0 && String(message.content || '').trim().length > 0;
+  if (isEmptyAfterArchitectStrip) {
     return null;
   }
 

@@ -26,6 +26,21 @@ export function stripProposedPlanEnvelope(text: string) {
   return withoutOpeningTag.replace(/(?:\r?\n)?[ \t]*<\/proposed_plan>\s*$/i, '');
 }
 
+/**
+ * Strips the agent-architect's raw `<aidev-agent>{...}</aidev-agent>` design block from a reply
+ * before it reaches the transcript. `parseAgentDraft` already turns that block into the
+ * AgentCreateCard, so showing the same JSON a second time as a chat bubble is pure noise — the
+ * architect is told to keep surrounding text minimal, so there is rarely anything else to show.
+ * Streaming-safe: while only the opening tag has arrived, everything from it onward is dropped too.
+ */
+export function stripAgentArchitectBlock(text: string) {
+  if (!text || typeof text !== 'string') return text;
+  const withoutClosedBlocks = text.replace(/<aidev-agent>\s*[\s\S]*?\s*<\/aidev-agent>/g, '');
+  if (withoutClosedBlocks !== text) return withoutClosedBlocks.trim();
+  const openIndex = text.indexOf('<aidev-agent>');
+  return openIndex === -1 ? text : text.slice(0, openIndex).trimEnd();
+}
+
 export function formatUsageLimitText(text: string) {
   try {
     if (typeof text !== 'string') return text;
