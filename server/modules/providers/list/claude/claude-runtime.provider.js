@@ -659,7 +659,7 @@ export function normalizeUsageLimit(info) {
  * itself is `allowed`, and a `rejected` window with overage `allowed` keeps
  * running on overage — neither is a block. The CLI applies the same rule.
  *
- * @param {Object} info - SDK `rate_limit_info`
+ * @param {Object | null | undefined} info - SDK `rate_limit_info`
  * @returns {boolean}
  */
 export function isBlockingRateLimit(info) {
