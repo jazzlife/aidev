@@ -1,5 +1,5 @@
 import { api } from '@/shared/api';
-import { CODE_EDITOR_STORAGE_KEYS } from '@/shared/constants';
+import { CODE_EDITOR_STORAGE_KEYS, PROVIDER_PERMISSION_PREFERENCE_KEYS } from '@/shared/constants';
 
 /**
  * The one reader and writer for the settings that used to live in browser
@@ -155,6 +155,21 @@ function queueServerWrite(updates: PreferenceRecord): void {
  * Synchronous by design: callers include module-level initializers and
  * `useState` initial values that run before any fetch could resolve.
  */
+/**
+ * The permission mode the user chose for new chats of `provider` in Settings, or null when none is set.
+ * Claude/Cursor/OpenCode keep it as `defaultPermissionMode` on their permission settings; Codex has had
+ * a `permissionMode` field there since before this reader (it was saved but never applied — 2026-10-07).
+ */
+export function readDefaultPermissionMode(provider: string): string | null {
+  const key = PROVIDER_PERMISSION_PREFERENCE_KEYS[provider as keyof typeof PROVIDER_PERMISSION_PREFERENCE_KEYS];
+  if (!key) {
+    return null;
+  }
+  const stored = readUserPreference<Record<string, unknown>>(key, {});
+  const value = provider === 'codex' ? stored.permissionMode : stored.defaultPermissionMode;
+  return typeof value === 'string' && value.trim() ? value : null;
+}
+
 export function readUserPreference<T>(key: UserPreferenceKey, fallback: T): T {
   const value = preferences[key];
   return value === undefined || value === null ? fallback : (value as T);

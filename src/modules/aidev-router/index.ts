@@ -41,6 +41,12 @@ export type { KnowledgeItem, KnowledgeProposal, KnowledgeRefreshJob } from '@/mo
 export { useEffortCap, EFFORT_LABEL } from '@/modules/aidev-router/hooks/useEffortCap';
 export { useChatEffortCap } from '@/modules/aidev-router/hooks/useChatEffortCap';
 export { EffortCapDefaults } from '@/modules/aidev-router/EffortCapDefaults';
+// Model floor per engine (workbench settings/router bar + mobile settings/routing sheet) — 2026-10-07.
+export { useModelFloor, MODEL_LABEL } from '@/modules/aidev-router/hooks/useModelFloor';
+export { useChatModelFloor } from '@/modules/aidev-router/hooks/useChatModelFloor';
+// Independent verification of a finished run (worker ≠ verifier): the verdict card, both apps.
+export { VerificationCard } from '@/modules/aidev-router/VerificationCard';
+export type { RunVerification } from '@/modules/aidev-router/api';
 // F-08: the PC a chat's remote work goes to (router bar chip + mobile router sheet).
 export { useTargetChoice, targetChipView, TARGET_SOURCE_LABEL } from '@/modules/aidev-router/hooks/useTargetChoice';
 export type { RouteDevice, RouteTargetOption, RouteTargetSource } from '@/modules/aidev-router/api';

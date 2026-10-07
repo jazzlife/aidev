@@ -59,11 +59,13 @@ export async function appSettingsGet() {
       policy: t.policy, default: Boolean(t.is_default), screen: Boolean(t.capabilities?.screen), control: Boolean(t.capabilities?.control),
     })),
     effort_cap: engines.effort_cap ?? null, effort_ladder: engines.effort_ladder ?? null,
+    model_floor: engines.model_floor ?? null, model_ladder: engines.model_ladder ?? null,
     engines: engines.engines ?? null, default_engine: engines.default_engine ?? null,
     keys: {
       'pc.policy': 'full | auto | ask | deny (target required)', 'pc.default': 'true | false (target required)',
       'pc.screen': 'true | false — screen capture on that PC (target required)', 'pc.control': 'true | false — remote mouse/keyboard (target required; implies screen)',
       'effort_cap.claude': 'an effort from effort_ladder.claude, or "" for none', 'effort_cap.codex': 'an effort from effort_ladder.codex, or "" for none',
+      'model_floor.claude': 'a model from model_ladder.claude — routing never picks a weaker one; "" for none', 'model_floor.codex': 'a model from model_ladder.codex, or "" for none',
       routing_mode: 'auto | manual | off — applied by the user\'s open pages',
     },
   };
@@ -103,6 +105,11 @@ export async function appSettingsSet(input: { key: string; value: unknown; targe
     const engine = key.slice('effort_cap.'.length);
     const r = await callGateway('PUT', '/settings/effort-cap', { [engine]: String(input.value ?? '') }) as { effort_cap?: unknown };
     return { key, value: input.value, effort_cap: r.effort_cap ?? null };
+  }
+  if (key === 'model_floor.claude' || key === 'model_floor.codex') {
+    const engine = key.slice('model_floor.'.length);
+    const r = await callGateway('PUT', '/settings/model-floor', { [engine]: String(input.value ?? '') }) as { model_floor?: unknown };
+    return { key, value: input.value, model_floor: r.model_floor ?? null };
   }
   if (key === 'routing_mode') {
     const mode = String(input.value);

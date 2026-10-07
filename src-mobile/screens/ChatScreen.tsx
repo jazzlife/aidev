@@ -3,7 +3,7 @@ import { useLocation, useParams } from 'react-router-dom';
 import { Clock, Download, Gauge, GitBranch, MoreHorizontal, Search } from 'lucide-react';
 
 import { api, grantClaudeToolPermission, buildClaudeToolPermissionEntry, useChatRealtimeHandlers, useSessionStore, useWebSocket, type LLMProvider, type NormalizedMessage, type PendingPermissionRequest, type ProjectSession } from '@/modules/chat-core';
-import { AgentCreateCard, aidevApi, routingStore, shouldAskClarify, useAgentCreation, useAidevRouting, useEscalation, usePrejudge, type AidevSendDecoration, type Engine } from '@/modules/aidev-router';
+import { AgentCreateCard, aidevApi, routingStore, shouldAskClarify, useAgentCreation, useAidevRouting, useEscalation, usePrejudge, useRoutingState, VerificationCard, type AidevSendDecoration, type Engine } from '@/modules/aidev-router';
 import { Composer } from '@m/components/Composer';
 import { MessageList } from '@m/components/MessageList';
 import { PermissionSheet, type PermissionDecision } from '@m/components/PermissionSheet';
@@ -54,6 +54,8 @@ export function ChatScreen() {
   const { ws, sendMessage, subscribe, isConnected } = useWebSocket();
   const sessionStore = useSessionStore();
   const { beforeSend, reportOutcome } = useAidevRouting();
+  // the verifier's verdict for the last routed run (card above the composer)
+  const routingState = useRoutingState();
   const [draft, setDraft] = useState('');
   // where the cursor is in the draft (the `/` and `@` suggestions read the text before it)
   const [cursor, setCursor] = useState(0);
@@ -469,6 +471,7 @@ export function ChatScreen() {
         onCancel={scheduled.cancel} />
       {actionError ? <div className="px-4 py-1 text-[13px] text-danger" role="alert">{actionError}</div> : null}
       {agentCreation.pending ? <div className="m-scroll max-h-[45dvh]"><AgentCreateCard compact pending={agentCreation.pending} onApprove={(draft) => { void agentCreation.approve(draft); }} onSelfCheck={agentCreation.runSelfCheck} onDismiss={agentCreation.dismiss} /></div> : null}
+      {routingState.verification && !busy ? <VerificationCard compact status={routingState.verification.status} result={routingState.verification.result} onDismiss={() => routingStore.patch({ verification: null })} /> : null}
       {escalation.escalation && !busy ? <EscalationPrompt next={escalation.escalation.next} label={escalation.label} busy={escalation.busy} error={escalation.error} onRun={() => { void escalation.run(); }} onDismiss={escalation.dismiss} /> : null}
       {lastRunFinished && !busy ? <RunFeedback key={lastRunFinished} onFeedback={(value) => { void reportOutcome({ user_feedback: value }); }} /> : null}
       {clarify ? <ClarifyPrompt key={clarify.decoration.route.decision_id} text={clarify.text || attachmentLabel(clarify.attachments.map((a) => a.name ?? '파일'))} question={clarify.decoration.route.scope.clarify_question} onProceed={() => { setClarify(null); void dispatch(clarify.text, clarify.decoration, clarify.attachments, clarify.previews); }} onAnswer={(answer) => { setClarify(null); void dispatch(`${clarify.text}\n\n(추가 정보) ${answer}`, clarify.decoration, clarify.attachments, clarify.previews); }} /> : null}

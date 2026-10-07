@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
-import type { AgentDraft, Engine, NextAction, RouteResult } from '@/modules/aidev-router/api';
+import type { AgentDraft, Engine, NextAction, RouteResult, RunVerification } from '@/modules/aidev-router/api';
 
 /**
  * Small external store for routing state shared between the composer hook and the
@@ -63,6 +63,13 @@ export type RoutingState = {
   pendingHandoff: { sessionId: string; text: string } | null;
   /** The open chat's own effort ceiling (sessionId null = a new chat whose id is not known yet). */
   chatCap: { sessionId: string | null; cap: Partial<Record<Engine, string>> | null };
+  /** The open chat's own model floor (same lifecycle as chatCap). */
+  chatFloor: { sessionId: string | null; floor: Partial<Record<Engine, string>> | null };
+  /**
+   * Independent verification of the last routed run (worker ≠ verifier): pending while the gateway's
+   * verifier reads the repository, then its verdict — shown as a card until dismissed or the next send.
+   */
+  verification: { runId: number; status: 'pending' | 'done'; result: RunVerification | null } | null;
 };
 
 const MODE_KEY = 'aidev.routing.mode';
@@ -76,7 +83,7 @@ function readMode(): RoutingMode {
   }
 }
 
-let state: RoutingState = { mode: readMode(), pendingCreate: null, oneShotAgent: null, oneShotCreate: null, busy: false, last: null, lastText: null, error: null, overrides: {}, runId: null, runSessionId: null, runFinishedAt: null, runFeedback: null, oneShotPlan: null, escalation: null, pendingHandoff: null, chatCap: { sessionId: null, cap: null } };
+let state: RoutingState = { mode: readMode(), pendingCreate: null, oneShotAgent: null, oneShotCreate: null, busy: false, last: null, lastText: null, error: null, overrides: {}, runId: null, runSessionId: null, runFinishedAt: null, runFeedback: null, oneShotPlan: null, escalation: null, pendingHandoff: null, chatCap: { sessionId: null, cap: null }, chatFloor: { sessionId: null, floor: null }, verification: null };
 const listeners = new Set<() => void>();
 
 function emit() {

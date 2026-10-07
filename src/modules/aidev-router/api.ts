@@ -93,6 +93,11 @@ export type EnginesResult = {
   /** the user's reasoning-effort ceiling per engine and the levels each engine accepts (weakest first) */
   effort_cap?: Record<Engine, string>;
   effort_ladder?: Record<Engine, string[]>;
+  /** the user's model floor per engine (engines absent: none) and the tier models each engine runs on (weakest first) */
+  model_floor?: Partial<Record<Engine, string>>;
+  model_ladder?: Record<Engine, string[]>;
+  /** whether finished D2+ runs get an independent verification turn */
+  verification?: boolean;
   weights: Record<string, Record<Engine, number>>;
 };
 
@@ -131,6 +136,8 @@ export type RouteRequest = {
   createProposal?: number | null;
   /** this chat's own effort ceiling (a new chat sends it with its first message) */
   effortCap?: Partial<Record<Engine, string>> | null;
+  /** this chat's own model floor (same lifecycle as effortCap) */
+  modelFloor?: Partial<Record<Engine, string>> | null;
   text: string;
   sessionId?: string | null;
   sessionEngine?: Engine | null;
@@ -282,7 +289,24 @@ export type RemoteRun = {
 };
 
 /** GET/PUT /session-settings/:id — the chat's ceiling, the account default and what routing will use. */
-export type SessionEffortCap = { effort_cap: Partial<Record<Engine, string>> | null; default: Record<Engine, string>; effective: Record<Engine, string> };
+export type SessionEffortCap = { effort_cap: Partial<Record<Engine, string>> | null; default: Record<Engine, string>; effective: Record<Engine, string>;
+  /** the chat's model floor, the account default and what routing will use (GET only) */
+  model_floor?: Partial<Record<Engine, string>> | null; model_floor_default?: Partial<Record<Engine, string>>; model_floor_effective?: Partial<Record<Engine, string>> };
+/** PUT/DELETE /session-settings/:id/model-floor */
+export type SessionModelFloor = { model_floor: Partial<Record<Engine, string>> | null; default: Partial<Record<Engine, string>>; effective: Partial<Record<Engine, string>> };
+
+/** The independent verifier's verdict on a finished run (worker ≠ verifier), stored on the run by the gateway. */
+export type RunVerification = {
+  verdict: 'pass' | 'fail' | 'unclear';
+  summary: string;
+  checked: Array<{ claim: string; result: 'ok' | 'wrong' | 'unverified'; evidence: string }>;
+  issues: string[];
+  engine: string | null;
+  model: string | null;
+  at: number;
+};
+/** GET /runs/:id — the run with its verdict (null until the verifier answers) and the gateway's proposed next step. */
+export type RunView = { run: { id: number; outcome: string | null; test_result: string | null; verification: RunVerification | null; next_action: NextAction | null; session_id: string | null }; verifying: boolean };
 
 /** Platform-managed Claude subscription login state (runtime `/api/aidev-tools/claude-login`). */
 export type ClaudeLoginStatus = { token: { issuedAt: number; expiresAt: number } | null; failure: { at: number; message: string } | null };
@@ -306,7 +330,7 @@ export const aidevApi = {
   createAgent: (input: Record<string, unknown>) => post('/api/aidev/agents', input).then((response) => readJson<{ agent: CatalogAgent }>(response)),
   updateAgent: (id: number, input: Record<string, unknown>) => post(`/api/aidev/agents/${id}`, input, 'PUT').then((response) => readJson<{ agent: CatalogAgent; version: number }>(response)),
   createRun: (input: Record<string, unknown>) => post('/api/aidev/runs', input).then((response) => readJson<{ run_id: number }>(response)),
-  runOutcome: (runId: number, outcome: Record<string, unknown>) => post(`/api/aidev/runs/${runId}/outcome`, outcome, 'PATCH').then((response) => readJson<{ run: Record<string, unknown>; next?: NextAction | null }>(response)),
+  runOutcome: (runId: number, outcome: Record<string, unknown>) => post(`/api/aidev/runs/${runId}/outcome`, outcome, 'PATCH').then((response) => readJson<{ run: Record<string, unknown>; next?: NextAction | null; verifying?: boolean }>(response)),
   handoffBrief: (sessionId: string, input: { from_engine?: string | null; to_engine?: string | null; reason?: string | null }) => post('/api/aidev-tools/handoff', { session_id: sessionId, ...input }).then((response) => readRuntimeData<{ text: string; files: string[]; userTurns: number }>(response)),
   /** F-08: pin this chat's remote work to a PC (null: back to automatic). */
   setSessionTarget: (sessionId: string, targetId: number | null) => post(`/api/aidev/session-settings/${encodeURIComponent(sessionId)}/target`, { target_id: targetId }, 'PUT').then((response) => readJson<{ target_id: number | null }>(response)),
@@ -365,5 +389,13 @@ export const aidevApi = {
     ? post(`/api/aidev/session-settings/${encodeURIComponent(sessionId)}`, cap, 'PUT')
     : authenticatedFetch(`/api/aidev/session-settings/${encodeURIComponent(sessionId)}`, { method: 'DELETE' })).then((response) => readJson<SessionEffortCap>(response)),
   setEffortCap: (cap: Partial<Record<Engine, string>>) => post('/api/aidev/settings/effort-cap', cap, 'PUT').then((response) => readJson<{ effort_cap: Record<Engine, string> }>(response)),
+  /** The account's model floor per engine ('' clears an engine's floor). */
+  setModelFloor: (floor: Partial<Record<Engine, string>>) => post('/api/aidev/settings/model-floor', floor, 'PUT').then((response) => readJson<{ model_floor: Partial<Record<Engine, string>> }>(response)),
+  /** A chat's own model floor (engines it leaves out follow the account default); null clears it. */
+  setSessionModelFloor: (sessionId: string, floor: Partial<Record<Engine, string>> | null) => (floor && Object.keys(floor).length
+    ? post(`/api/aidev/session-settings/${encodeURIComponent(sessionId)}/model-floor`, floor, 'PUT')
+    : authenticatedFetch(`/api/aidev/session-settings/${encodeURIComponent(sessionId)}/model-floor`, { method: 'DELETE' })).then((response) => readJson<SessionModelFloor>(response)),
+  /** One run with its verification verdict (polled after a run completes until the verifier answers). */
+  run: (id: number) => authenticatedFetch(`/api/aidev/runs/${id}`).then((response) => readJson<RunView>(response)),
   routeEval: () => post('/api/aidev/route/eval', {}).then((response) => readJson<Record<string, unknown>>(response)),
 };

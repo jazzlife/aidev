@@ -27,7 +27,7 @@ import {
 } from '@/shared/context/SessionProtectionContext';
 import ChatMessagesPane from '@/modules/chat/transcript/ChatMessagesPane';
 import ChatComposer from '@/modules/chat/composer/ChatComposer';
-import { AgentCreateCard, AidevRouterBar, ClarifyPrompt, COMPOSE_EVENT, announceRunComplete, changedFilesSince, EscalationCard, routingStore, useAgentCreation, useAidevRouting, useEffortCap, useEscalation, useRoutingState } from '@/modules/aidev-router';
+import { AgentCreateCard, AidevRouterBar, ClarifyPrompt, COMPOSE_EVENT, announceRunComplete, changedFilesSince, EscalationCard, routingStore, useAgentCreation, useAidevRouting, useEffortCap, useEscalation, useRoutingState, VerificationCard } from '@/modules/aidev-router';
 import CommandResultModal from '@/modules/chat/modals/CommandResultModal';
 
 type ChatInterfaceProps = {
@@ -673,6 +673,7 @@ function ChatInterface({
             </div>
           ) : null}
           {clarify ? <ClarifyPrompt key={clarify.decisionId} question={clarify.question} onAnswer={(answer) => releaseClarify(answer)} onProceed={() => releaseClarify(null)} onDismiss={dismissClarify} /> : null}
+          {routingState.verification ? <VerificationCard status={routingState.verification.status} result={routingState.verification.result} onDismiss={() => routingStore.patch({ verification: null })} /> : null}
           {escalation.escalation ? <EscalationCard next={escalation.escalation.next} label={escalation.label} busy={escalation.busy} error={escalation.error} onRun={() => { void escalation.run(); }} onDismiss={escalation.dismiss} /> : null}
           {agentCreation.pending ? <AgentCreateCard pending={agentCreation.pending} onApprove={(draft) => { void agentCreation.approve(draft); }} onSelfCheck={agentCreation.runSelfCheck} onDismiss={agentCreation.dismiss} /> : null}
           <AidevRouterBar sessionId={selectedSession?.id ?? null} />

@@ -455,6 +455,18 @@
     },
     "actions": {
       "add": "Add"
+    },
+    "defaultMode": {
+      "label": "Default permission mode for new chats",
+      "description": "Every new Claude chat starts in this mode. A mode picked inside a chat stays with that chat. Shared with the mobile app.",
+      "providerDefault": "Engine default (ask for every tool)"
+    },
+    "modes": {
+      "default": "Default — ask for every tool",
+      "auto": "Auto — safe actions run without asking",
+      "acceptEdits": "Accept edits automatically",
+      "bypassPermissions": "Allow everything — never ask",
+      "plan": "Plan — plan before acting"
     }
   },
   "mcpServers": {

@@ -15,6 +15,8 @@ vi.mock('@/modules/chat-core', async () => {
     parseToolPayload: (value: unknown) => value,
     buildClaudeToolPermissionEntry: permissions.buildClaudeToolPermissionEntry,
     readUserPreference: (key: string, fallback: unknown) => (prefs as Record<string, unknown>)[key] ?? fallback,
+    // no Settings default in these tests: the engine's own default decides
+    readDefaultPermissionMode: () => null,
   };
 });
 

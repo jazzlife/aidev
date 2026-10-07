@@ -5,7 +5,7 @@ import { aidevApi, claudeAuth, routingStore, useClaudeAuth, useRoutingState, typ
 import { EffortCapControl } from '@m/components/EffortCapControl';
 import { ClaudeLoginSheet } from '@m/components/ClaudeLoginSheet';
 import { KnowledgeSection } from '@m/components/KnowledgeSection';
-import { GithubSection, PermissionRulesSection, VoiceSection } from '@m/components/SettingsSections';
+import { DefaultPermissionSection, GithubSection, PermissionRulesSection, VoiceSection } from '@m/components/SettingsSections';
 import { takeGithubReturn } from '@m/lib/githubReturn';
 import { disablePush, enablePush, pushState, type PushState } from '@m/lib/push';
 
@@ -83,6 +83,7 @@ export function SettingsScreen() {
           </div>
           {engines ? <div className="text-[12px] text-muted mt-2">기본 엔진: {engines.default_engine ?? '자동 선택'}</div> : null}
         </section>
+        <DefaultPermissionSection />
         <PermissionRulesSection />
         <GithubSection notice={githubNotice} />
         <VoiceSection />

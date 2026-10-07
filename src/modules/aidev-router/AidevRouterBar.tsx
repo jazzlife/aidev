@@ -7,6 +7,8 @@ import { useAidevRouting } from '@/modules/aidev-router/hooks/useAidevRouting';
 import { claudeAuth, useClaudeAuth } from '@/modules/aidev-router/hooks/useClaudeAuth';
 import { EFFORT_LABEL } from '@/modules/aidev-router/hooks/useEffortCap';
 import { useChatEffortCap } from '@/modules/aidev-router/hooks/useChatEffortCap';
+import { useChatModelFloor } from '@/modules/aidev-router/hooks/useChatModelFloor';
+import { MODEL_LABEL } from '@/modules/aidev-router/hooks/useModelFloor';
 import { ClaudeLoginDialog } from '@/modules/aidev-router/ClaudeLoginPanel';
 import { useTargetChoice } from '@/modules/aidev-router/hooks/useTargetChoice';
 
@@ -35,6 +37,7 @@ export function AidevRouterBar({ sessionId = null }: { sessionId?: string | null
   };
   const claudeAuthState = useClaudeAuth();
   const chatCap = useChatEffortCap(sessionId);
+  const chatFloor = useChatModelFloor(sessionId);
   // F-08: which PC this chat's remote work goes to
   const targetChoice = useTargetChoice(sessionId);
   const tv = targetChoice.view;
@@ -172,6 +175,21 @@ export function AidevRouterBar({ sessionId = null }: { sessionId?: string | null
                   </label>
                 ))}
                 {chatCap.error ? <div className="text-[11px] text-red-600">{chatCap.error}</div> : null}
+              </div>
+            ) : null}
+            {chatFloor.defaults && chatFloor.ladder ? (
+              <div className="mt-1 border-t border-border px-2 pt-1.5" data-testid="model-floor">
+                <div className="mb-1 text-[11px] text-muted-foreground" title="이 채팅에만 적용됩니다. '기본값'은 설정 → Agents의 기본 하한을 따릅니다. 라우터가 어떤 깊이로 판정하든 이 모델보다 약한 모델로는 실행하지 않습니다.">이 채팅의 최소 모델</div>
+                {(['claude', 'codex'] as const).map((engine) => (
+                  <label key={engine} className="mb-1 flex items-center gap-2">
+                    <span className="w-12 capitalize">{engine}</span>
+                    <select aria-label={`${engine} 이 채팅 최소 모델`} value={chatFloor.floor?.[engine] ?? 'default'} onChange={(event) => { void chatFloor.set(engine, event.target.value); }} className="h-6 flex-1 rounded border border-border bg-background px-1">
+                      <option value="default">기본값 ({chatFloor.defaults![engine] ? MODEL_LABEL[chatFloor.defaults![engine]!] ?? chatFloor.defaults![engine] : '하한 없음'})</option>
+                      {chatFloor.ladder![engine].map((model) => <option key={model} value={model}>{MODEL_LABEL[model] ?? model}</option>)}
+                    </select>
+                  </label>
+                ))}
+                {chatFloor.error ? <div className="text-[11px] text-red-600">{chatFloor.error}</div> : null}
               </div>
             ) : null}
           </div>

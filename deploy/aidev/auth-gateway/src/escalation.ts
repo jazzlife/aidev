@@ -2,7 +2,7 @@ import type { openStore } from './store.js';
 import type { Engine } from './store-aidev.js';
 import type { LayaClient } from './laya.js';
 import { decide } from './laya-questions.js';
-import { TIER_TABLE, applyEffortCap, type EngineAvailability } from './routing.js';
+import { TIER_TABLE, applyEffortCap, applyModelFloor, type EngineAvailability } from './routing.js';
 import { EFFORT_LADDER } from './store-aidev.js';
 
 /**
@@ -40,9 +40,12 @@ export async function decideNext(store: Store, laya: LayaClient, run: RunRow, en
   const chain = chainLength(store, run);
   const base = { from_run: run.id, chain };
   const cap = store.effectiveEffortCap(run.user_id, run.session_id).cap;
+  const floor = store.effectiveModelFloor(run.user_id, run.session_id).floor;
   const plan = (action: NextAction['action'], planEngine: Engine | null, planDepth: number | null, reason: string): NextAction => {
     if (!planEngine || planDepth === null) return { ...base, action, engine: null, model: null, effort: null, depth: null, reason };
-    const tier = TIER_TABLE[planDepth][planEngine];
+    // the user's model floor holds for the retry too (a retry never runs below the chat's floor)
+    const tier = { ...TIER_TABLE[planDepth][planEngine] };
+    applyModelFloor(planEngine, tier, floor[planEngine]);
     return { ...base, action, engine: planEngine, model: tier.model, effort: applyEffortCap(tier.effort, planDepth, planEngine, cap[planEngine]), depth: planDepth, reason };
   };
   // at the top tier the effort can still climb (one step per attempt) until the user's ceiling

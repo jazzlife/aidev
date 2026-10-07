@@ -19,6 +19,13 @@ export type KnowledgeRow = { id: number; agent_id: number; title: string; body: 
  * 'ultracode' is a session mode, not a level). The user's ceiling is one of these. */
 export const EFFORT_LADDER: Record<Engine, string[]> = { claude: ['low', 'medium', 'high', 'xhigh', 'max'], codex: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] };
 export const DEFAULT_EFFORT_CAP: Record<Engine, string> = { claude: 'xhigh', codex: 'xhigh' };
+/**
+ * The models each engine's tier ladder runs on, weakest first — the same names as TIER_TABLE in
+ * routing.ts (D0..D4; sonnet serves D1 and D2). A model floor (account or chat) is one of these:
+ * routing never runs below it, whatever depth Laya scored (2026-10-07 — "high-level work landed on sonnet").
+ */
+export const MODEL_LADDER: Record<Engine, string[]> = { claude: ['haiku', 'sonnet', 'opus', 'best'], codex: ['gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.6-sol', 'gpt-6-astra'] };
+const cleanFloor = (floor: Partial<Record<Engine, string>>) => Object.fromEntries(ENGINES.filter((e) => typeof floor[e] === 'string' && MODEL_LADDER[e].includes(floor[e]!)).map((e) => [e, floor[e]!])) as Partial<Record<Engine, string>>;
 /** Keeps only engines with a level on their ladder (quietly: stored data). */
 const cleanCap = (cap: Partial<Record<Engine, string>>) => Object.fromEntries(ENGINES.filter((e) => typeof cap[e] === 'string' && EFFORT_LADDER[e].includes(cap[e]!)).map((e) => [e, cap[e]!])) as Partial<Record<Engine, string>>;
 /** Same, but a wrong level is an error (user input). */
@@ -29,7 +36,7 @@ const validCap = (cap: Partial<Record<Engine, string>>) => {
 export type TierPolicyRow = { domain: string; depth: number; engine: string; model: string | null; effort: string | null; success_n: number; fail_n: number; avg_ms: number | null; level: number | null; pinned: number; updated_at: number | null };
 export type LessonRow = { id: number; agent_id: number; engine: string | null; trigger: string; rule: string; evidence_run_id: number | null; status: string; hits: number; owner_id: number | null; promoted_to_prompt: number; fails: number; verified_by: string | null; promoted_version: number | null; created_at: number };
 export type CreateQueueRow = { id: number; user_id: number; name: string; domain: string; description: string; technologies: string; count: number; commands: string; status: string; created_at: number; updated_at: number };
-export type RunRow = { id: number; user_id: number; session_id: string | null; decision_id: number | null; agent_id: number | null; agent_version: number | null; engine: string | null; model: string | null; effort: string | null; depth: number | null; task_kind: string | null; risk: number | null; target_id: number | null; started_at: number; finished_at: number | null; exit_code: number | null; tool_errors: number; user_feedback: string | null; reverted: number; reasked: number; test_result: string | null; cost_tokens: number | null; escalated_from_run: number | null; outcome: string | null };
+export type RunRow = { id: number; user_id: number; session_id: string | null; decision_id: number | null; agent_id: number | null; agent_version: number | null; engine: string | null; model: string | null; effort: string | null; depth: number | null; task_kind: string | null; risk: number | null; target_id: number | null; started_at: number; finished_at: number | null; exit_code: number | null; tool_errors: number; user_feedback: string | null; reverted: number; reasked: number; test_result: string | null; cost_tokens: number | null; escalated_from_run: number | null; outcome: string | null; next_action: string | null; verification: string | null };
 export type RemoteRunRow = { id: number; run_id: number | null; target_id: number; user_id: number; kind: string; cmd: string | null; cwd: string | null; risk: number | null; approved_by: string | null; started_at: number; finished_at: number | null; exit_code: number | null; artifacts: string | null; target_name?: string | null };
 export type TargetRow = { id: number; user_id: number; name: string; platform: string | null; arch: string | null; tags: string | null; description: string; token_hash: string | null; pairing_code: string | null; pairing_expires: number | null; policy: string; allowed_roots: string | null; capabilities: string | null; status: string; last_seen: number | null; created_at: number; /** the account's default PC for remote work (F-08) */ is_default: number };
 
@@ -157,7 +164,12 @@ export function migrateAidev(db: Database.Database) {
   addColumn(db, 'accounts', 'claude_token_expires_at', 'INTEGER');   // reported by the runtime after an in-app login
   addColumn(db, 'accounts', 'claude_auth_failure_at', 'INTEGER');    // reported by the runtime when a turn is refused
   addColumn(db, 'accounts', 'claude_notice', 'TEXT');
-  addColumn(db, 'accounts', 'effort_cap', 'TEXT');                  // per-engine effort ceiling chosen by the user (JSON), see routing EFFORT_LADDER                // last reminder sent ("<expiresAt>:<days>" or "fail:<at>")
+  addColumn(db, 'accounts', 'effort_cap', 'TEXT');
+  // Model floor (2026-10-07): the weakest model routing may pick per engine — account default and per chat.
+  addColumn(db, 'accounts', 'model_floor', 'TEXT');
+  addColumn(db, 'session_settings', 'model_floor', 'TEXT');
+  // Independent verification of a finished run (worker ≠ verifier): the verifier's verdict (JSON).
+  addColumn(db, 'runs', 'verification', 'TEXT');                  // per-engine effort ceiling chosen by the user (JSON), see routing EFFORT_LADDER                // last reminder sent ("<expiresAt>:<days>" or "fail:<at>")
   // Knowledge refresh (§3.8 / E-04): last check, consecutive unreachable checks, the check's note,
   // and — for a replacement Laya was not sure about — the item a 'proposed' row would replace.
   addColumn(db, 'knowledge', 'checked_at', 'INTEGER');
@@ -294,7 +306,7 @@ export function aidevMethods(db: Database.Database) {
       const clean = cap ? validCap(cap) : null;
       if (!clean || !Object.keys(clean).length) {
         db.prepare('UPDATE session_settings SET effort_cap=NULL, updated_at=? WHERE user_id=? AND session_id=?').run(Date.now(), userId, sessionId);
-        db.prepare('DELETE FROM session_settings WHERE user_id=? AND session_id=? AND effort_cap IS NULL AND target_id IS NULL').run(userId, sessionId);
+        db.prepare('DELETE FROM session_settings WHERE user_id=? AND session_id=? AND effort_cap IS NULL AND target_id IS NULL AND model_floor IS NULL').run(userId, sessionId);
         return null;
       }
       db.prepare('INSERT INTO session_settings(user_id,session_id,effort_cap,updated_at) VALUES(?,?,?,?) ON CONFLICT(user_id,session_id) DO UPDATE SET effort_cap=excluded.effort_cap, updated_at=excluded.updated_at')
@@ -311,7 +323,7 @@ export function aidevMethods(db: Database.Database) {
       if (targetId !== null && !m.target(userId, targetId)) throw new Error('Target not found');
       db.prepare('INSERT INTO session_settings(user_id,session_id,target_id,updated_at) VALUES(?,?,?,?) ON CONFLICT(user_id,session_id) DO UPDATE SET target_id=excluded.target_id, updated_at=excluded.updated_at')
         .run(userId, sessionId, targetId, Date.now());
-      db.prepare('DELETE FROM session_settings WHERE user_id=? AND session_id=? AND effort_cap IS NULL AND target_id IS NULL').run(userId, sessionId);
+      db.prepare('DELETE FROM session_settings WHERE user_id=? AND session_id=? AND effort_cap IS NULL AND target_id IS NULL AND model_floor IS NULL').run(userId, sessionId);
       return targetId;
     },
     /** What routing uses: chat ceiling (stored, or sent with a new chat's first message) over the account default. */
@@ -319,6 +331,48 @@ export function aidevMethods(db: Database.Database) {
       const account = m.effortCap(userId);
       const chat = { ...(sessionId ? m.sessionEffortCap(userId, sessionId) ?? {} : {}), ...(inline ? cleanCap(inline) : {}) };
       return { cap: { ...account, ...chat } as Record<Engine, string>, chat: Object.keys(chat).length ? chat : null, account };
+    },
+    /** The account's model floor per engine (none by default): routing never picks a weaker model. */
+    modelFloor(userId: number): Partial<Record<Engine, string>> {
+      const row = db.prepare('SELECT model_floor FROM accounts WHERE id=?').get(userId) as { model_floor: string | null } | undefined;
+      try { return row?.model_floor ? cleanFloor(JSON.parse(row.model_floor) as Partial<Record<Engine, string>>) : {}; } catch { return {}; }
+    },
+    /** Sets or clears (null / '') the floor of each engine given; other engines keep theirs. */
+    setModelFloor(userId: number, floor: Partial<Record<Engine, string | null>>) {
+      const next = { ...m.modelFloor(userId) };
+      for (const engine of ENGINES) {
+        const value = floor[engine];
+        if (value === undefined) continue;
+        if (value === null || value === '') { delete next[engine]; continue; }
+        if (!MODEL_LADDER[engine].includes(value)) throw new Error(`${engine} model must be one of ${MODEL_LADDER[engine].join('|')}`);
+        next[engine] = value;
+      }
+      db.prepare('UPDATE accounts SET model_floor=? WHERE id=?').run(Object.keys(next).length ? JSON.stringify(next) : null, userId);
+      return next;
+    },
+    /** A chat's own floor; engines it leaves out follow the account default. */
+    sessionModelFloor(userId: number, sessionId: string): Partial<Record<Engine, string>> | null {
+      const row = db.prepare('SELECT model_floor FROM session_settings WHERE user_id=? AND session_id=?').get(userId, sessionId) as { model_floor: string | null } | undefined;
+      if (!row?.model_floor) return null;
+      try { return cleanFloor(JSON.parse(row.model_floor) as Partial<Record<Engine, string>>); } catch { return null; }
+    },
+    setSessionModelFloor(userId: number, sessionId: string, floor: Partial<Record<Engine, string>> | null) {
+      if (floor) for (const engine of ENGINES) if (floor[engine] !== undefined && !MODEL_LADDER[engine].includes(floor[engine]!)) throw new Error(`${engine} model must be one of ${MODEL_LADDER[engine].join('|')}`);
+      const clean = floor ? cleanFloor(floor) : null;
+      if (!clean || !Object.keys(clean).length) {
+        db.prepare('UPDATE session_settings SET model_floor=NULL, updated_at=? WHERE user_id=? AND session_id=?').run(Date.now(), userId, sessionId);
+        db.prepare('DELETE FROM session_settings WHERE user_id=? AND session_id=? AND effort_cap IS NULL AND target_id IS NULL AND model_floor IS NULL').run(userId, sessionId);
+        return null;
+      }
+      db.prepare('INSERT INTO session_settings(user_id,session_id,model_floor,updated_at) VALUES(?,?,?,?) ON CONFLICT(user_id,session_id) DO UPDATE SET model_floor=excluded.model_floor, updated_at=excluded.updated_at')
+        .run(userId, sessionId, JSON.stringify(clean), Date.now());
+      return clean;
+    },
+    /** What routing uses: the chat's floor (stored, or sent with a new chat's first message) over the account's. */
+    effectiveModelFloor(userId: number, sessionId?: string | null, inline?: Partial<Record<Engine, string>> | null) {
+      const account = m.modelFloor(userId);
+      const chat = { ...(sessionId ? m.sessionModelFloor(userId, sessionId) ?? {} : {}), ...(inline ? cleanFloor(inline) : {}) };
+      return { floor: { ...account, ...chat } as Partial<Record<Engine, string>>, chat: Object.keys(chat).length ? chat : null, account };
     },
     setDefaultEngine(username: string, engine: Engine | null) {
       if (engine && !ENGINES.includes(engine)) throw new Error(`engine must be one of ${ENGINES.join(',')}`);
@@ -568,6 +622,15 @@ export function aidevMethods(db: Database.Database) {
       return Number(res.lastInsertRowid);
     },
     run(userId: number, id: number) { return db.prepare('SELECT * FROM runs WHERE id=? AND user_id=?').get(id, userId) as RunRow | undefined; },
+    /** The newest run of a chat with its agent — a follow-up message keeps that agent and never drops below its depth. */
+    lastRunForSession(userId: number, sessionId: string) {
+      return db.prepare('SELECT r.*, a.name AS agent_name, a.domain AS agent_domain FROM runs r LEFT JOIN agents a ON a.id=r.agent_id WHERE r.user_id=? AND r.session_id=? ORDER BY r.id DESC LIMIT 1')
+        .get(userId, sessionId) as (RunRow & { agent_name: string | null; agent_domain: string | null }) | undefined;
+    },
+    setRunVerification(userId: number, id: number, verification: unknown) {
+      db.prepare('UPDATE runs SET verification=? WHERE id=? AND user_id=?').run(JSON.stringify(verification), id, userId);
+      return m.run(userId, id)!;
+    },
     runs(userId: number, opts: { agentId?: number; limit?: number; sessionId?: string } = {}) {
       const where = ['user_id=?']; const args: unknown[] = [userId];
       if (opts.agentId) { where.push('agent_id=?'); args.push(opts.agentId); }

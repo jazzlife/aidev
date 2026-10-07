@@ -35,6 +35,7 @@ type ClaudeSettingsStorage = {
   disallowedTools?: string[];
   skipPermissions?: boolean;
   projectSortOrder?: ProjectSortOrder;
+  defaultPermissionMode?: string | null;
 };
 
 type CursorSettingsStorage = {
@@ -79,6 +80,7 @@ const createEmptyClaudePermissions = (): ClaudePermissionsState => ({
   allowedTools: [],
   disallowedTools: [],
   skipPermissions: false,
+  defaultPermissionMode: null,
 });
 
 const createEmptyCursorPermissions = (): CursorPermissionsState => ({
@@ -156,6 +158,7 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
         allowedTools: savedClaudeSettings.allowedTools || [],
         disallowedTools: savedClaudeSettings.disallowedTools || [],
         skipPermissions: Boolean(savedClaudeSettings.skipPermissions),
+        defaultPermissionMode: typeof savedClaudeSettings.defaultPermissionMode === 'string' ? savedClaudeSettings.defaultPermissionMode as ClaudePermissionsState['defaultPermissionMode'] : null,
       });
       setProjectSortOrder(readUserPreference<ProjectSortOrder>('projectSortOrder', 'name') === 'date' ? 'date' : 'name');
 
@@ -227,6 +230,7 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
           allowedTools: claudePermissions.allowedTools,
           disallowedTools: claudePermissions.disallowedTools,
           skipPermissions: claudePermissions.skipPermissions,
+          defaultPermissionMode: claudePermissions.defaultPermissionMode ?? null,
         },
         projectSortOrder,
         cursorPermissions: {
@@ -255,6 +259,7 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
     claudePermissions.allowedTools,
     claudePermissions.disallowedTools,
     claudePermissions.skipPermissions,
+    claudePermissions.defaultPermissionMode,
     codexPermissionMode,
     cursorPermissions.allowedCommands,
     cursorPermissions.disallowedCommands,

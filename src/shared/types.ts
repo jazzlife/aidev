@@ -1233,6 +1233,8 @@ export type ClaudePermissionsState = {
   allowedTools: string[];
   disallowedTools: string[];
   skipPermissions: boolean;
+  /** The permission mode every new Claude chat starts in (settings → Agents → 권한); null = the provider default. */
+  defaultPermissionMode?: PermissionMode | null;
 };
 
 /** The user's notification settings, grouped into delivery channels (in-app, web push, desktop, sound) and the events that trigger them; mirrors the payload of the notification preferences API. */

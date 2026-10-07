@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import crypto from 'node:crypto';
 import type { openStore } from './store.js';
-import { EFFORT_LADDER, ENGINES, type Engine } from './store-aidev.js';
+import { EFFORT_LADDER, ENGINES, MODEL_LADDER, type Engine, type RunRow } from './store-aidev.js';
 import type { LayaClient } from './laya.js';
 import type { Push } from './push.js';
 import { createNotifier } from './notify.js';
@@ -97,6 +97,11 @@ export function createAidevApi(deps: AidevDeps) {
   const notifier = createNotifier({ store, laya, push: deps.push, isOnline: deps.isOnline ?? (() => false) });
   const ENGINE_CACHE_MS = 60_000;
   const CURATE_TIMEOUT_MS = 180_000;
+  // Independent verification of a finished run (2026-10-07): a headless turn on the user's runtime reads the
+  // files and re-runs checks the worker claimed; reading a repo and running tests takes minutes.
+  const VERIFY_TIMEOUT_MS = 12 * 60_000;
+  const VERIFY_MIN_DEPTH = 2;
+  const verifying = new Set<number>();
   // the latest captures (screen / device), by remote run id, for result cards; memory only, oldest dropped
   const SNAPSHOTS_KEPT = 30;
   const snapshots = new Map<number, Buffer>();
@@ -173,6 +178,92 @@ export function createAidevApi(deps: AidevDeps) {
     console.log(`[aidev] lesson ${id} for ${agent.name} (${accepted ? 'candidate' : 'rejected'} p=${typeof judged.answer === 'number' ? judged.answer.toFixed(2) : '-'}): ${candidate.trigger} → ${candidate.rule}`);
   }
 
+  /** A run as the clients read it: JSON columns parsed. */
+  function runView(run: RunRow) {
+    const parse = (value: string | null) => { if (!value) return null; try { return JSON.parse(value) as unknown; } catch { return null; } };
+    return { ...run, next_action: parse(run.next_action), verification: parse(run.verification) };
+  }
+
+  /**
+   * What follows a run's outcome once it is known (§3.8): the decision is finalised, a fresh failure gets a
+   * proposed next step (E-03) and a lesson candidate (E-01), carried lessons learn (E-02), a success with a
+   * specialist becomes a routing example. Called from the outcome PATCH and again when a verifier's verdict
+   * changes the outcome; `before` is the row before the change so each step runs once per transition.
+   */
+  async function settleOutcome(session: Session, before: RunRow, final: RunRow, outcome: string): Promise<NextAction | null> {
+    const uid = session.user.id;
+    if (final.decision_id) store.finalizeDecision(uid, final.decision_id, null, outcome);
+    let next: NextAction | null = null;
+    if (outcome === 'fail' && before.outcome !== 'fail' && final.agent_id) {
+      try {
+        next = await decideNext(store, laya, final, await engineAvailability(session));
+        store.db.prepare('UPDATE runs SET next_action=? WHERE id=?').run(JSON.stringify(next), final.id);
+        console.log(`[aidev] run ${final.id} failed → ${next.action}${next.model ? ` (${next.engine} ${next.model}/${next.effort})` : ''}: ${next.reason}`);
+      } catch (error) { console.warn('[aidev] escalation failed:', error instanceof Error ? error.message : error); }
+    }
+    if (final.decision_id && (outcome === 'success' || outcome === 'fail') && before.outcome !== outcome) {
+      for (const line of applyLessonOutcome(store, final.decision_id, outcome)) console.log(`[aidev] ${line}`);
+    }
+    if (outcome === 'fail' && final.agent_id && before.outcome !== 'fail' && final.session_id) {
+      void curateFailure(session, final).catch((error) => console.warn('[aidev] lesson curation failed:', error instanceof Error ? error.message : error));
+    }
+    if (outcome === 'success' && final.agent_id && final.decision_id && before.outcome !== 'success') {
+      const decisionRow = store.db.prepare('SELECT command FROM decision_log WHERE id=?').get(final.decision_id) as { command: string } | undefined;
+      const agent = store.agentById(final.agent_id);
+      if (decisionRow && agent && agent.name !== 'generalist' && agent.domain !== 'meta') store.addExamples(agent.id, [{ text: decisionRow.command, source: 'run', taskKind: final.task_kind }]);   // a confirmed run also confirms its task kind
+    }
+    return next;
+  }
+
+  type Verification = { verdict: 'pass' | 'fail' | 'unclear'; summary: string; checked: Array<{ claim: string; result: string; evidence: string }>; issues: string[]; engine: string | null; model: string | null; at: number };
+
+  /**
+   * Whether a finished run gets an independent verification, and starts it when so. Only clean exits of
+   * D2+ work by a non-meta agent: a verifier re-reading a one-line answer costs more than it protects, and
+   * a run that already failed goes to escalation instead. `run_verification=off` (app_kv) disables it.
+   */
+  function startVerification(session: Session, run: RunRow, outcome: string, eligible: boolean): boolean {
+    if (!eligible || outcome === 'fail' || run.verification || verifying.has(run.id)) return false;
+    if (!run.session_id || !run.agent_id || (run.depth ?? 0) < VERIFY_MIN_DEPTH) return false;
+    if (store.kvGet('run_verification') === 'off') return false;
+    const agent = store.agentById(run.agent_id);
+    if (!agent || agent.domain === 'meta') return false;
+    verifying.add(run.id);
+    void verifyRun(session, run, agent.name).catch((error) => console.warn('[aidev] verification failed:', error instanceof Error ? error.message : error)).finally(() => verifying.delete(run.id));
+    return true;
+  }
+
+  /** Asks the user's runtime to verify the run; stores the verdict and settles the outcome it implies. */
+  async function verifyRun(session: Session, run: RunRow, agentName: string) {
+    const uid = session.user.id;
+    const engines = usableEngines(await engineAvailability(session));
+    const unclear = (summary: string): Verification => ({ verdict: 'unclear', summary, checked: [], issues: [], engine: null, model: null, at: Date.now() });
+    if (!engines.length) { store.setRunVerification(uid, run.id, unclear('검증에 쓸 수 있는 엔진이 없습니다 (로그인 필요)')); return; }
+    const decisionRow = run.decision_id ? store.db.prepare('SELECT command FROM decision_log WHERE id=?').get(run.decision_id) as { command: string } | undefined : undefined;
+    const floor = store.effectiveModelFloor(uid, run.session_id).floor;
+    let verdict: Verification;
+    try {
+      const response = await deps.runtimeFetch(session, '/api/aidev-tools/verify', { method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ session_id: run.session_id, run_id: run.id, agent: agentName, engine: run.engine, engines, command: decisionRow?.command ?? null, worker_model: run.model, depth: run.depth, model_floor: floor }) }, VERIFY_TIMEOUT_MS);
+      const body = await response.json().catch(() => ({})) as { data?: Omit<Verification, 'at'>; error?: string };
+      verdict = response.ok && body.data ? { ...body.data, at: Date.now() } : unclear(`검증을 실행하지 못했습니다: ${body.error ?? response.status}`);
+    } catch (error) {
+      verdict = unclear(`검증을 실행하지 못했습니다: ${error instanceof Error ? error.message : String(error)}`);
+    }
+    const before = store.run(uid, run.id);
+    if (!before) return;
+    store.setRunVerification(uid, run.id, verdict);
+    console.log(`[aidev] run ${run.id} verified (${verdict.engine ?? '-'} ${verdict.model ?? '-'}): ${verdict.verdict} — ${verdict.summary.slice(0, 160)}`);
+    if (verdict.verdict !== 'pass' && verdict.verdict !== 'fail') return;
+    // the verdict is the run's test result: fail → escalation + lesson, pass → success (a user 👎 still wins)
+    const outcome = verdict.verdict === 'fail' || before.outcome === 'fail' ? 'fail' : 'success';
+    const final = store.updateRun(uid, run.id, { testResult: verdict.verdict, outcome });
+    if (outcome !== before.outcome) await settleOutcome(session, before, final, outcome);
+    if (verdict.verdict === 'fail') {
+      void notifier.handle(uid, { code: 'run.verify_failed', sessionId: run.session_id, sessionName: '검증 실패', provider: run.engine, detail: verdict.summary.slice(0, 300) }).catch(() => undefined);
+    }
+  }
+
   function requireAdmin(session: Session) { if (store.accountEngines(session.user.id).role !== 'admin') throw new HttpError(403, 'Administrator only'); }
   function ownAgent(session: Session, id: number, write = false) {
     const a = store.agentById(id);
@@ -209,7 +300,8 @@ export function createAidevApi(deps: AidevDeps) {
         const input: RouteInput = { text: str(b.text, 'text', 32000), sessionId: optStr(b.sessionId, 200), sessionEngine: ENGINES.includes(b.sessionEngine as Engine) ? b.sessionEngine as Engine : null,
           preferEngine: ENGINES.includes(b.preferEngine as Engine) ? b.preferEngine as Engine : null, targetId: b.targetId === undefined || b.targetId === null ? null : num(b.targetId, 'targetId'),
           forceAgent: optStr(b.forceAgent, 41) ?? null, createProposal: b.createProposal === undefined || b.createProposal === null ? null : num(b.createProposal, 'createProposal'), projectHint: optStr(b.projectHint, 400), recentFiles: Array.isArray(b.recentFiles) ? (b.recentFiles as unknown[]).map(String).slice(0, 10) : null, model: optStr(b.model, 100), effort: optStr(b.effort, 20),
-          effortCap: b.effortCap && typeof b.effortCap === 'object' ? { claude: optStr((b.effortCap as Record<string, unknown>).claude, 20), codex: optStr((b.effortCap as Record<string, unknown>).codex, 20) } as Partial<Record<Engine, string>> : null };
+          effortCap: b.effortCap && typeof b.effortCap === 'object' ? { claude: optStr((b.effortCap as Record<string, unknown>).claude, 20), codex: optStr((b.effortCap as Record<string, unknown>).codex, 20) } as Partial<Record<Engine, string>> : null,
+          modelFloor: b.modelFloor && typeof b.modelFloor === 'object' ? { claude: optStr((b.modelFloor as Record<string, unknown>).claude, 40), codex: optStr((b.modelFloor as Record<string, unknown>).codex, 40) } as Partial<Record<Engine, string>> : null };
         const engines = await engineAvailability(session);
         const judge = judgeFor(session, engines);
         // D-05: Codex-only judging is slow (12–28 s) — the send waits briefly, the verdict is cached for next time
@@ -231,11 +323,22 @@ export function createAidevApi(deps: AidevDeps) {
         if (id !== null && !Number.isInteger(id)) throw new HttpError(400, 'target_id must be an integer or null');
         try { return json(res, 200, { target_id: store.setSessionTarget(uid, sessTargetMatch[1], id) }), true; } catch (error) { throw new HttpError(404, error instanceof Error ? error.message : 'target not found'); }
       }
+      // a chat's own model floor (the account default lives in /settings/model-floor); DELETE or an empty body clears it
+      const sessFloorMatch = rest.match(/^\/session-settings\/([A-Za-z0-9._:-]{1,200})\/model-floor$/);
+      if (sessFloorMatch && (m === 'PUT' || m === 'DELETE')) {
+        const b = m === 'PUT' ? await readJson(req) : {};
+        try {
+          const floor = m === 'DELETE' ? null : { claude: b.claude === null ? undefined : optStr(b.claude, 40), codex: b.codex === null ? undefined : optStr(b.codex, 40) };
+          const saved = store.setSessionModelFloor(uid, sessFloorMatch[1], floor);
+          const info = store.effectiveModelFloor(uid, sessFloorMatch[1]);
+          return json(res, 200, { model_floor: saved, default: info.account, effective: info.floor }), true;
+        } catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid model'); }
+      }
       // a chat's own effort ceiling (the account default lives in /settings/effort-cap)
       const sessMatch = rest.match(/^\/session-settings\/([A-Za-z0-9._:-]{1,200})$/);
       if (sessMatch) {
         const sid = sessMatch[1];
-        if (m === 'GET') { const info = store.effectiveEffortCap(uid, sid); return json(res, 200, { effort_cap: info.chat, default: info.account, effective: info.cap, target_id: store.sessionTarget(uid, sid) }), true; }
+        if (m === 'GET') { const info = store.effectiveEffortCap(uid, sid); const floor = store.effectiveModelFloor(uid, sid); return json(res, 200, { effort_cap: info.chat, default: info.account, effective: info.cap, model_floor: floor.chat, model_floor_default: floor.account, model_floor_effective: floor.floor, target_id: store.sessionTarget(uid, sid) }), true; }
         if (m === 'PUT' || m === 'DELETE') {
           const b = m === 'PUT' ? await readJson(req) : {};
           try {
@@ -381,7 +484,14 @@ export function createAidevApi(deps: AidevDeps) {
       if (rest === '/engines' && m === 'GET') {
         const acct = store.accountEngines(uid);
         // ?refresh=1 right after an in-app login, so the next route sees the engine at once
-        return json(res, 200, { engines: await engineAvailability(session, url.searchParams.get('refresh') === '1'), default_engine: acct.defaultEngine, role: acct.role, weights: store.engineWeights(), effort_cap: store.effortCap(uid), effort_ladder: EFFORT_LADDER }), true;
+        return json(res, 200, { engines: await engineAvailability(session, url.searchParams.get('refresh') === '1'), default_engine: acct.defaultEngine, role: acct.role, weights: store.engineWeights(), effort_cap: store.effortCap(uid), effort_ladder: EFFORT_LADDER, model_floor: store.modelFloor(uid), model_ladder: MODEL_LADDER, verification: store.kvGet('run_verification') !== 'off' }), true;
+      }
+      // the user's model floor per engine ("" or null clears that engine's floor)
+      if (rest === '/settings/model-floor' && m === 'PUT') {
+        const b = await readJson(req);
+        const value = (v: unknown) => (v === null || v === '' ? null : optStr(v, 40));
+        try { return json(res, 200, { model_floor: store.setModelFloor(uid, { claude: value(b.claude), codex: value(b.codex) }) }), true; }
+        catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid model'); }
       }
       // the user's effort ceiling per engine (own subscription usage, so every user sets their own)
       if (rest === '/settings/effort-cap' && m === 'PUT') {
@@ -457,6 +567,12 @@ export function createAidevApi(deps: AidevDeps) {
         return json(res, 201, { run_id: id }), true;
       }
       if (rest === '/runs' && m === 'GET') return json(res, 200, { runs: store.runs(uid, { agentId: url.searchParams.has('agent') ? Number(url.searchParams.get('agent')) : undefined, sessionId: url.searchParams.get('session') ?? undefined, limit: Number(url.searchParams.get('limit') ?? 50) }) }), true;
+      const runViewMatch = rest.match(/^\/runs\/(\d+)$/);
+      if (runViewMatch && m === 'GET') {
+        const run = store.run(uid, Number(runViewMatch[1]));
+        if (!run) throw new HttpError(404, 'Run not found');
+        return json(res, 200, { run: runView(run), verifying: verifying.has(run.id) }), true;
+      }
       const runMatch = rest.match(/^\/runs\/(\d+)\/outcome$/);
       if (runMatch && m === 'PATCH') {
         const b = await readJson(req);
@@ -475,32 +591,11 @@ export function createAidevApi(deps: AidevDeps) {
           outcome = typeof d.answer === 'string' ? d.answer : 'unknown'; classified = { confidence: d.confidence, fallback: d.fallback };
         }
         const final = store.updateRun(uid, id, { outcome });
-        if (final.decision_id) store.finalizeDecision(uid, final.decision_id, null, outcome);
-        // Learning loop (§3.8): a successful run with a specialist confirms the routing — the command
-        // becomes an example for that agent, so the lexical prior sharpens with real usage.
-        // E-03: a fresh failure gets a proposed next step (offered to the user as a one-tap card).
-        let next: NextAction | null = null;
-        if (outcome === 'fail' && row.outcome !== 'fail' && final.agent_id) {
-          try {
-            next = await decideNext(store, laya, final, await engineAvailability(session));
-            store.db.prepare('UPDATE runs SET next_action=? WHERE id=?').run(JSON.stringify(next), final.id);
-            console.log(`[aidev] run ${final.id} failed → ${next.action}${next.model ? ` (${next.engine} ${next.model}/${next.effort})` : ''}: ${next.reason}`);
-          } catch (error) { console.warn('[aidev] escalation failed:', error instanceof Error ? error.message : error); }
-        }
-        // Learning loop (§3.8 / E-02): the lessons this command carried learn from how it ended.
-        if (final.decision_id && (outcome === 'success' || outcome === 'fail') && row.outcome !== outcome) {
-          for (const line of applyLessonOutcome(store, final.decision_id, outcome)) console.log(`[aidev] ${line}`);
-        }
-        // Learning loop (§3.8 / E-01): a fresh failure is curated out of band into a lesson candidate.
-        if (outcome === 'fail' && final.agent_id && row.outcome !== 'fail' && final.session_id) {
-          void curateFailure(session, final).catch((error) => console.warn('[aidev] lesson curation failed:', error instanceof Error ? error.message : error));
-        }
-        if (outcome === 'success' && final.agent_id && final.decision_id && row.outcome !== 'success') {
-          const decisionRow = store.db.prepare('SELECT command FROM decision_log WHERE id=?').get(final.decision_id) as { command: string } | undefined;
-          const agent = store.agentById(final.agent_id);
-          if (decisionRow && agent && agent.name !== 'generalist' && agent.domain !== 'meta') store.addExamples(agent.id, [{ text: decisionRow.command, source: 'run', taskKind: final.task_kind }]);   // a confirmed run also confirms its task kind
-        }
-        return json(res, 200, { run: final, classified, next }), true;
+        const next = await settleOutcome(session, row, final, outcome);
+        // Worker ≠ verifier (2026-10-07): a run that ended cleanly on a D2+ task is checked by an independent turn
+        // before it counts as a success — the client polls GET /runs/:id for the verdict.
+        const verify = startVerification(session, final, outcome, b.exit_code === 0 && b.verify !== false);
+        return json(res, 200, { run: runView(final), classified, next, verifying: verify }), true;
       }
 
       // ---- lessons --------------------------------------------------------------------------

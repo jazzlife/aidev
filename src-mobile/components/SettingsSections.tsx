@@ -1,7 +1,8 @@
 import { useEffect, useState } from 'react';
 import { GitBranch, Volume2, X } from 'lucide-react';
 
-import { api, getClaudeSettings, subscribeToUserPreferences, voicePlayer, writeUserPreference } from '@/modules/chat-core';
+import { api, getClaudeSettings, readDefaultPermissionMode, readUserPreference, subscribeToUserPreferences, voicePlayer, writeUserPreference } from '@/modules/chat-core';
+import { MODE_LABELS, permissionModesFor } from '@m/lib/chatOptions';
 import { readVoiceConfig } from '@/shared/voiceConfig';
 import { GithubLogin } from '@m/components/GithubLogin';
 import { failureText } from '@m/lib/http';
@@ -42,6 +43,39 @@ export function PermissionRulesSection() {
         ))}
       </div>
       <div className="mt-2 text-[12px] text-muted">Claude 대화에 적용되고 작업대와 같이 씁니다. Codex는 대화마다 권한 모드로 정합니다.</div>
+    </section>
+  );
+}
+
+/**
+ * Used by the settings screen: the permission mode every new chat starts in, per engine (2026-10-07 —
+ * "매 채팅때마다 새로 설정"). Stored with the engine's permission settings (server-synced, shared with
+ * the workbench): Claude `defaultPermissionMode`, Codex `permissionMode`.
+ */
+export function DefaultPermissionSection() {
+  // re-read when the preferences change (here, in the workbench, or from the server)
+  const [tick, setTick] = useState(0);
+  useEffect(() => subscribeToUserPreferences(() => setTick((n) => n + 1)), []);
+  const choose = (engine: 'claude' | 'codex', mode: string) => {
+    if (engine === 'claude') writeUserPreference('claudePermissions', { ...getClaudeSettings(), defaultPermissionMode: mode || null });
+    else writeUserPreference('codexPermissions', { ...readUserPreference<Record<string, unknown>>('codexPermissions', {}), permissionMode: mode || 'default' });
+    setTick((n) => n + 1);
+  };
+  return (
+    <section data-testid="default-permission" data-tick={tick}>
+      <div className={sectionTitle}>새 채팅의 기본 권한</div>
+      <div className={`${card} divide-y divide-line`}>
+        {(['claude', 'codex'] as const).map((engine) => (
+          <label key={engine} className="px-4 py-3 flex items-center gap-3">
+            <span className="flex-1 text-[15px] capitalize">{engine}</span>
+            <select aria-label={`${engine} 새 채팅 기본 권한`} value={readDefaultPermissionMode(engine) ?? ''} onChange={(event) => choose(engine, event.target.value)} className="h-9 max-w-[60%] rounded-lg border border-line bg-elevated px-2 text-[14px]">
+              <option value="">엔진 기본값</option>
+              {permissionModesFor(null, engine).map((mode) => <option key={mode} value={mode}>{MODE_LABELS[mode]?.label ?? mode}</option>)}
+            </select>
+          </label>
+        ))}
+      </div>
+      <div className="mt-2 text-[12px] text-muted">새 대화가 이 모드로 시작합니다. 대화 안에서 바꾼 모드는 그 대화에만 남습니다. 작업대와 같이 씁니다.</div>
     </section>
   );
 }

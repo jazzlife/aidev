@@ -95,7 +95,8 @@ export const alphaFor = (name: string) => (nb.count(name) >= MIN_EXAMPLES ? LAYA
 type Store = ReturnType<typeof openStore>;
 export type EngineAvailability = Record<Engine, { allowed: boolean; authenticated: boolean; error?: string | null }>;
 export type RouteInput = { text: string; sessionId?: string | null; sessionEngine?: Engine | null; preferEngine?: Engine | null; targetId?: number | null; projectHint?: string | null; recentFiles?: string[] | null; model?: string | null; effort?: string | null; /** user override: use this agent regardless of Laya's pick */ forceAgent?: string | null; /** D-04: create the specialist of this create-queue entry (the architect turn) */ createProposal?: number | null;
-  /** this chat's own ceiling (a new chat sends it with its first message; later it is stored per session) */ effortCap?: Partial<Record<Engine, string>> | null };
+  /** this chat's own ceiling (a new chat sends it with its first message; later it is stored per session) */ effortCap?: Partial<Record<Engine, string>> | null;
+  /** this chat's own model floor (same lifecycle as effortCap) */ modelFloor?: Partial<Record<Engine, string>> | null };
 
 // Each engine's ladder ends on its strongest model: Codex gpt-6-astra, Claude 'best' (= Fable when the
 // subscription has it, else the latest Opus — resolved by the Claude CLI). 'opusplan' is not used at
@@ -125,6 +126,29 @@ export function applyEffortCap(effort: string | null, level: number, engine: Eng
   const index = ladder.indexOf(effort);
   return index > capIndex ? cap : effort;
 }
+
+/** The stronger of two efforts on an engine's ladder (unknown values lose). */
+export function strongerEffort(engine: Engine, a: string | null, b: string | null): string | null {
+  const ladder = EFFORT_LADDER[engine];
+  const ia = ladder.indexOf(a ?? ''); const ib = ladder.indexOf(b ?? '');
+  return ib > ia ? b : a;
+}
+
+/**
+ * Raises a tier to the model floor when it is below it (2026-10-07). The floor's own tier effort comes
+ * with it (D3 opus/high, not opus/medium) so the run is at least what the table would give that model.
+ */
+export function applyModelFloor(engine: Engine, tier: { model: string | null; effort: string | null }, floor: string | null | undefined): boolean {
+  if (!floor) return false;
+  const level = modelRank(engine, floor);
+  if (modelRank(engine, tier.model) >= level) return false;
+  tier.model = floor;
+  tier.effort = strongerEffort(engine, tier.effort, TIER_TABLE[level][engine].effort);
+  return true;
+}
+
+/** The agent-architect designs a specialist: design work, so its turn runs at least at D3 (§3.4 D3 = 설계·심층). */
+export const ARCHITECT_MIN_DEPTH = 3;
 
 /** Minimum depth per task kind: debugging, refactoring and design need a reasoning model even when the command is short. */
 export const KIND_MIN_DEPTH: Record<string, number> = { debug: 2, refactor: 2, design: 2, implement: 1, ops: 1, bulk_read: 1, explain: 0 };
@@ -486,19 +510,22 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     reason.push(`create queue #${fromQueue.id}: ${fromQueue.name} (${fromQueue.count} commands)`);
   }
   const needsLlmAnalysis = !fallback && (agentTop.probability < 0.5 || depthRaw >= 2.5 || multiDomain > 0.6);
-  // Clarify (§3.1): the judge decides when it ran — on the server Laya's clarify did not separate vague from specific
-  // commands (0.36 "로그인 버튼 고쳐줘" vs 0.42 with the file and behavior named) while the judge got 3/3. Laya decides
-  // only without a verdict that carries the field (judge down, a 'similar' shortcut, a cache entry from before it).
-  const judgeAsks = verdict && verdict.question !== undefined ? Boolean(verdict.question) : null;
-  const agent = store.agent(userId, agentName) ?? store.agent(userId, 'generalist') ?? all[0];
-  if (!agent) throw new Error('Agent catalog is empty');
-  // floors: the kind of work and the specialist itself set a minimum depth (model tier, lessons, knowledge)
-  const kindFloor = KIND_MIN_DEPTH[taskKind] ?? 0;
-  const agentFloor = agent.name === 'generalist' ? 0 : (agent.min_tier ?? 0);
-  const depth = Math.max(scoredDepth, kindFloor, agentFloor);
-  // the final depth: a kind floor (debug ≥ D2) says the work is not a quick one even when Laya scored it D1
-  const askClarify = depth >= 2 && (judgeAsks ?? (!fallback && clarify > 0.7));
-  if (depth > scoredDepth) reason.push(`depth D${scoredDepth} → D${depth} (${[kindFloor > scoredDepth ? `${taskKind} ≥ D${kindFloor}` : null, agentFloor > scoredDepth ? `${agent.name} ≥ D${agentFloor}` : null].filter(Boolean).join(', ')})`);
+  // A chat keeps its specialist and never drops a tier (2026-10-07). Follow-ups ("진행해", "완료했니?", a
+  // correction) used to be routed as fresh turns: a D3 opus conversation continued as a D1/D2 sonnet
+  // generalist turn, and the judge sometimes proposed creating a new agent for a one-line reply inside
+  // a specialist's conversation (server decisions #637/#639). The chat's last run sets the depth floor
+  // and keeps its agent unless the user forces one, the app re-sends with one, or the judge names a
+  // different specialist with high fit. A generalist chat may still move to a specialist.
+  const prior = input.sessionId && !input.forceAgent && !fromQueue ? store.lastRunForSession(userId, input.sessionId) : undefined;
+  const sessionFloor = prior && prior.depth !== null && prior.agent_domain !== 'meta' ? clampDepth(prior.depth) : 0;
+  const priorAgent = prior?.agent_name && prior.agent_domain !== 'meta' && prior.agent_name !== 'generalist' && store.agent(userId, prior.agent_name) ? prior.agent_name : null;
+  if (priorAgent && agentName !== priorAgent) {
+    const judgedOther = Boolean(verdict?.agent && verdict.agent === agentName && verdict.agent !== 'generalist' && verdict.fit >= 0.8 && decision === 'use');
+    if (!judgedOther) {
+      reason.push(`session agent ${priorAgent} kept (follow-up; router had ${agentName}${decision !== 'use' ? `, ${decision}` : ''})`);
+      agentName = priorAgent; decision = 'use'; proposal = null;
+    } else reason.push(`session agent ${priorAgent} → ${agentName} (specialist judge fit ${verdict!.fit.toFixed(2)})`);
+  }
   // D-04 (§3.7): no specialist but quick work (D0–1) runs on the generalist now; its domain goes to the create queue.
   // The size of the work is Laya's score: a kind floor (refactor ≥ D2 for a one-line rename) asks for a stronger
   // model, it does not make the work big enough to design a specialist first (server: "Godot 노드 이름 하나 바꿔줘").
@@ -506,6 +533,21 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     decision = 'create_background';
     reason.push(`quick work (scored D${scoredDepth}) → generalist now${proposal ? `, ${proposal.name} queued for creation` : ''}`);
   }
+  // Clarify (§3.1): the judge decides when it ran — on the server Laya's clarify did not separate vague from specific
+  // commands (0.36 "로그인 버튼 고쳐줘" vs 0.42 with the file and behavior named) while the judge got 3/3. Laya decides
+  // only without a verdict that carries the field (judge down, a 'similar' shortcut, a cache entry from before it).
+  const judgeAsks = verdict && verdict.question !== undefined ? Boolean(verdict.question) : null;
+  const agent = store.agent(userId, agentName) ?? store.agent(userId, 'generalist') ?? all[0];
+  if (!agent) throw new Error('Agent catalog is empty');
+  // floors: the kind of work, the specialist itself, the chat so far and an architect turn set a minimum
+  // depth (model tier, lessons, knowledge)
+  const kindFloor = KIND_MIN_DEPTH[taskKind] ?? 0;
+  const agentFloor = agent.name === 'generalist' ? 0 : (agent.min_tier ?? 0);
+  const architectFloor = decision === 'create' ? ARCHITECT_MIN_DEPTH : 0;
+  const depth = Math.max(scoredDepth, kindFloor, agentFloor, sessionFloor, architectFloor);
+  // the final depth: a kind floor (debug ≥ D2) says the work is not a quick one even when Laya scored it D1
+  const askClarify = depth >= 2 && (judgeAsks ?? (!fallback && clarify > 0.7));
+  if (depth > scoredDepth) reason.push(`depth D${scoredDepth} → D${depth} (${[kindFloor > scoredDepth ? `${taskKind} ≥ D${kindFloor}` : null, agentFloor > scoredDepth ? `${agent.name} ≥ D${agentFloor}` : null, sessionFloor > scoredDepth ? `session ≥ D${sessionFloor}` : null, architectFloor > scoredDepth ? `agent design ≥ D${architectFloor}` : null].filter(Boolean).join(', ')})`);
   const queued = decision === 'create_background' && proposal ? enqueueCreate(store, userId, proposal, text) : null;
   if (queued?.proposedNow) reason.push(`${queued.name}: ${queued.count} commands in this domain → offered for creation`);
 
@@ -547,6 +589,10 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     // an agent-pinned model applies only when it is at least as strong as the tier's (it never weakens a run)
     if (agent.model && modelRank(engine, agent.model) >= modelRank(engine, tier.model)) { if (agent.model !== tier.model) reason.push(`agent pins model ${agent.model}`); tier.model = agent.model; }
     else if (agent.model) reason.push(`agent model ${agent.model} ignored (weaker than ${tier.model})`);
+    // the user's model floor (account, or this chat's): never a weaker model than that, whatever the depth
+    const floorInfo = store.effectiveModelFloor(userId, input.sessionId, input.modelFloor);
+    const below = tier.model;
+    if (applyModelFloor(engine, tier, floorInfo.floor[engine])) reason.push(`model floor ${tier.model}/${tier.effort} (${floorInfo.chat?.[engine] ? 'this chat' : 'account'}) over ${below}`);
     // the user's effort ceiling: the top tier runs at the ceiling, no tier goes above it
     const capInfo = store.effectiveEffortCap(userId, input.sessionId, input.effortCap);
     const ceiling = capInfo.cap[engine];

@@ -26,7 +26,7 @@ export type { NormalizedMessage, ServerEvent, PendingPermissionRequest, LLMProvi
 // Tool permissions shared with the workbench (C-12.2): the "항상 허용" rule and the server-synced allow-list.
 export { buildClaudeToolPermissionEntry, grantClaudeToolPermission } from '@/modules/chat/utils/chatPermissions';
 export { getClaudeSettings } from '@/modules/chat/utils/chatStorage';
-export { readUserPreference, writeUserPreference, subscribeToUserPreferences } from '@/shared/userSettings';
+export { readUserPreference, writeUserPreference, subscribeToUserPreferences, readDefaultPermissionMode } from '@/shared/userSettings';
 export type { PermissionMode, Question } from '@/shared/types';
 // Read-aloud (C-12.3): the app-level player the workbench uses, so playback outlives the message sheet.
 export { voicePlayer, voiceId } from '@/modules/chat/utils/voicePlayer';

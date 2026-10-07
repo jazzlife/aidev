@@ -3,7 +3,10 @@ import { AlertTriangle, Plus, Shield, X } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { Button, Input } from '@/shared/ui';
-import type { CodexPermissionMode } from '@/shared/types';
+import type { CodexPermissionMode, PermissionMode } from '@/shared/types';
+
+/** Modes a Claude chat can start in; the labels come from the settings namespace. */
+const CLAUDE_DEFAULT_MODES: PermissionMode[] = ['default', 'auto', 'acceptEdits', 'bypassPermissions', 'plan'];
 
 const COMMON_CLAUDE_TOOLS = [
   'Bash(git log:*)',
@@ -52,6 +55,9 @@ const removeValue = (items: string[], value: string): string[] => (
 
 type ClaudePermissionsProps = {
   agent: 'claude';
+  /** The mode every new Claude chat starts in; null = the provider default (ask on every tool). */
+  defaultPermissionMode: PermissionMode | null;
+  onDefaultPermissionModeChange: (value: PermissionMode | null) => void;
   skipPermissions: boolean;
   onSkipPermissionsChange: (value: boolean) => void;
   allowedTools: string[];
@@ -61,6 +67,8 @@ type ClaudePermissionsProps = {
 };
 
 function ClaudePermissions({
+  defaultPermissionMode,
+  onDefaultPermissionModeChange,
   skipPermissions,
   onSkipPermissionsChange,
   allowedTools,
@@ -99,6 +107,19 @@ function ClaudePermissions({
           <AlertTriangle className="h-5 w-5 text-orange-500" />
           <h3 className="text-lg font-medium text-foreground">{t('permissions.title')}</h3>
         </div>
+        <label className="block rounded-lg border border-border p-4" data-testid="default-permission-mode">
+          <div className="font-medium text-foreground">{t('permissions.defaultMode.label')}</div>
+          <div className="mb-2 text-sm text-muted-foreground">{t('permissions.defaultMode.description')}</div>
+          <select
+            aria-label={t('permissions.defaultMode.label')}
+            value={defaultPermissionMode ?? ''}
+            onChange={(event) => onDefaultPermissionModeChange((event.target.value || null) as PermissionMode | null)}
+            className="h-9 w-full max-w-sm rounded border border-border bg-background px-2 text-sm"
+          >
+            <option value="">{t('permissions.defaultMode.providerDefault')}</option>
+            {CLAUDE_DEFAULT_MODES.map((mode) => <option key={mode} value={mode}>{t(`permissions.modes.${mode}`)}</option>)}
+          </select>
+        </label>
         <div className="rounded-lg border border-orange-200 bg-orange-50 p-4 dark:border-orange-800 dark:bg-orange-900/20">
           <label className="flex items-center gap-3">
             <input

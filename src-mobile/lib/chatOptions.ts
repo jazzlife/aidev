@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 
-import { api, readUserPreference, type LLMProvider, type PermissionMode } from '@/modules/chat-core';
+import { api, readDefaultPermissionMode, readUserPreference, type LLMProvider, type PermissionMode } from '@/modules/chat-core';
 import { PROVIDER_PERMISSION_PREFERENCE_KEYS } from '@/shared/constants';
 
 /**
@@ -65,6 +65,9 @@ export function permissionModesFor(caps: Record<string, ProviderCaps> | null, pr
 
 function defaultModeFor(caps: Record<string, ProviderCaps> | null, provider: string): string {
   const modes = permissionModesFor(caps, provider);
+  // the user's default from Settings (shared with the workbench) before the engine's own
+  const chosen = readDefaultPermissionMode(provider);
+  if (chosen && modes.includes(chosen)) return chosen;
   const preferred = caps?.[provider]?.defaultPermissionMode;
   return preferred && modes.includes(preferred) ? preferred : modes[0] ?? 'default';
 }

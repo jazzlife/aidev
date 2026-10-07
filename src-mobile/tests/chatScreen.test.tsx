@@ -46,6 +46,8 @@ vi.mock('@/modules/chat-core', async () => {
     api,
     parseToolPayload: (value: unknown) => value,
     buildClaudeToolPermissionEntry: permissions.buildClaudeToolPermissionEntry,
+    // no Settings default in these tests: the engine's own default decides
+    readDefaultPermissionMode: () => null,
     grantClaudeToolPermission: vi.fn(),
     readUserPreference: (_key: string, fallback: unknown) => fallback,
     writeUserPreference: vi.fn(),
@@ -74,6 +76,9 @@ vi.mock('@/modules/aidev-router', () => ({
   useAgentCreation: () => ({ pending: null, onRunComplete: vi.fn(), approve: vi.fn(), runSelfCheck: vi.fn(), dismiss: vi.fn() }),
   useEscalation: () => ({ escalation: null, takeHandoff: () => null, label: '', busy: false, error: null, run: vi.fn(), dismiss: vi.fn() }),
   usePrejudge: () => undefined,
+  // no verification card in these tests
+  useRoutingState: () => ({ verification: null }),
+  VerificationCard: () => null,
 }));
 vi.mock('@/modules/remote-preview', () => ({ usePreviewList: () => ({ previews: [] }) }));
 vi.mock('@/modules/remote-debug', () => ({ useDebugSessions: () => ({ sessions: [] }) }));

@@ -5,6 +5,7 @@ import { lessonCuratorService } from '@/modules/aidev-tools/lesson-curator.servi
 import { claudeLoginService } from '@/modules/aidev-tools/claude-login.service.js';
 import { handoffService } from '@/modules/aidev-tools/handoff.service.js';
 import { knowledgeCheckService } from '@/modules/aidev-tools/knowledge-check.service.js';
+import { runVerifierService } from '@/modules/aidev-tools/run-verifier.service.js';
 import { remoteSync } from '@/modules/aidev-tools/remote-sync.service.js';
 import { specialistJudgeService } from '@/modules/aidev-tools/specialist-judge.service.js';
 
@@ -64,6 +65,29 @@ router.post('/curate', asyncHandler(async (req: Request, res: Response) => {
     engines: Array.isArray(body.engines) ? (body.engines as unknown[]).filter((e): e is 'claude' | 'codex' => e === 'claude' || e === 'codex') : undefined,
     command: typeof body.command === 'string' ? body.command : null,
     signals: body.signals && typeof body.signals === 'object' ? body.signals as Record<string, unknown> : {},
+  });
+  res.json(createApiSuccessResponse(result));
+}));
+
+// Independent verification of a finished run (worker ≠ verifier): the gateway asks after a clean D2+ exit.
+router.post('/verify', asyncHandler(async (req: Request, res: Response) => {
+  const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
+  const sessionId = typeof body.session_id === 'string' ? body.session_id : '';
+  if (!sessionId) {
+    res.status(400).json({ success: false, error: 'session_id is required.' });
+    return;
+  }
+  const floor = body.model_floor && typeof body.model_floor === 'object' ? body.model_floor as Record<string, unknown> : {};
+  const result = await runVerifierService.verify({
+    sessionId,
+    runId: typeof body.run_id === 'number' ? body.run_id : null,
+    agent: typeof body.agent === 'string' ? body.agent : null,
+    engine: body.engine === 'codex' ? 'codex' : body.engine === 'claude' ? 'claude' : null,
+    workerModel: typeof body.worker_model === 'string' ? body.worker_model : null,
+    engines: Array.isArray(body.engines) ? (body.engines as unknown[]).filter((e): e is 'claude' | 'codex' => e === 'claude' || e === 'codex') : ['claude', 'codex'],
+    command: typeof body.command === 'string' ? body.command : null,
+    depth: typeof body.depth === 'number' ? body.depth : null,
+    modelFloor: { ...(typeof floor.claude === 'string' ? { claude: floor.claude } : {}), ...(typeof floor.codex === 'string' ? { codex: floor.codex } : {}) },
   });
   res.json(createApiSuccessResponse(result));
 }));

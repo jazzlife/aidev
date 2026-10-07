@@ -1,6 +1,6 @@
 import { useCallback } from 'react';
 
-import { aidevApi, type Engine, type RouteResult } from '@/modules/aidev-router/api';
+import { aidevApi, type Engine, type RouteResult, type RunView } from '@/modules/aidev-router/api';
 import { routingStore, useRoutingState } from '@/modules/aidev-router/store';
 
 /**
@@ -40,6 +40,37 @@ export function shouldAskClarify(decoration: AidevSendDecoration | null): decora
   return Boolean(decoration && decoration.route.scope.ask_clarify && decoration.route.decision !== 'create' && !decoration.appResend);
 }
 const asEngine = (value: string): Engine | null => (ENGINES.includes(value as Engine) ? value as Engine : null);
+
+/** How long a verification is followed (a verifier reads the repository and re-runs checks) and how often it is asked for. */
+const VERIFY_POLL_MS = 5_000;
+const VERIFY_MAX_MS = 13 * 60_000;
+
+/**
+ * Polls the run until the verifier's verdict is stored, then shows it. A failed verdict also carries the
+ * gateway's next step, so the escalation card appears with the verifier's findings appended to the
+ * command the retry will send — the next attempt knows what the last one got wrong.
+ */
+async function followVerification(runId: number, sessionId: string | null) {
+  const until = Date.now() + VERIFY_MAX_MS;
+  while (Date.now() < until) {
+    await new Promise((resolve) => setTimeout(resolve, VERIFY_POLL_MS));
+    const current = routingStore.get().verification;
+    if (!current || current.runId !== runId) return;   // a newer send replaced it
+    let view: RunView;
+    try { view = await aidevApi.run(runId); } catch { continue; }
+    const result = view.run.verification;
+    if (!result) { if (!view.verifying) break; continue; }
+    routingStore.patch({ verification: { runId, status: 'done', result } });
+    if (result.verdict === 'fail' && view.run.next_action && !routingStore.get().escalation) {
+      const text = routingStore.get().lastText ?? '';
+      const findings = result.issues.length ? `\n\n[검증에서 발견된 문제 — 먼저 해결할 것]\n${result.issues.map((issue) => `- ${issue}`).join('\n')}` : `\n\n[검증 결과] ${result.summary}`;
+      routingStore.patch({ escalation: { next: view.run.next_action, text: text ? `${text}${findings}` : '', sessionId } });
+    }
+    return;
+  }
+  const stale = routingStore.get().verification;
+  if (stale && stale.runId === runId && stale.status === 'pending') routingStore.patch({ verification: { runId, status: 'done', result: { verdict: 'unclear', summary: '검증 결과를 받지 못했습니다', checked: [], issues: [], engine: null, model: null, at: Date.now() } } });
+}
 
 function buildAidevPayload(route: RouteResult, runId: number | null) {
   return {
@@ -82,8 +113,8 @@ export function useAidevRouting() {
     if (current.mode === 'off' || !text.trim()) {
       return null;
     }
-    // a new send supersedes any follow-up still offered for the previous run
-    routingStore.patch({ busy: true, error: null, escalation: null });
+    // a new send supersedes any follow-up or verdict still shown for the previous run
+    routingStore.patch({ busy: true, error: null, escalation: null, verification: null });
     try {
       const overrides = current.overrides;
       // A self-check turn or an explicit agent pick bypasses Laya's agent choice (§3.7, C-07).
@@ -106,8 +137,9 @@ export function useAidevRouting() {
         effort: oneShot?.effort ?? overrides.effort ?? null,
         forceAgent,
         createProposal,
-        // the chat's own ceiling: stored server-side for known sessions, sent inline for a new chat
+        // the chat's own ceiling and model floor: stored server-side for known sessions, sent inline for a new chat
         effortCap: current.chatCap.sessionId === (context.isNewSession ? null : context.sessionId ?? null) ? current.chatCap.cap : null,
+        modelFloor: current.chatFloor.sessionId === (context.isNewSession ? null : context.sessionId ?? null) ? current.chatFloor.floor : null,
       });
       let runId: number | null = null;
       try {
@@ -176,6 +208,8 @@ export function useAidevRouting() {
       const result = await aidevApi.runOutcome(id, outcome);
       // E-03: a failed run comes back with a proposed next step (retry / stronger model / other engine)
       if (result.next) routingStore.patch({ escalation: { next: result.next, text: routingStore.get().lastText ?? '', sessionId: outcome.session_id ?? routingStore.get().runSessionId } });
+      // worker ≠ verifier: the gateway started an independent check of this run — follow it to its verdict
+      if (result.verifying) { routingStore.patch({ verification: { runId: id, status: 'pending', result: null } }); void followVerification(id, outcome.session_id ?? routingStore.get().runSessionId); }
       return result;
     } catch {
       return null;

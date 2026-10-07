@@ -9,6 +9,7 @@ import type { PendingPermissionRequest, PermissionMode,
   ProviderModelActions,
   ProviderModelOption,
   ProviderModelsDefinition } from '@/shared/types';
+import { readDefaultPermissionMode } from '@/shared/userSettings';
 import { DEFAULT_EFFORT_VALUE } from '@/shared/constants';
 import { readSelectedProvider, writeSelectedProvider } from '@/shared/selectedProvider';
 
@@ -271,6 +272,11 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
 
   const getDefaultPermissionModeForProvider = useCallback((targetProvider: LLMProvider): PermissionMode => {
     const modes = getPermissionModesForProvider(targetProvider);
+    // the user's own default from Settings → Agents → 권한 comes before the provider's
+    const userDefault = readDefaultPermissionMode(targetProvider) as PermissionMode | null;
+    if (userDefault && modes.includes(userDefault)) {
+      return userDefault;
+    }
     const capabilityDefault = providerCapabilities?.[targetProvider]?.defaultPermissionMode as PermissionMode | undefined;
     if (capabilityDefault && modes.includes(capabilityDefault)) {
       return capabilityDefault;
@@ -415,7 +421,11 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
     // only receives its session id after the first send, so without this the
     // mode chosen beforehand would snap back to the default as soon as the
     // session id appears.
-    const providerSavedMode = localStorage.getItem(`permissionMode-last-${provider}`) as PermissionMode | null;
+    // A brand-new chat starts in the Settings default when one is set (2026-10-07: "매 채팅때마다 새로
+    // 설정"); the last-picked mode only carries a pre-send choice over to the session once it has an id.
+    const providerSavedMode = selectedSession?.id || !readDefaultPermissionMode(provider)
+      ? localStorage.getItem(`permissionMode-last-${provider}`) as PermissionMode | null
+      : null;
     const savedMode = [sessionSavedMode, providerSavedMode].find(
       (mode): mode is PermissionMode => Boolean(mode && validModes.includes(mode)),
     );
