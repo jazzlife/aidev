@@ -679,10 +679,13 @@ export type QueuedSendOptions = Record<string, unknown>;
 /** Function that turns an old/new string pair into rendered diff lines; the chat session state supplies one memoized, caching instance so each file diff is computed only once. */
 export type DiffCalculator = (oldStr: string, newStr: string) => DiffLine[];
 
-/** A synthetic transcript entry standing for a run of consecutive calls to the same tool, produced by the message grouping pass and identified by its `_isGroup` flag so the message list can collapse the run into one expandable block. */
+/** A synthetic transcript entry standing for a run of consecutive tool calls (of one tool or several), produced by the message grouping pass and identified by its `_isGroup` flag so the message list can collapse the run into one expandable block. */
 export type ToolGroupItem = {
   _isGroup: true;
+  /** The first tool in the run; the whole run's identity only when `isMixed` is false. */
   toolName: string;
+  /** True when the run spans more than one tool, so the row shows a generic header instead of `toolName`'s. */
+  isMixed: boolean;
   messages: ChatMessage[];
   timestamp: ChatMessage['timestamp'];
   /**

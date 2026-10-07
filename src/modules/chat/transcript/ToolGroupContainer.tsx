@@ -1,5 +1,6 @@
 import { memo, useMemo, useState } from 'react';
-import { ChevronRight } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
+import { ChevronRight, Wrench } from 'lucide-react';
 
 import type { ChatMessage, ClaudePermissionSuggestion, PermissionGrantResult, LLMProvider,DiffLine,DiffStats,Project,ToolGroupItem } from '@/shared/types';
 import { getToolConfig } from '@/modules/chat/tools';
@@ -27,25 +28,25 @@ type ToolGroupContainerProps = {
  *
  * A collapsed group hides every individual diff behind `x4`, so without this
  * the one thing the row could usefully say about a batch of edits — how big it
- * is — is the one thing it did not. Returns null for groups of tools that do
- * not render a diff at all.
+ * is — is the one thing it did not. Each message is read through its own tool's
+ * config, so the edits inside a mixed Bash/Read/Edit run count too. Returns
+ * null for a group with no diff-rendering tool in it.
  */
 function useGroupDiffStats(
-  toolName: string,
   messages: ChatMessage[],
   createDiff: (oldStr: string, newStr: string) => DiffLine[],
 ): DiffStats | null {
   return useMemo(() => {
-    const config = getToolConfig(toolName).input;
-    if (config.contentType !== 'diff' || !config.getContentProps) {
-      return null;
-    }
-
     let added = 0;
     let removed = 0;
     let counted = 0;
 
     for (const message of messages) {
+      const config = getToolConfig(message.toolName || 'UnknownTool').input;
+      if (config.contentType !== 'diff' || !config.getContentProps) {
+        continue;
+      }
+
       const contentProps = config.getContentProps(parseToolPayload(message.toolInput) ?? {});
       if (typeof contentProps?.oldContent !== 'string' || typeof contentProps?.newContent !== 'string') {
         continue;
@@ -58,7 +59,7 @@ function useGroupDiffStats(
     }
 
     return counted > 0 ? { added, removed } : null;
-  }, [createDiff, messages, toolName]);
+  }, [createDiff, messages]);
 }
 
 function getToolGroupIcon(icon: string | undefined, toolName: string): string {
@@ -67,6 +68,31 @@ function getToolGroupIcon(icon: string | undefined, toolName: string): string {
   }
 
   return icon || toolName.slice(0, 1).toUpperCase();
+}
+
+/**
+ * Header identity for one group row. A run of one tool wears that tool's
+ * label, icon and colour; a run spanning several tools gets a neutral wrench
+ * and the plain "Tool" label, since no single tool's branding describes it.
+ */
+function useToolGroupHeader(group: ToolGroupItem) {
+  const { t } = useTranslation('chat');
+  if (group.isMixed) {
+    return {
+      label: t('messageTypes.tool'),
+      borderClass: 'border-border',
+      iconClass: 'text-muted-foreground',
+      icon: <Wrench className="h-3 w-3" aria-hidden />,
+    };
+  }
+
+  const config = getToolConfig(group.toolName).input;
+  return {
+    label: config.label || group.toolName,
+    borderClass: config.colorScheme?.border || 'border-border',
+    iconClass: config.colorScheme?.icon || 'text-muted-foreground',
+    icon: getToolGroupIcon(config.icon, group.toolName),
+  };
 }
 
 /**
@@ -92,14 +118,10 @@ function ToolGroupContainer({
   // has no way to ask.
   const [isExpanded, setIsExpanded] = useState(false);
   const showChildren = isExpanded || isExporting;
-  const config = getToolConfig(group.toolName).input;
-  const label = config.label || group.toolName;
-  const borderClass = config.colorScheme?.border || 'border-border';
-  const iconClass = config.colorScheme?.icon || 'text-muted-foreground';
-  const icon = getToolGroupIcon(config.icon, group.toolName);
+  const { label, borderClass, iconClass, icon } = useToolGroupHeader(group);
 
   const preview = group.preview;
-  const groupDiffStats = useGroupDiffStats(group.toolName, group.messages, createDiff);
+  const groupDiffStats = useGroupDiffStats(group.messages, createDiff);
 
   return (
     <div className="chat-message tool px-3 sm:px-0" data-message-timestamp={group.timestamp || undefined}>

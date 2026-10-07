@@ -94,6 +94,7 @@ describe('diff stats on a collapsed tool group', () => {
     const group = {
       _isGroup: true,
       toolName,
+      isMixed: false,
       messages,
       timestamp: messages[0].timestamp,
       preview: 'a.js',

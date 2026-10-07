@@ -1,7 +1,15 @@
 import type { ChatMessage, ToolGroupItem } from '@/shared/types';
-import { getToolConfig } from '@/modules/chat/tools/configs/toolConfigs';
+import { formatToolDisplayName, getToolConfig } from '@/modules/chat/tools/configs/toolConfigs';
 
 export const TOOL_GROUP_THRESHOLD = 2;
+
+/**
+ * Tools whose card is addressed to the user rather than being a record of work
+ * — a question to answer, a plan to approve, a checklist to follow. They stay
+ * as their own row so a collapsed "x12" never hides something that needs a
+ * reply, and they end the run of worker tools on either side of them.
+ */
+const UNGROUPABLE_TOOL_NAMES = new Set(['AskUserQuestion', 'ExitPlanMode', 'exit_plan_mode', 'TodoWrite']);
 
 /** How many of a group's tool inputs the collapsed summary line spells out. */
 const PREVIEWED_TOOL_COUNT = 2;
@@ -14,7 +22,17 @@ export function isToolGroupItem(item: MessageListItem): item is ToolGroupItem {
 }
 
 function isGroupableToolMessage(message: ChatMessage): message is ChatMessage & { toolName: string } {
-  return Boolean(message.isToolUse && message.toolName && !message.isSubagentContainer);
+  return Boolean(
+    message.isToolUse
+      && message.toolName
+      && !message.isSubagentContainer
+      && !UNGROUPABLE_TOOL_NAMES.has(message.toolName),
+  );
+}
+
+/** The header name a tool goes by — the same one ToolGroupContainer prints. */
+function getToolGroupLabel(toolName: string): string {
+  return getToolConfig(toolName).input.label || formatToolDisplayName(toolName);
 }
 
 // Messages that render nothing (e.g. reasoning hidden when showThinking is off)
@@ -78,6 +96,22 @@ function buildGroupPreview(messages: ChatMessage[]): string {
   return extraCount > 0 ? `${previewText}, +${extraCount} more` : previewText;
 }
 
+/**
+ * Summary line for a run that spans several tools: each tool once, in order of
+ * first use, with how many times it ran — "Bash ×3, Read ×2, Edit". Individual
+ * inputs would be noise here; the breakdown is what tells the reader what kind
+ * of work the collapsed row stands for.
+ */
+function buildMixedGroupPreview(messages: ChatMessage[]): string {
+  const counts = new Map<string, number>();
+  for (const message of messages) {
+    const label = getToolGroupLabel(message.toolName || 'UnknownTool');
+    counts.set(label, (counts.get(label) ?? 0) + 1);
+  }
+
+  return Array.from(counts, ([label, count]) => (count > 1 ? `${label} ×${count}` : label)).join(', ');
+}
+
 export function groupConsecutiveTools(
   messages: ChatMessage[],
   showThinking: boolean = true,
@@ -106,7 +140,10 @@ export function groupConsecutiveTools(
         continue;
       }
 
-      if (isGroupableToolMessage(candidate) && candidate.toolName === message.toolName) {
+      // Any worker tool extends the run: a Bash, Read, Grep, Edit sequence is
+      // one stretch of work, and showing it as four cards is what buried the
+      // conversation under tool chrome.
+      if (isGroupableToolMessage(candidate)) {
         run.push(candidate);
         nextIndex += 1;
         continue;
@@ -116,12 +153,14 @@ export function groupConsecutiveTools(
     }
 
     if (run.length >= TOOL_GROUP_THRESHOLD) {
+      const isMixed = run.some((candidate) => candidate.toolName !== message.toolName);
       items.push({
         _isGroup: true,
         toolName: message.toolName,
+        isMixed,
         messages: run,
         timestamp: message.timestamp,
-        preview: buildGroupPreview(run),
+        preview: isMixed ? buildMixedGroupPreview(run) : buildGroupPreview(run),
       });
     } else {
       items.push(...run);

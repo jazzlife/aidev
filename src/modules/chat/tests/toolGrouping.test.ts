@@ -67,14 +67,47 @@ test('a single tool call is not grouped', () => {
   assert.equal(isToolGroupItem(items[0]), false);
 });
 
-test('different tools are not grouped together', () => {
+test('a run spanning different tools is one mixed group with a per-tool breakdown', () => {
+  // A Bash, Read, Grep, Edit stretch is one piece of work; four separate cards
+  // for it is what buried the conversation under tool chrome.
   const items = groupConsecutiveTools([
+    toolMessage('Bash', { command: 'ls' }),
     toolMessage('Read', { file_path: '/a.ts' }),
-    toolMessage('Write', { file_path: '/b.ts' }),
+    toolMessage('Bash', { command: 'pwd' }),
+    toolMessage('Edit', { file_path: '/b.ts', old_string: 'a', new_string: 'b' }),
   ]);
 
-  assert.equal(items.length, 2);
-  assert.equal(items.every((item) => !isToolGroupItem(item)), true);
+  assert.equal(items.length, 1);
+  const [group] = items;
+  assert.ok(isToolGroupItem(group));
+  assert.equal(group.isMixed, true);
+  assert.equal(group.messages.length, 4);
+  assert.equal(group.preview, 'Bash ×2, Read, Edit');
+});
+
+test('a run of one tool is not marked mixed', () => {
+  const [group] = groupConsecutiveTools([
+    toolMessage('Read', { file_path: '/a.ts' }),
+    toolMessage('Read', { file_path: '/b.ts' }),
+  ]);
+
+  assert.ok(isToolGroupItem(group));
+  assert.equal(group.isMixed, false);
+});
+
+test('a tool that addresses the user stays its own row and ends the run', () => {
+  const items = groupConsecutiveTools([
+    toolMessage('Bash', { command: 'ls' }),
+    toolMessage('Read', { file_path: '/a.ts' }),
+    toolMessage('AskUserQuestion', { questions: [] }),
+    toolMessage('Bash', { command: 'pwd' }),
+    toolMessage('Edit', { file_path: '/b.ts', old_string: 'a', new_string: 'b' }),
+  ]);
+
+  assert.equal(items.length, 3);
+  assert.ok(isToolGroupItem(items[0]));
+  assert.equal(isToolGroupItem(items[1]), false);
+  assert.ok(isToolGroupItem(items[2]));
 });
 
 test('a text turn splits a run', () => {
