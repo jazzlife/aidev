@@ -545,8 +545,10 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   const agentFloor = agent.name === 'generalist' ? 0 : (agent.min_tier ?? 0);
   const architectFloor = decision === 'create' ? ARCHITECT_MIN_DEPTH : 0;
   const depth = Math.max(scoredDepth, kindFloor, agentFloor, sessionFloor, architectFloor);
-  // the final depth: a kind floor (debug ≥ D2) says the work is not a quick one even when Laya scored it D1
-  const askClarify = depth >= 2 && (judgeAsks ?? (!fallback && clarify > 0.7));
+  // the final depth: a kind floor (debug ≥ D2) says the work is not a quick one even when Laya scored it D1.
+  // Never for a follow-up in a chat that already ran ("진행해" after a D2 run): the agent has the conversation
+  // and asks back itself; the clarify card is for a first command that lacks its essentials.
+  const askClarify = depth >= 2 && !prior && (judgeAsks ?? (!fallback && clarify > 0.7));
   if (depth > scoredDepth) reason.push(`depth D${scoredDepth} → D${depth} (${[kindFloor > scoredDepth ? `${taskKind} ≥ D${kindFloor}` : null, agentFloor > scoredDepth ? `${agent.name} ≥ D${agentFloor}` : null, sessionFloor > scoredDepth ? `session ≥ D${sessionFloor}` : null, architectFloor > scoredDepth ? `agent design ≥ D${architectFloor}` : null].filter(Boolean).join(', ')})`);
   const queued = decision === 'create_background' && proposal ? enqueueCreate(store, userId, proposal, text) : null;
   if (queued?.proposedNow) reason.push(`${queued.name}: ${queued.count} commands in this domain → offered for creation`);
