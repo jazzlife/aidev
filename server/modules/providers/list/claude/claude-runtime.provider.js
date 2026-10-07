@@ -651,6 +651,22 @@ export function normalizeUsageLimit(info) {
   };
 }
 
+/**
+ * Whether a `rate_limit_event` means the account cannot run at all.
+ *
+ * Only the window status decides this. `overageStatus: 'rejected'` arrives on
+ * every response for a subscription with no overage provisioned while the window
+ * itself is `allowed`, and a `rejected` window with overage `allowed` keeps
+ * running on overage — neither is a block. The CLI applies the same rule.
+ *
+ * @param {Object} info - SDK `rate_limit_info`
+ * @returns {boolean}
+ */
+export function isBlockingRateLimit(info) {
+  if (info?.status !== 'rejected') return false;
+  return info.overageStatus !== 'allowed' && info.overageStatus !== 'allowed_warning';
+}
+
 // Tool calls that leave work running past the end of a turn. Bash and Agent only
 // count when they are backgrounded; the rest defer or watch work by nature.
 // Workflow belongs here rather than in a branch of its own: its input schema has
@@ -1113,20 +1129,21 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
       // that follows is a refusal, not an answer.
       if (message.type === 'rate_limit_event') {
         const info = message.rate_limit_info || {};
-        if (info.status === 'rejected' || info.overageStatus === 'rejected') {
+        if (isBlockingRateLimit(info)) {
           blockingUsageLimit = normalizeUsageLimit(info);
+        } else if (info.status === 'allowed' || info.status === 'allowed_warning') {
+          // The window opened again (or a later event corrected an earlier read),
+          // so an older block must not fail a turn that then went through.
+          blockingUsageLimit = null;
         }
       }
 
       if (message.type === 'result') {
         // The turn is done as far as the client is concerned.
         const abortPending = sessionKey() ? abortedSessionIds.has(sessionKey()) : false;
-        // A turn the account had no usage left for is a failed run, not an answer:
-        // reporting it as success would tell routing the work was done and leave
-        // the user stuck until the window resets.
-        if (message.terminal_reason === 'blocking_limit' && !blockingUsageLimit) {
-          blockingUsageLimit = normalizeUsageLimit(message.rate_limit_info);
-        }
+        // `terminal_reason: 'blocking_limit'` is deliberately not read as a usage
+        // limit: in the CLI it is the context-window block (prompt too long), and
+        // treating it as one handed a merely oversized session to the other engine.
         const usageLimit = blockingUsageLimit;
         if (!turnCompleteSent && !abortPending) {
           turnCompleteSent = true;

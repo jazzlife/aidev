@@ -1,12 +1,26 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { normalizeUsageLimit, parseLegacyUsageLimit } from '@/modules/providers/list/claude/claude-runtime.provider.js';
+import { isBlockingRateLimit, normalizeUsageLimit, parseLegacyUsageLimit } from '@/modules/providers/list/claude/claude-runtime.provider.js';
 import { isClaudeAuthFailure, isClaudeUsageLimit } from '@/modules/providers/services/claude-auth-store.service.js';
 
 // A refused usage window has to end the run as a failure carrying the limit, because
 // that `complete` is what moves the work to another engine. Reported as success (the
 // behaviour before this existed) the user is stuck until the window resets.
+
+test('only a rejected window with no overage to fall back on is a block', () => {
+  assert.ok(isBlockingRateLimit({ status: 'rejected' }));
+  assert.ok(isBlockingRateLimit({ status: 'rejected', overageStatus: 'rejected' }));
+  // A subscription with no overage provisioned reports overage 'rejected' on every
+  // response while the window itself is fine — the bug that blocked runs with usage left.
+  assert.ok(!isBlockingRateLimit({ status: 'allowed', overageStatus: 'rejected' }));
+  assert.ok(!isBlockingRateLimit({ status: 'allowed_warning', overageStatus: 'rejected', utilization: 0.9 }));
+  // A rejected window with overage allowed keeps running on overage.
+  assert.ok(!isBlockingRateLimit({ status: 'rejected', overageStatus: 'allowed' }));
+  assert.ok(!isBlockingRateLimit({ status: 'rejected', overageStatus: 'allowed_warning' }));
+  assert.ok(!isBlockingRateLimit({}));
+  assert.ok(!isBlockingRateLimit(undefined));
+});
 
 test('a rejected window is normalized with its type and reset time', () => {
   const limit = normalizeUsageLimit({ status: 'rejected', rateLimitType: 'seven_day', resetsAt: 1767225600 });
