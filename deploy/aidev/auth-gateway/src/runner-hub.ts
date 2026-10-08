@@ -65,6 +65,8 @@ export function compareVersions(a: string, b: string) {
 
 export const hashToken = (token: string) => crypto.createHash('sha256').update(token).digest('hex');
 const PING_MS = 20_000;
+/** pings between repeats of `runner.realtime`: a runner that found the CDN-free address down ignores it for 10 min (conn.rs REALTIME_RETRY) and is only told at hello, so it would otherwise stay on the CDN until its next reconnect */
+const REALTIME_REPEAT_PINGS = 33;   // 11 min
 const SILENCE_MS = 45_000;
 const CALL_TIMEOUT_MS = 30_000;
 const MAX_FRAME = 16 * 1024 * 1024;   // JSON-RPC text frames (a sync manifest of a large project is several MB)
@@ -376,9 +378,12 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
         conns.set(target.id, conn);
         setStatus(target, { status: 'online', lastSeen: Date.now() });
         console.log(`[runner] target #${target.id} ${target.name} connected (runner ${version}${previous ? `, replacing ${previous.version}` : ''})`);
+        let pings = 0;
         const timer = setInterval(() => {
           if (Date.now() - conn.lastFrame > SILENCE_MS) { ws.terminate(); return; }
-          if (ws.readyState === WebSocket.OPEN) ws.ping();
+          if (ws.readyState !== WebSocket.OPEN) return;
+          ws.ping();
+          if (conn.moveTo && conn.hello && ++pings % REALTIME_REPEAT_PINGS === 0) ws.send(JSON.stringify({ jsonrpc: '2.0', method: 'runner.realtime', params: { url: conn.moveTo } }));
         }, PING_MS);
         ws.on('pong', () => { conn.lastFrame = Date.now(); });
         ws.on('ping', () => { conn.lastFrame = Date.now(); });
