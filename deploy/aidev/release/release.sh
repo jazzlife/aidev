@@ -198,9 +198,9 @@ cmd_status() {
     printf '%s\t%s\t%s\t%s\n' "$n" "$s" "$i" "$( [ "$s" = running ] && docker exec "$n" cat /tmp/aidev-release 2>/dev/null || echo -)"; done
 }
 cmd_prune() { # keep current, previous and the 3 newest releases; drop deps nobody links
-  vol 'cur=$(readlink current | sed "s#releases/##"); prev=$(cat previous 2>/dev/null); keep="$cur $prev $(ls -1t releases | head -3)";
+  vol 'cur=$(readlink current | sed "s#releases/##"); prev=$(cat previous 2>/dev/null); keep=$(echo $cur $prev $(ls -1t releases | head -3));   # one line, so case " $keep " sees every name between spaces
        for r in $(ls -1 releases); do case " $keep " in *" $r "*) ;; *) rm -rf "releases/$r"; echo "removed release $r";; esac; done
-       used=$(find releases -maxdepth 4 -type l -name node_modules -exec readlink {} \; | xargs -n1 basename -a 2>/dev/null | sort -u; find releases -maxdepth 4 -type l -name node_modules -exec readlink {} \; | sed "s#.*/deps/##; s#/node_modules##" | sort -u)
+       used=$(echo $(find releases -maxdepth 4 -type l -name node_modules -exec readlink {} \; | sed "s#.*/deps/##; s#/node_modules##" | sort -u))
        for d in $(ls -1 deps); do case " $used " in *" $d "*) ;; *) rm -rf "deps/$d"; echo "removed deps $d";; esac; done'
 }
 case "${1:-}" in
