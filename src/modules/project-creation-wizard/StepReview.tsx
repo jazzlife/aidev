@@ -2,7 +2,9 @@ import { useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 
 import { isSshGitUrl } from '@/modules/project-creation-wizard/utils/pathUtils';
+import { useWorkspacesRoot } from '@/shared/hooks/useWorkspacesRoot';
 import type { WizardFormState } from '@/shared/types';
+import { collapseWorkspacesRoot } from '@/shared/utils';
 
 type StepReviewProps = {
   formState: WizardFormState;
@@ -19,6 +21,7 @@ export default function StepReview({
   cloneProgress,
 }: StepReviewProps) {
   const { t } = useTranslation();
+  const workspacesRoot = useWorkspacesRoot();
 
   const authenticationLabel = useMemo(() => {
     if (formState.tokenMode === 'stored' && formState.selectedGithubToken) {
@@ -46,8 +49,8 @@ export default function StepReview({
         <div className="space-y-2">
           <div className="flex justify-between text-sm">
             <span className="text-gray-600 dark:text-gray-400">{t('projectWizard.step3.path')}</span>
-            <span className="break-all font-mono text-xs text-gray-900 dark:text-white">
-              {formState.workspacePath}
+            <span className="break-all font-mono text-xs text-gray-900 dark:text-white" title={formState.workspacePath}>
+              {collapseWorkspacesRoot(formState.workspacePath, workspacesRoot)}
             </span>
           </div>
 

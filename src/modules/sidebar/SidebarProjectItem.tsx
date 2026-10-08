@@ -2,8 +2,9 @@ import { memo, useEffect, useRef } from 'react';
 import { Check, ChevronDown, ChevronRight, Edit3, Loader2, Star, Trash2, X } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
+import { useWorkspacesRoot } from '@/shared/hooks/useWorkspacesRoot';
 import { Button, Tooltip } from '@/shared/ui';
-import { cn } from '@/shared/utils';
+import { cn, collapseWorkspacesRoot } from '@/shared/utils';
 import type { LLMProvider, MCPServerStatus, Project, ProjectSession, SessionWithProvider } from '@/shared/types';
 import { getTaskIndicatorStatus } from '@/modules/sidebar/utils/sidebarProjectFormatting';
 import TaskIndicator from '@/modules/sidebar/TaskIndicator';
@@ -129,6 +130,8 @@ function SidebarProjectItem({
     0,
   );
   const mobileRenameInputRef = useRef<HTMLInputElement>(null);
+  const workspacesRoot = useWorkspacesRoot();
+  const displayPath = collapseWorkspacesRoot(project.fullPath, workspacesRoot);
 
   useEffect(() => {
     if (!isEditing || !mobileRenameInputRef.current) {
@@ -375,7 +378,7 @@ function SidebarProjectItem({
                     }}
                   />
                   <div className="truncate text-xs text-muted-foreground" title={project.fullPath}>
-                    {project.fullPath}
+                    {displayPath}
                   </div>
                 </div>
               ) : (
@@ -391,7 +394,7 @@ function SidebarProjectItem({
                     {project.fullPath !== project.displayName && (
                       <span className="ml-1 opacity-60" title={project.fullPath}>
                         {' - '}
-                        {project.fullPath.length > 25 ? `...${project.fullPath.slice(-22)}` : project.fullPath}
+                        {displayPath.length > 25 ? `...${displayPath.slice(-22)}` : displayPath}
                       </span>
                     )}
                   </div>

@@ -2,8 +2,10 @@ import { type ReactNode } from 'react';
 import { Activity, Archive, Folder, MessageSquare, RotateCcw, Search, Trash2 } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
+import { useWorkspacesRoot } from '@/shared/hooks/useWorkspacesRoot';
 import { LLMProviderLogo, ScrollArea } from '@/shared/ui';
 import type { ArchivedProjectListItem, ArchivedSessionListItem, ConversationSearchResults, Project, RecentConversationListItem, ReleaseInfo, SearchProgress, SidebarProjectListProps, SidebarSearchMode } from '@/shared/types';
+import { collapseWorkspacesRoot } from '@/shared/utils';
 import { formatCompactAge, getAllSessions } from '@/modules/sidebar/utils/sidebarProjectFormatting';
 import SidebarFooter from '@/modules/sidebar/SidebarFooter';
 import SidebarHeader from '@/modules/sidebar/SidebarHeader';
@@ -183,6 +185,7 @@ export default function SidebarContent({
     conversationResults
     && (conversationResults.titleResults.length > 0 || conversationResults.results.length > 0),
   );
+  const workspacesRoot = useWorkspacesRoot();
   const groupedArchivedSessions = groupArchivedSessionsByProject(archivedSessions);
   const visibleArchivedItemsCount = archivedProjects.length + archivedSessions.length;
   const isRenamingOnMobile = isMobile && projectListProps.activeRename !== null;
@@ -525,7 +528,7 @@ export default function SidebarContent({
                           )}
                         </div>
                         <p className="mt-0.5 truncate text-[11px] text-muted-foreground/70" title={project.fullPath}>
-                          {project.fullPath}
+                          {collapseWorkspacesRoot(project.fullPath, workspacesRoot)}
                         </p>
                       </div>
                       <button

@@ -8,6 +8,7 @@ import MessageComponent from '@/modules/chat/transcript/MessageComponent';
 import { useIsExportingTranscript } from '@/modules/chat/context/TranscriptRenderContext';
 import { DiffStatsBadge } from '@/modules/chat/tools/DiffStatsBadge';
 import { parseToolPayload, summarizeDiff } from '@/modules/chat/utils/messageTransforms';
+import { isGroupableToolMessage } from '@/modules/chat/utils/toolGrouping';
 
 type ToolGroupContainerProps = {
   group: ToolGroupItem;
@@ -121,7 +122,14 @@ function ToolGroupContainer({
   const { label, borderClass, iconClass, icon } = useToolGroupHeader(group);
 
   const preview = group.preview;
-  const groupDiffStats = useGroupDiffStats(group.messages, createDiff);
+  // group.messages can include narration captions absorbed between calls
+  // (see toolGrouping.ts); diff totals are only meaningful over the actual
+  // tool calls.
+  const toolMessages = useMemo(
+    () => group.messages.filter(isGroupableToolMessage),
+    [group.messages],
+  );
+  const groupDiffStats = useGroupDiffStats(toolMessages, createDiff);
 
   return (
     <div className="chat-message tool px-3 sm:px-0" data-message-timestamp={group.timestamp || undefined}>
@@ -140,7 +148,7 @@ function ToolGroupContainer({
         </span>
         <span className="min-w-0 flex-shrink-0 text-xs font-medium text-foreground">{label}</span>
         <span className="flex-shrink-0 rounded-full bg-muted px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground">
-          x{group.messages.length}
+          x{group.toolCount}
         </span>
         {preview && (
           <>

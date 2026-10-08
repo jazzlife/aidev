@@ -5,7 +5,9 @@ import { FolderOpen } from 'lucide-react';
 import { Button, Input } from '@/shared/ui';
 import { browseFilesystemFolders } from '@/modules/project-creation-wizard/utils/workspaceApi';
 import { getSuggestionRootPath } from '@/modules/project-creation-wizard/utils/pathUtils';
+import { useWorkspacesRoot } from '@/shared/hooks/useWorkspacesRoot';
 import type { FolderSuggestion } from '@/shared/types';
+import { collapseWorkspacesRoot } from '@/shared/utils';
 import FolderBrowserModal from '@/modules/project-creation-wizard/FolderBrowserModal';
 
 type WorkspacePathFieldProps = {
@@ -23,6 +25,7 @@ export default function WorkspacePathField({
   onAdvanceToConfirm,
 }: WorkspacePathFieldProps) {
   const { t } = useTranslation();
+  const workspacesRoot = useWorkspacesRoot();
   const [pathSuggestions, setPathSuggestions] = useState<FolderSuggestion[]>([]);
   const [showPathDropdown, setShowPathDropdown] = useState(false);
   const [showFolderBrowser, setShowFolderBrowser] = useState(false);
@@ -104,7 +107,9 @@ export default function WorkspacePathField({
                   className="w-full px-4 py-2 text-left text-sm hover:bg-gray-100 dark:hover:bg-gray-700"
                 >
                   <div className="font-medium text-gray-900 dark:text-white">{suggestion.name}</div>
-                  <div className="text-xs text-gray-500 dark:text-gray-400">{suggestion.path}</div>
+                  <div className="text-xs text-gray-500 dark:text-gray-400">
+                    {collapseWorkspacesRoot(suggestion.path, workspacesRoot)}
+                  </div>
                 </button>
               ))}
             </div>

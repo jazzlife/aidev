@@ -44,6 +44,31 @@ export function parseProviderUsageLimit(value: unknown): ProviderUsageLimit | nu
 
 // ---------------------------
 
+//----------------- PATH FORMATTING ------------
+
+/**
+ * Collapses a project path under the server's workspace root to `~`, dropping the
+ * root segment entirely (e.g. `/home/user/workspaces/foo` with root
+ * `/home/user/workspaces` becomes `~/foo`). Returns `fullPath` unchanged if `root`
+ * is unknown or isn't a prefix of `fullPath`.
+ */
+export function collapseWorkspacesRoot(fullPath: string, root: string | null): string {
+  if (!root) {
+    return fullPath;
+  }
+
+  const normalizedRoot = root.endsWith('/') ? root.slice(0, -1) : root;
+  if (fullPath === normalizedRoot) {
+    return '~';
+  }
+  if (fullPath.startsWith(`${normalizedRoot}/`)) {
+    return `~${fullPath.slice(normalizedRoot.length)}`;
+  }
+  return fullPath;
+}
+
+// ---------------------------
+
 //----------------- CLIPBOARD ------------
 
 /**

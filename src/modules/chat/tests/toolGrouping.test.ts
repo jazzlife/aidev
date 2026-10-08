@@ -110,15 +110,97 @@ test('a tool that addresses the user stays its own row and ends the run', () => 
   assert.ok(isToolGroupItem(items[2]));
 });
 
-test('a text turn splits a run', () => {
+test('a real explanation splits a run', () => {
+  // Multi-sentence prose is not a narration caption — it's the kind of
+  // explanation that would be lost if silently folded into a collapsed group.
   const items = groupConsecutiveTools([
     toolMessage('Read', { file_path: '/a.ts' }),
-    textMessage('some prose'),
+    textMessage('Checked the config first. It looks like the flag is already off, so this should be a no-op.'),
     toolMessage('Read', { file_path: '/b.ts' }),
   ]);
 
   assert.equal(items.length, 3);
   assert.equal(items.filter(isToolGroupItem).length, 0);
+});
+
+test('a long single-line turn still splits a run', () => {
+  // Length alone disqualifies a caption even without a line break — a long
+  // sentence is prose, not the one-line narration beat CLAUDE.md asks for.
+  const longLine = 'x'.repeat(101);
+  const items = groupConsecutiveTools([
+    toolMessage('Read', { file_path: '/a.ts' }),
+    textMessage(longLine),
+    toolMessage('Read', { file_path: '/b.ts' }),
+  ]);
+
+  assert.equal(items.length, 3);
+  assert.equal(items.filter(isToolGroupItem).length, 0);
+});
+
+test('a short caption between same-tool calls does not split the run', () => {
+  // The scenario the "wall of cards" complaint was about: CLAUDE.md asks for
+  // a one-line narration before each routine call, and that caption should
+  // not turn one run of the same tool into N separate rows.
+  const items = groupConsecutiveTools([
+    toolMessage('Bash', { command: 'ls a' }),
+    textMessage('Checking the a directory.'),
+    toolMessage('Bash', { command: 'ls b' }),
+    textMessage('Checking the b directory.'),
+    toolMessage('Bash', { command: 'ls c' }),
+  ]);
+
+  assert.equal(items.length, 1);
+  const [group] = items;
+  assert.ok(isToolGroupItem(group));
+  // The captions ride along in display order so expanding the group still
+  // shows them, but they are not tool calls.
+  assert.equal(group.messages.length, 5);
+  assert.equal(group.toolCount, 3);
+  assert.deepEqual(group.messages.map((message) => message.toolName ?? 'caption'), [
+    'Bash',
+    'caption',
+    'Bash',
+    'caption',
+    'Bash',
+  ]);
+  // The preview and badge describe the calls, not the narration.
+  assert.equal(group.preview, 'ls a, ls b, +1 more');
+});
+
+test('a caption with no further same-tool call is not absorbed', () => {
+  // The caption between the two Bash calls is still absorbed (something of
+  // the same tool follows it). The trailing caption has nothing after it, so
+  // lookahead fails and it is a genuine wrap-up comment: the run ends before
+  // it and it stays standalone rather than being swallowed into the group.
+  const items = groupConsecutiveTools([
+    toolMessage('Bash', { command: 'ls a' }),
+    textMessage('Checking the a directory.'),
+    toolMessage('Bash', { command: 'ls b' }),
+    textMessage('All directories look fine.'),
+  ]);
+
+  assert.equal(items.length, 2);
+  const [group, trailing] = items;
+  assert.ok(isToolGroupItem(group));
+  assert.equal(group.toolCount, 2);
+  assert.equal(group.messages.length, 3);
+  assert.equal(!isToolGroupItem(trailing) && trailing.content, 'All directories look fine.');
+});
+
+test('a caption before the first call of a run is not retroactively absorbed', () => {
+  // Narration before the very first call in a run isn't "between" two calls,
+  // so it is left as its own row ahead of the group rather than folded in.
+  const items = groupConsecutiveTools([
+    textMessage('Listing the directory.'),
+    toolMessage('Bash', { command: 'ls a' }),
+    toolMessage('Bash', { command: 'ls b' }),
+  ]);
+
+  assert.equal(items.length, 2);
+  const [caption] = items;
+  assert.equal(!isToolGroupItem(caption) && caption.content, 'Listing the directory.');
+  assert.ok(isToolGroupItem(items[1]));
+  assert.equal(items[1].toolCount, 2);
 });
 
 test('an unparsable tool input does not throw while grouping', () => {

@@ -14,6 +14,15 @@ const UNGROUPABLE_TOOL_NAMES = new Set(['AskUserQuestion', 'ExitPlanMode', 'exit
 /** How many of a group's tool inputs the collapsed summary line spells out. */
 const PREVIEWED_TOOL_COUNT = 2;
 
+/**
+ * Longest text that still counts as a one-line narration caption rather than
+ * prose. CLAUDE.md-style conventions ask the assistant to say what it's doing
+ * in one short sentence before a routine tool call; that sentence announces
+ * the next call rather than interrupting the run it's part of. Anything
+ * longer, or spanning more than one line, is treated as real prose (an
+ * explanation or a final summary) and still splits the run.
+ */
+const CAPTION_MAX_LENGTH = 100;
 
 export type MessageListItem = ChatMessage | ToolGroupItem;
 
@@ -21,7 +30,7 @@ export function isToolGroupItem(item: MessageListItem): item is ToolGroupItem {
   return '_isGroup' in item && (item as ToolGroupItem)._isGroup === true;
 }
 
-function isGroupableToolMessage(message: ChatMessage): message is ChatMessage & { toolName: string } {
+export function isGroupableToolMessage(message: ChatMessage): message is ChatMessage & { toolName: string } {
   return Boolean(
     message.isToolUse
       && message.toolName
@@ -40,6 +49,71 @@ function getToolGroupLabel(toolName: string): string {
 // Codex interleave hidden reasoning between consecutive tool calls.
 function rendersNothing(message: ChatMessage, showThinking: boolean): boolean {
   return Boolean(message.isThinking && !showThinking);
+}
+
+// A sentence-ending mark followed by whitespace or the end of the string —
+// used to count sentences. More than one means the text is a paragraph, not
+// the single narration beat a caption is.
+const SENTENCE_END = /[.!?](?:\s|$)/g;
+
+// A short, single-sentence assistant turn is treated as a caption candidate:
+// it may be the narration CLAUDE.md asks for before a routine tool call,
+// which should not by itself break a run of the same tool. Whether it
+// actually gets absorbed is decided by lookahead (see
+// isFollowedByMoreTools) — this only screens out messages that could
+// never qualify (real prose, user/error turns, tool calls, hidden reasoning).
+function isCaptionCandidate(message: ChatMessage): boolean {
+  if (message.type !== 'assistant' || message.isToolUse || message.isThinking || message.isSubagentContainer) {
+    return false;
+  }
+
+  const text = (message.content || message.displayText || '').trim();
+  if (!text || text.length > CAPTION_MAX_LENGTH || text.includes('\n')) {
+    return false;
+  }
+
+  const sentenceEndings = text.match(SENTENCE_END);
+  return !sentenceEndings || sentenceEndings.length <= 1;
+}
+
+/**
+ * Looks past a caption candidate (and past any further captions or hidden
+ * reasoning right after it — a provider can narrate more than once in a row)
+ * to see whether another worker tool fires before anything else does. Any
+ * groupable tool counts: a run spans tools (see isGroupableToolMessage).
+ *
+ * If real prose, a user-facing tool, or the end of the transcript comes first,
+ * the caption in front of it is a genuine break — a wrap-up comment, not a
+ * narration beat — so the run must end before it rather than swallow it.
+ */
+function isFollowedByMoreTools(
+  messages: ChatMessage[],
+  fromIndex: number,
+  showThinking: boolean,
+): boolean {
+  let index = fromIndex;
+
+  while (index < messages.length) {
+    const candidate = messages[index];
+
+    if (rendersNothing(candidate, showThinking)) {
+      index += 1;
+      continue;
+    }
+
+    if (isGroupableToolMessage(candidate)) {
+      return true;
+    }
+
+    if (isCaptionCandidate(candidate)) {
+      index += 1;
+      continue;
+    }
+
+    return false;
+  }
+
+  return false;
 }
 
 function parseToolInput(toolInput: unknown): unknown {
@@ -149,18 +223,36 @@ export function groupConsecutiveTools(
         continue;
       }
 
+      // A short narration beat announcing the next call doesn't break the run
+      // — but only once lookahead confirms the same tool actually follows it.
+      // Otherwise it's a genuine wrap-up comment and must end the run.
+      if (
+        isCaptionCandidate(candidate) &&
+        isFollowedByMoreTools(messages, nextIndex + 1, showThinking)
+      ) {
+        run.push(candidate);
+        nextIndex += 1;
+        continue;
+      }
+
       break;
     }
 
-    if (run.length >= TOOL_GROUP_THRESHOLD) {
-      const isMixed = run.some((candidate) => candidate.toolName !== message.toolName);
+    // Captions absorbed into the run aren't tool calls — the badge, preview,
+    // and grouping threshold all count only the calls themselves, so a caption
+    // never pads a run of one real tool call past the threshold on its own.
+    const toolMessages = run.filter(isGroupableToolMessage);
+
+    if (toolMessages.length >= TOOL_GROUP_THRESHOLD) {
+      const isMixed = toolMessages.some((candidate) => candidate.toolName !== message.toolName);
       items.push({
         _isGroup: true,
         toolName: message.toolName,
         isMixed,
         messages: run,
         timestamp: message.timestamp,
-        preview: isMixed ? buildMixedGroupPreview(run) : buildGroupPreview(run),
+        toolCount: toolMessages.length,
+        preview: isMixed ? buildMixedGroupPreview(toolMessages) : buildGroupPreview(toolMessages),
       });
     } else {
       items.push(...run);

@@ -554,6 +554,7 @@ export const api = {
 
   system: {
     update: () => post('/api/system/update'),
+    workspacesRoot: () => get('/api/system/workspaces-root'),
   },
 
   // Nado AI Dev remote targets (developer PCs running aidev-runner; gateway /api/aidev/targets).

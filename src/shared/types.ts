@@ -686,8 +686,16 @@ export type ToolGroupItem = {
   toolName: string;
   /** True when the run spans more than one tool, so the row shows a generic header instead of `toolName`'s. */
   isMixed: boolean;
+  /**
+   * The run in display order, including any short narration captions
+   * absorbed between tool calls (see toolGrouping.ts). Not all entries are
+   * tool calls — use `toolCount`, not `messages.length`, for the number of
+   * calls the group represents.
+   */
   messages: ChatMessage[];
   timestamp: ChatMessage['timestamp'];
+  /** How many of `messages` are actual tool calls, for the `x{n}` badge. */
+  toolCount: number;
   /**
    * Summary line for the collapsed group, built while grouping so the tool-input
    * JSON parsing it needs never runs during render.

@@ -97,6 +97,7 @@ describe('diff stats on a collapsed tool group', () => {
       isMixed: false,
       messages,
       timestamp: messages[0].timestamp,
+      toolCount: messages.length,
       preview: 'a.js',
     } as ToolGroupItem;
 
