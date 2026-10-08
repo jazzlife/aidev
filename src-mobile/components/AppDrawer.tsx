@@ -2,10 +2,11 @@ import { createContext, useCallback, useContext, useEffect, useMemo, useState, t
 import { AppWindow, Bot, Bug, FolderGit2, Link2, MessageSquare, Monitor, Settings, X } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 
-import { api, useAuth } from '@/modules/chat-core';
+import { useAuth } from '@/modules/chat-core';
 import { aidevApi } from '@/modules/aidev-router';
 import { useBackOverlay, useGo } from '@m/lib/nav';
 import { useCurrentConversation, useCurrentProject } from '@m/lib/current';
+import { useRunningSessions } from '@m/lib/runningSessions';
 
 /**
  * The app's common menu, reachable from every screen (☰ in the top bar, or a swipe from the left edge). No lists here
@@ -32,21 +33,17 @@ function Drawer({ onClose }: { onClose: () => void }) {
   const project = useCurrentProject();
   const conversation = useCurrentConversation();
   const [targets, setTargets] = useState<Target[] | null>(null);
-  const [running, setRunning] = useState<string[]>([]);
+  const running = useRunningSessions();
   useBackOverlay(true, onClose);
   useEffect(() => {
     aidevApi.targets().then((r) => setTargets(r.targets as unknown as Target[])).catch(() => setTargets([]));
-    api.runningSessions().then(async (r) => {
-      const body = await r.json() as { data?: { sessions?: Array<{ sessionId?: string }> } };
-      setRunning((body.data?.sessions ?? []).map((s) => s.sessionId ?? '').filter(Boolean));
-    }).catch(() => undefined);
   }, []);
   const open = (path: string) => { onClose(); go(path); };
   const row = (active: boolean) => `w-full h-11 rounded-xl flex items-center gap-3 px-3 text-[15px] text-left ${active ? 'bg-elevated font-medium' : 'active:bg-elevated'}`;
   const section = (title: string) => <div className="px-3 pt-4 pb-1 text-[11px] uppercase tracking-wide text-muted">{title}</div>;
   const card = 'w-full rounded-xl border border-line bg-bg px-3 py-2.5 text-left active:bg-elevated';
-  const isRunning = Boolean(conversation && running.includes(conversation.sessionId));
-  const others = running.filter((id) => id !== conversation?.sessionId).length;
+  const isRunning = Boolean(conversation && running.ids.has(conversation.sessionId));
+  const others = running.list.filter((entry) => entry.sessionId !== conversation?.sessionId).length;
   const projectPath = project ? `/projects/${encodeURIComponent(project.projectId)}` : '';
   return (
     <div className="fixed inset-0 z-50" role="dialog" aria-modal="true" aria-label="메뉴" data-testid="app-drawer">

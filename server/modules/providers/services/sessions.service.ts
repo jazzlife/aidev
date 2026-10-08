@@ -135,8 +135,18 @@ export const sessionsService = {
     provider: LLMProvider;
     startedAt: number;
     lastSeq: number;
+    /** The owning project, so a project list can mark projects with a running conversation (null when the session has no row yet). */
+    projectId: string | null;
+    projectPath: string | null;
   }> {
-    return chatRunRegistry.listRunningRuns();
+    const projectCache = new Map<string, string | null>();
+    return chatRunRegistry.listRunningRuns().map((run) => {
+      const projectPath = sessionsDb.getSessionById(run.sessionId)?.project_path?.trim() || null;
+      if (projectPath && !projectCache.has(projectPath)) {
+        projectCache.set(projectPath, projectsDb.getProjectPath(projectPath)?.project_id ?? null);
+      }
+      return { ...run, projectId: projectPath ? projectCache.get(projectPath) ?? null : null, projectPath };
+    });
   },
 
   /**

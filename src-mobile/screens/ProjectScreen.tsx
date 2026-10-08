@@ -14,19 +14,21 @@ import { relativeTime } from '@m/lib/format';
 import type { FileRef } from '@m/lib/peek';
 import { useGo, useParent } from '@m/lib/nav';
 import { useLongPress } from '@m/lib/useLongPress';
+import { useRunningSessions } from '@m/lib/runningSessions';
 
 type SessionItem = { id: string; provider?: string; summary?: string; lastActivity?: string };
 const PAGE = 30;
 
 /** One conversation row: tap opens it; long-press or ⋯ opens the conversation sheet. */
-function SessionRow({ item, onOpen, onActions }: { item: SessionItem; onOpen: () => void; onActions: () => void }) {
+function SessionRow({ item, running, onOpen, onActions }: { item: SessionItem; /** the runtime is answering this conversation now */ running: boolean; onOpen: () => void; onActions: () => void }) {
   const press = useLongPress(onActions);
   return (
-    <li className="border-b border-line flex items-stretch">
+    <li className="border-b border-line flex items-stretch" data-running={running || undefined}>
       <button type="button" onClick={onOpen} {...press} className="flex-1 min-w-0 text-left pl-4 pr-1 py-3 active:bg-elevated">
         <div className="flex items-baseline gap-2">
+          {running ? <span role="status" aria-label="응답 중" className="w-2 h-2 shrink-0 rounded-full self-center bg-accent m-pulse" /> : null}
           <span className="flex-1 min-w-0 truncate text-[15px]">{item.summary || '(제목 없음)'}</span>
-          <span className="text-[11px] text-muted shrink-0">{relativeTime(item.lastActivity)}</span>
+          {running ? <span className="text-[11px] text-accent shrink-0">응답 중</span> : <span className="text-[11px] text-muted shrink-0">{relativeTime(item.lastActivity)}</span>}
         </div>
         <div className="text-[12px] text-muted uppercase tracking-wide mt-0.5">{item.provider ?? ''}</div>
       </button>
@@ -54,6 +56,8 @@ export function ProjectScreen() {
   // the git sheet (the project's changes, commit, push)
   const [gitSheet, setGitSheet] = useState(false);
   const [filePeek, setFilePeek] = useState<{ open: boolean; file: FileRef | null; fromSearch: boolean }>({ open: false, file: null, fromSearch: false });
+  // conversations the runtime is answering now (polled while this screen is open)
+  const running = useRunningSessions();
 
   // opened from a conversation or a link: the name and path come from the project list
   useEffect(() => {
@@ -112,7 +116,7 @@ export function ProjectScreen() {
         {sessions === null && !error ? <ListSkeleton /> : null}
         {sessions && sessions.length === 0 ? <div className="p-6 text-center text-muted text-sm">이 프로젝트에 대화가 없습니다. 아래 + 로 시작하세요.</div> : null}
         <ul>
-          {sessions?.map((s) => <SessionRow key={s.id} item={s} onOpen={() => go(`/session/${encodeURIComponent(s.id)}`)} onActions={() => setConversationTarget(s)} />)}
+          {sessions?.map((s) => <SessionRow key={s.id} item={s} running={running.ids.has(s.id)} onOpen={() => go(`/session/${encodeURIComponent(s.id)}`)} onActions={() => setConversationTarget(s)} />)}
         </ul>
         {hasMore ? <button type="button" onClick={() => { void load(sessions?.length ?? 0); }} className="m-touch w-full py-3 text-[14px] text-accent">더 보기</button> : null}
       </main>

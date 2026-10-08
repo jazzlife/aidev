@@ -10,6 +10,7 @@ import { TopBar } from '@m/components/TopBar';
 import { relativeTime } from '@m/lib/format';
 import { useLongPress } from '@m/lib/useLongPress';
 import { useBackOverlay, useGo, useParent } from '@m/lib/nav';
+import { useRunningSessions } from '@m/lib/runningSessions';
 
 // the search loads when 🔍 is first tapped: the conversation list is the first screen (main chunk)
 const ConversationSearch = lazy(() => import('@m/components/ConversationSearch').then((m) => ({ default: m.ConversationSearch })));
@@ -25,18 +26,19 @@ async function readList(response: Response, key: 'conversations' | 'sessions') {
 }
 
 /** One row: tap opens the conversation; long-press or ⋯ opens its actions. */
-function ConversationRow({ item, unread, onOpen, onActions }: { item: Conversation; /** C-06: news not looked at yet */ unread?: UnreadSession; onOpen: () => void; onActions: () => void }) {
+function ConversationRow({ item, unread, running, onOpen, onActions }: { item: Conversation; /** C-06: news not looked at yet */ unread?: UnreadSession; /** the runtime is answering this conversation now */ running: boolean; onOpen: () => void; onActions: () => void }) {
   const press = useLongPress(onActions);
   return (
-    <li className="border-b border-line flex items-stretch">
+    <li className="border-b border-line flex items-stretch" data-running={running || undefined}>
       <button type="button" className="flex-1 min-w-0 text-left pl-4 pr-1 py-3 active:bg-elevated" onClick={onOpen} {...press}>
         <div className="flex items-baseline gap-2">
-          {unread ? <span aria-label="새 소식" className={`w-2 h-2 shrink-0 rounded-full self-center ${unread.code === 'run.failed' || unread.code === 'permission.required' ? 'bg-danger' : 'bg-accent'}`} /> : null}
+          {running ? <span role="status" aria-label="응답 중" className="w-2 h-2 shrink-0 rounded-full self-center bg-accent m-pulse" />
+            : unread ? <span aria-label="새 소식" className={`w-2 h-2 shrink-0 rounded-full self-center ${unread.code === 'run.failed' || unread.code === 'permission.required' ? 'bg-danger' : 'bg-accent'}`} /> : null}
           <span className={`flex-1 min-w-0 truncate text-[15px] ${unread ? 'font-semibold' : ''}`}>{item.sessionTitle || '(제목 없음)'}</span>
-          <span className="text-[11px] text-muted shrink-0">{relativeTime(item.lastActivity)}</span>
+          {running ? <span className="text-[11px] text-accent shrink-0">응답 중</span> : <span className="text-[11px] text-muted shrink-0">{relativeTime(item.lastActivity)}</span>}
         </div>
         <div className="text-[12px] text-muted truncate mt-0.5">
-          {unread?.body ? <span className="text-ink">{unread.body}</span> : <><span className="uppercase tracking-wide">{item.provider ?? ''}</span>{item.projectDisplayName ? ` · ${item.projectDisplayName}` : ''}</>}
+          {unread?.body && !running ? <span className="text-ink">{unread.body}</span> : <><span className="uppercase tracking-wide">{item.provider ?? ''}</span>{item.projectDisplayName ? ` · ${item.projectDisplayName}` : ''}</>}
         </div>
       </button>
       <button type="button" aria-label="대화 메뉴" onClick={onActions} className="m-touch shrink-0 flex items-center justify-center px-2 text-muted active:bg-elevated"><MoreHorizontal size={18} /></button>
@@ -66,6 +68,8 @@ export function SessionsScreen() {
   const [unread, setUnread] = useState<Map<string, UnreadSession>>(new Map());
   // D-04: domains worked in repeatedly without a specialist; "만들기" opens a new chat that sends the creation turn
   const creation = useCreateProposals();
+  // conversations the runtime is answering now (polled while this screen is open)
+  const running = useRunningSessions(view === 'active');
 
   const load = useCallback((which: View) => {
     setItems(null); setError(null);
@@ -130,7 +134,7 @@ export function SessionsScreen() {
         {items && items.length > 0 && !hidden ? <div className="px-4 pt-2 pb-1 text-[11px] text-muted">길게 누르면 이름 변경·분기·숨기기·삭제</div> : null}
         <ul>
           {items?.map((item) => (
-            <ConversationRow key={item.sessionId} item={item} unread={hidden ? undefined : unread.get(item.sessionId)} onOpen={() => navigate(`/session/${encodeURIComponent(item.sessionId)}`)} onActions={() => setTarget(item)} />
+            <ConversationRow key={item.sessionId} item={item} unread={hidden ? undefined : unread.get(item.sessionId)} running={!hidden && running.ids.has(item.sessionId)} onOpen={() => navigate(`/session/${encodeURIComponent(item.sessionId)}`)} onActions={() => setTarget(item)} />
           ))}
         </ul>
       </main>

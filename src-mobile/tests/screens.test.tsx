@@ -10,7 +10,7 @@ const api = {
     { projectId: 'p2', displayName: 'beta', fullPath: '/w/beta', isStarred: true, sessions: [], sessionMeta: { total: 0 } },
   ])),
   projectSessions: vi.fn(() => json({ sessions: [{ id: 's1', provider: 'claude', summary: '로그인 버그', lastActivity: '2026-10-01T00:00:00Z' }], sessionMeta: { hasMore: false } })),
-  runningSessions: vi.fn(() => json({ data: { sessions: [{ sessionId: 's1' }, { sessionId: 's9' }] } })),
+  runningSessions: vi.fn(() => json({ data: { sessions: [{ sessionId: 's1', projectId: 'p1' }, { sessionId: 's9', projectId: null }] } })),
   browseFilesystem: vi.fn((path: string | null) => json({ path: path ?? '/w', suggestions: path === '/w/new' ? [] : [{ name: 'alpha', path: '/w/alpha' }, { name: 'new', path: '/w/new' }] })),
   createFolder: vi.fn(),
   createProject: vi.fn((_body: unknown) => json({ success: true, project: { projectId: 'p3', displayName: 'new', fullPath: '/w/new', isArchived: false } })),
@@ -89,6 +89,10 @@ describe('mobile projects', () => {
     const names = screen.getAllByText(/^(alpha|beta)$/).map((n) => n.textContent);
     expect(names).toEqual(['beta', 'alpha']);
     expect(screen.getByText(/대화 3개/)).toBeTruthy();
+    // alpha has a running conversation (s1), beta has none
+    expect(screen.getByLabelText('응답 중인 대화 1개')).toBeTruthy();
+    expect(screen.getByText('alpha').closest('li')?.getAttribute('data-running')).toBe('1');
+    expect(screen.getByText('beta').closest('li')?.getAttribute('data-running')).toBeNull();
     fireEvent.click(screen.getByText('alpha'));
     expect(screen.getByTestId('where').textContent).toBe('/projects/p1');
   });
@@ -98,6 +102,9 @@ describe('mobile projects', () => {
     await settle();
     expect(screen.getByText('alpha')).toBeTruthy();
     expect(api.projectSessions).toHaveBeenCalledWith('p1', { limit: 30, offset: 0 });
+    // s1 is being answered: the row says so instead of its age
+    expect(screen.getByLabelText('응답 중')).toBeTruthy();
+    expect(screen.getByText('로그인 버그').closest('li')?.textContent).toContain('응답 중');
     fireEvent.click(screen.getByText('로그인 버그'));
     expect(screen.getByTestId('where').textContent).toBe('/session/s1');
   });

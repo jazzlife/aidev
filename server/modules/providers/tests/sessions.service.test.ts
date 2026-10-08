@@ -6,6 +6,7 @@ import test from 'node:test';
 
 import { closeConnection, initializeDatabase, projectsDb, sessionsDb } from '@/modules/database/index.js';
 import { sessionsService } from '@/modules/providers/services/sessions.service.js';
+import { chatRunRegistry } from '@/modules/websocket/index.js';
 
 async function withIsolatedDatabase(runTest: () => void | Promise<void>): Promise<void> {
   const previousDatabasePath = process.env.DATABASE_PATH;
@@ -190,4 +191,23 @@ test('history pages are sliced from the cached full transcript and see appended 
   } finally {
     await rm(transcriptDirectory, { recursive: true, force: true });
   }
+});
+
+test('running sessions carry their project so lists can mark the project', { concurrency: false }, async () => {
+  await withIsolatedDatabase(() => {
+    projectsDb.createProjectPath('/tmp/running-project');
+    const projectId = projectsDb.getProjectPath('/tmp/running-project')?.project_id;
+    assert.ok(projectId);
+    sessionsDb.createAppSession('running-session', 'claude', '/tmp/running-project');
+    const run = chatRunRegistry.startRun({ appSessionId: 'running-session', provider: 'claude', providerSessionId: null, connection: null, userId: null });
+    assert.ok(run);
+    try {
+      const listed = sessionsService.listRunningSessions().find((entry) => entry.sessionId === 'running-session');
+      assert.ok(listed);
+      assert.equal(listed.projectPath, '/tmp/running-project');
+      assert.equal(listed.projectId, projectId);
+    } finally {
+      chatRunRegistry.completeRun('running-session', { exitCode: 0 });
+    }
+  });
 });
