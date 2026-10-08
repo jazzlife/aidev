@@ -3,6 +3,8 @@ import type { ReactNode } from 'react';
 
 import type { NormalizedMessage } from '@/modules/chat-core';
 import { MessageBubble, type PeekHandlers } from '@m/components/MessageBubble';
+import { ToolRunRow } from '@m/components/ToolRunRow';
+import { groupToolRuns, isToolRun } from '@m/lib/toolRuns';
 
 const RENDERED_KINDS = new Set(['text', 'stream_delta', 'tool_use', 'thinking', 'error']);
 /** Scrolled this close to the top, the earlier page loads by itself. */
@@ -25,7 +27,7 @@ type MessageListProps = {
  * load the latest page first; scrolling to the top (or "이전 메시지 보기") prepends the earlier one and keeps the
  * message the user was looking at in place.
  */
-export function MessageList({ messages, loading, onMessageLongPress, footer, onPeekFile, onPeekDiff, hasMore, onLoadOlder }: MessageListProps) {
+export function MessageList({ messages, loading, onMessageLongPress, footer, onPeekFile, onPeekDiff, projectPath, hasMore, onLoadOlder }: MessageListProps) {
   const ref = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   // the distance from the bottom to keep while an earlier page is prepended
@@ -37,7 +39,8 @@ export function MessageList({ messages, loading, onMessageLongPress, footer, onP
     for (const message of messages) if (message.kind === 'tool_result' && message.toolId) map.set(message.toolId, message);
     return map;
   }, [messages]);
-  const rows = useMemo(() => messages.filter((message) => RENDERED_KINDS.has(message.kind)), [messages]);
+  // stretches of tool calls fold into one row each, so the transcript reads as the conversation (2026-10-09)
+  const rows = useMemo(() => groupToolRuns(messages.filter((message) => RENDERED_KINDS.has(message.kind))), [messages]);
   useLayoutEffect(() => {
     const element = ref.current;
     if (!element) return;
@@ -65,7 +68,9 @@ export function MessageList({ messages, loading, onMessageLongPress, footer, onP
       ) : null}
       {loading && rows.length === 0 ? <div className="px-4 py-6 text-muted text-sm m-pulse">불러오는 중…</div> : null}
       {!loading && rows.length === 0 ? <div className="px-6 py-10 text-center text-muted text-sm">무엇을 만들까요? 아래에 명령을 입력하세요.</div> : null}
-      {rows.map((message) => <MessageBubble key={message.id} message={message} result={message.toolId ? results.get(message.toolId) : null} onLongPress={onMessageLongPress} onPeekFile={onPeekFile} onPeekDiff={onPeekDiff} />)}
+      {rows.map((row) => (isToolRun(row)
+        ? <ToolRunRow key={row.id} run={row} results={results} onPeekFile={onPeekFile} onPeekDiff={onPeekDiff} projectPath={projectPath} />
+        : <MessageBubble key={row.id} message={row} result={row.toolId ? results.get(row.toolId) : null} onLongPress={onMessageLongPress} onPeekFile={onPeekFile} onPeekDiff={onPeekDiff} projectPath={projectPath} />))}
       {footer}
     </div>
   );

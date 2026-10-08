@@ -13,13 +13,17 @@ type DiffPeekProps = {
   onClose: () => void;
   /** opens the edited file in the file peek (no button without it) */
   onOpenFile?: (path: string) => void;
+  /** the open project's path: the header shows the file relative to it */
+  projectPath?: string | null;
 };
 
 /**
  * Used by ChatScreen (C-05) and the git sheet (C-12.8): what one file tool call (or one file's git diff) changed, as a single column of −/+ lines (own renderer —
  * no @codemirror/merge on the phone). Multi-edits show one block per edit.
  */
-export function DiffPeek({ edit, onClose, onOpenFile }: DiffPeekProps) {
+export function DiffPeek({ edit, onClose, onOpenFile, projectPath }: DiffPeekProps) {
+  const root = projectPath?.replace(/\/+$/, '') ?? '';
+  const shownPath = edit && root && edit.path.startsWith(`${root}/`) ? edit.path.slice(root.length + 1) : edit?.path ?? '';
   const blocks = useMemo(() => (edit ? edit.hunks.map((hunk) => calculateDiff(hunk.before, hunk.after)) : []), [edit]);
   const stats = useMemo(() => summarizeDiff(blocks.flat()), [blocks]);
   // the rows each block may draw: blocks share one MAX_ROWS budget, in order
@@ -33,7 +37,7 @@ export function DiffPeek({ edit, onClose, onOpenFile }: DiffPeekProps) {
       {edit ? (
         <div className="space-y-3" data-testid="diff-peek">
           <div className="flex items-center gap-2 text-[12px] text-muted">
-            <span className="min-w-0 flex-1 truncate">{edit.deleted ? '삭제됨 · ' : edit.created ? '새 파일 · ' : ''}{edit.path}</span>
+            <span className="min-w-0 flex-1 truncate">{edit.deleted ? '삭제됨 · ' : edit.created ? '새 파일 · ' : ''}{shownPath}</span>
             {!edit.deleted && onOpenFile ? <button type="button" onClick={() => onOpenFile(edit.path)} className="flex h-8 shrink-0 items-center gap-1 rounded-lg border border-line px-2 text-[13px] text-ink"><FileText size={14} /> 파일 보기</button> : null}
           </div>
           {blocks.every((block) => block.length === 0) ? <div className="py-4 text-center text-[13px] text-muted">기록된 변경 내용이 없습니다</div> : null}

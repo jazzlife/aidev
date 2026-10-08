@@ -44,9 +44,10 @@ describe('tool cards', () => {
     expect(screen.getByTestId('question-card').textContent).toContain('저장소 — SQLite');
   });
 
-  it('other tools keep the generic card', () => {
-    render(<MessageBubble message={tool('Bash', { command: 'npm test' })} />);
-    expect(screen.getByText('npm test')).toBeTruthy();
+  it('other tools keep the generic card; a shell card shows its description, never the command', () => {
+    render(<MessageBubble message={tool('Bash', { command: 'npm test', description: '테스트 실행' })} />);
+    expect(screen.getByText('테스트 실행')).toBeTruthy();
+    expect(screen.queryByText('npm test')).toBeNull();
     expect(screen.queryByTestId('todo-card')).toBeNull();
   });
 

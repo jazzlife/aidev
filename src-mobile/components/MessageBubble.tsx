@@ -47,10 +47,12 @@ export type PeekHandlers = {
   onPeekFile?: (ref: FileRef) => void;
   /** opens what a file tool changed in the diff peek */
   onPeekDiff?: (edit: FileEdit) => void;
+  /** the open project's path: file paths in tool rows are shown relative to it */
+  projectPath?: string | null;
 };
 
 /** Used by MessageList: one transcript row — user bubble, assistant prose, or a collapsible tool/thinking card. */
-export function MessageBubble({ message, result, onLongPress, onPeekFile, onPeekDiff }: { message: NormalizedMessage; result?: NormalizedMessage | null; /** text messages: long-press opens the copy sheet (text selection is off in the app) */ onLongPress?: (text: string, message: NormalizedMessage) => void } & PeekHandlers) {
+export function MessageBubble({ message, result, onLongPress, onPeekFile, onPeekDiff, projectPath }: { message: NormalizedMessage; result?: NormalizedMessage | null; /** text messages: long-press opens the copy sheet (text selection is off in the app) */ onLongPress?: (text: string, message: NormalizedMessage) => void } & PeekHandlers) {
   const [open, setOpen] = useState(false);
   const text = message.kind === 'text' || message.kind === 'stream_delta' ? String((message.role === 'user' ? message.displayText || message.content : message.content) ?? '') : '';
   const hasAttachments = Boolean(message.images?.length || message.files?.length);
@@ -85,7 +87,7 @@ export function MessageBubble({ message, result, onLongPress, onPeekFile, onPeek
           <Wrench size={14} className="mt-0.5 text-muted shrink-0" />
           <span className="flex-1 min-w-0">
             <span className="text-[13px] font-medium">{message.toolName}</span>
-            <span className="block text-[12px] text-muted truncate">{summarizeInput(message.toolInput)}</span>
+            <span className="block text-[12px] text-muted truncate">{summarizeInput(message.toolInput, message.toolName, projectPath)}</span>
           </span>
           {open ? <ChevronDown size={16} className="text-muted" /> : <ChevronRight size={16} className="text-muted" />}
         </button>

@@ -443,7 +443,7 @@ export function ChatScreen() {
       ) : null}
       {loadError ? <div className="px-4 py-2 text-danger text-sm">{loadError}</div> : null}
       {!isConnected ? <div className="px-4 py-1 text-[12px] text-warn bg-warn/10">연결 중…</div> : null}
-      <MessageList messages={messages} loading={slot?.status === 'loading'} hasMore={Boolean(slot?.hasMore)} onLoadOlder={() => (sessionId ? sessionStore.fetchMore(sessionId) : Promise.resolve())} onMessageLongPress={(text, message) => setMessageTarget({ text, message })} onPeekFile={openFile} onPeekDiff={setDiffPeek} footer={sessionId ? <SessionResults sessionId={sessionId} refreshKey={lastRunFinished ?? 0} /> : null} />
+      <MessageList messages={messages} projectPath={peekProject?.projectPath ?? null} loading={slot?.status === 'loading'} hasMore={Boolean(slot?.hasMore)} onLoadOlder={() => (sessionId ? sessionStore.fetchMore(sessionId) : Promise.resolve())} onMessageLongPress={(text, message) => setMessageTarget({ text, message })} onPeekFile={openFile} onPeekDiff={setDiffPeek} footer={sessionId ? <SessionResults sessionId={sessionId} refreshKey={lastRunFinished ?? 0} /> : null} />
       <MessageActions target={messageTarget} onClose={() => setMessageTarget(null)}
         canEdit={canRewind(messageTarget) && Boolean(messageTarget?.text) && Boolean(providerCaps?.supportsMessageEditing) && !busy}
         canFork={canRewind(messageTarget) && Boolean(providerCaps?.supportsSessionForking)}
@@ -521,7 +521,7 @@ export function ChatScreen() {
       <CommandResultSheet result={commandResult} onClose={() => setCommandResult(null)} onSend={(content) => { void send(content); }} />
       <PermissionModeSheet open={modeSheet} onClose={() => setModeSheet(false)} modes={permission.modes} mode={permission.mode} onChoose={permission.choose} />
       <FilePeek open={filePeek.open} onClose={() => setFilePeek({ open: false, file: null, fromSearch: false })} project={peekProject} file={filePeek.file} fromSearch={filePeek.fromSearch} onFile={(file) => setFilePeek({ open: true, file, fromSearch: file !== null })} />
-      <DiffPeek edit={diffPeek} onClose={() => setDiffPeek(null)} onOpenFile={(path) => openFile({ path, line: null })} />
+      <DiffPeek edit={diffPeek} onClose={() => setDiffPeek(null)} onOpenFile={(path) => openFile({ path, line: null })} projectPath={peekProject?.projectPath ?? null} />
       <ProjectPicker open={pickingProject} onClose={() => setPickingProject(false)} onPick={(picked) => { setProject(picked); setPickingProject(false); }} />
     </div>
   );
