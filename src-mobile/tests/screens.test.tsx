@@ -11,6 +11,8 @@ const api = {
   ])),
   projectSessions: vi.fn(() => json({ sessions: [{ id: 's1', provider: 'claude', summary: '로그인 버그', lastActivity: '2026-10-01T00:00:00Z' }], sessionMeta: { hasMore: false } })),
   runningSessions: vi.fn(() => json({ data: { sessions: [{ sessionId: 's1', projectId: 'p1' }, { sessionId: 's9', projectId: null }] } })),
+  // the projects home: paths print as ~/… and the folder browser starts here
+  system: { workspacesRoot: vi.fn(() => json({ success: true, data: { root: '/w' } })) },
   browseFilesystem: vi.fn((path: string | null) => json({ path: path ?? '/w', suggestions: path === '/w/new' ? [] : [{ name: 'alpha', path: '/w/alpha' }, { name: 'new', path: '/w/new' }] })),
   createFolder: vi.fn(),
   createProject: vi.fn((_body: unknown) => json({ success: true, project: { projectId: 'p3', displayName: 'new', fullPath: '/w/new', isArchived: false } })),
@@ -32,6 +34,10 @@ const api = {
     create: vi.fn(), refreshPairing: vi.fn(), remove: vi.fn(),
   },
 };
+vi.mock('@/shared/api', async () => {
+  const actual = await vi.importActual<typeof import('@/shared/api')>('@/shared/api');
+  return { ...actual, api };
+});
 vi.mock('@/modules/chat-core', async () => {
   const shared = await vi.importActual<typeof import('@/shared/api')>('@/shared/api');
   return { api, readApiJson: shared.readApiJson, useAuth: () => ({ user: { username: 'jazzlife' } }) };
@@ -164,7 +170,9 @@ describe('mobile common menu (drawer)', () => {
     await settle();
     fireEvent.click(screen.getByLabelText('메뉴'));
     await settle();
-    expect(screen.getByTestId('drawer-current').textContent).toContain('/w/alpha');
+    // the project path under the projects home prints as ~/alpha
+    expect(screen.getByTestId('drawer-current').textContent).toContain('~/alpha');
+    expect(screen.getByTestId('drawer-current').textContent).not.toContain('/w/alpha');
     fireEvent.click(screen.getByText('원격 제어'));
     expect(screen.getByTestId('where').textContent).toBe('/screen');
   });
@@ -197,7 +205,7 @@ describe('adding a project', () => {
     expect(api.browseFilesystem).toHaveBeenCalledWith(null);
     fireEvent.click(screen.getByText('new'));
     await settle();
-    expect((screen.getByLabelText('경로') as HTMLInputElement).value).toBe('/w/new');
+    expect((screen.getByLabelText('경로') as HTMLInputElement).value).toBe('~/new');
     fireEvent.click(screen.getByRole('button', { name: '추가' }));
     await settle();
     expect(api.createProject).toHaveBeenCalledWith({ path: '/w/new' });
@@ -240,10 +248,10 @@ describe('adding a project', () => {
     fireEvent.click(screen.getByText('jazzlife/secret-app'));
     await settle();
     expect(screen.getByTestId('clone-source').textContent).toContain('jazzlife/secret-app');
-    expect(screen.getByTestId('clone-target').textContent).toBe('→ /w/secret-app');
+    expect(screen.getByTestId('clone-target').textContent).toBe('→ ~/secret-app');
     fireEvent.click(screen.getByText('new'));
     await settle();
-    expect(screen.getByTestId('clone-target').textContent).toBe('→ /w/new/secret-app');
+    expect(screen.getByTestId('clone-target').textContent).toBe('→ ~/new/secret-app');
     fireEvent.click(screen.getByRole('button', { name: '복제하고 추가' }));
     expect(api.cloneProjectProgressUrl).toHaveBeenCalledWith({ path: '/w/new', githubUrl: 'https://github.com/jazzlife/secret-app.git', githubTokenId: 7, newGithubToken: null });
     act(() => FakeSource.last!.onmessage!({ data: JSON.stringify({ type: 'complete', project: { projectId: 'p9', displayName: 'secret-app', fullPath: '/w/new/secret-app' } }) }));

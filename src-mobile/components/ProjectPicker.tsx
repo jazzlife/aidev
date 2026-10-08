@@ -1,4 +1,6 @@
 import { useEffect, useState } from 'react';
+import { useWorkspacesRoot } from '@/shared/hooks/useWorkspacesRoot';
+import { collapseWorkspacesRoot } from '@/shared/utils';
 
 import { api } from '@/modules/chat-core';
 import { BottomSheet } from '@m/components/BottomSheet';
@@ -14,6 +16,7 @@ export function readLastProject(): PickedProject | null {
 /** Used by ChatScreen: sheet listing the runtime's projects for a new conversation. */
 export function ProjectPicker({ open, onClose, onPick }: { open: boolean; onClose: () => void; onPick: (project: PickedProject) => void }) {
   const [projects, setProjects] = useState<PickedProject[] | null>(null);
+  const workspacesRoot = useWorkspacesRoot();
   useEffect(() => {
     if (!open) return;
     api.projects().then(async (response) => {
@@ -29,7 +32,7 @@ export function ProjectPicker({ open, onClose, onPick }: { open: boolean; onClos
             <li key={project.projectId}>
               <button type="button" className="w-full text-left py-3" onClick={() => { setCurrentProject(project); onPick(project); }}>
                 <div className="text-[15px]">{project.displayName}</div>
-                <div className="text-[12px] text-muted truncate">{project.fullPath}</div>
+                <div className="text-[12px] text-muted truncate">{collapseWorkspacesRoot(project.fullPath, workspacesRoot)}</div>
               </button>
             </li>
           ))}

@@ -15,6 +15,8 @@ import type { FileRef } from '@m/lib/peek';
 import { useGo, useParent } from '@m/lib/nav';
 import { useLongPress } from '@m/lib/useLongPress';
 import { useRunningSessions } from '@m/lib/runningSessions';
+import { useWorkspacesRoot } from '@/shared/hooks/useWorkspacesRoot';
+import { collapseWorkspacesRoot } from '@/shared/utils';
 
 type SessionItem = { id: string; provider?: string; summary?: string; lastActivity?: string };
 const PAGE = 30;
@@ -58,6 +60,7 @@ export function ProjectScreen() {
   const [filePeek, setFilePeek] = useState<{ open: boolean; file: FileRef | null; fromSearch: boolean }>({ open: false, file: null, fromSearch: false });
   // conversations the runtime is answering now (polled while this screen is open)
   const running = useRunningSessions();
+  const workspacesRoot = useWorkspacesRoot();
 
   // opened from a conversation or a link: the name and path come from the project list
   useEffect(() => {
@@ -101,7 +104,7 @@ export function ProjectScreen() {
     <div className="m-app">
       <TopBar
         title={project?.displayName ?? '프로젝트'}
-        subtitle={project?.fullPath}
+        subtitle={project ? collapseWorkspacesRoot(project.fullPath, workspacesRoot) : undefined}
         back
         right={project ? (
           <>

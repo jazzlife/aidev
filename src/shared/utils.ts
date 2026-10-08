@@ -67,6 +67,25 @@ export function collapseWorkspacesRoot(fullPath: string, root: string | null): s
   return fullPath;
 }
 
+/**
+ * The inverse of `collapseWorkspacesRoot` for a path the user typed: `~` and `~/x`
+ * become the workspace root and `<root>/x`. Anything else (an absolute path, a
+ * bare name) is returned unchanged. With no `root` the text is returned as is.
+ */
+export function expandWorkspacesRoot(input: string, root: string | null): string {
+  if (!root) {
+    return input;
+  }
+  const normalizedRoot = root.endsWith('/') ? root.slice(0, -1) : root;
+  if (input === '~') {
+    return normalizedRoot;
+  }
+  if (input.startsWith('~/')) {
+    return `${normalizedRoot}/${input.slice(2)}`;
+  }
+  return input;
+}
+
 // ---------------------------
 
 //----------------- CLIPBOARD ------------

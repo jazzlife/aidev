@@ -14,7 +14,7 @@ import type {
   FileTreeProjectGateway,
   FileTreeWorkspaceGateway,
 } from '@/shared/types.js';
-import { WORKSPACES_ROOT, validateWorkspacePath } from '@/shared/utils.js';
+import { PROJECTS_HOME, WORKSPACES_ROOT, validateWorkspacePath } from '@/shared/utils.js';
 
 const MAXIMUM_UPLOAD_SIZE_MEGABYTES = 200;
 const MAXIMUM_UPLOAD_SIZE_BYTES = MAXIMUM_UPLOAD_SIZE_MEGABYTES * 1024 * 1024;
@@ -72,6 +72,7 @@ const fileTreeProjects: FileTreeProjectGateway = {
  */
 const fileTreeWorkspace: FileTreeWorkspaceGateway = {
   rootPath: WORKSPACES_ROOT,
+  browseStartPath: PROJECTS_HOME,
   validatePath: (candidatePath) => validateWorkspacePath(candidatePath),
 };
 

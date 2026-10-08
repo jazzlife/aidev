@@ -7,6 +7,8 @@ import { GithubLogin } from '@m/components/GithubLogin';
 import type { CurrentProject } from '@m/lib/current';
 import { failureText as failure } from '@m/lib/http';
 import { relativeTime } from '@m/lib/format';
+import { useWorkspacesRoot } from '@/shared/hooks/useWorkspacesRoot';
+import { collapseWorkspacesRoot, expandWorkspacesRoot } from '@/shared/utils';
 
 type Suggestion = { name: string; path: string };
 type ServerProject = CurrentProject & { isArchived?: boolean };
@@ -23,6 +25,8 @@ export const repoFolderName = (url: string) => url.trim().replace(/\/+$/, '').re
 
 /** The runtime's folders: ↑ to the parent, tap to enter, a new folder in the one shown; the path can also be typed. */
 function FolderBrowser({ path, onPath }: { path: string; onPath: (path: string) => void }) {
+  // the projects home (~): where the list starts, how paths print, what a typed ~/x expands against
+  const root = useWorkspacesRoot();
   const [shown, setShown] = useState<string | null>(null);
   const [folders, setFolders] = useState<Suggestion[] | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -60,12 +64,12 @@ function FolderBrowser({ path, onPath }: { path: string; onPath: (path: string) 
   };
   return (
     <div className="space-y-2">
-      <input value={path} onChange={(e) => onPath(e.target.value)} onBlur={() => { if (path && path !== shown) void browse(path); }} placeholder="/경로/폴더" aria-label="경로"
+      <input value={collapseWorkspacesRoot(path, root)} onChange={(e) => onPath(expandWorkspacesRoot(e.target.value, root))} onBlur={() => { if (path && path !== shown) void browse(path); }} placeholder="~/폴더" aria-label="경로"
         className="w-full h-11 rounded-xl border border-line bg-bg px-3 text-[15px] font-mono outline-none focus:border-accent" />
       <div className="rounded-xl border border-line">
         <div className="flex items-center border-b border-line">
           <button type="button" aria-label="상위 폴더" disabled={!shown || parentOf(shown) === shown} onClick={() => { if (shown) void browse(parentOf(shown)); }} className="m-touch flex items-center justify-center text-muted disabled:opacity-30"><ArrowUp size={18} /></button>
-          <span className="min-w-0 flex-1 truncate text-[12px] text-muted">{shown ?? ''}</span>
+          <span className="min-w-0 flex-1 truncate text-[12px] text-muted">{shown ? collapseWorkspacesRoot(shown, root) : ''}</span>
           <button type="button" aria-label="새 폴더" onClick={() => setNewName('')} className="m-touch flex items-center justify-center text-muted"><FolderPlus size={18} /></button>
         </div>
         {newName !== null ? (
@@ -217,6 +221,7 @@ export function AddProjectSheet({ open, onClose, onAdded, initialTab = 'folder',
   useEffect(() => { if (open) setTab(initialTab); }, [open, initialTab]);
   const [path, setPath] = useState('');
   const [name, setName] = useState('');
+  const workspacesRoot = useWorkspacesRoot();
   // the repository picked to clone (the clone tab's second step: where it goes)
   const [source, setSource] = useState<CloneSource | null>(null);
   const [busy, setBusy] = useState(false);
@@ -296,7 +301,7 @@ export function AddProjectSheet({ open, onClose, onAdded, initialTab = 'folder',
         {tab === 'folder' ? (
           <input value={name} onChange={(e) => setName(e.target.value)} placeholder="표시 이름 (선택)" aria-label="표시 이름"
             className="w-full h-11 rounded-xl border border-line bg-bg px-3 text-[15px] outline-none focus:border-accent" />
-        ) : source && folderName && path ? <div className="truncate text-[12px] text-muted font-mono" data-testid="clone-target">→ {join(path, folderName)}</div> : null}
+        ) : source && folderName && path ? <div className="truncate text-[12px] text-muted font-mono" data-testid="clone-target">→ {collapseWorkspacesRoot(join(path, folderName), workspacesRoot)}</div> : null}
         {progress ? <div className="truncate text-[13px] text-muted m-pulse" role="status">{progress}</div> : null}
         {error ? <div className="text-[13px] text-danger" role="alert">{error}</div> : null}
         {tab === 'clone' && !source ? null : <button type="button" disabled={busy || !path.trim() || (tab === 'clone' && !folderName)} onClick={() => { if (tab === 'folder') void addFolder(); else clone(); }}

@@ -20,6 +20,10 @@ async function loadWorkspacesRoot(): Promise<string | null> {
 
   inFlightRequest = (async () => {
     try {
+      // the hook renders inside many components; a partial api (a test double) means "unknown", not an error
+      if (typeof api.system?.workspacesRoot !== 'function') {
+        return null;
+      }
       const response = await api.system.workspacesRoot();
       const body = (await response.json()) as { success?: boolean; data?: { root?: string } };
       const root = body.success && typeof body.data?.root === 'string' ? body.data.root : null;

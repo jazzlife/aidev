@@ -1145,6 +1145,8 @@ export type FileTreeProjectGateway = {
  */
 export type FileTreeWorkspaceGateway = {
   rootPath: string;
+  /** Where browsing starts and what a typed `~` means (PROJECTS_HOME); defaults to `rootPath`. */
+  browseStartPath?: string;
   validatePath(candidatePath: string): Promise<WorkspacePathValidationResult>;
 };
 

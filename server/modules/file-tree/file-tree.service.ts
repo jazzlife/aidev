@@ -324,9 +324,9 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
 
   return {
     async browseWorkspace(inputPath) {
-      const requestedPath = inputPath
-        ? expandWorkspacePath(dependencies.workspace.rootPath, inputPath)
-        : dependencies.workspace.rootPath;
+      // no path: the projects home, where new projects go (not the validation root, which may be the whole home)
+      const browseStart = dependencies.workspace.browseStartPath ?? dependencies.workspace.rootPath;
+      const requestedPath = inputPath ? expandWorkspacePath(browseStart, inputPath) : browseStart;
       const targetPath = path.resolve(requestedPath);
       const validation = await dependencies.workspace.validatePath(targetPath);
       if (!validation.valid) {
@@ -375,7 +375,7 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
     },
 
     async createWorkspaceFolder(folderPath) {
-      const expandedPath = expandWorkspacePath(dependencies.workspace.rootPath, folderPath);
+      const expandedPath = expandWorkspacePath(dependencies.workspace.browseStartPath ?? dependencies.workspace.rootPath, folderPath);
       const resolvedInput = path.resolve(expandedPath);
       const validation = await dependencies.workspace.validatePath(resolvedInput);
       if (!validation.valid) {

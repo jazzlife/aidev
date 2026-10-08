@@ -123,6 +123,23 @@ export class AppError extends Error {
 export const WORKSPACES_ROOT = process.env.WORKSPACES_ROOT || os.homedir();
 
 /**
+ * Where projects live by convention and what the apps print as `~`: `PROJECTS_HOME`
+ * when configured, else `<WORKSPACES_ROOT>/workspaces` when that folder exists (the
+ * platform runtime keeps projects there), else `WORKSPACES_ROOT` itself. The folder
+ * browser starts here and a typed `~/x` expands against it; path *validation* still
+ * uses `WORKSPACES_ROOT`, so projects outside this folder keep working.
+ */
+export const PROJECTS_HOME = (() => {
+  if (process.env.PROJECTS_HOME) return process.env.PROJECTS_HOME;
+  const conventional = path.join(WORKSPACES_ROOT, 'workspaces');
+  try {
+    return fs.statSync(conventional).isDirectory() ? conventional : WORKSPACES_ROOT;
+  } catch {
+    return WORKSPACES_ROOT;
+  }
+})();
+
+/**
  * System-critical paths that must never be used as workspace roots.
  *
  * The validation helper blocks these values directly and also blocks paths

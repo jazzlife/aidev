@@ -3,7 +3,7 @@ import os from 'node:os';
 import spawn from 'cross-spawn';
 import type { Router } from 'express';
 
-import { WORKSPACES_ROOT } from '@/shared/utils.js';
+import { PROJECTS_HOME } from '@/shared/utils.js';
 
 import { createSystemRouter } from './system.routes.js';
 import { createSystemUpdateService } from './system.service.js';
@@ -60,5 +60,5 @@ export function createSystemModule(options: SystemModuleOptions): Router {
     logError: (message, detail) => console.error(message, detail ?? ''),
   });
 
-  return createSystemRouter(systemUpdateService, WORKSPACES_ROOT);
+  return createSystemRouter(systemUpdateService, PROJECTS_HOME);
 }

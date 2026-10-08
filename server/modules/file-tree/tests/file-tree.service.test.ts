@@ -389,3 +389,29 @@ test('createEntry performs filesystem mutation only through the injected adapter
   assert.equal(result.path, targetPath);
   assert.deepEqual(writtenFiles, [{ filePath: targetPath, content: '' }]);
 });
+
+test('browseWorkspace starts at the projects home and expands ~ against it, not the validation root', async () => {
+  const home = path.resolve('file-tree-test-home');
+  const projectsHome = path.join(home, 'workspaces');
+  const readDirectories: string[] = [];
+  const fileSystem = createFakeFileSystem({
+    access: async () => undefined,
+    stat: async () => createStats(true, 0o755),
+    realpath: async (target) => target,
+    openDirectory: createDirectoryReader((directoryPath) => {
+      readDirectories.push(directoryPath);
+      return [createDirectoryEntry('alpha', true), createDirectoryEntry('notes.md', false)];
+    }),
+  });
+  const dependencies = createDependencies(fileSystem, home);
+  dependencies.workspace.browseStartPath = projectsHome;
+  const service = createFileTreeService(dependencies);
+
+  const start = await service.browseWorkspace(null);
+  assert.equal(start.path, projectsHome);
+  assert.deepEqual(start.suggestions.map((entry) => entry.name), ['alpha']);
+
+  const typed = await service.browseWorkspace('~/alpha');
+  assert.equal(typed.path, path.join(projectsHome, 'alpha'));
+  assert.equal(readDirectories.includes(path.join(projectsHome, 'alpha')), true);
+});

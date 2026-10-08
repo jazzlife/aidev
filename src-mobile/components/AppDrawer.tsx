@@ -7,6 +7,8 @@ import { aidevApi } from '@/modules/aidev-router';
 import { useBackOverlay, useGo } from '@m/lib/nav';
 import { useCurrentConversation, useCurrentProject } from '@m/lib/current';
 import { useRunningSessions } from '@m/lib/runningSessions';
+import { useWorkspacesRoot } from '@/shared/hooks/useWorkspacesRoot';
+import { collapseWorkspacesRoot } from '@/shared/utils';
 
 /**
  * The app's common menu, reachable from every screen (☰ in the top bar, or a swipe from the left edge). No lists here
@@ -34,6 +36,8 @@ function Drawer({ onClose }: { onClose: () => void }) {
   const conversation = useCurrentConversation();
   const [targets, setTargets] = useState<Target[] | null>(null);
   const running = useRunningSessions();
+  // project paths print as ~/… under the projects home
+  const workspacesRoot = useWorkspacesRoot();
   useBackOverlay(true, onClose);
   useEffect(() => {
     aidevApi.targets().then((r) => setTargets(r.targets as unknown as Target[])).catch(() => setTargets([]));
@@ -61,7 +65,7 @@ function Drawer({ onClose }: { onClose: () => void }) {
               <button type="button" className={card} onClick={() => open(projectPath)} aria-current={pathname === projectPath ? 'page' : undefined}>
                 <div className="flex items-center gap-1.5 text-[11px] text-muted"><FolderGit2 size={13} /> 프로젝트</div>
                 <div className="mt-0.5 truncate text-[15px] font-medium">{project.displayName}</div>
-                <div className="truncate text-[12px] text-muted">{project.fullPath}</div>
+                <div className="truncate text-[12px] text-muted">{collapseWorkspacesRoot(project.fullPath, workspacesRoot)}</div>
               </button>
             ) : (
               <div className="rounded-xl border border-dashed border-line px-3 py-2.5 text-[13px] text-muted">선택된 프로젝트가 없습니다 · 홈의 프로젝트 탭에서 고르거나 추가하세요</div>
