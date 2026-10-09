@@ -55,6 +55,8 @@ export function ChatScreen() {
   const { ws, sendMessage, subscribe, isConnected } = useWebSocket();
   const sessionStore = useSessionStore();
   const { beforeSend, reportOutcome } = useAidevRouting();
+  // engine priority switch-back, assigned from useEscalation below (send is defined before it)
+  const switchBackRef = useRef<((args: { sessionId: string; engine: Engine; fromEngine: Engine; text: string; reason: string }) => Promise<boolean>) | null>(null);
   // the verifier's verdict for the last routed run (card above the composer)
   const routingState = useRoutingState();
   const [draft, setDraft] = useState('');
@@ -298,8 +300,15 @@ export function ChatScreen() {
         for (const url of previews) if (url) pendingPreviewsRef.current.add(url);
       }
       const decoration = await beforeSend(routed, { sessionId: meta?.id ?? null, provider, isNewSession: !meta, projectHint: (meta?.projectName || project?.displayName) ?? null, userPinnedModel: false });
+      // read before the clarify guard: its type predicate narrows `decoration` to null afterwards
+      const switchBack = decoration?.switchBack ?? null;
       // §3.1: essential detail missing from a deeper command → ask once (not for agent creation or the app's re-sends)
       if (shouldAskClarify(decoration)) { setClarify({ text, decoration, attachments, previews }); return; }
+      // engine priority: the chat continues on the higher engine that is usable again (unless pinned)
+      if (switchBack && meta && (meta.provider === 'claude' || meta.provider === 'codex') && !attachments.length) {
+        const moved = await switchBackRef.current?.({ sessionId: meta.id, engine: switchBack.engine, fromEngine: meta.provider, text: routed, reason: switchBack.reason });
+        if (moved) return;
+      }
       if (!(await dispatch(text, decoration, attachments, previews))) {
         for (const url of previews) if (url) { URL.revokeObjectURL(url); pendingPreviewsRef.current.delete(url); }
         setRestore({ text, files, n: Date.now() });
@@ -333,7 +342,7 @@ export function ChatScreen() {
     getProjectPath: () => meta?.projectPath || project?.fullPath || null,
   });
   const takeHandoffRef = useRef(escalation.takeHandoff);
-  useEffect(() => { takeHandoffRef.current = escalation.takeHandoff; });
+  useEffect(() => { takeHandoffRef.current = escalation.takeHandoff; switchBackRef.current = escalation.switchBack ?? null; });
   // a chat handed off on a usage limit offers the way back once the engine it left is usable again
   const returnFromHandoff = useReturnFromHandoff(sessionId, (id) => navigate(`/session/${encodeURIComponent(id)}`));
   useEffect(() => {

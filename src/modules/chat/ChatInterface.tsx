@@ -82,6 +82,8 @@ function ChatInterface({
     resend: (text) => { handleVoiceTranscriptRef.current?.(text, true); },
   });
   const handleVoiceTranscriptRef = useRef<((text: string, send?: boolean) => void) | null>(null);
+  // Assigned from useEscalation below; the composer hook that calls it is created before it exists.
+  const switchBackRef = useRef<((args: { sessionId: string; engine: 'claude' | 'codex'; fromEngine: 'claude' | 'codex'; text: string; reason: string }) => Promise<boolean>) | null>(null);
   // Assigned from useEscalation below; the complete subscriber is installed before it exists.
   const handoffOnUsageLimitRef = useRef<((args: { sessionId: string; blockedEngine: 'claude' | 'codex'; reason: string }) => Promise<unknown>) | null>(null);
   const agentCreationRef = useRef(agentCreation);
@@ -294,6 +296,8 @@ function ChatInterface({
     setIsUserScrolledUp,
     setPendingPermissionRequests,
     resolvePermissionModeForProvider,
+    // engine priority: assigned from useEscalation below (the composer hook is created before it)
+    onEngineSwitchBack: (args) => switchBackRef.current?.(args) ?? Promise.resolve(false),
   });
   useEffect(() => { chatMessagesRef.current = chatMessages; handleVoiceTranscriptRef.current = handleVoiceTranscript; });
   // D-04: the catalog's "만들기" on a proposed domain sends the creation turn through this chat (needs a project)
@@ -321,7 +325,7 @@ function ChatInterface({
   });
   const takeHandoffRef = useRef(escalation.takeHandoff);
   useEffect(() => { takeHandoffRef.current = escalation.takeHandoff; });
-  useEffect(() => { handoffOnUsageLimitRef.current = escalation.handoffOnUsageLimit; });
+  useEffect(() => { handoffOnUsageLimitRef.current = escalation.handoffOnUsageLimit; switchBackRef.current = escalation.switchBack; });
   // a chat handed off on a usage limit offers the way back once the engine it left is usable again
   const returnFromHandoff = useReturnFromHandoff(selectedSession?.id ?? null, (sessionId, engine, title) => {
     if (!selectedProject) return;

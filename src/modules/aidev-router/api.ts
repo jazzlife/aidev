@@ -61,7 +61,7 @@ export type RouteResult = {
   agent: { id: number; name: string; version: number; domain: string; description: string; probability: number; confidence: number; definition: AgentDefinition };
   alternatives: Array<{ name: string; probability: number; description: string }>;
   needs_new: number;
-  plan: { engine: Engine | null; engine_locked: boolean; engine_error?: string | null; model: string | null; effort: string | null; target: RouteTarget; device?: RouteDevice; reason: string[] };
+  plan: { engine: Engine | null; engine_locked: boolean; /** the chat is pinned to its engine by hand (2026-10-09) */ engine_pinned?: boolean; /** a higher-priority engine is usable again: the app should continue this chat there */ switch_back?: { engine: Engine; reason: string } | null; engine_error?: string | null; model: string | null; effort: string | null; target: RouteTarget; device?: RouteDevice; reason: string[] };
   /** Laya's target.select / device.select, logged as their own decisions (an override is recorded on them). */
   target_decision?: { decision_id: number; answer: unknown; confidence: number; fallback: boolean } | null;
   device_decision?: { decision_id: number; answer: unknown; confidence: number; fallback: boolean } | null;
@@ -98,6 +98,8 @@ export type EnginesResult = {
   model_ladder?: Record<Engine, string[]>;
   /** whether finished D2+ runs get an independent verification turn */
   verification?: boolean;
+  /** the order engines are used in ([] = the learned weights decide) */
+  engine_priority?: Engine[];
   weights: Record<string, Record<Engine, number>>;
 };
 
@@ -291,7 +293,9 @@ export type RemoteRun = {
 /** GET/PUT /session-settings/:id — the chat's ceiling, the account default and what routing will use. */
 export type SessionEffortCap = { effort_cap: Partial<Record<Engine, string>> | null; default: Record<Engine, string>; effective: Record<Engine, string>;
   /** the chat's model floor, the account default and what routing will use (GET only) */
-  model_floor?: Partial<Record<Engine, string>> | null; model_floor_default?: Partial<Record<Engine, string>>; model_floor_effective?: Partial<Record<Engine, string>> };
+  model_floor?: Partial<Record<Engine, string>> | null; model_floor_default?: Partial<Record<Engine, string>>; model_floor_effective?: Partial<Record<Engine, string>>;
+  /** the engine this chat is pinned to by hand, or null */
+  pinned_engine?: Engine | null };
 /** PUT/DELETE /session-settings/:id/model-floor */
 export type SessionModelFloor = { model_floor: Partial<Record<Engine, string>> | null; default: Partial<Record<Engine, string>>; effective: Partial<Record<Engine, string>> };
 
@@ -391,6 +395,10 @@ export const aidevApi = {
   setEffortCap: (cap: Partial<Record<Engine, string>>) => post('/api/aidev/settings/effort-cap', cap, 'PUT').then((response) => readJson<{ effort_cap: Record<Engine, string> }>(response)),
   /** The account's model floor per engine ('' clears an engine's floor). */
   setModelFloor: (floor: Partial<Record<Engine, string>>) => post('/api/aidev/settings/model-floor', floor, 'PUT').then((response) => readJson<{ model_floor: Partial<Record<Engine, string>> }>(response)),
+  /** The order engines are used in; null → the learned weights decide. */
+  setEnginePriority: (order: Engine[] | null) => post('/api/aidev/settings/engine-priority', { order }, 'PUT').then((response) => readJson<{ engine_priority: Engine[] }>(response)),
+  /** Pins a chat to an engine by hand (routing never moves it); null unpins. */
+  setSessionEngine: (sessionId: string, engine: Engine | null) => post(`/api/aidev/session-settings/${encodeURIComponent(sessionId)}/engine`, { engine }, 'PUT').then((response) => readJson<{ pinned_engine: Engine | null }>(response)),
   /** A chat's own model floor (engines it leaves out follow the account default); null clears it. */
   setSessionModelFloor: (sessionId: string, floor: Partial<Record<Engine, string>> | null) => (floor && Object.keys(floor).length
     ? post(`/api/aidev/session-settings/${encodeURIComponent(sessionId)}/model-floor`, floor, 'PUT')

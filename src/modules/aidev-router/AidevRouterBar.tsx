@@ -52,7 +52,9 @@ export function AidevRouterBar({ sessionId = null }: { sessionId?: string | null
   const last = state.last;
   const chip = 'inline-flex items-center gap-1 h-6 px-2 rounded-md border border-border bg-background text-[11px] text-muted-foreground whitespace-nowrap';
   const overrideAgent = (name: string) => { routingStore.setOverrides({ agent: name }); if (last) void aidevApi.overrideDecision(last.decision_id, { final_agent: name }); setOpen(null); };
-  const overrideEngine = (engine: Engine) => { routingStore.setOverrides({ engine }); if (last) void aidevApi.overrideDecision(last.decision_id, { final_engine: engine }); setOpen(null); };
+  // picking an engine pins this chat to it (routing never moves a pinned chat); "자동" lets priority / routing decide again
+  const overrideEngine = (engine: Engine) => { routingStore.setOverrides({ engine }); if (last) void aidevApi.overrideDecision(last.decision_id, { final_engine: engine }); if (sessionId) void aidevApi.setSessionEngine(sessionId, engine).catch(() => undefined); setOpen(null); };
+  const autoEngine = () => { routingStore.clearOverride('engine'); if (sessionId) void aidevApi.setSessionEngine(sessionId, null).catch(() => undefined); setOpen(null); };
 
   // Expired (before any route has said so) or due for renewal within 30 days: offer the login here.
   const authNotice = !last?.plan.engine_error && claudeAuthState.expired
@@ -94,13 +96,16 @@ export function AidevRouterBar({ sessionId = null }: { sessionId?: string | null
             ) : null}
           </span>
           <span className="relative">
-            <button type="button" className={`${chip} text-foreground`} disabled={last.plan.engine_locked} onClick={(event) => { event.stopPropagation(); setOpen(open === 'engine' ? null : 'engine', event); }} title={last.plan.reason.join('\n')}>
-              <span className="capitalize">{state.overrides.engine ?? last.plan.engine ?? '엔진 없음'}</span>
+            <button type="button" className={`${chip} text-foreground`} onClick={(event) => { event.stopPropagation(); setOpen(open === 'engine' ? null : 'engine', event); }} title={last.plan.reason.join('\n')}>
+              <span className="capitalize">{state.overrides.engine ?? last.plan.engine ?? '엔진 없음'}</span>{state.overrides.engine || last.plan.engine_pinned ? <span className="text-muted-foreground">· 고정</span> : null}
               {last.plan.model ? <span className="text-muted-foreground">· {last.plan.model}/{last.plan.effort}</span> : null}
-              {!last.plan.engine_locked ? <ChevronDown size={11} /> : null}
+              <ChevronDown size={11} />
             </button>
             {open === 'engine' ? (
               <div className="z-50 rounded-md border border-border bg-popover p-1 shadow-md" style={menuStyle('left', 256)} onClick={(event) => event.stopPropagation()}>
+                <button type="button" onClick={autoEngine} className={`w-full rounded px-2 py-1.5 text-left hover:bg-accent ${!state.overrides.engine && !last.plan.engine_pinned ? 'font-medium' : ''}`}>
+                  <div>자동</div><div className="text-muted-foreground">{engines?.engine_priority?.length ? `우선순위 ${engines.engine_priority.join(' > ')} · 한도가 풀리면 되돌아갑니다` : '판정과 학습된 가중치로 고릅니다'}</div>
+                </button>
                 {(['claude', 'codex'] as Engine[]).map((engine) => {
                   const info = engines?.engines[engine] ?? last.engines[engine];
                   const usable = info.allowed && info.authenticated;

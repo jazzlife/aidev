@@ -60,12 +60,14 @@ export async function appSettingsGet() {
     })),
     effort_cap: engines.effort_cap ?? null, effort_ladder: engines.effort_ladder ?? null,
     model_floor: engines.model_floor ?? null, model_ladder: engines.model_ladder ?? null,
+    engine_priority: engines.engine_priority ?? null,
     engines: engines.engines ?? null, default_engine: engines.default_engine ?? null,
     keys: {
       'pc.policy': 'full | auto | ask | deny (target required)', 'pc.default': 'true | false (target required)',
       'pc.screen': 'true | false — screen capture on that PC (target required)', 'pc.control': 'true | false — remote mouse/keyboard (target required; implies screen)',
       'effort_cap.claude': 'an effort from effort_ladder.claude, or "" for none', 'effort_cap.codex': 'an effort from effort_ladder.codex, or "" for none',
       'model_floor.claude': 'a model from model_ladder.claude — routing never picks a weaker one; "" for none', 'model_floor.codex': 'a model from model_ladder.codex, or "" for none',
+      engine_priority: '"claude,codex" | "codex,claude" | "" (learned weights) — the order engines are used in; a limited engine is skipped and the chat moves back when it is usable again',
       routing_mode: 'auto | manual | off — applied by the user\'s open pages',
     },
   };
@@ -110,6 +112,11 @@ export async function appSettingsSet(input: { key: string; value: unknown; targe
     const engine = key.slice('model_floor.'.length);
     const r = await callGateway('PUT', '/settings/model-floor', { [engine]: String(input.value ?? '') }) as { model_floor?: unknown };
     return { key, value: input.value, model_floor: r.model_floor ?? null };
+  }
+  if (key === 'engine_priority') {
+    const order = String(input.value ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+    const r = await callGateway('PUT', '/settings/engine-priority', { order: order.length ? order : null }) as { engine_priority?: unknown };
+    return { key, value: r.engine_priority ?? null };
   }
   if (key === 'routing_mode') {
     const mode = String(input.value);

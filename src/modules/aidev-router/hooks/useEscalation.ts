@@ -25,6 +25,8 @@ type HandoffArgs = {
   plan: Record<string, unknown>;
   oneShotAgent: string | null;
   title: string;
+  /** a request typed now, sent in the new session after the brief (engine switch-back) */
+  appendText?: string;
 };
 
 const ENGINE_LABEL: Record<Engine, string> = { claude: 'Claude', codex: 'Codex' };
@@ -52,7 +54,7 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
   const dismiss = useCallback(() => { routingStore.patch({ escalation: null }); setError(null); }, []);
 
   /** Builds the brief, opens a session on `engine` in the same project, and queues the brief for it. */
-  const handoff = useCallback(async ({ engine, fromEngine, sessionId, text, reason, plan, oneShotAgent, title }: HandoffArgs) => {
+  const handoff = useCallback(async ({ engine, fromEngine, sessionId, text, reason, plan, oneShotAgent, title, appendText }: HandoffArgs) => {
     const projectPath = getProjectPath();
     if (!projectPath) { setError('인계할 프로젝트 경로를 찾지 못했습니다'); return; }
     setBusy(true);
@@ -65,7 +67,7 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
       handedOffSessions.current.add(sessionId);
       // the new chat remembers where it came from, so it can offer the way back once that engine is usable again
       rememberHandoff(newId, { fromSessionId: sessionId, fromEngine, toEngine: engine, reason, at: Date.now() });
-      routingStore.patch({ pendingHandoff: { sessionId: newId, text: brief.text }, oneShotPlan: plan, oneShotAgent, escalation: null });
+      routingStore.patch({ pendingHandoff: { sessionId: newId, text: appendText ? `${brief.text}\n\n## 이어서 할 요청\n${appendText}` : brief.text }, oneShotPlan: plan, oneShotAgent, escalation: null });
       openSession(newId, engine, title);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : '인계 실패');
@@ -153,6 +155,29 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
     return { status: 'handed-off', otherEngine };
   }, [busy, handoff]);
 
+  /**
+   * Engine priority (2026-10-09): routing said a higher-priority engine is usable again for a chat that is not
+   * pinned — the request typed now continues in a new session on that engine, with a brief of this chat, instead
+   * of being sent here. Returns false when the move could not be made (the host then sends here).
+   */
+  const switchBack = useCallback(async (args: { sessionId: string; engine: Engine; fromEngine: Engine; text: string; reason: string }): Promise<boolean> => {
+    if (busy) return false;
+    const agentName = routingStore.get().last?.agent.name ?? null;
+    setError(null);
+    await handoff({
+      engine: args.engine,
+      fromEngine: args.fromEngine,
+      sessionId: args.sessionId,
+      text: '',
+      appendText: args.text,
+      reason: args.reason,
+      plan: { engine: args.engine },
+      oneShotAgent: agentName && agentName !== 'agent-architect' ? agentName : null,
+      title: `[${ENGINE_LABEL[args.engine]} 복귀] ${args.text.slice(0, 60)}`,
+    });
+    return routingStore.get().pendingHandoff !== null;
+  }, [busy, handoff]);
+
   /** Host calls this once the handoff session is open; returns the brief to send there (once). */
   const takeHandoff = useCallback((sessionId: string | null | undefined): string | null => {
     const pending = routingStore.get().pendingHandoff;
@@ -167,5 +192,5 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
       : next.action === 'escalate_tier' ? `더 강한 모델로 다시 시도 (${next.model}${next.effort ? ` · ${next.effort}` : ''})`
         : next.action === 'switch_engine' && next.engine ? `${ENGINE_LABEL[next.engine]}로 인계 (${next.model})`
           : null;
-  return { escalation, agentName: last?.agent.name ?? null, label, busy, error, run, dismiss, takeHandoff, handoffOnUsageLimit };
+  return { escalation, agentName: last?.agent.name ?? null, label, busy, error, run, dismiss, takeHandoff, handoffOnUsageLimit, switchBack };
 }

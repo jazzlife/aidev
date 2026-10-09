@@ -70,7 +70,7 @@ export function RouterChip({ sessionId = null }: { sessionId?: string | null }) 
                   const info = last.engines[engine];
                   const usable = info.allowed && info.authenticated;
                   return (
-                    <button key={engine} type="button" disabled={!usable || last.plan.engine_locked} onClick={() => { routingStore.setOverrides({ engine }); void aidevApi.overrideDecision(last.decision_id, { final_engine: engine }); }}
+                    <button key={engine} type="button" disabled={!usable} onClick={() => { routingStore.setOverrides({ engine }); void aidevApi.overrideDecision(last.decision_id, { final_engine: engine }); if (sessionId) void aidevApi.setSessionEngine(sessionId, engine).catch(() => undefined); }}
                       className={`flex-1 rounded-xl border px-3 py-2 text-left disabled:opacity-40 ${(state.overrides.engine ?? last.plan.engine) === engine ? 'border-accent' : 'border-line'}`}>
                       <div className="text-[13px] capitalize">{engine}</div>
                       <div className="text-[11px] text-muted">{!info.allowed ? '계정에 없음' : !info.authenticated ? (info.error || '로그인 필요') : info.score !== null ? `점수 ${info.score.toFixed(2)}` : ''}</div>
@@ -78,7 +78,12 @@ export function RouterChip({ sessionId = null }: { sessionId?: string | null }) 
                   );
                 })}
               </div>
-              <div className="text-[12px] text-muted mt-2">{last.plan.model ? `${last.plan.model} / ${last.plan.effort ?? "-"}` : "모델 미정 (사용 가능한 엔진 없음)"}{last.plan.engine_locked ? ' · 이 세션은 엔진 고정' : ''}</div>
+              {state.overrides.engine || last.plan.engine_pinned ? (
+                <button type="button" className="mt-2 w-full rounded-xl border border-line px-3 py-2 text-left text-[13px]" onClick={() => { routingStore.clearOverride('engine'); if (sessionId) void aidevApi.setSessionEngine(sessionId, null).catch(() => undefined); }}>
+                  자동으로 되돌리기 <span className="text-[11px] text-muted">· 이 채팅은 엔진이 고정되어 있습니다</span>
+                </button>
+              ) : null}
+              <div className="text-[12px] text-muted mt-2">{last.plan.model ? `${last.plan.model} / ${last.plan.effort ?? "-"}` : "모델 미정 (사용 가능한 엔진 없음)"}{last.plan.engine_locked ? ' · 세션은 엔진에 묶여 있고, 우선순위가 더 높은 엔진이 쓸 수 있게 되면 다음 메시지부터 그쪽으로 이어갑니다' : ''}</div>
               <ul className="text-[11px] text-muted mt-1 list-disc pl-4">{last.plan.reason.map((reason) => <li key={reason}>{reason}</li>)}</ul>
             </div>
             {tv ? (

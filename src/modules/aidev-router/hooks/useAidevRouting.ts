@@ -16,6 +16,11 @@ export type AidevSendDecoration = {
   runId: number | null;
   /** the send carried a one-shot agent or plan: the app re-sending (agent creation, self-check, escalation, handoff) */
   appResend: boolean;
+  /**
+   * Engine priority (2026-10-09): a higher-priority engine is usable again and this chat is not pinned — the host
+   * continues the conversation there (a handoff with this text appended) instead of sending here.
+   */
+  switchBack: { engine: Engine; reason: string } | null;
 };
 
 export type BeforeSendContext = {
@@ -181,6 +186,8 @@ export function useAidevRouting() {
         const proposal = route.create.proposal;
         payload.knowledgeDigest = `## 현재 카탈로그 (name: routing hint)\n${route.create.catalog}${proposal ? `\n\n## 라우터가 판단한 필요한 전문 분야\n- 이름 제안: ${proposal.name}\n- 분야: ${proposal.domain}\n- 설명: ${proposal.description}\n- 핵심 기술: ${proposal.technologies.join(', ')}\n이 분야를 정확히 전문으로 하는 agent를 설계할 것(기존 agent와 겹치지 않게).` : ''}`;
       }
+      // a manual engine choice for this send (chip/bar, escalation, handoff) keeps the chat where it is
+      const manualEngine = Boolean(oneShot?.engine || overrides.engine);
       return {
         aidev: payload,
         model: applyPlan ? route.plan.model : null,
@@ -188,6 +195,7 @@ export function useAidevRouting() {
         route,
         runId,
         appResend: Boolean(current.oneShotAgent || oneShot || createProposal),
+        switchBack: route.plan.switch_back && !manualEngine && !context.isNewSession ? route.plan.switch_back : null,
       };
     } catch (error) {
       routingStore.patch({ busy: false, error: error instanceof Error ? error.message : 'routing failed' });

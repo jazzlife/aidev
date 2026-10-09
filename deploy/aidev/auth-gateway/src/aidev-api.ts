@@ -326,6 +326,14 @@ export function createAidevApi(deps: AidevDeps) {
         if (id !== null && !Number.isInteger(id)) throw new HttpError(400, 'target_id must be an integer or null');
         try { return json(res, 200, { target_id: store.setSessionTarget(uid, sessTargetMatch[1], id) }), true; } catch (error) { throw new HttpError(404, error instanceof Error ? error.message : 'target not found'); }
       }
+      // the engine a chat is pinned to by hand (routing never moves it away); DELETE or {engine:null} unpins
+      const sessEngineMatch = rest.match(/^\/session-settings\/([A-Za-z0-9._:-]{1,200})\/engine$/);
+      if (sessEngineMatch && (m === 'PUT' || m === 'DELETE')) {
+        const b = m === 'PUT' ? await readJson(req) : {};
+        const engine = m === 'DELETE' || b.engine === null || b.engine === undefined ? null : String(b.engine);
+        if (engine !== null && !ENGINES.includes(engine as Engine)) throw new HttpError(400, `engine must be one of ${ENGINES.join('|')}`);
+        return json(res, 200, { pinned_engine: store.setSessionPinnedEngine(uid, sessEngineMatch[1], engine as Engine | null) }), true;
+      }
       // a chat's own model floor (the account default lives in /settings/model-floor); DELETE or an empty body clears it
       const sessFloorMatch = rest.match(/^\/session-settings\/([A-Za-z0-9._:-]{1,200})\/model-floor$/);
       if (sessFloorMatch && (m === 'PUT' || m === 'DELETE')) {
@@ -341,7 +349,7 @@ export function createAidevApi(deps: AidevDeps) {
       const sessMatch = rest.match(/^\/session-settings\/([A-Za-z0-9._:-]{1,200})$/);
       if (sessMatch) {
         const sid = sessMatch[1];
-        if (m === 'GET') { const info = store.effectiveEffortCap(uid, sid); const floor = store.effectiveModelFloor(uid, sid); return json(res, 200, { effort_cap: info.chat, default: info.account, effective: info.cap, model_floor: floor.chat, model_floor_default: floor.account, model_floor_effective: floor.floor, target_id: store.sessionTarget(uid, sid) }), true; }
+        if (m === 'GET') { const info = store.effectiveEffortCap(uid, sid); const floor = store.effectiveModelFloor(uid, sid); return json(res, 200, { effort_cap: info.chat, default: info.account, effective: info.cap, model_floor: floor.chat, model_floor_default: floor.account, model_floor_effective: floor.floor, pinned_engine: store.sessionPinnedEngine(uid, sid), target_id: store.sessionTarget(uid, sid) }), true; }
         if (m === 'PUT' || m === 'DELETE') {
           const b = m === 'PUT' ? await readJson(req) : {};
           try {
@@ -487,7 +495,15 @@ export function createAidevApi(deps: AidevDeps) {
       if (rest === '/engines' && m === 'GET') {
         const acct = store.accountEngines(uid);
         // ?refresh=1 right after an in-app login, so the next route sees the engine at once
-        return json(res, 200, { engines: await engineAvailability(session, url.searchParams.get('refresh') === '1'), default_engine: acct.defaultEngine, role: acct.role, weights: store.engineWeights(), effort_cap: store.effortCap(uid), effort_ladder: EFFORT_LADDER, model_floor: store.modelFloor(uid), model_ladder: MODEL_LADDER, verification: store.kvGet('run_verification') !== 'off' }), true;
+        return json(res, 200, { engines: await engineAvailability(session, url.searchParams.get('refresh') === '1'), default_engine: acct.defaultEngine, role: acct.role, weights: store.engineWeights(), effort_cap: store.effortCap(uid), effort_ladder: EFFORT_LADDER, model_floor: store.modelFloor(uid), model_ladder: MODEL_LADDER, engine_priority: store.enginePriority(uid), verification: store.kvGet('run_verification') !== 'off' }), true;
+      }
+      // the order engines are used in (null / [] → the learned weights decide)
+      if (rest === '/settings/engine-priority' && m === 'PUT') {
+        const b = await readJson(req);
+        if (b.order !== null && b.order !== undefined && !Array.isArray(b.order)) throw new HttpError(400, 'order must be an array of engines or null');
+        const order = Array.isArray(b.order) ? (b.order as unknown[]).map(String) as Engine[] : null;
+        try { return json(res, 200, { engine_priority: store.setEnginePriority(uid, order) }), true; }
+        catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid engines'); }
       }
       // the user's model floor per engine ("" or null clears that engine's floor)
       if (rest === '/settings/model-floor' && m === 'PUT') {

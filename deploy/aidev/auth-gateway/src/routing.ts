@@ -577,12 +577,26 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   let engine: Engine | null = null; let engineLocked = false;
   const acct = store.accountEngines(userId);
   let engineError: string | null = null;
+  // Engine priority (2026-10-09): the user's order wins over the learned weights whenever more than one engine is
+  // usable; a limited or signed-out engine is skipped and the next one taken. A chat pinned by hand never moves.
+  const priority = store.enginePriority(userId);
+  const pinnedEngine = input.sessionId ? store.sessionPinnedEngine(userId, input.sessionId) : null;
+  const firstByPriority = priority.find((e) => usable.includes(e)) ?? null;
+  let switchBack: { engine: Engine; reason: string } | null = null;
   if (input.sessionEngine && engines[input.sessionEngine]?.allowed) {
-    engine = input.sessionEngine; engineLocked = true; reason.push(`session is bound to ${engine}`);
+    engine = input.sessionEngine; engineLocked = true; reason.push(`session is bound to ${engine}${pinnedEngine ? ' (pinned)' : ''}`);
     // the bound engine cannot run right now (expired OAuth, missing key): say so instead of failing mid-turn
     if (!engines[engine].authenticated) { engineError = engines[engine].error ?? `${engine} is not authenticated`; reason.push(`${engine} unavailable: ${engineError}`); }
+    // a chat that landed on a lower engine (a limit, a handoff) goes back up once the higher one is usable —
+    // unless the user pinned this chat or asked for this engine now
+    const rank = (e: Engine) => { const index = priority.indexOf(e); return index < 0 ? priority.length : index; };
+    if (firstByPriority && !pinnedEngine && !input.preferEngine && firstByPriority !== engine && rank(firstByPriority) < rank(engine)) {
+      switchBack = { engine: firstByPriority, reason: `engine priority ${priority.join(' > ')}: ${firstByPriority} is usable again` };
+      reason.push(`switch back → ${firstByPriority} (${switchBack.reason})`);
+    }
   }
   else if (input.preferEngine && usable.includes(input.preferEngine)) { engine = input.preferEngine; reason.push(`user prefers ${engine}`); }
+  else if (firstByPriority) { engine = firstByPriority; reason.push(`engine priority ${priority.join(' > ')} → ${engine}${usable.length > 1 ? '' : ' (only usable engine)'}`); }
   else if (usable.length) {
     const best = Math.max(...usable.map((e) => scores[e].score!));
     const tied = usable.filter((e) => Math.abs(scores[e].score! - best) < 1e-6);
@@ -748,7 +762,7 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
       definition: { prompt, tools: agent.tools ? JSON.parse(agent.tools) as string[] : null, model: agent.model, maxTurns: agent.max_turns, skills: agent.skills ? JSON.parse(agent.skills) as string[] : null, mcpServers: agent.mcp_servers ? JSON.parse(agent.mcp_servers) as Record<string, unknown> : null } },
     alternatives: agentTop.ranked.filter(([name]) => name !== agentName).slice(0, 3).map(([name, probability]) => ({ name, probability, description: descriptions[name] })),
     needs_new: needsNew, shortlisted,
-    plan: { engine, engine_locked: engineLocked, engine_error: engineError, model: tier.model, effort: tier.effort, target: target ? { id: target.id, name: target.name, platform: target.platform, tags: target.tags ? JSON.parse(target.tags) as string[] : [], capabilities: target.capabilities ? JSON.parse(target.capabilities) as unknown : null, source: targetSource } : null, device: targetDevice, reason },
+    plan: { engine, engine_locked: engineLocked, engine_pinned: Boolean(pinnedEngine), switch_back: switchBack, engine_error: engineError, model: tier.model, effort: tier.effort, target: target ? { id: target.id, name: target.name, platform: target.platform, tags: target.tags ? JSON.parse(target.tags) as string[] : [], capabilities: target.capabilities ? JSON.parse(target.capabilities) as unknown : null, source: targetSource } : null, device: targetDevice, reason },
     engines: { claude: { ...engines.claude, score: scores.claude.score, notes: scores.claude.parts }, codex: { ...engines.codex, score: scores.codex.score, notes: scores.codex.parts } },
     lessons: lessons.map((l) => ({ id: l.id, trigger: l.trigger, rule: l.rule, trial: l === trial })),
     knowledge_digest: knowledgeDigest || null,

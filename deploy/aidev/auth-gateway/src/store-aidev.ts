@@ -168,6 +168,11 @@ export function migrateAidev(db: Database.Database) {
   // Model floor (2026-10-07): the weakest model routing may pick per engine — account default and per chat.
   addColumn(db, 'accounts', 'model_floor', 'TEXT');
   addColumn(db, 'session_settings', 'model_floor', 'TEXT');
+  // Engine priority (2026-10-09): the order engines are used in when more than one is usable (JSON array; null =
+  // the learned task-kind weights). A chat may pin one engine; without a pin, routing follows the priority and
+  // asks the apps to move a chat back to a higher engine once that engine is usable again.
+  addColumn(db, 'accounts', 'engine_priority', 'TEXT');
+  addColumn(db, 'session_settings', 'pinned_engine', 'TEXT');
   // Independent verification of a finished run (worker ≠ verifier): the verifier's verdict (JSON).
   addColumn(db, 'runs', 'verification', 'TEXT');
   // A run the engine refused on a usage limit (2026-10-09): when the window resets (epoch ms; 0 = unknown).
@@ -309,7 +314,7 @@ export function aidevMethods(db: Database.Database) {
       const clean = cap ? validCap(cap) : null;
       if (!clean || !Object.keys(clean).length) {
         db.prepare('UPDATE session_settings SET effort_cap=NULL, updated_at=? WHERE user_id=? AND session_id=?').run(Date.now(), userId, sessionId);
-        db.prepare('DELETE FROM session_settings WHERE user_id=? AND session_id=? AND effort_cap IS NULL AND target_id IS NULL AND model_floor IS NULL').run(userId, sessionId);
+        db.prepare('DELETE FROM session_settings WHERE user_id=? AND session_id=? AND effort_cap IS NULL AND target_id IS NULL AND model_floor IS NULL AND pinned_engine IS NULL').run(userId, sessionId);
         return null;
       }
       db.prepare('INSERT INTO session_settings(user_id,session_id,effort_cap,updated_at) VALUES(?,?,?,?) ON CONFLICT(user_id,session_id) DO UPDATE SET effort_cap=excluded.effort_cap, updated_at=excluded.updated_at')
@@ -326,7 +331,7 @@ export function aidevMethods(db: Database.Database) {
       if (targetId !== null && !m.target(userId, targetId)) throw new Error('Target not found');
       db.prepare('INSERT INTO session_settings(user_id,session_id,target_id,updated_at) VALUES(?,?,?,?) ON CONFLICT(user_id,session_id) DO UPDATE SET target_id=excluded.target_id, updated_at=excluded.updated_at')
         .run(userId, sessionId, targetId, Date.now());
-      db.prepare('DELETE FROM session_settings WHERE user_id=? AND session_id=? AND effort_cap IS NULL AND target_id IS NULL AND model_floor IS NULL').run(userId, sessionId);
+      db.prepare('DELETE FROM session_settings WHERE user_id=? AND session_id=? AND effort_cap IS NULL AND target_id IS NULL AND model_floor IS NULL AND pinned_engine IS NULL').run(userId, sessionId);
       return targetId;
     },
     /** What routing uses: chat ceiling (stored, or sent with a new chat's first message) over the account default. */
@@ -334,6 +339,33 @@ export function aidevMethods(db: Database.Database) {
       const account = m.effortCap(userId);
       const chat = { ...(sessionId ? m.sessionEffortCap(userId, sessionId) ?? {} : {}), ...(inline ? cleanCap(inline) : {}) };
       return { cap: { ...account, ...chat } as Record<Engine, string>, chat: Object.keys(chat).length ? chat : null, account };
+    },
+    /** The order engines are used in ([] = none set: the learned weights decide). */
+    enginePriority(userId: number): Engine[] {
+      const row = db.prepare('SELECT engine_priority FROM accounts WHERE id=?').get(userId) as { engine_priority: string | null } | undefined;
+      try {
+        const parsed = row?.engine_priority ? JSON.parse(row.engine_priority) as unknown : [];
+        return Array.isArray(parsed) ? [...new Set(parsed.filter((e): e is Engine => ENGINES.includes(e as Engine)))] : [];
+      } catch { return []; }
+    },
+    /** Sets the order (null / [] clears it: back to the learned weights). */
+    setEnginePriority(userId: number, order: Engine[] | null) {
+      const clean = [...new Set((order ?? []).filter((e) => ENGINES.includes(e)))];
+      if (order && order.length && clean.length !== order.length) throw new Error(`engines must be among ${ENGINES.join(',')}`);
+      db.prepare('UPDATE accounts SET engine_priority=? WHERE id=?').run(clean.length ? JSON.stringify(clean) : null, userId);
+      return clean;
+    },
+    /** The engine a chat is pinned to by hand (routing never moves the chat away from it), or null. */
+    sessionPinnedEngine(userId: number, sessionId: string): Engine | null {
+      const row = db.prepare('SELECT pinned_engine FROM session_settings WHERE user_id=? AND session_id=?').get(userId, sessionId) as { pinned_engine: string | null } | undefined;
+      return row?.pinned_engine && ENGINES.includes(row.pinned_engine as Engine) ? row.pinned_engine as Engine : null;
+    },
+    setSessionPinnedEngine(userId: number, sessionId: string, engine: Engine | null) {
+      if (engine !== null && !ENGINES.includes(engine)) throw new Error(`engine must be one of ${ENGINES.join('|')}`);
+      db.prepare('INSERT INTO session_settings(user_id,session_id,pinned_engine,updated_at) VALUES(?,?,?,?) ON CONFLICT(user_id,session_id) DO UPDATE SET pinned_engine=excluded.pinned_engine, updated_at=excluded.updated_at')
+        .run(userId, sessionId, engine, Date.now());
+      if (engine === null) db.prepare('DELETE FROM session_settings WHERE user_id=? AND session_id=? AND effort_cap IS NULL AND target_id IS NULL AND model_floor IS NULL AND pinned_engine IS NULL').run(userId, sessionId);
+      return engine;
     },
     /** The account's model floor per engine (none by default): routing never picks a weaker model. */
     modelFloor(userId: number): Partial<Record<Engine, string>> {
@@ -364,7 +396,7 @@ export function aidevMethods(db: Database.Database) {
       const clean = floor ? cleanFloor(floor) : null;
       if (!clean || !Object.keys(clean).length) {
         db.prepare('UPDATE session_settings SET model_floor=NULL, updated_at=? WHERE user_id=? AND session_id=?').run(Date.now(), userId, sessionId);
-        db.prepare('DELETE FROM session_settings WHERE user_id=? AND session_id=? AND effort_cap IS NULL AND target_id IS NULL AND model_floor IS NULL').run(userId, sessionId);
+        db.prepare('DELETE FROM session_settings WHERE user_id=? AND session_id=? AND effort_cap IS NULL AND target_id IS NULL AND model_floor IS NULL AND pinned_engine IS NULL').run(userId, sessionId);
         return null;
       }
       db.prepare('INSERT INTO session_settings(user_id,session_id,model_floor,updated_at) VALUES(?,?,?,?) ON CONFLICT(user_id,session_id) DO UPDATE SET model_floor=excluded.model_floor, updated_at=excluded.updated_at')

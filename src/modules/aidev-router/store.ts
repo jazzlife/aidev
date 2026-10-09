@@ -117,6 +117,12 @@ export const routingStore = {
   clearOverrides() {
     routingStore.patch({ overrides: {} });
   },
+  /** Drops one override (the engine chip's "자동": back to priority / routing for the next sends). */
+  clearOverride(key: keyof RoutingOverrides) {
+    const next = { ...state.overrides };
+    delete next[key];
+    routingStore.patch({ overrides: next });
+  },
 };
 
 /** React binding for routingStore. Used by the router bar/chip and the composer hook. */

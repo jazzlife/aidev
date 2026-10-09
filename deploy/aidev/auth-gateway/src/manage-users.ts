@@ -14,8 +14,8 @@ async function runtime(name: string, operation: 'provision' | 'delete') {
   if (!response.ok) throw new Error(`Runtime ${operation} failed; check runtime-manager logs and retry`);
 }
 try {
-  const usage = 'Usage: list | decisions [N] | tier-policy [run] | session USERNAME | end-session SID | add USERNAME | delete USERNAME | disable USERNAME | engines USERNAME codex|claude|claude,codex | default-engine USERNAME claude|codex|none | role USERNAME user|admin | effort-cap USERNAME claude=xhigh|max,codex=xhigh|max|ultra | model-floor USERNAME claude=opus|best|none,codex=gpt-5.6-sol|gpt-6-astra|none';
-  const withExtra = ['engines', 'default-engine', 'role', 'effort-cap', 'model-floor'].includes(action ?? '');
+  const usage = 'Usage: list | decisions [N] | tier-policy [run] | session USERNAME | end-session SID | add USERNAME | delete USERNAME | disable USERNAME | engines USERNAME codex|claude|claude,codex | default-engine USERNAME claude|codex|none | role USERNAME user|admin | effort-cap USERNAME claude=xhigh|max,codex=xhigh|max|ultra | model-floor USERNAME claude=opus|best|none,codex=gpt-5.6-sol|gpt-6-astra|none | engine-priority USERNAME claude,codex|codex,claude|none';
+  const withExtra = ['engines', 'default-engine', 'role', 'effort-cap', 'model-floor', 'engine-priority'].includes(action ?? '');
   if ((extra && !withExtra) || (withExtra && !extra) || (action === 'list' ? username : action === 'decisions' ? false : action === 'end-session' ? !/^[A-Za-z0-9_-]{16,128}$/.test(username ?? '') : action === 'tier-policy' ? (username !== undefined && username !== 'run') : !/^[a-z0-9][a-z0-9_.-]{2,63}$/.test(username ?? ''))) throw new Error(usage);
   if (action === 'decisions') {
     // last routing decisions with the signals behind them (B-13 evidence / routing post-mortems)
@@ -58,6 +58,11 @@ try {
     const account = store.account(username); if (!account) throw new Error('User not found');
     const floor = Object.fromEntries(extra.split(',').map((pair) => pair.split('=').map((s) => s.trim())).map(([engine, value]) => [engine, value === 'none' ? null : value]));
     console.log(`${username}: model floor ${JSON.stringify(store.setModelFloor(account.id, floor))}`);
+  }
+  else if (action === 'engine-priority') {
+    // the order engines are used in when more than one is usable ("none" → the learned weights)
+    const account = store.account(username); if (!account) throw new Error('User not found');
+    console.log(`${username}: engine priority ${JSON.stringify(store.setEnginePriority(account.id, extra === 'none' ? null : extra.split(',').map((s) => s.trim()) as never))}`);
   }
   else if (action === 'role') { if (extra !== 'user' && extra !== 'admin') throw new Error(usage); store.setRole(username, extra); console.log(`${username}: role=${extra}`); }
   else if (action === 'add') {

@@ -41,6 +41,9 @@ export { ReturnCard } from '@/modules/aidev-router/ReturnCard';
 export { useUsageLimits, usageLimitView, formatTimeLeft } from '@/modules/aidev-router/hooks/useUsageLimits';
 export type { UsageLimitView, UsageWindowView } from '@/modules/aidev-router/hooks/useUsageLimits';
 export { UsageLimitPanel } from '@/modules/aidev-router/UsageLimitPanel';
+// 2026-10-09: the order engines are used in (workbench settings + mobile settings).
+export { useEnginePriority, PRIORITY_CHOICES, priorityKey } from '@/modules/aidev-router/hooks/useEnginePriority';
+export { EnginePriorityDefaults } from '@/modules/aidev-router/EnginePriorityDefaults';
 export type { NextAction } from '@/modules/aidev-router/api';
 // E-04: knowledge re-check and review (workbench catalog + mobile settings).
 export { useKnowledgeRefresh, knowledgeLabel, refreshSummary } from '@/modules/aidev-router/hooks/useKnowledgeRefresh';

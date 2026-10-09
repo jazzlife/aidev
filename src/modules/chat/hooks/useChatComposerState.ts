@@ -40,6 +40,11 @@ type UseChatComposerStateArgs = {
   cyclePermissionMode: () => void;
   resolvePermissionModeForProvider: (provider: LLMProvider, requestedMode: PermissionMode | string) => PermissionMode;
   /**
+   * Engine priority (2026-10-09): routing said a higher-priority engine is usable again for this (unpinned) chat.
+   * The host continues the conversation there with this text; true when it did, so nothing is sent here.
+   */
+  onEngineSwitchBack?: (args: { sessionId: string; engine: 'claude' | 'codex'; fromEngine: 'claude' | 'codex'; text: string; reason: string }) => Promise<boolean>;
+  /**
    * Model every send and command carries: the open session's model when there
    * is one, otherwise the user's per-provider selection.
    */
@@ -162,6 +167,7 @@ export function useChatComposerState({
   permissionMode,
   cyclePermissionMode,
   resolvePermissionModeForProvider,
+  onEngineSwitchBack,
   currentProviderModel,
   currentProviderEffort,
   isLoading,
@@ -812,6 +818,11 @@ export function useChatComposerState({
         restoreInput();
         return;
       }
+      // engine priority: the chat continues on the higher engine that is usable again (unless pinned)
+      if (!resume && !queuedSubmission && aidevDecoration?.switchBack && targetSessionId && onEngineSwitchBack && (provider === 'claude' || provider === 'codex')) {
+        const moved = await onEngineSwitchBack({ sessionId: targetSessionId, engine: aidevDecoration.switchBack.engine, fromEngine: provider, text: messageContent, reason: aidevDecoration.switchBack.reason });
+        if (moved) return;
+      }
       const plannedEngine = aidevDecoration?.route.plan.engine;
       const sessionProvider: LLMProvider = !targetSessionId && (plannedEngine === 'claude' || plannedEngine === 'codex') ? plannedEngine : provider;
       if (!targetSessionId) {
@@ -942,6 +953,7 @@ export function useChatComposerState({
     },
     [
       aidevBeforeSend,
+      onEngineSwitchBack,
       selectedSession,
       attachedFiles,
       buildSendOptions,
