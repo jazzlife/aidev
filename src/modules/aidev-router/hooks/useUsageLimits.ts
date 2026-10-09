@@ -20,14 +20,14 @@ export type UsageLimitView = {
   windows: UsageWindowView[];
 };
 
-/** "14:30" / "내일 09:00" for a reset time. */
-export function formatResetTime(resetsAt: number, now = Date.now()): string {
-  const date = new Date(resetsAt);
-  const time = date.toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' });
-  const dayDiff = Math.round((new Date(date).setHours(0, 0, 0, 0) - new Date(now).setHours(0, 0, 0, 0)) / 86_400_000);
-  if (dayDiff <= 0) return time;
-  if (dayDiff === 1) return `내일 ${time}`;
-  return `${date.toLocaleDateString('ko-KR', { month: 'numeric', day: 'numeric' })} ${time}`;
+/** "7일 3시간 남음" / "3시간 20분 남음" / "12분 남음" until a reset; "곧 초기화" once it is due. */
+export function formatTimeLeft(resetsAt: number, now = Date.now()): string {
+  const minutes = Math.ceil((resetsAt - now) / 60_000);
+  if (minutes <= 0) return '곧 초기화';
+  const days = Math.floor(minutes / 1440);
+  const hours = Math.floor((minutes % 1440) / 60);
+  const parts = days ? [`${days}일`, hours ? `${hours}시간` : ''] : hours ? [`${hours}시간`, minutes % 60 ? `${minutes % 60}분` : ''] : [`${minutes}분`];
+  return `${parts.filter(Boolean).join(' ')} 남음`;
 }
 
 /** Used by the panel and tests: one engine's snapshot (or none) as the drawer draws it. */

@@ -38,7 +38,7 @@ export { useReturnFromHandoff, rememberHandoff, handoffOrigin } from '@/modules/
 export type { HandoffOrigin, ReturnFromHandoff } from '@/modules/aidev-router/hooks/useReturnFromHandoff';
 export { ReturnCard } from '@/modules/aidev-router/ReturnCard';
 // 2026-10-09: account usage limits per engine, for the drawers of both apps.
-export { useUsageLimits, usageLimitView, formatResetTime } from '@/modules/aidev-router/hooks/useUsageLimits';
+export { useUsageLimits, usageLimitView, formatTimeLeft } from '@/modules/aidev-router/hooks/useUsageLimits';
 export type { UsageLimitView, UsageWindowView } from '@/modules/aidev-router/hooks/useUsageLimits';
 export { UsageLimitPanel } from '@/modules/aidev-router/UsageLimitPanel';
 export type { NextAction } from '@/modules/aidev-router/api';

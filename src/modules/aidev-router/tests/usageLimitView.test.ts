@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 
 import { test } from 'vitest';
 
-import { formatResetTime, usageLimitView } from '@/modules/aidev-router/hooks/useUsageLimits';
+import { formatTimeLeft, usageLimitView } from '@/modules/aidev-router/hooks/useUsageLimits';
 
 /** The drawers draw the engines' usage windows from the runtime's snapshot (2026-10-09). */
 test('no snapshot → unknown; a snapshot → labelled windows with percentages', () => {
@@ -23,9 +23,11 @@ test('a blocked engine keeps its unknown window; an unblocked one drops it', () 
   assert.equal(clear.windows.length, 0);
 });
 
-test('reset times read as today, tomorrow or a date', () => {
+test('time left until a reset reads as days and hours, hours and minutes, or minutes', () => {
   const now = new Date('2026-10-09T10:00:00').getTime();
-  assert.match(formatResetTime(new Date('2026-10-09T14:30:00').getTime(), now), /14:30|02:30/);
-  assert.match(formatResetTime(new Date('2026-10-10T09:00:00').getTime(), now), /^내일 /);
-  assert.match(formatResetTime(new Date('2026-10-15T09:00:00').getTime(), now), /10\. 15\./);
+  assert.equal(formatTimeLeft(new Date('2026-10-16T13:00:00').getTime(), now), '7일 3시간 남음');
+  assert.equal(formatTimeLeft(new Date('2026-10-16T10:00:00').getTime(), now), '7일 남음');
+  assert.equal(formatTimeLeft(new Date('2026-10-09T13:20:00').getTime(), now), '3시간 20분 남음');
+  assert.equal(formatTimeLeft(new Date('2026-10-09T10:12:00').getTime(), now), '12분 남음');
+  assert.equal(formatTimeLeft(now - 1000, now), '곧 초기화');
 });
