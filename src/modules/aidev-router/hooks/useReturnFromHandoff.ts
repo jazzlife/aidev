@@ -40,6 +40,19 @@ function forget(sessionId: string) {
   try { const all = readAll(); delete all[sessionId]; localStorage.setItem(KEY, JSON.stringify(all)); } catch { /* ignore */ }
 }
 
+/**
+ * Used by the hook and tests: the origin a chat may be offered to return to, or null. A chat that is itself
+ * the way back — Claude → (limit) Codex → (limit) Claude — has nothing to return to: the Codex hop came from
+ * the engine this chat already runs on, so offering "Codex로 돌아가기" there only nags (2026-10-09).
+ */
+export function returnTarget(sessionId: string | null | undefined): HandoffOrigin | null {
+  const origin = handoffOrigin(sessionId);
+  if (!origin) return null;
+  const upstream = handoffOrigin(origin.fromSessionId);
+  if (upstream && upstream.fromEngine === origin.toEngine) return null;
+  return origin;
+}
+
 export type ReturnFromHandoff = {
   /** the engine the chat left, once it is usable again (null: nothing to offer) */
   engine: Engine | null;
@@ -61,11 +74,12 @@ export type ReturnFromHandoff = {
  */
 export function useReturnFromHandoff(sessionId: string | null, openSession: (sessionId: string, engine: Engine, title: string) => void): ReturnFromHandoff {
   // read once per session: the record is written when the handoff opens, before this chat is shown
-  const origin = useMemo(() => handoffOrigin(sessionId), [sessionId]);
+  const origin = useMemo(() => returnTarget(sessionId), [sessionId]);
   // what the last poll said about the engine this chat left
   const [state, setState] = useState<{ usable: boolean; limitedUntil: number | null }>({ usable: false, limitedUntil: null });
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  // closing the card is final for this chat: the origin record is dropped, so it does not come back on reopen
   const [dismissed, setDismissed] = useState<string | null>(null);
 
   useEffect(() => {
@@ -108,6 +122,6 @@ export function useReturnFromHandoff(sessionId: string | null, openSession: (ses
     label: offer && origin ? `${ENGINE_LABEL[origin.fromEngine]}${wasLimit ? ' 한도가 풀렸습니다' : '를 다시 쓸 수 있습니다'} — ${ENGINE_LABEL[origin.fromEngine]}로 돌아가기` : null,
     limitedUntil: origin && dismissed !== sessionId ? state.limitedUntil : null,
     busy, error, returnNow,
-    dismiss: () => setDismissed(sessionId),
+    dismiss: () => { setDismissed(sessionId); if (sessionId) forget(sessionId); },
   };
 }

@@ -2,7 +2,7 @@ import assert from 'node:assert/strict';
 
 import { beforeEach, test } from 'vitest';
 
-import { handoffOrigin, rememberHandoff } from '@/modules/aidev-router/hooks/useReturnFromHandoff';
+import { handoffOrigin, rememberHandoff, returnTarget } from '@/modules/aidev-router/hooks/useReturnFromHandoff';
 
 /**
  * A usage-limit handoff lands in a new, engine-bound session; the way back needs to know where that
@@ -23,4 +23,15 @@ test('only the newest twenty handoffs are kept', () => {
   assert.equal(handoffOrigin('s4'), null);
   assert.equal(handoffOrigin('s5')?.fromSessionId, 'o5');
   assert.equal(handoffOrigin('s24')?.fromSessionId, 'o24');
+});
+
+test('a chat that is itself the way back offers no return (Claude → Codex → Claude)', () => {
+  rememberHandoff('codex-chat', { fromSessionId: 'claude-chat', fromEngine: 'claude', toEngine: 'codex', reason: 'claude_usage_limit:five_hour', at: 1 });
+  rememberHandoff('claude-again', { fromSessionId: 'codex-chat', fromEngine: 'codex', toEngine: 'claude', reason: 'codex 사용량 한도에 걸려 claude로 넘깁니다', at: 2 });
+  // the Codex chat may go back to Claude; the Claude chat that came from it is already where the chain began
+  assert.equal(returnTarget('codex-chat')?.fromEngine, 'claude');
+  assert.equal(returnTarget('claude-again'), null);
+  // a first handoff with no upstream is offered
+  rememberHandoff('lone', { fromSessionId: 'root', fromEngine: 'codex', toEngine: 'claude', reason: null, at: 3 });
+  assert.equal(returnTarget('lone')?.fromEngine, 'codex');
 });

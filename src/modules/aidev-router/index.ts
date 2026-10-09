@@ -34,7 +34,7 @@ export { ClaudeLoginPanel, ClaudeLoginDialog } from '@/modules/aidev-router/Clau
 export { useEscalation } from '@/modules/aidev-router/hooks/useEscalation';
 export { EscalationCard } from '@/modules/aidev-router/EscalationCard';
 // 2026-10-09: the way back from a usage-limit handoff once the engine it left is usable again.
-export { useReturnFromHandoff, rememberHandoff, handoffOrigin } from '@/modules/aidev-router/hooks/useReturnFromHandoff';
+export { useReturnFromHandoff, rememberHandoff, handoffOrigin, returnTarget } from '@/modules/aidev-router/hooks/useReturnFromHandoff';
 export type { HandoffOrigin, ReturnFromHandoff } from '@/modules/aidev-router/hooks/useReturnFromHandoff';
 export { ReturnCard } from '@/modules/aidev-router/ReturnCard';
 // 2026-10-09: account usage limits per engine, for the drawers of both apps.
