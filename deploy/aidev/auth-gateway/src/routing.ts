@@ -555,6 +555,10 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
 
   // ---- engine (§3.4) ------------------------------------------------------------------------
   const weights = store.engineWeights();
+  // The architect turn designs a specialist: design work, whatever the user's command was classified as
+  // (2026-10-09: ops-classified commands sent agent creation to Codex on the learned ops weight).
+  const weightKind = decision === 'create' ? 'design' : taskKind;
+  if (weightKind !== taskKind) reason.push(`agent design: engines weighed as design work, not ${taskKind}`);
   const scores: Record<Engine, { score: number | null; parts: string[] }> = { claude: { score: null, parts: [] }, codex: { score: null, parts: [] } };
   for (const engine of ['claude', 'codex'] as Engine[]) {
     const e = engines[engine];
@@ -562,7 +566,7 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     if (!e.authenticated) { scores[engine].parts.push(`not authenticated${e.error ? ` (${e.error})` : ''}`); continue; }
     // a usage-limit window: the engine comes back by itself when it resets, so it is skipped, not penalised
     if (e.limited_until && e.limited_until > Date.now()) { scores[engine].parts.push(`usage limit until ${new Date(e.limited_until).toISOString().slice(11, 16)}Z`); continue; }
-    let s = weights[taskKind]?.[engine] ?? 0.5; scores[engine].parts.push(`w(${taskKind})=${s.toFixed(2)}`);
+    let s = weights[weightKind]?.[engine] ?? 0.5; scores[engine].parts.push(`w(${weightKind})=${s.toFixed(2)}`);
     const tp = store.tierPolicy(agent.domain, depth, engine);
     if (tp && tp.success_n + tp.fail_n >= 5) { const adj = Math.max(-0.2, Math.min(0.2, (tp.success_n / (tp.success_n + tp.fail_n) - 0.75) * 0.8)); s += adj; scores[engine].parts.push(`tier ${adj >= 0 ? '+' : ''}${adj.toFixed(2)}`); }
     const errs = store.recentEngineErrors(userId, engine, 3600_000);

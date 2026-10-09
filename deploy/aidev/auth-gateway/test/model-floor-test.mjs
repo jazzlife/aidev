@@ -101,6 +101,15 @@ assert.equal(ARCHITECT_MIN_DEPTH, 3);
 r = await route(store, laya({ agent: 'generalist', depth: 2, needsNew: 0.9 }), uid, claudeOnly, { text: 'Unity 셰이더로 물 표면 굴절 효과를 구현해줘' }, { judge: creator });
 assert.equal(r.decision, 'create'); assert.equal(r.scope.depth, 3, `architect depth ${r.scope.depth}`); assert.equal(r.plan.model, 'opus');
 assert.ok(r.plan.reason.some((line) => line.includes('agent design ≥ D3')));
+// the architect turn weighs engines as design work, not as the command's kind (ops favoured codex here)
+store.setEngineWeight('ops', 'codex', 0.9, { pinned: true, actor: 'test' }); store.setEngineWeight('ops', 'claude', 0.1, { pinned: true, actor: 'test' });
+store.setEngineWeight('design', 'claude', 0.6, { pinned: true, actor: 'test' }); store.setEngineWeight('design', 'codex', 0.4, { pinned: true, actor: 'test' });
+r = await route(store, laya({ agent: 'generalist', depth: 3, kind: 'ops', needsNew: 0.9 }), uid, engines, { text: '배포 파이프라인 전문 agent가 필요한 운영 작업' }, { judge: creator });
+assert.equal(r.decision, 'create'); assert.equal(r.plan.engine, 'claude', `design weights decide: ${r.plan.reason.join(' | ')}`);
+assert.ok(r.engines.claude.notes.some((note) => note.startsWith('w(design)')), r.engines.claude.notes.join(' | '));
+// the same ops command run (not created) still follows the ops weight
+r = await route(store, laya({ agent: 'devops', depth: 3, kind: 'ops' }), uid, engines, { text: '배포 스크립트 점검' });
+assert.equal(r.plan.engine, 'codex');
 // quick work still runs on the generalist now and queues the domain (no D3 for that)
 r = await route(store, laya({ agent: 'generalist', depth: 1, needsNew: 0.9 }), uid, claudeOnly, { text: 'Unity 노드 이름 바꿔' }, { judge: creator });
 assert.equal(r.decision, 'create_background'); assert.ok(r.scope.depth <= 2);
