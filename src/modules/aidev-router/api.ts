@@ -67,7 +67,7 @@ export type RouteResult = {
   device_decision?: { decision_id: number; answer: unknown; confidence: number; fallback: boolean } | null;
   /** The PCs that were online when this was routed (the router chip's choices). */
   targets?: RouteTargetOption[];
-  engines: Record<Engine, { allowed: boolean; authenticated: boolean; error?: string | null; score: number | null; notes: string[] }>;
+  engines: Record<Engine, { allowed: boolean; authenticated: boolean; error?: string | null; /** epoch ms until which a usage limit holds (2026-10-09); routing skips the engine until then */ limited_until?: number | null; score: number | null; notes: string[] }>;
   lessons: Array<{ id: number; trigger: string; rule: string; trial?: boolean }>;
   knowledge_digest: string | null;
   latency_ms: number | null;

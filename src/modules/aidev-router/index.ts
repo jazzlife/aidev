@@ -33,6 +33,10 @@ export { ClaudeLoginPanel, ClaudeLoginDialog } from '@/modules/aidev-router/Clau
 // E-03: follow-up for a failed run (retry / stronger model / engine handoff).
 export { useEscalation } from '@/modules/aidev-router/hooks/useEscalation';
 export { EscalationCard } from '@/modules/aidev-router/EscalationCard';
+// 2026-10-09: the way back from a usage-limit handoff once the engine it left is usable again.
+export { useReturnFromHandoff, rememberHandoff, handoffOrigin } from '@/modules/aidev-router/hooks/useReturnFromHandoff';
+export type { HandoffOrigin, ReturnFromHandoff } from '@/modules/aidev-router/hooks/useReturnFromHandoff';
+export { ReturnCard } from '@/modules/aidev-router/ReturnCard';
 export type { NextAction } from '@/modules/aidev-router/api';
 // E-04: knowledge re-check and review (workbench catalog + mobile settings).
 export { useKnowledgeRefresh, knowledgeLabel, refreshSummary } from '@/modules/aidev-router/hooks/useKnowledgeRefresh';

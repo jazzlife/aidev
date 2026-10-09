@@ -36,7 +36,7 @@ const validCap = (cap: Partial<Record<Engine, string>>) => {
 export type TierPolicyRow = { domain: string; depth: number; engine: string; model: string | null; effort: string | null; success_n: number; fail_n: number; avg_ms: number | null; level: number | null; pinned: number; updated_at: number | null };
 export type LessonRow = { id: number; agent_id: number; engine: string | null; trigger: string; rule: string; evidence_run_id: number | null; status: string; hits: number; owner_id: number | null; promoted_to_prompt: number; fails: number; verified_by: string | null; promoted_version: number | null; created_at: number };
 export type CreateQueueRow = { id: number; user_id: number; name: string; domain: string; description: string; technologies: string; count: number; commands: string; status: string; created_at: number; updated_at: number };
-export type RunRow = { id: number; user_id: number; session_id: string | null; decision_id: number | null; agent_id: number | null; agent_version: number | null; engine: string | null; model: string | null; effort: string | null; depth: number | null; task_kind: string | null; risk: number | null; target_id: number | null; started_at: number; finished_at: number | null; exit_code: number | null; tool_errors: number; user_feedback: string | null; reverted: number; reasked: number; test_result: string | null; cost_tokens: number | null; escalated_from_run: number | null; outcome: string | null; next_action: string | null; verification: string | null };
+export type RunRow = { id: number; user_id: number; session_id: string | null; decision_id: number | null; agent_id: number | null; agent_version: number | null; engine: string | null; model: string | null; effort: string | null; depth: number | null; task_kind: string | null; risk: number | null; target_id: number | null; started_at: number; finished_at: number | null; exit_code: number | null; tool_errors: number; user_feedback: string | null; reverted: number; reasked: number; test_result: string | null; cost_tokens: number | null; escalated_from_run: number | null; outcome: string | null; next_action: string | null; verification: string | null; usage_limit_resets_at: number | null };
 export type RemoteRunRow = { id: number; run_id: number | null; target_id: number; user_id: number; kind: string; cmd: string | null; cwd: string | null; risk: number | null; approved_by: string | null; started_at: number; finished_at: number | null; exit_code: number | null; artifacts: string | null; target_name?: string | null };
 export type TargetRow = { id: number; user_id: number; name: string; platform: string | null; arch: string | null; tags: string | null; description: string; token_hash: string | null; pairing_code: string | null; pairing_expires: number | null; policy: string; allowed_roots: string | null; capabilities: string | null; status: string; last_seen: number | null; created_at: number; /** the account's default PC for remote work (F-08) */ is_default: number };
 
@@ -169,7 +169,10 @@ export function migrateAidev(db: Database.Database) {
   addColumn(db, 'accounts', 'model_floor', 'TEXT');
   addColumn(db, 'session_settings', 'model_floor', 'TEXT');
   // Independent verification of a finished run (worker ≠ verifier): the verifier's verdict (JSON).
-  addColumn(db, 'runs', 'verification', 'TEXT');                  // per-engine effort ceiling chosen by the user (JSON), see routing EFFORT_LADDER                // last reminder sent ("<expiresAt>:<days>" or "fail:<at>")
+  addColumn(db, 'runs', 'verification', 'TEXT');
+  // A run the engine refused on a usage limit (2026-10-09): when the window resets (epoch ms; 0 = unknown).
+  // Such a run is a temporary refusal, not an engine failure — routing skips the engine only until then.
+  addColumn(db, 'runs', 'usage_limit_resets_at', 'INTEGER');                  // per-engine effort ceiling chosen by the user (JSON), see routing EFFORT_LADDER                // last reminder sent ("<expiresAt>:<days>" or "fail:<at>")
   // Knowledge refresh (§3.8 / E-04): last check, consecutive unreachable checks, the check's note,
   // and — for a replacement Laya was not sure about — the item a 'proposed' row would replace.
   addColumn(db, 'knowledge', 'checked_at', 'INTEGER');
@@ -446,7 +449,7 @@ export function aidevMethods(db: Database.Database) {
     /** Finished runs with a clear outcome since `since`, with their agent's domain (policy aggregation input). */
     policyRuns(since: number) {
       return db.prepare(`SELECT r.depth, r.engine, r.model, r.effort, r.outcome, r.started_at, r.finished_at, r.user_feedback, r.reasked, a.domain FROM runs r JOIN agents a ON a.id=r.agent_id
-        WHERE r.started_at >= ? AND r.outcome IN ('success','fail') AND r.engine IS NOT NULL AND r.depth IS NOT NULL AND a.domain != 'meta'`).all(since) as Array<{ depth: number; engine: string; model: string | null; effort: string | null; outcome: string; started_at: number; finished_at: number | null; user_feedback: string | null; reasked: number; domain: string }>;
+        WHERE r.started_at >= ? AND r.outcome IN ('success','fail') AND r.usage_limit_resets_at IS NULL AND r.engine IS NOT NULL AND r.depth IS NOT NULL AND a.domain != 'meta'`).all(since) as Array<{ depth: number; engine: string; model: string | null; effort: string | null; outcome: string; started_at: number; finished_at: number | null; user_feedback: string | null; reasked: number; domain: string }>;
     },
     tierStats(engine: Engine) {
       return db.prepare('SELECT domain, depth, success_n, fail_n FROM tier_policy WHERE engine=?').all(engine) as Array<{ domain: string; depth: number; success_n: number; fail_n: number }>;
@@ -639,16 +642,28 @@ export function aidevMethods(db: Database.Database) {
       return db.prepare(`SELECT * FROM runs WHERE ${where.join(' AND ')} ORDER BY id DESC LIMIT ?`).all(...args) as RunRow[];
     },
     /** Merge outcome signals; returns the row after the update so the caller can classify. */
-    updateRun(userId: number, id: number, p: Partial<{ sessionId: string | null; finishedAt: number; exitCode: number | null; toolErrors: number; userFeedback: string | null; reverted: number; reasked: number; testResult: string | null; costTokens: number | null; outcome: string | null }>) {
+    updateRun(userId: number, id: number, p: Partial<{ sessionId: string | null; finishedAt: number; exitCode: number | null; toolErrors: number; userFeedback: string | null; reverted: number; reasked: number; testResult: string | null; costTokens: number | null; outcome: string | null; usageLimitResetsAt: number | null }>) {
       const cur = m.run(userId, id); if (!cur) throw new Error('Run not found');
+      if (p.usageLimitResetsAt !== undefined) db.prepare('UPDATE runs SET usage_limit_resets_at=? WHERE id=?').run(p.usageLimitResetsAt, id);
       // session_id is only filled in later for runs routed before their session existed (first message of a new chat)
       db.prepare('UPDATE runs SET session_id=?, finished_at=?, exit_code=?, tool_errors=?, user_feedback=?, reverted=?, reasked=?, test_result=?, cost_tokens=?, outcome=? WHERE id=?')
         .run(cur.session_id ?? p.sessionId ?? null, p.finishedAt ?? cur.finished_at, p.exitCode === undefined ? cur.exit_code : p.exitCode, p.toolErrors ?? cur.tool_errors, p.userFeedback === undefined ? cur.user_feedback : p.userFeedback,
           p.reverted ?? cur.reverted, p.reasked ?? cur.reasked, p.testResult === undefined ? cur.test_result : p.testResult, p.costTokens === undefined ? cur.cost_tokens : p.costTokens, p.outcome === undefined ? cur.outcome : p.outcome, id);
       return m.run(userId, id)!;
     },
+    /** Failed runs on the engine recently — a usage-limit refusal is not one (it is a window, see engineLimitedUntil). */
     recentEngineErrors(userId: number, engine: Engine, sinceMs: number) {
-      return (db.prepare('SELECT COUNT(*) AS n FROM runs WHERE user_id=? AND engine=? AND outcome=\'fail\' AND started_at>?').get(userId, engine, Date.now() - sinceMs) as { n: number }).n;
+      return (db.prepare('SELECT COUNT(*) AS n FROM runs WHERE user_id=? AND engine=? AND outcome=\'fail\' AND usage_limit_resets_at IS NULL AND started_at>?').get(userId, engine, Date.now() - sinceMs) as { n: number }).n;
+    },
+    /**
+     * When the engine's latest usage-limit refusal says the window resets (epoch ms), or null when there is no
+     * refusal still in force. A refusal without a reset time is assumed to hold for five hours (the shortest window).
+     */
+    engineLimitedUntil(userId: number, engine: Engine, now = Date.now()): number | null {
+      const row = db.prepare('SELECT started_at, usage_limit_resets_at FROM runs WHERE user_id=? AND engine=? AND usage_limit_resets_at IS NOT NULL ORDER BY id DESC LIMIT 1').get(userId, engine) as { started_at: number; usage_limit_resets_at: number } | undefined;
+      if (!row) return null;
+      const until = row.usage_limit_resets_at > 0 ? row.usage_limit_resets_at : row.started_at + 5 * 3600_000;
+      return until > now ? until : null;
     },
     // ---- decisions (all kinds) ------------------------------------------------
     // ---- D-04 create queue ----------------------------------------------------------------

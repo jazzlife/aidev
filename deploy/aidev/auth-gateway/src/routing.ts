@@ -93,7 +93,7 @@ export const alphaFor = (name: string) => (nb.count(name) >= MIN_EXAMPLES ? LAYA
  * plus the lessons/knowledge to inject. One Laya call (plus a shortlist call when the catalog is large).
  */
 type Store = ReturnType<typeof openStore>;
-export type EngineAvailability = Record<Engine, { allowed: boolean; authenticated: boolean; error?: string | null }>;
+export type EngineAvailability = Record<Engine, { allowed: boolean; authenticated: boolean; error?: string | null; /** epoch ms until which the engine refuses on a usage limit (2026-10-09); absent/null = not limited */ limited_until?: number | null }>;
 export type RouteInput = { text: string; sessionId?: string | null; sessionEngine?: Engine | null; preferEngine?: Engine | null; targetId?: number | null; projectHint?: string | null; recentFiles?: string[] | null; model?: string | null; effort?: string | null; /** user override: use this agent regardless of Laya's pick */ forceAgent?: string | null; /** D-04: create the specialist of this create-queue entry (the architect turn) */ createProposal?: number | null;
   /** this chat's own ceiling (a new chat sends it with its first message; later it is stored per session) */ effortCap?: Partial<Record<Engine, string>> | null;
   /** this chat's own model floor (same lifecycle as effortCap) */ modelFloor?: Partial<Record<Engine, string>> | null };
@@ -560,6 +560,8 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     const e = engines[engine];
     if (!e?.allowed) { scores[engine].parts.push('not allowed for this account'); continue; }
     if (!e.authenticated) { scores[engine].parts.push(`not authenticated${e.error ? ` (${e.error})` : ''}`); continue; }
+    // a usage-limit window: the engine comes back by itself when it resets, so it is skipped, not penalised
+    if (e.limited_until && e.limited_until > Date.now()) { scores[engine].parts.push(`usage limit until ${new Date(e.limited_until).toISOString().slice(11, 16)}Z`); continue; }
     let s = weights[taskKind]?.[engine] ?? 0.5; scores[engine].parts.push(`w(${taskKind})=${s.toFixed(2)}`);
     const tp = store.tierPolicy(agent.domain, depth, engine);
     if (tp && tp.success_n + tp.fail_n >= 5) { const adj = Math.max(-0.2, Math.min(0.2, (tp.success_n / (tp.success_n + tp.fail_n) - 0.75) * 0.8)); s += adj; scores[engine].parts.push(`tier ${adj >= 0 ? '+' : ''}${adj.toFixed(2)}`); }

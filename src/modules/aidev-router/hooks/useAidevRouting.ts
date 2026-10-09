@@ -196,7 +196,7 @@ export function useAidevRouting() {
   }, []);
 
   /** Records the terminal signal of the run started by the last routed send (§3.8). */
-  const reportOutcome = useCallback(async (outcome: { session_id?: string | null; exit_code?: number | null; tool_errors?: number; user_feedback?: 'up' | 'down' | null; test_result?: 'pass' | 'fail' | null; summary?: string; reverted?: boolean }, runId?: number | null) => {
+  const reportOutcome = useCallback(async (outcome: { session_id?: string | null; exit_code?: number | null; tool_errors?: number; user_feedback?: 'up' | 'down' | null; test_result?: 'pass' | 'fail' | null; summary?: string; reverted?: boolean; /** the engine refused the run on a usage limit (its reset time when known) */ usage_limit?: { type: string; resets_at: number | null } | null }, runId?: number | null) => {
     const id = runId ?? routingStore.get().runId;
     if (outcome.exit_code !== undefined) routingStore.patch({ runFinishedAt: Date.now() });
     if (outcome.user_feedback) routingStore.patch({ runFeedback: outcome.user_feedback });

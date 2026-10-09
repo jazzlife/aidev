@@ -113,10 +113,12 @@ export function createAidevApi(deps: AidevDeps) {
   async function engineAvailability(session: Session, force = false): Promise<EngineAvailability> {
     const acct = store.accountEngines(session.user.id);
     const cached = Object.fromEntries(store.engineStatus(session.user.id).map((r) => [r.engine, r]));
-    const out = { claude: { allowed: false, authenticated: false, error: null }, codex: { allowed: false, authenticated: false, error: null } } as EngineAvailability;
+    const out = { claude: { allowed: false, authenticated: false, error: null, limited_until: null }, codex: { allowed: false, authenticated: false, error: null, limited_until: null } } as EngineAvailability;
     await Promise.all(ENGINES.map(async (engine) => {
       out[engine].allowed = acct.engines.includes(engine);
       if (!out[engine].allowed) return;
+      // a usage-limit window still in force (from the last refused run); the apps show it and routing skips the engine
+      out[engine].limited_until = store.engineLimitedUntil(session.user.id, engine);
       const c = cached[engine];
       if (c && !force && Date.now() - c.checked_at < ENGINE_CACHE_MS) { out[engine].authenticated = Boolean(c.authenticated); out[engine].error = c.last_error; return; }
       try {
@@ -204,7 +206,8 @@ export function createAidevApi(deps: AidevDeps) {
     if (final.decision_id && (outcome === 'success' || outcome === 'fail') && before.outcome !== outcome) {
       for (const line of applyLessonOutcome(store, final.decision_id, outcome)) console.log(`[aidev] ${line}`);
     }
-    if (outcome === 'fail' && final.agent_id && before.outcome !== 'fail' && final.session_id) {
+    // a usage-limit refusal teaches nothing about the work: no lesson is curated from it
+    if (outcome === 'fail' && final.agent_id && before.outcome !== 'fail' && final.session_id && final.usage_limit_resets_at === null) {
       void curateFailure(session, final).catch((error) => console.warn('[aidev] lesson curation failed:', error instanceof Error ? error.message : error));
     }
     if (outcome === 'success' && final.agent_id && final.decision_id && before.outcome !== 'success') {
@@ -579,7 +582,10 @@ export function createAidevApi(deps: AidevDeps) {
         const id = Number(runMatch[1]);
         const fb = b.user_feedback; if (fb !== undefined && fb !== null && fb !== 'up' && fb !== 'down') throw new HttpError(400, 'user_feedback must be up|down|null');
         const tr = b.test_result; if (tr !== undefined && tr !== null && tr !== 'pass' && tr !== 'fail') throw new HttpError(400, 'test_result must be pass|fail|null');
-        const row = store.updateRun(uid, id, { sessionId: optStr(b.session_id, 200) ?? undefined, finishedAt: b.finished === false ? undefined : Date.now(), exitCode: b.exit_code === undefined ? undefined : (b.exit_code === null ? null : num(b.exit_code, 'exit_code')), toolErrors: b.tool_errors === undefined ? undefined : num(b.tool_errors, 'tool_errors'),
+        // the engine refused the run on a usage limit: remembered with its reset time (0 = unknown) — see store.engineLimitedUntil
+        const limit = b.usage_limit && typeof b.usage_limit === 'object' ? b.usage_limit as { resets_at?: unknown } : null;
+        const usageLimitResetsAt = limit ? (typeof limit.resets_at === 'number' && Number.isFinite(limit.resets_at) ? limit.resets_at : 0) : undefined;
+        const row = store.updateRun(uid, id, { usageLimitResetsAt, sessionId: optStr(b.session_id, 200) ?? undefined, finishedAt: b.finished === false ? undefined : Date.now(), exitCode: b.exit_code === undefined ? undefined : (b.exit_code === null ? null : num(b.exit_code, 'exit_code')), toolErrors: b.tool_errors === undefined ? undefined : num(b.tool_errors, 'tool_errors'),
           userFeedback: fb as string | null | undefined, reverted: b.reverted === undefined ? undefined : (b.reverted ? 1 : 0), reasked: b.reasked === undefined ? undefined : (b.reasked ? 1 : 0), testResult: tr as string | null | undefined, costTokens: b.cost_tokens === undefined ? undefined : num(b.cost_tokens, 'cost_tokens') });
         // §3.8 outcome rule; explicit signals first, then Laya on a summary, else unknown
         let outcome: string = 'unknown'; let classified: unknown = null;

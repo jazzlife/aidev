@@ -79,6 +79,9 @@ vi.mock('@/modules/aidev-router', () => ({
   // no verification card in these tests
   useRoutingState: () => ({ verification: null }),
   VerificationCard: () => null,
+  // not a handoff session in these tests: nothing to return to
+  useReturnFromHandoff: () => ({ engine: null, label: null, limitedUntil: null, busy: false, error: null, returnNow: async () => undefined, dismiss: () => undefined }),
+  ReturnCard: () => null,
 }));
 vi.mock('@/modules/remote-preview', () => ({ usePreviewList: () => ({ previews: [] }) }));
 vi.mock('@/modules/remote-debug', () => ({ useDebugSessions: () => ({ sessions: [] }) }));

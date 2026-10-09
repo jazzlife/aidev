@@ -3,7 +3,8 @@ import { useLocation, useParams } from 'react-router-dom';
 import { Clock, Download, Gauge, GitBranch, MoreHorizontal, Search } from 'lucide-react';
 
 import { api, grantClaudeToolPermission, buildClaudeToolPermissionEntry, useChatRealtimeHandlers, useSessionStore, useWebSocket, type LLMProvider, type NormalizedMessage, type PendingPermissionRequest, type ProjectSession } from '@/modules/chat-core';
-import { AgentCreateCard, aidevApi, routingStore, shouldAskClarify, useAgentCreation, useAidevRouting, useEscalation, usePrejudge, useRoutingState, VerificationCard, type AidevSendDecoration, type Engine } from '@/modules/aidev-router';
+import { AgentCreateCard, aidevApi, routingStore, shouldAskClarify, useAgentCreation, useAidevRouting, useEscalation, usePrejudge, useReturnFromHandoff, useRoutingState, ReturnCard, VerificationCard, type AidevSendDecoration, type Engine } from '@/modules/aidev-router';
+import { parseProviderUsageLimit } from '@/shared/utils';
 import { Composer } from '@m/components/Composer';
 import { MessageList } from '@m/components/MessageList';
 import { PermissionSheet, type PermissionDecision } from '@m/components/PermissionSheet';
@@ -215,7 +216,9 @@ export function ChatScreen() {
   useEffect(() => subscribe((event) => {
     if (event.kind !== 'complete' || (event.sessionId && event.sessionId !== sessionId)) return;
     const exitCode = typeof event.exitCode === 'number' ? event.exitCode : (event.isError ? 1 : 0);
-    void reportOutcome({ exit_code: exitCode, session_id: event.sessionId ?? sessionId });
+    // a limit refusal is reported as such: the gateway skips the engine until the reset and proposes the other engine
+    const usageLimit = parseProviderUsageLimit(event.usageLimit);
+    void reportOutcome({ exit_code: exitCode, session_id: event.sessionId ?? sessionId, ...(usageLimit ? { usage_limit: { type: usageLimit.type, resets_at: usageLimit.resetsAt ?? null } } : {}) });
     setLastRunFinished(Date.now());
     setTimeout(() => { void agentCreationRef.current.onRunComplete(); }, 400);
   }), [subscribe, sessionId, reportOutcome]);
@@ -331,6 +334,8 @@ export function ChatScreen() {
   });
   const takeHandoffRef = useRef(escalation.takeHandoff);
   useEffect(() => { takeHandoffRef.current = escalation.takeHandoff; });
+  // a chat handed off on a usage limit offers the way back once the engine it left is usable again
+  const returnFromHandoff = useReturnFromHandoff(sessionId, (id) => navigate(`/session/${encodeURIComponent(id)}`));
   useEffect(() => {
     if (!meta?.id || meta.id !== routeSessionId) return;
     const brief = takeHandoffRef.current(meta.id);
@@ -471,6 +476,7 @@ export function ChatScreen() {
         onCancel={scheduled.cancel} />
       {actionError ? <div className="px-4 py-1 text-[13px] text-danger" role="alert">{actionError}</div> : null}
       {agentCreation.pending ? <div className="m-scroll max-h-[45dvh]"><AgentCreateCard compact pending={agentCreation.pending} onApprove={(draft) => { void agentCreation.approve(draft); }} onSelfCheck={agentCreation.runSelfCheck} onDismiss={agentCreation.dismiss} /></div> : null}
+      {!busy ? <ReturnCard compact back={returnFromHandoff} /> : null}
       {routingState.verification && !busy ? <VerificationCard compact status={routingState.verification.status} result={routingState.verification.result} onDismiss={() => routingStore.patch({ verification: null })} /> : null}
       {escalation.escalation && !busy ? <EscalationPrompt next={escalation.escalation.next} label={escalation.label} busy={escalation.busy} error={escalation.error} onRun={() => { void escalation.run(); }} onDismiss={escalation.dismiss} /> : null}
       {lastRunFinished && !busy ? <RunFeedback key={lastRunFinished} onFeedback={(value) => { void reportOutcome({ user_feedback: value }); }} /> : null}

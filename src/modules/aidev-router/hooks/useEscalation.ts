@@ -3,6 +3,7 @@ import { useCallback, useRef, useState } from 'react';
 import { api } from '@/shared/api';
 import { aidevApi, type Engine } from '@/modules/aidev-router/api';
 import { routingStore, useRoutingState } from '@/modules/aidev-router/store';
+import { rememberHandoff } from '@/modules/aidev-router/hooks/useReturnFromHandoff';
 
 type UseEscalationArgs = {
   /** Sends text as a new user turn in the open session through the composer (routing runs again). */
@@ -61,6 +62,8 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
       const newId = body.data?.sessionId;
       if (!response.ok || !newId) throw new Error(`세션을 만들지 못했습니다 (${response.status})`);
       handedOffSessions.current.add(sessionId);
+      // the new chat remembers where it came from, so it can offer the way back once that engine is usable again
+      if (fromEngine) rememberHandoff(newId, { fromSessionId: sessionId, fromEngine, toEngine: engine, reason, at: Date.now() });
       routingStore.patch({ pendingHandoff: { sessionId: newId, text: brief.text }, oneShotPlan: plan, oneShotAgent, escalation: null });
       openSession(newId, engine, title);
     } catch (failure) {

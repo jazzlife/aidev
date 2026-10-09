@@ -27,7 +27,7 @@ import {
 } from '@/shared/context/SessionProtectionContext';
 import ChatMessagesPane from '@/modules/chat/transcript/ChatMessagesPane';
 import ChatComposer from '@/modules/chat/composer/ChatComposer';
-import { AgentCreateCard, AidevRouterBar, ClarifyPrompt, COMPOSE_EVENT, announceRunComplete, changedFilesSince, EscalationCard, routingStore, useAgentCreation, useAidevRouting, useEffortCap, useEscalation, useRoutingState, VerificationCard } from '@/modules/aidev-router';
+import { AgentCreateCard, AidevRouterBar, ClarifyPrompt, COMPOSE_EVENT, announceRunComplete, changedFilesSince, EscalationCard, routingStore, useAgentCreation, useAidevRouting, useEffortCap, useEscalation, useReturnFromHandoff, useRoutingState, ReturnCard, VerificationCard } from '@/modules/aidev-router';
 import CommandResultModal from '@/modules/chat/modals/CommandResultModal';
 
 type ChatInterfaceProps = {
@@ -90,12 +90,13 @@ function ChatInterface({
     if (event.kind !== 'complete') return;
     if (event.sessionId && selectedSession?.id && event.sessionId !== selectedSession.id) return;
     const exitCode = typeof event.exitCode === 'number' ? event.exitCode : (event.isError ? 1 : 0);
-    void reportAidevOutcome({ exit_code: exitCode, session_id: event.sessionId ?? selectedSession?.id ?? null });
+    const usageLimit = parseProviderUsageLimit(event.usageLimit);
+    // a limit refusal is reported as such: the gateway skips the engine until the reset, and holds nothing else against it
+    void reportAidevOutcome({ exit_code: exitCode, session_id: event.sessionId ?? selectedSession?.id ?? null, ...(usageLimit ? { usage_limit: { type: usageLimit.type, resets_at: usageLimit.resetsAt ?? null } } : {}) });
     // A usage limit refused this run, so the work continues on the other engine
     // (claude ↔ codex) instead of stopping — this engine cannot answer again until
     // the window resets (E-03, no tap). handoffOnUsageLimit blocks instead if the
     // other engine is not logged in, rather than attempting a handoff that cannot work.
-    const usageLimit = parseProviderUsageLimit(event.usageLimit);
     const limitedSessionId = event.sessionId ?? selectedSession?.id ?? null;
     if (usageLimit && limitedSessionId && (event.provider === 'claude' || event.provider === 'codex')) {
       void handoffOnUsageLimitRef.current?.({ sessionId: limitedSessionId, blockedEngine: event.provider, reason: `${event.provider}_usage_limit:${usageLimit.type}` });
@@ -321,6 +322,11 @@ function ChatInterface({
   const takeHandoffRef = useRef(escalation.takeHandoff);
   useEffect(() => { takeHandoffRef.current = escalation.takeHandoff; });
   useEffect(() => { handoffOnUsageLimitRef.current = escalation.handoffOnUsageLimit; });
+  // a chat handed off on a usage limit offers the way back once the engine it left is usable again
+  const returnFromHandoff = useReturnFromHandoff(selectedSession?.id ?? null, (sessionId, engine, title) => {
+    if (!selectedProject) return;
+    handleSessionEstablished(sessionId, { provider: engine, project: selectedProject, summary: title });
+  });
   useEffect(() => {
     const id = selectedSession?.id;
     if (!id || (selectedSession?.__provider && selectedSession.__provider !== provider)) return;
@@ -673,6 +679,7 @@ function ChatInterface({
             </div>
           ) : null}
           {clarify ? <ClarifyPrompt key={clarify.decisionId} question={clarify.question} onAnswer={(answer) => releaseClarify(answer)} onProceed={() => releaseClarify(null)} onDismiss={dismissClarify} /> : null}
+          <ReturnCard back={returnFromHandoff} />
           {routingState.verification ? <VerificationCard status={routingState.verification.status} result={routingState.verification.result} onDismiss={() => routingStore.patch({ verification: null })} /> : null}
           {escalation.escalation ? <EscalationCard next={escalation.escalation.next} label={escalation.label} busy={escalation.busy} error={escalation.error} onRun={() => { void escalation.run(); }} onDismiss={escalation.dismiss} /> : null}
           {agentCreation.pending ? <AgentCreateCard pending={agentCreation.pending} onApprove={(draft) => { void agentCreation.approve(draft); }} onSelfCheck={agentCreation.runSelfCheck} onDismiss={agentCreation.dismiss} /> : null}

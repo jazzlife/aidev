@@ -53,6 +53,11 @@ export async function decideNext(store: Store, laya: LayaClient, run: RunRow, en
   const effortRoom = depth >= 4 && ladder.indexOf(run.effort ?? '') >= 0 && ladder.indexOf(run.effort ?? '') < ladder.indexOf(cap[engine]);
 
   if (chain >= MAX_CHAIN) return plan('ask_user', null, null, `이미 ${chain}번 이어서 시도했습니다`);
+  // refused on a usage limit: not a failure of the plan — the other engine takes over, or the user waits for the reset
+  if (run.usage_limit_resets_at !== null && run.usage_limit_resets_at !== undefined) {
+    const resetNote = run.usage_limit_resets_at > 0 ? ` (초기화 ${new Date(run.usage_limit_resets_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })})` : '';
+    return otherUsable ? plan('switch_engine', other, depth, `${engine} 사용량 한도에 걸려 ${other}로 넘깁니다${resetNote}`) : plan('ask_user', null, null, `${engine} 사용량 한도에 걸렸습니다${resetNote}. 한도가 풀리면 다시 시도하세요`);
+  }
   if (!engines[engine]?.authenticated) {
     return otherUsable ? plan('switch_engine', other, depth, `${engine} 로그인이 필요해 ${other}로 넘깁니다`) : plan('ask_user', null, null, `${engine} 로그인이 필요합니다`);
   }
