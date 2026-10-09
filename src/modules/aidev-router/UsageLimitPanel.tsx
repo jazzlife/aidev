@@ -23,21 +23,23 @@ function EngineUsage({ view, compact, now }: { view: UsageLimitView; compact: bo
       <div className="flex items-center gap-2">
         <span className={`h-2 w-2 shrink-0 rounded-full ${view.unknown ? palette.unknownDot : blocked ? palette.bad : palette.ok}`} />
         <span className={`${compact ? 'text-[14px]' : 'text-xs'} font-medium`}>{ENGINE_LABEL[view.engine] ?? view.engine}</span>
-        <span className={`ml-auto ${small} ${palette.muted}`}>
-          {view.unknown ? '아직 정보 없음' : blocked ? `한도 도달 · ${view.blockedUntil ? `${formatResetTime(view.blockedUntil, now)} 해제` : '해제 시각 미정'}` : '한도 내'}
-        </span>
+        {/* a status only when there is something to say: no picture yet, or a refusal in force */}
+        {view.unknown || blocked ? (
+          <span className={`ml-auto ${small} ${palette.muted}`}>
+            {view.unknown ? '아직 정보 없음' : `한도 도달 · ${view.blockedUntil ? `${formatResetTime(view.blockedUntil, now)} 해제` : '해제 시각 미정'}`}
+          </span>
+        ) : null}
       </div>
       {view.windows.length ? (
-        <ul className="mt-1 space-y-1">
-          {/* one line per window: name, how much is used, and when it resets */}
+        <ul className={`mt-1 grid grid-cols-[auto_minmax(0,1fr)_2rem] items-center gap-x-2 gap-y-1 ${small} ${palette.muted}`}>
+          {/* one line per window: "name (reset time)", the bar, how much is used — the grid keeps the bars aligned */}
           {view.windows.map((window) => (
-            <li key={window.type} className={`flex items-center gap-2 ${small} ${palette.muted}`}>
-              <span className="w-12 shrink-0 truncate">{window.label}</span>
-              <div className={`h-1.5 min-w-0 flex-1 overflow-hidden rounded-full ${palette.track}`}>
+            <li key={window.type} className="contents">
+              <span className="whitespace-nowrap tabular-nums">{window.label}{window.resetsAt ? <span className="opacity-80"> ({formatResetTime(window.resetsAt, now)})</span> : null}</span>
+              <div className={`h-1.5 overflow-hidden rounded-full ${palette.track}`}>
                 {window.percent !== null ? <div className={`h-full rounded-full ${tone(palette, window.percent, window.blocked)}`} style={{ width: `${Math.min(100, window.percent)}%` }} /> : null}
               </div>
-              <span className="w-8 shrink-0 text-right tabular-nums">{window.percent !== null ? `${window.percent}%` : '—'}</span>
-              <span className="w-[4.5rem] shrink-0 whitespace-nowrap text-right text-[10px] tabular-nums opacity-80">{window.resetsAt ? formatResetTime(window.resetsAt, now) : ''}</span>
+              <span className="text-right tabular-nums">{window.percent !== null ? `${window.percent}%` : '—'}</span>
             </li>
           ))}
         </ul>
