@@ -15,14 +15,6 @@ test('no snapshot → unknown; a snapshot → labelled windows with percentages'
   assert.deepEqual(view.windows.map((window) => [window.label, window.percent]), [['5시간', 76], ['주간', null]]);
 });
 
-test("a model's weekly window is named after the model, known or not", () => {
-  const view = usageLimitView('claude', { provider: 'claude', observedAt: 1, blockedUntil: null, windows: [
-    { type: 'seven_day_fable', utilization: 1, resetsAt: null, blocked: true },
-    { type: 'seven_day_haiku', utilization: 0.1, resetsAt: null, blocked: false },
-  ] });
-  assert.deepEqual(view.windows.map((window) => [window.label, window.blocked]), [['주간 Fable', true], ['주간 Haiku', false]]);
-});
-
 test('a blocked engine keeps its unknown window; an unblocked one drops it', () => {
   const blocked = usageLimitView('codex', { provider: 'codex', observedAt: 1, blockedUntil: 0, windows: [{ type: 'unknown', utilization: null, resetsAt: null, blocked: true }] });
   assert.equal(blocked.windows.length, 1);

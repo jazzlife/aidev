@@ -5,13 +5,7 @@ import type { Engine } from '@/modules/aidev-router/api';
 import type { ProviderUsageLimitsSnapshot, ProviderUsageWindow } from '@/shared/types';
 
 /** Korean names of the usage windows the engines report. */
-const WINDOW_LABEL: Record<string, string> = { five_hour: '5시간', seven_day: '주간', seven_day_opus: '주간 Opus', seven_day_sonnet: '주간 Sonnet', seven_day_fable: '주간 Fable', overage: '추가 사용', unknown: '한도' };
-
-/** A window's name; a model's weekly window the list does not know yet still reads "주간 <Model>". */
-function windowLabel(type: string): string {
-  const scoped = /^seven_day_(.+)$/.exec(type);
-  return WINDOW_LABEL[type] ?? (scoped ? `주간 ${scoped[1].charAt(0).toUpperCase()}${scoped[1].slice(1)}` : type);
-}
+const WINDOW_LABEL: Record<string, string> = { five_hour: '5시간', seven_day: '주간', seven_day_opus: '주간 Opus', seven_day_sonnet: '주간 Sonnet', overage: '추가 사용', unknown: '한도' };
 /** The drawer asks again this often while open (the server reads the Codex account at most that often too). */
 const POLL_MS = 60_000;
 
@@ -41,7 +35,7 @@ export function usageLimitView(engine: Engine, snapshot: ProviderUsageLimitsSnap
   if (!snapshot || !snapshot.observedAt) return { engine, unknown: true, blockedUntil: null, observedAt: null, windows: [] };
   const windows = snapshot.windows
     .filter((window: ProviderUsageWindow) => window.type !== 'unknown' || window.blocked)
-    .map((window) => ({ type: window.type, label: windowLabel(window.type), percent: window.utilization === null ? null : Math.round(window.utilization * 100), resetsAt: window.resetsAt, blocked: window.blocked }));
+    .map((window) => ({ type: window.type, label: WINDOW_LABEL[window.type] ?? window.type, percent: window.utilization === null ? null : Math.round(window.utilization * 100), resetsAt: window.resetsAt, blocked: window.blocked }));
   return { engine, unknown: false, blockedUntil: snapshot.blockedUntil, observedAt: snapshot.observedAt, windows };
 }
 

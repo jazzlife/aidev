@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { isBlockingRateLimit, modelLimitMessage, normalizeUsageLimit, parseLegacyUsageLimit } from '@/modules/providers/list/claude/claude-runtime.provider.js';
+import { isBlockingRateLimit, isFableOnlyRefusal, modelLimitMessage, normalizeUsageLimit, parseLegacyUsageLimit } from '@/modules/providers/list/claude/claude-runtime.provider.js';
 import { isClaudeAuthFailure, isClaudeUsageLimit } from '@/modules/providers/services/claude-auth-store.service.js';
 
 // A refused usage window has to end the run as a failure carrying the limit, because
@@ -31,6 +31,21 @@ test("one model's own window (Fable / Opus weekly) is never a block: the account
   assert.equal(limit.type, 'seven_day_fable');
   assert.match(modelLimitMessage(limit), /주간\(Fable\) 한도/);
   assert.match(modelLimitMessage(limit), /다른 Claude 모델/);
+});
+
+test("a Fable turn's refusal is Fable's own share only when no account window is named and both have room", () => {
+  const room = { windows: [{ type: 'five_hour', utilization: 0.3, blocked: false, resetsAt: null }, { type: 'seven_day', utilization: 0.7, blocked: false, resetsAt: null }] };
+  assert.ok(isFableOnlyRefusal({ type: 'unknown', resetsAt: null }, room));
+  assert.ok(isFableOnlyRefusal({ type: 'seven_day_fable', resetsAt: null }, null), 'a named model window needs no account check');
+  // an account window named in the refusal is the account being out
+  assert.ok(!isFableOnlyRefusal({ type: 'seven_day', resetsAt: null }, room));
+  assert.ok(!isFableOnlyRefusal({ type: 'five_hour', resetsAt: null }, room));
+  // a full or blocked account window, or no picture of the account, is not read as Fable-only
+  assert.ok(!isFableOnlyRefusal({ type: 'unknown', resetsAt: null }, { windows: [{ type: 'five_hour', utilization: 1, blocked: false }, { type: 'seven_day', utilization: 0.7, blocked: false }] }));
+  assert.ok(!isFableOnlyRefusal({ type: 'unknown', resetsAt: null }, { windows: [{ type: 'five_hour', utilization: 0.3, blocked: true }, { type: 'seven_day', utilization: 0.7, blocked: false }] }));
+  assert.ok(!isFableOnlyRefusal({ type: 'unknown', resetsAt: null }, { windows: [{ type: 'five_hour', utilization: 0.3, blocked: false }] }));
+  assert.ok(!isFableOnlyRefusal({ type: 'unknown', resetsAt: null }, undefined));
+  assert.ok(!isFableOnlyRefusal(null, room));
 });
 
 test('a rejected window is normalized with its type and reset time', () => {

@@ -685,6 +685,46 @@ export function isBlockingRateLimit(info) {
   return info.overageStatus !== 'allowed' && info.overageStatus !== 'allowed_warning';
 }
 
+/** The model that takes over a turn Fable refused on its own weekly share (2026-10-09). */
+const FABLE_FALLBACK_MODEL = 'opus';
+/** Fable's weekly share is a slice of the weekly pool: a refusal is remembered until that pool resets. */
+let fableLimitedUntil = 0;
+
+/**
+ * Whether a refusal on a Fable turn was Fable's own weekly share rather than the account. The SDK does
+ * not name that window (no `seven_day_fable` in `rate_limit_event`, the CLI only shows it in /usage),
+ * so it is told apart by the refusal not naming an account window while the account's five-hour and
+ * weekly windows, as last reported, still have room. An account window named in the refusal, or no
+ * knowledge of the account windows, reads as the account being out — the handoff as before.
+ *
+ * Used by the turn below and the providers module's tests.
+ *
+ * @param {{ type: string, resetsAt?: number | null } | null | undefined} limit - the refusal as normalized
+ * @param {{ windows?: Array<{ type: string, utilization: number | null, blocked: boolean }> } | null | undefined} claude - the account picture
+ * @returns {boolean}
+ */
+export function isFableOnlyRefusal(limit, claude) {
+  if (!limit || limit.type === 'five_hour' || limit.type === 'seven_day' || limit.type === 'overage') return false;
+  if (isModelScopedUsageLimit(limit.type)) return true;
+  const windows = claude?.windows ?? [];
+  const hasRoom = (type) => {
+    const window = windows.find((entry) => entry.type === type);
+    return Boolean(window) && !window.blocked && window.utilization !== null && window.utilization < 1;
+  };
+  return hasRoom('five_hour') && hasRoom('seven_day');
+}
+
+/**
+ * Remembers Fable's share as spent until the weekly pool resets: the refusal's own time when it has
+ * one, else the account's weekly window reset, else five hours.
+ * @param {{ resetsAt: number | null }} limit
+ * @param {{ windows?: Array<{ type: string, resetsAt: number | null }> } | null | undefined} claude
+ */
+function rememberFableLimit(limit, claude) {
+  const weekly = claude?.windows?.find((entry) => entry.type === 'seven_day')?.resetsAt ?? null;
+  fableLimitedUntil = limit.resetsAt ?? weekly ?? Date.now() + 5 * 3600_000;
+}
+
 // Tool calls that leave work running past the end of a turn. Bash and Agent only
 // count when they are backgrounded; the rest defer or watch work by nature.
 // Workflow belongs here rather than in a branch of its own: its input schema has
@@ -898,6 +938,9 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
   let blockingUsageLimit = null;
   // One model's own window refused this turn (Fable weekly etc.): named in the error, never a handoff.
   let modelLimitHit = null;
+  // This turn runs on Fable; a refusal that is Fable's own weekly share re-runs the turn on Opus below.
+  let fableTurn = false;
+  let retryOnOpus = false;
 
   // A new turn supersedes any earlier one still holding this session's process
   // open, so held runs cannot stack up across a conversation.
@@ -944,6 +987,17 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
       sdkOptions.mcpServers = mcpServers;
     }
     applyAidevRouting(sdkOptions, options.aidev);
+
+    // Fable's weekly share (2026-10-09): a turn re-run after Fable refused, or started while that share
+    // is known to be spent, goes to Opus — the account's own windows still have room, so handing the
+    // work to the other engine would be wrong.
+    fableTurn = /^fable/i.test(String(sdkOptions.model || ''));
+    if (fableTurn && (options.fallbackFromFable || fableLimitedUntil > Date.now())) {
+      sdkOptions.model = FABLE_FALLBACK_MODEL;
+      fableTurn = false;
+      ws.send(createNormalizedMessage({ kind: 'status', text: `Fable 주간 한도 도달 — ${FABLE_FALLBACK_MODEL}로 전환해 이어갑니다`, sessionId: capturedSessionId || sessionId || null, provider: 'claude' }));
+      console.log(`[Claude SDK] Fable weekly share spent until ${new Date(fableLimitedUntil).toISOString()}: running on ${FABLE_FALLBACK_MODEL}`);
+    }
 
     // Every turn uses streaming input so stdin stays open past the turn's
     // `result`. The message list is reusable, but each query attempt needs its
@@ -1168,9 +1222,16 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
         // `terminal_reason: 'blocking_limit'` is deliberately not read as a usage
         // limit: in the CLI it is the context-window block (prompt too long), and
         // treating it as one handed a merely oversized session to the other engine.
-        const usageLimit = blockingUsageLimit;
+        let usageLimit = blockingUsageLimit;
+        if (usageLimit && fableTurn && !abortPending && isFableOnlyRefusal(usageLimit, providerUsageLimitsService.snapshot().claude)) {
+          // Fable's own share, not the account: no limit on the complete (no handoff), the turn re-runs on Opus
+          rememberFableLimit(usageLimit, providerUsageLimitsService.snapshot().claude);
+          usageLimit = null;
+          blockingUsageLimit = null;
+          retryOnOpus = true;
+        }
         if (usageLimit) providerUsageLimitsService.recordBlock('claude', usageLimit); else providerUsageLimitsService.recordClear('claude');
-        if (!turnCompleteSent && !abortPending) {
+        if (!turnCompleteSent && !abortPending && !retryOnOpus) {
           turnCompleteSent = true;
           if (usageLimit) {
             ws.send(createNormalizedMessage({ kind: 'error', content: usageLimitMessage(usageLimit), sessionId: capturedSessionId || sessionId || null, provider: 'claude' }));
@@ -1237,7 +1298,7 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
     // terminal `complete` (aborted: true) was already sent by abort-session, and
     // for runs that already reported completion when their `result` arrived.
     const wasAborted = !superseded && sessionKey() ? abortedSessionIds.delete(sessionKey()) : false;
-    if (!turnCompleteSent && !superseded) {
+    if (!turnCompleteSent && !superseded && !retryOnOpus) {
       turnCompleteSent = true;
       if (!wasAborted) {
         ws.send(createCompleteMessage({ provider: 'claude', sessionId: capturedSessionId || sessionId || null, exitCode: 0 }));
@@ -1290,22 +1351,30 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
     if (installed && !blockingUsageLimit && !modelLimitHit && isClaudeUsageLimit(String(error?.message ?? ''))) {
       blockingUsageLimit = { type: 'unknown', resetsAt: null };
     }
-    if (blockingUsageLimit) providerUsageLimitsService.recordBlock('claude', blockingUsageLimit);
+    if (blockingUsageLimit && fableTurn && !turnCompleteSent && isFableOnlyRefusal(blockingUsageLimit, providerUsageLimitsService.snapshot().claude)) {
+      // Fable's own share refused (the account has room): the turn re-runs on Opus below instead of failing
+      rememberFableLimit(blockingUsageLimit, providerUsageLimitsService.snapshot().claude);
+      providerUsageLimitsService.recordClear('claude');
+      blockingUsageLimit = null;
+      retryOnOpus = true;
+    } else {
+      if (blockingUsageLimit) providerUsageLimitsService.recordBlock('claude', blockingUsageLimit);
 
-    // Send error to WebSocket, then the terminal complete. A run that already
-    // reported completion and then failed during its post-turn hold still
-    // surfaces the error, but must not emit a second terminal complete.
-    ws.send(createNormalizedMessage({ kind: 'error', content: errorContent, sessionId: capturedSessionId || sessionId || null, provider: 'claude' }));
-    if (!turnCompleteSent) {
-      ws.send(createCompleteMessage({ provider: 'claude', sessionId: capturedSessionId || sessionId || null, exitCode: 1, usageLimit: blockingUsageLimit }));
+      // Send error to WebSocket, then the terminal complete. A run that already
+      // reported completion and then failed during its post-turn hold still
+      // surfaces the error, but must not emit a second terminal complete.
+      ws.send(createNormalizedMessage({ kind: 'error', content: errorContent, sessionId: capturedSessionId || sessionId || null, provider: 'claude' }));
+      if (!turnCompleteSent) {
+        ws.send(createCompleteMessage({ provider: 'claude', sessionId: capturedSessionId || sessionId || null, exitCode: 1, usageLimit: blockingUsageLimit }));
+      }
+      notifyRunFailed({
+        userId: ws?.userId || null,
+        provider: 'claude',
+        sessionId: sessionId || capturedSessionId || null,
+        sessionName: sessionSummary,
+        error
+      });
     }
-    notifyRunFailed({
-      userId: ws?.userId || null,
-      provider: 'claude',
-      sessionId: sessionId || capturedSessionId || null,
-      sessionName: sessionSummary,
-      error
-    });
   } finally {
     // Always close stdin — otherwise an aborted or failed run leaves the CLI
     // process (and its MCP servers) alive until the server exits.
@@ -1314,6 +1383,12 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
       idleReleaseTimer = null;
     }
     releasePromptStream();
+  }
+
+  // the same turn again on Opus (once: the re-run cannot itself fall back)
+  if (retryOnOpus) {
+    console.log(`[Claude SDK] Fable refused on its own weekly share; re-running the turn on ${FABLE_FALLBACK_MODEL}`);
+    await queryClaudeSDK(command, { ...options, fallbackFromFable: true }, ws, context);
   }
 }
 
