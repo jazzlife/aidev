@@ -3,7 +3,7 @@ import { AppWindow, Bot, Bug, FolderGit2, Link2, MessageSquare, Monitor, Setting
 import { useLocation } from 'react-router-dom';
 
 import { useAuth } from '@/modules/chat-core';
-import { aidevApi } from '@/modules/aidev-router';
+import { aidevApi, UsageLimitPanel } from '@/modules/aidev-router';
 import { useBackOverlay, useGo } from '@m/lib/nav';
 import { useCurrentConversation, useCurrentProject } from '@m/lib/current';
 import { useRunningSessions } from '@m/lib/runningSessions';
@@ -82,6 +82,9 @@ function Drawer({ onClose }: { onClose: () => void }) {
             ) : null}
             {others > 0 ? <button type="button" className="w-full px-2 py-1 text-left text-[13px] text-accent" onClick={() => open('/')}>다른 대화 {others}개 실행 중 ›</button> : null}
           </div>
+
+          {section('계정 한도')}
+          <div className="px-1"><UsageLimitPanel compact /></div>
 
           {section('원격 PC')}
           <button type="button" className={row(pathname.startsWith('/screen'))} onClick={() => open('/screen')}><Monitor size={18} className="text-muted" /> 원격 제어</button>

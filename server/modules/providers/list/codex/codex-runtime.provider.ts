@@ -23,6 +23,7 @@ import {
   createNormalizedMessage,
 } from '@/shared/index.js';
 import { notifyRunFailed, notifyRunStopped } from '@/modules/notifications/index.js';
+import { providerUsageLimitsService } from '@/modules/providers/services/provider-usage-limits.service.js';
 import type { AnyRecord, ProviderRuntimeContext, ProviderRuntimeWriter } from '@/shared/index.js';
 
 type ActiveCodexSession = {
@@ -488,6 +489,8 @@ async function queryCodex(
     const runSession = activeCodexSessions.get(sessionKey() || '');
     const runAborted = runSession?.status === 'aborted' || abortController.signal.aborted;
     if (!runAborted) {
+      // the drawers' usage picture: a refusal is remembered, a turn that went through lifts it
+      if (blockingUsageLimit) providerUsageLimitsService.recordBlock('codex', blockingUsageLimit); else if (!terminalFailure) providerUsageLimitsService.recordClear('codex');
       sendMessage(ws, createCompleteMessage({
         provider: 'codex',
         sessionId: capturedSessionId || sessionId || null,
@@ -531,6 +534,7 @@ async function queryCodex(
       if (!blockingUsageLimit && isCodexUsageLimit(runError.message)) {
         blockingUsageLimit = { type: 'unknown', resetsAt: null };
       }
+      if (blockingUsageLimit) providerUsageLimitsService.recordBlock('codex', blockingUsageLimit);
       sendMessage(ws, createCompleteMessage({
         provider: 'codex',
         sessionId: capturedSessionId || sessionId || null,

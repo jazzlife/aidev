@@ -5,6 +5,7 @@ import { providerCapabilitiesService } from '@/modules/providers/services/provid
 import { providerMcpService } from '@/modules/providers/services/mcp.service.js';
 import { providerModelsService } from '@/modules/providers/services/provider-models.service.js';
 import { providerTokenUsageService } from '@/modules/providers/services/provider-token-usage.service.js';
+import { providerUsageLimitsService } from '@/modules/providers/services/provider-usage-limits.service.js';
 import { providerSkillsService } from '@/modules/providers/services/skills.service.js';
 import { sessionConversationsSearchService } from '@/modules/providers/services/session-conversations-search.service.js';
 import { sessionsService } from '@/modules/providers/services/sessions.service.js';
@@ -695,6 +696,14 @@ router.post(
       scope: payload.scope === 'user' ? 'user' : 'project',
     });
     res.status(201).json(createApiSuccessResponse({ results }));
+  }),
+);
+
+// Account usage limits per engine, as learned from the engines' own turn events (the drawers show them).
+router.get(
+  '/usage-limits',
+  asyncHandler(async (_req: Request, res: Response) => {
+    res.json(createApiSuccessResponse({ providers: providerUsageLimitsService.snapshot() }));
   }),
 );
 

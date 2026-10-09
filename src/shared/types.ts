@@ -215,6 +215,22 @@ export type ProviderUsageLimit = {
   resetsAt: number | null;
 };
 
+/** One usage window of an engine's account as the runtime last saw it (`/api/providers/usage-limits`): utilization 0..1 when reported, reset epoch ms when known, `blocked` while the engine refuses on it. Shown by the drawers' usage panel. */
+export type ProviderUsageWindow = {
+  type: string;
+  utilization: number | null;
+  resetsAt: number | null;
+  blocked: boolean;
+};
+
+/** An engine's usage-limit picture from the runtime: when it was last observed, its windows, and `blockedUntil` (epoch ms) while a refusal holds. Read by useUsageLimits for the drawers of both apps. */
+export type ProviderUsageLimitsSnapshot = {
+  provider: LLMProvider;
+  observedAt: number;
+  windows: ProviderUsageWindow[];
+  blockedUntil: number | null;
+};
+
 export type ServerEvent = {
   kind?: string;
   type?: string;

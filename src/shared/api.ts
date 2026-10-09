@@ -366,6 +366,8 @@ export const api = {
     capabilities: () => get('/api/providers/capabilities'),
     authStatus: (provider: string) =>
       get(`/api/providers/${encodeURIComponent(provider)}/auth/status`),
+    /** Account usage limits per engine as the runtime last saw them (the drawers' usage panel). */
+    usageLimits: () => get('/api/providers/usage-limits'),
 
     models: (provider: string) => get(`/api/providers/${provider}/models`),
     createModel: (provider: string, input: unknown) =>

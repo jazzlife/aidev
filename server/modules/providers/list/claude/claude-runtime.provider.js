@@ -31,6 +31,7 @@ import {
 import { resolveClaudeCodeExecutablePath } from '@/shared/claude-cli-path.js';
 import { aidevToolsService, composeAgentInstructions, sanitizeAidevOptions } from '@/modules/aidev-tools/index.js';
 import { claudeAuthStore, isClaudeAuthFailure, isClaudeUsageLimit } from '@/modules/providers/services/claude-auth-store.service.js';
+import { providerUsageLimitsService } from '@/modules/providers/services/provider-usage-limits.service.js';
 import {
   createNotificationEvent,
   notifyBackgroundWorkCompleted,
@@ -1129,6 +1130,8 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
       // that follows is a refusal, not an answer.
       if (message.type === 'rate_limit_event') {
         const info = message.rate_limit_info || {};
+        // the drawers show the account's windows (utilization, reset) from this same event
+        providerUsageLimitsService.recordClaude(info);
         if (isBlockingRateLimit(info)) {
           blockingUsageLimit = normalizeUsageLimit(info);
         } else if (info.status === 'allowed' || info.status === 'allowed_warning') {
@@ -1145,6 +1148,7 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
         // limit: in the CLI it is the context-window block (prompt too long), and
         // treating it as one handed a merely oversized session to the other engine.
         const usageLimit = blockingUsageLimit;
+        if (usageLimit) providerUsageLimitsService.recordBlock('claude', usageLimit); else providerUsageLimitsService.recordClear('claude');
         if (!turnCompleteSent && !abortPending) {
           turnCompleteSent = true;
           if (usageLimit) {
@@ -1264,6 +1268,7 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
     if (installed && !blockingUsageLimit && isClaudeUsageLimit(String(error?.message ?? ''))) {
       blockingUsageLimit = { type: 'unknown', resetsAt: null };
     }
+    if (blockingUsageLimit) providerUsageLimitsService.recordBlock('claude', blockingUsageLimit);
 
     // Send error to WebSocket, then the terminal complete. A run that already
     // reported completion and then failed during its post-turn hold still

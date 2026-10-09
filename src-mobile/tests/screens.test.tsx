@@ -50,6 +50,8 @@ vi.mock('@/modules/aidev-router', async () => {
       targets: () => Promise.resolve({ targets: [{ id: 4, name: 'm4pro', online: true }, { id: 5, name: 'old-pc', online: false }] }),
       remoteRuns: () => Promise.resolve({ runs: [] }),
     },
+    // the drawer's account-usage panel is covered by its own tests
+    UsageLimitPanel: () => null,
     // the gateway queue, delivered once (the real hook long-polls it)
     useUiCommands: (onShow: (c: unknown) => void) => { useEffect(() => { for (const c of uiQueue.commands.splice(0)) onShow(c); }); },
   };

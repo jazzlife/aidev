@@ -709,6 +709,30 @@ export type UpsertProviderMcpServerInput = {
  * This shape is consumed by settings/status endpoints to report installation and
  * credential state for each provider.
  */
+/**
+ * One subscription usage window of an engine (Claude: five-hour / weekly; Codex: only a refusal is
+ * observable). `utilization` is 0..1 when the engine reports it; `resetsAt` epoch ms when known.
+ * `blocked` means the engine refused the last run on this window.
+ */
+export type ProviderUsageWindow = {
+  type: string;
+  utilization: number | null;
+  resetsAt: number | null;
+  blocked: boolean;
+};
+
+/**
+ * What the runtime knows about an engine's account usage limits (GET /api/providers/usage-limits),
+ * read off the engines' own turn events — nothing is polled from the vendors. `observedAt` is the
+ * last event; `blockedUntil` is set while a refusal is in force (epoch ms, 0 = reset time unknown).
+ */
+export type ProviderUsageLimitsSnapshot = {
+  provider: LLMProvider;
+  observedAt: number;
+  windows: ProviderUsageWindow[];
+  blockedUntil: number | null;
+};
+
 export type ProviderAuthStatus = {
   installed: boolean;
   provider: LLMProvider;

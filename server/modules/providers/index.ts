@@ -12,6 +12,7 @@ export { sessionsService } from './services/sessions.service.js';
 
 // claudeAuthStore: platform-managed Claude subscription token — aidev-tools' in-app login saves it, server startup loads it.
 export { claudeAuthStore } from './services/claude-auth-store.service.js';
+export { providerUsageLimitsService } from './services/provider-usage-limits.service.js';
 
 export { initializeSessionsWatcher } from './services/sessions-watcher.service.js';
 export { closeSessionsWatcher } from './services/sessions-watcher.service.js';

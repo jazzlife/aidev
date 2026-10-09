@@ -2,6 +2,7 @@ import { Settings, ArrowUpCircle, Bug, AlertTriangle } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
 import { IS_PLATFORM } from '@/shared/utils';
+import { UsageLimitPanel } from '@/modules/aidev-router';
 import type { ReleaseInfo } from '@/shared/types';
 
 const GITHUB_ISSUES_URL = 'https://github.com/siteboon/claudecodeui/issues/new';
@@ -104,6 +105,13 @@ export default function SidebarFooter({
           </div>
         </>
       )}
+
+      {/* Connected accounts' usage limits (2026-10-09): five-hour / weekly windows, or a refusal until when */}
+      <div className="nav-divider" />
+      <div className="px-2 pt-1">
+        <div className="px-2.5 pb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground/70">계정 한도</div>
+        <UsageLimitPanel />
+      </div>
 
       {/* Community + Settings */}
       <div className="nav-divider" />
