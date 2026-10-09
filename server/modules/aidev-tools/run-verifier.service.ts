@@ -10,6 +10,11 @@ import { sessionsDb } from '@/modules/database/index.js';
  * reads the repository and re-runs the checks before the run may count as a success. It never edits
  * files and never writes into the conversation; the gateway stores the verdict on the run, fails the
  * run when the report was wrong, and the apps show the card.
+ *
+ * Cross-engine (2026-10-09): the verifier runs on the other engine when the account has both (a Claude
+ * worker is checked by Codex and the other way round), which also keeps the usage from piling up on one
+ * engine. With a single engine it is a fresh thread on that engine acting as a different agent than the
+ * worker — the gateway picks that agent and sends its prompt as the verifier's background.
  */
 export type VerifyInput = {
   sessionId: string;
@@ -18,8 +23,10 @@ export type VerifyInput = {
   /** the worker's engine and model */
   engine: 'claude' | 'codex' | null;
   workerModel: string | null;
-  /** the engines this account may use and is signed in to (D-05); the verifier stays inside them */
+  /** the engines this account may use, is signed in to and is not usage-limited on (D-05); the verifier stays inside them */
   engines: Array<'claude' | 'codex'>;
+  /** a different agent than the worker, chosen by the gateway: its prompt is the verifier's domain background */
+  verifierAgent: { name: string; prompt: string } | null;
   command: string | null;
   depth: number | null;
   /** the user's model floor per engine (routing MODEL_LADDER names) */
@@ -59,6 +66,23 @@ export function verifierModel(engine: 'claude' | 'codex', input: { workerEngine:
   const rank = (model: string | null | undefined) => (model ? ladder.indexOf(CLAUDE_ALIASES[model] ?? model) : -1);
   const rung = Math.max(VERIFIER_MIN_RUNG, input.workerEngine === engine ? rank(input.workerModel) : -1, rank(input.floor));
   return ladder[Math.min(rung, ladder.length - 1)];
+}
+
+/**
+ * Engines to try for the verifier, best first: the worker's other engine, then the worker's own (a different
+ * thread / agent there). Only engines the gateway reported usable are kept, so a limited or signed-out engine
+ * never gets the check. Used by `verify` and its test.
+ */
+export function verifierEngineOrder(workerEngine: 'claude' | 'codex' | null, engines: Array<'claude' | 'codex'>): Array<'claude' | 'codex'> {
+  const other: 'claude' | 'codex' | null = workerEngine === 'claude' ? 'codex' : workerEngine === 'codex' ? 'claude' : null;
+  const preferred: Array<'claude' | 'codex'> = other && workerEngine ? [other, workerEngine] : ['claude', 'codex'];
+  return preferred.filter((engine) => engines.includes(engine));
+}
+
+/** The verifier's instructions, with the reviewing agent's own prompt as background — the verification rules come first and win. */
+function verifierSystemPrompt(agent: VerifyInput['verifierAgent']): string {
+  if (!agent) return VERIFIER_PROMPT;
+  return `${VERIFIER_PROMPT}\n## 검증자의 전문 분야 배경 ('${agent.name}' agent — 참고용이며 위 절차·규칙이 우선한다)\n${agent.prompt.slice(0, 8000)}`;
 }
 
 const FILE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'apply_patch', 'edit', 'write']);
@@ -142,7 +166,7 @@ export function parseVerification(text: string): Omit<Verification, 'engine' | '
 const HARD_TIMEOUT_MS = 10 * 60_000;
 const VERIFIER_TOOLS = ['Read', 'Glob', 'Grep', 'Bash'];
 
-async function askClaude(prompt: string, cwd: string, model: string): Promise<string> {
+async function askClaude(prompt: string, cwd: string, model: string, systemPrompt: string): Promise<string> {
   let output = '';
   const abortController = new AbortController();
   const timer = setTimeout(() => abortController.abort(), HARD_TIMEOUT_MS);
@@ -150,7 +174,7 @@ async function askClaude(prompt: string, cwd: string, model: string): Promise<st
     const stream = query({
       prompt,
       options: {
-        cwd, maxTurns: 25, model, allowedTools: VERIFIER_TOOLS, tools: VERIFIER_TOOLS, permissionMode: 'bypassPermissions', systemPrompt: VERIFIER_PROMPT,
+        cwd, maxTurns: 25, model, allowedTools: VERIFIER_TOOLS, tools: VERIFIER_TOOLS, permissionMode: 'bypassPermissions', systemPrompt,
         // an internal side turn: no transcript, so it never shows up as a conversation in the user's project
         settingSources: [], persistSession: false, abortController,
       },
@@ -170,8 +194,8 @@ async function askClaude(prompt: string, cwd: string, model: string): Promise<st
  *  session indexer skips them (see lesson-curator.service.ts). */
 const SIDE_TURN_SOURCE = 'subagent';
 
-async function askCodex(prompt: string, cwd: string, model: string): Promise<string> {
-  const codex = new Codex({ config: { developer_instructions: VERIFIER_PROMPT } as never });
+async function askCodex(prompt: string, cwd: string, model: string, systemPrompt: string): Promise<string> {
+  const codex = new Codex({ config: { developer_instructions: systemPrompt } as never });
   // reads and runs checks in the project; write access only so build/test caches work — the prompt forbids edits
   const thread = codex.startThread({ threadSource: SIDE_TURN_SOURCE, workingDirectory: cwd, skipGitRepoCheck: true, sandboxMode: 'workspace-write', approvalPolicy: 'never', model, modelReasoningEffort: 'high', webSearchMode: 'disabled' });
   const turn = await thread.run(prompt);
@@ -187,19 +211,19 @@ export const runVerifierService = {
     const { sessionsService } = await import('@/modules/providers/index.js');
     const history = await sessionsService.fetchHistory(input.sessionId, { limit: 400, offset: 0 });
     const brief = buildVerificationBrief(history.messages as HistoryMessage[], { command: input.command, agent: input.agent, engine: input.engine, model: input.workerModel });
-    // Claude checks when the account can use it (a different engine than a Codex worker is a plus); Codex otherwise.
-    const order: Array<'claude' | 'codex'> = input.engines.includes('claude') ? ['claude', 'codex'] : ['codex', 'claude'];
+    // the worker's other engine first; on the same engine the check runs as a different agent (verifierAgent)
+    const order = verifierEngineOrder(input.engine, input.engines);
+    const systemPrompt = verifierSystemPrompt(input.verifierAgent);
     let lastError: unknown = null;
     for (const engine of order) {
-      if (!input.engines.includes(engine)) continue;
       const model = verifierModel(engine, { workerEngine: input.engine, workerModel: input.workerModel, floor: input.modelFloor[engine] });
       try {
-        const text = engine === 'claude' ? await askClaude(brief.text, cwd, model) : await askCodex(brief.text, cwd, model);
+        const text = engine === 'claude' ? await askClaude(brief.text, cwd, model, systemPrompt) : await askCodex(brief.text, cwd, model, systemPrompt);
         const parsed = parseVerification(text);
         const result: Verification = parsed
           ? { ...parsed, engine, model }
           : { verdict: 'unclear', summary: `검증자가 판정 블록을 내지 않았습니다: ${clip(text.replace(/\s+/g, ' ').trim(), 300)}`, checked: [], issues: [], engine, model };
-        console.log(`[aidev-tools] verify run=${input.runId ?? '-'} agent=${input.agent ?? '-'} by ${engine} ${model}: ${result.verdict} — ${clip(result.summary, 200)}`);
+        console.log(`[aidev-tools] verify run=${input.runId ?? '-'} agent=${input.agent ?? '-'} by ${engine} ${model}${input.verifierAgent ? ` as ${input.verifierAgent.name}` : ''}: ${result.verdict} — ${clip(result.summary, 200)}`);
         return { ...result, briefChars: brief.text.length };
       } catch (error) {
         lastError = error;

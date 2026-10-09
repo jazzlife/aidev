@@ -86,5 +86,29 @@ console.log('PASS D3 → D4 plan uses the ceiling:', next.model, next.effort);
 assert.throws(() => store.setEffortCap(uid, { claude: 'ultra' }), /claude effort must be/);
 console.log('PASS invalid ceiling rejected (claude has no ultra)');
 
+// cross-verification (2026-10-09): a verifier's fail verdict goes back to the same worker, twice at most, unless
+// that engine is usage-limited (then the usual escalation applies)
+const failedVerdict = JSON.stringify({ verdict: 'fail', summary: '테스트 주장이 틀림', checked: [], issues: ['x'], engine: 'codex', model: 'gpt-5.6-sol', at: 1 });
+const verifiedFail = (engine, depth, from = null) => { const r = run(engine, depth, from); store.setRunVerification(uid, r.id, JSON.parse(failedVerdict)); store.updateRun(uid, r.id, { exitCode: 0, testResult: 'fail' }); return store.run(uid, r.id); };
+const v1 = verifiedFail('claude', 2);
+next = await decideNext(store, laya('escalate_tier'), v1, both);
+assert.equal(next.action, 'retry_worker'); assert.equal(next.engine, 'claude'); assert.equal(next.model, v1.model); assert.equal(next.effort, v1.effort); assert.equal(next.depth, 2); assert.equal(next.chain, 0);
+console.log('PASS verifier fail → retry_worker on the same plan:', next.reason);
+const v2 = verifiedFail('claude', 2, v1.id);
+next = await decideNext(store, laya('escalate_tier'), v2, both);
+assert.equal(next.action, 'retry_worker'); assert.equal(next.chain, 1);
+const v3 = verifiedFail('claude', 2, v2.id);
+next = await decideNext(store, laya('escalate_tier'), v3, both);
+assert.equal(next.action, 'ask_user'); assert.equal(next.chain, 2);
+console.log('PASS two reworks, then ask_user');
+const limited = { claude: { allowed: true, authenticated: true, limited_until: Date.now() + 3600_000 }, codex: { allowed: true, authenticated: true } };
+next = await decideNext(store, laya('switch_engine'), verifiedFail('claude', 2), limited);
+assert.notEqual(next.action, 'retry_worker');
+console.log('PASS limited worker engine → no retry_worker:', next.action);
+// a plain failure (no verdict) still goes through Laya
+next = await decideNext(store, laya('escalate_tier'), run('claude', 2), both);
+assert.equal(next.action, 'escalate_tier');
+console.log('PASS a run that failed on its own still escalates');
+
 fs.rmSync(dir, { recursive: true, force: true });
 console.log('escalation: all checks passed');

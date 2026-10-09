@@ -98,7 +98,9 @@ export function createAidevApi(deps: AidevDeps) {
   const ENGINE_CACHE_MS = 60_000;
   const CURATE_TIMEOUT_MS = 180_000;
   // Independent verification of a finished run (2026-10-07): a headless turn on the user's runtime reads the
-  // files and re-runs checks the worker claimed; reading a repo and running tests takes minutes.
+  // files and re-runs checks the worker claimed; reading a repo and running tests takes minutes. Since
+  // 2026-10-09 it runs on the worker's other engine (or as another agent on the same one), and a failed
+  // verdict sends the work back to the worker (escalation.ts retry_worker).
   const VERIFY_TIMEOUT_MS = 12 * 60_000;
   const VERIFY_MIN_DEPTH = 2;
   const verifying = new Set<number>();
@@ -232,22 +234,36 @@ export function createAidevApi(deps: AidevDeps) {
     const agent = store.agentById(run.agent_id);
     if (!agent || agent.domain === 'meta') return false;
     verifying.add(run.id);
-    void verifyRun(session, run, agent.name).catch((error) => console.warn('[aidev] verification failed:', error instanceof Error ? error.message : error)).finally(() => verifying.delete(run.id));
+    void verifyRun(session, run, agent).catch((error) => console.warn('[aidev] verification failed:', error instanceof Error ? error.message : error)).finally(() => verifying.delete(run.id));
     return true;
   }
 
+  /**
+   * The agent that checks a worker's run (cross-verification, 2026-10-09): never the worker itself — a
+   * specialist of the same domain when there is another, else the testing agent, else the generalist. Its
+   * prompt is the verifier's domain background; on the worker's own engine it is what makes the check a
+   * different agent's.
+   */
+  function verifierAgentFor(uid: number, worker: { id: number; domain: string }): { name: string; prompt: string } | null {
+    const candidates = store.agents(uid).filter((agent) => agent.id !== worker.id && agent.domain !== 'meta');
+    const pick = candidates.find((agent) => agent.domain === worker.domain) ?? candidates.find((agent) => agent.name === 'testing') ?? candidates.find((agent) => agent.name === 'generalist') ?? candidates[0];
+    return pick ? { name: pick.name, prompt: pick.prompt } : null;
+  }
+
   /** Asks the user's runtime to verify the run; stores the verdict and settles the outcome it implies. */
-  async function verifyRun(session: Session, run: RunRow, agentName: string) {
+  async function verifyRun(session: Session, run: RunRow, agent: { id: number; name: string; domain: string }) {
     const uid = session.user.id;
-    const engines = usableEngines(await engineAvailability(session));
+    const availability = await engineAvailability(session);
+    // an engine refusing on a usage limit cannot check anything: the other one does (or none, when limited too)
+    const engines = usableEngines(availability).filter((engine) => !availability[engine].limited_until);
     const unclear = (summary: string): Verification => ({ verdict: 'unclear', summary, checked: [], issues: [], engine: null, model: null, at: Date.now() });
-    if (!engines.length) { store.setRunVerification(uid, run.id, unclear('검증에 쓸 수 있는 엔진이 없습니다 (로그인 필요)')); return; }
+    if (!engines.length) { store.setRunVerification(uid, run.id, unclear('검증에 쓸 수 있는 엔진이 없습니다 (로그인 필요 또는 사용량 한도)')); return; }
     const decisionRow = run.decision_id ? store.db.prepare('SELECT command FROM decision_log WHERE id=?').get(run.decision_id) as { command: string } | undefined : undefined;
     const floor = store.effectiveModelFloor(uid, run.session_id).floor;
     let verdict: Verification;
     try {
       const response = await deps.runtimeFetch(session, '/api/aidev-tools/verify', { method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ session_id: run.session_id, run_id: run.id, agent: agentName, engine: run.engine, engines, command: decisionRow?.command ?? null, worker_model: run.model, depth: run.depth, model_floor: floor }) }, VERIFY_TIMEOUT_MS);
+        body: JSON.stringify({ session_id: run.session_id, run_id: run.id, agent: agent.name, engine: run.engine, engines, command: decisionRow?.command ?? null, worker_model: run.model, depth: run.depth, model_floor: floor, verifier_agent: verifierAgentFor(uid, agent) }) }, VERIFY_TIMEOUT_MS);
       const body = await response.json().catch(() => ({})) as { data?: Omit<Verification, 'at'>; error?: string };
       verdict = response.ok && body.data ? { ...body.data, at: Date.now() } : unclear(`검증을 실행하지 못했습니다: ${body.error ?? response.status}`);
     } catch (error) {

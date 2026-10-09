@@ -10,21 +10,30 @@ import { EFFORT_LADDER } from './store-aidev.js';
  * among retry_same / escalate_tier / switch_engine / ask_user; rules keep the answer executable:
  *   - the run's engine is not signed in any more  → switch_engine (else ask_user)
  *   - two escalations already chained              → ask_user (no endless retries)
+ *   - the independent verifier failed the run      → retry_worker: the same worker (engine, model, agent)
+ *                                                     fixes what the verifier found; the apps run this one
+ *                                                     without a tap, and the new run is verified again
  *   - escalate_tier at the top tier                 → one more effort step up to the user's ceiling,
  *                                                     then switch_engine when possible, else ask_user
  *   - switch_engine with no other usable engine     → escalate_tier / ask_user
  * The proposal is stored on the run and returned to the client, which offers it as a one-tap card;
- * nothing re-runs by itself (each attempt spends the user's subscription).
+ * nothing but retry_worker re-runs by itself (each attempt spends the user's subscription).
  */
 type Store = ReturnType<typeof openStore>;
 type RunRow = NonNullable<ReturnType<Store['run']>>;
 export type NextAction = {
-  action: 'retry_same' | 'escalate_tier' | 'switch_engine' | 'ask_user';
+  action: 'retry_same' | 'retry_worker' | 'escalate_tier' | 'switch_engine' | 'ask_user';
   engine: Engine | null; model: string | null; effort: string | null; depth: number | null;
   from_run: number; chain: number; reason: string;
 };
 
 const MAX_CHAIN = 2;
+
+/** Whether the run's stored verification (runs.verification JSON) is a fail verdict. */
+function verificationFailed(run: RunRow): boolean {
+  if (!run.verification) return false;
+  try { return (JSON.parse(run.verification) as { verdict?: string }).verdict === 'fail'; } catch { return false; }
+}
 
 function chainLength(store: Store, run: RunRow) {
   let n = 0; let cur: RunRow | undefined = run;
@@ -60,6 +69,11 @@ export async function decideNext(store: Store, laya: LayaClient, run: RunRow, en
   }
   if (!engines[engine]?.authenticated) {
     return otherUsable ? plan('switch_engine', other, depth, `${engine} 로그인이 필요해 ${other}로 넘깁니다`) : plan('ask_user', null, null, `${engine} 로그인이 필요합니다`);
+  }
+  // cross-verification (2026-10-09): the verifier's findings go back to the worker that made them, on the same
+  // plan — a stronger model is not what was missing; the chain cap above ends the loop after two reworks
+  if (verificationFailed(run) && !engines[engine]?.limited_until) {
+    return { ...base, action: 'retry_worker', engine, model: run.model, effort: run.effort, depth, reason: `검증자가 지적한 문제를 같은 작업자(${engine} ${run.model ?? ''})가 다시 고칩니다 (${chain + 1}/${MAX_CHAIN})` };
   }
 
   const decision = store.db.prepare('SELECT command FROM decision_log WHERE id=?').get(run.decision_id ?? -1) as { command: string } | undefined;

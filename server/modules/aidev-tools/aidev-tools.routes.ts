@@ -78,6 +78,7 @@ router.post('/verify', asyncHandler(async (req: Request, res: Response) => {
     return;
   }
   const floor = body.model_floor && typeof body.model_floor === 'object' ? body.model_floor as Record<string, unknown> : {};
+  const verifierAgent = body.verifier_agent && typeof body.verifier_agent === 'object' ? body.verifier_agent as Record<string, unknown> : null;
   const result = await runVerifierService.verify({
     sessionId,
     runId: typeof body.run_id === 'number' ? body.run_id : null,
@@ -88,6 +89,7 @@ router.post('/verify', asyncHandler(async (req: Request, res: Response) => {
     command: typeof body.command === 'string' ? body.command : null,
     depth: typeof body.depth === 'number' ? body.depth : null,
     modelFloor: { ...(typeof floor.claude === 'string' ? { claude: floor.claude } : {}), ...(typeof floor.codex === 'string' ? { codex: floor.codex } : {}) },
+    verifierAgent: verifierAgent && typeof verifierAgent.name === 'string' && typeof verifierAgent.prompt === 'string' ? { name: verifierAgent.name, prompt: verifierAgent.prompt } : null,
   });
   res.json(createApiSuccessResponse(result));
 }));

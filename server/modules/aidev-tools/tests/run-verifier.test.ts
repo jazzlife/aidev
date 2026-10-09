@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildVerificationBrief, parseVerification, verifierModel } from '@/modules/aidev-tools/run-verifier.service.js';
+import { buildVerificationBrief, parseVerification, verifierEngineOrder, verifierModel } from '@/modules/aidev-tools/run-verifier.service.js';
 
 const verdict = { verdict: 'fail', summary: '테스트가 통과했다는 주장이 틀렸다', checked: [{ claim: 'npm test 통과', result: 'wrong', evidence: 'npm test → 2 failed' }], issues: ['GameLoop.cs의 타이머가 60fps를 보장하지 않음'] };
 
@@ -32,6 +32,17 @@ test('verifierModel never goes below opus/sol, follows a stronger worker and the
   assert.equal(verifierModel('claude', { workerEngine: 'codex', workerModel: 'gpt-6-astra', floor: undefined }), 'opus');
   assert.equal(verifierModel('codex', { workerEngine: 'codex', workerModel: 'gpt-5.6-terra', floor: undefined }), 'gpt-5.6-sol');
   assert.equal(verifierModel('codex', { workerEngine: 'codex', workerModel: 'gpt-6-astra', floor: undefined }), 'gpt-6-astra');
+});
+
+test('verifierEngineOrder prefers the worker\'s other engine and stays inside the usable ones', () => {
+  assert.deepEqual(verifierEngineOrder('claude', ['claude', 'codex']), ['codex', 'claude']);
+  assert.deepEqual(verifierEngineOrder('codex', ['claude', 'codex']), ['claude', 'codex']);
+  // only the worker's own engine usable: the check still runs there (as another agent)
+  assert.deepEqual(verifierEngineOrder('codex', ['codex']), ['codex']);
+  // the other engine is limited or signed out: it is not offered
+  assert.deepEqual(verifierEngineOrder('claude', ['claude']), ['claude']);
+  assert.deepEqual(verifierEngineOrder(null, ['codex']), ['codex']);
+  assert.deepEqual(verifierEngineOrder('claude', []), []);
 });
 
 test('buildVerificationBrief covers only the last turn: its files, commands, errors and the final report', () => {

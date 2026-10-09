@@ -231,9 +231,10 @@ async function readRuntimeData<T>(response: Response): Promise<T> {
   return body.data as T;
 }
 
-/** What the gateway proposes after a routed run failed (E-03); offered to the user as a one-tap card. */
+/** What the gateway proposes after a routed run failed (E-03); offered to the user as a one-tap card — except
+ *  retry_worker (the verifier failed the run), which the apps send back to the worker on their own. */
 export type NextAction = {
-  action: 'retry_same' | 'escalate_tier' | 'switch_engine' | 'ask_user';
+  action: 'retry_same' | 'retry_worker' | 'escalate_tier' | 'switch_engine' | 'ask_user';
   engine: Engine | null; model: string | null; effort: string | null; depth: number | null;
   from_run: number; chain: number; reason: string;
 };

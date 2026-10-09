@@ -53,7 +53,8 @@ const VERIFY_MAX_MS = 13 * 60_000;
 /**
  * Polls the run until the verifier's verdict is stored, then shows it. A failed verdict also carries the
  * gateway's next step, so the escalation card appears with the verifier's findings appended to the
- * command the retry will send — the next attempt knows what the last one got wrong.
+ * command the retry will send — the next attempt knows what the last one got wrong. When that step is
+ * retry_worker, useEscalation sends it back to the worker by itself (cross-verification loop).
  */
 async function followVerification(runId: number, sessionId: string | null) {
   const until = Date.now() + VERIFY_MAX_MS;

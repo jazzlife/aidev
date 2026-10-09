@@ -24,7 +24,7 @@ export function EscalationCard({ next, label, busy, error, onRun, onDismiss, com
     <div className={`border-t border-border bg-amber-500/10 ${compact ? 'p-3' : 'px-4 py-2.5'} text-[12px]`} data-testid="escalation-card">
       <div className="flex items-start gap-2">
         <div className="min-w-0 flex-1">
-          <div className="font-medium">실행이 실패했습니다{next.chain > 0 ? ` (이어서 ${next.chain}번째)` : ''}</div>
+          <div className="font-medium">{next.action === 'retry_worker' ? '검증 실패 — 작업자에게 다시 맡깁니다' : '실행이 실패했습니다'}{next.chain > 0 ? ` (이어서 ${next.chain}번째)` : ''}</div>
           <div className="mt-0.5 text-muted-foreground">{next.reason}</div>
           {error ? <div className="mt-1 text-red-600">{error}</div> : null}
         </div>

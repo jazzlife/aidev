@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { api } from '@/shared/api';
 import { aidevApi, type Engine } from '@/modules/aidev-router/api';
@@ -36,12 +36,15 @@ const ENGINE_LABEL: Record<Engine, string> = { claude: 'Claude', codex: 'Codex' 
  * proposal (`routingStore.escalation`, set by useAidevRouting.reportOutcome) is executed here:
  *   retry_same / escalate_tier → the same command re-sent once with the proposed model/effort,
  *                                 linked to the failed run (escalated_from_run);
+ *   retry_worker               → the verifier failed the run: the command plus the verifier's findings goes
+ *                                 back to the same worker without a tap (cross-verification loop; the gateway
+ *                                 caps the chain), and the new run is verified again;
  *   switch_engine              → a handoff brief is built from the transcript, a session on the other
  *                                 engine is created in the same project and the brief is sent there;
  *   ask_user                   → nothing to run; the card only explains why.
  * The original specialist agent is kept for the follow-up turn. Used by ChatInterface (workbench)
  * and the mobile ChatScreen; nothing runs without the user's tap (each attempt spends usage) —
- * except a usage-limit block, which `handoffOnUsageLimit` carries over on its own.
+ * except retry_worker and a usage-limit block, which `handoffOnUsageLimit` carries over on its own.
  */
 export function useEscalation({ resend, openSession, getProjectPath }: UseEscalationArgs) {
   const { escalation, last } = useRoutingState();
@@ -84,7 +87,7 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
     const oneShotAgent = agentName && agentName !== 'agent-architect' ? agentName : null;
     const plan = { engine: next.engine ?? undefined, model: next.model, effort: next.effort, depth: next.depth, escalatedFromRun: next.from_run };
     setError(null);
-    if (next.action === 'retry_same' || next.action === 'escalate_tier') {
+    if (next.action === 'retry_same' || next.action === 'retry_worker' || next.action === 'escalate_tier') {
       if (!text.trim()) { setError('다시 보낼 명령을 찾지 못했습니다'); return; }
       routingStore.patch({ oneShotPlan: plan, oneShotAgent, escalation: null });
       resend(text);
@@ -104,6 +107,16 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
       title: `[인계] ${(text || '이어서 작업').slice(0, 60)}`,
     });
   }, [busy, dismiss, handoff, resend]);
+
+  // Runs already sent back to their worker, so a re-render (or the card reappearing) never sends twice.
+  const reworkedRuns = useRef<Set<number>>(new Set());
+  // retry_worker is the one proposal that goes out by itself: the worker gets the verifier's findings right away
+  useEffect(() => {
+    const current = escalation;
+    if (!current || current.next.action !== 'retry_worker' || reworkedRuns.current.has(current.next.from_run)) return;
+    reworkedRuns.current.add(current.next.from_run);
+    void run();
+  }, [escalation, run]);
 
   /**
    * Carries the work to the other engine without waiting for a tap, for a run the
@@ -189,8 +202,9 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
   const next = escalation?.next ?? null;
   const label = !next ? null
     : next.action === 'retry_same' ? '같은 설정으로 다시 시도'
-      : next.action === 'escalate_tier' ? `더 강한 모델로 다시 시도 (${next.model}${next.effort ? ` · ${next.effort}` : ''})`
-        : next.action === 'switch_engine' && next.engine ? `${ENGINE_LABEL[next.engine]}로 인계 (${next.model})`
-          : null;
+      : next.action === 'retry_worker' ? '지적된 문제를 작업자에게 다시 맡기기'
+        : next.action === 'escalate_tier' ? `더 강한 모델로 다시 시도 (${next.model}${next.effort ? ` · ${next.effort}` : ''})`
+          : next.action === 'switch_engine' && next.engine ? `${ENGINE_LABEL[next.engine]}로 인계 (${next.model})`
+            : null;
   return { escalation, agentName: last?.agent.name ?? null, label, busy, error, run, dismiss, takeHandoff, handoffOnUsageLimit, switchBack };
 }
