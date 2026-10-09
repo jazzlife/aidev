@@ -16,6 +16,8 @@ type UseEscalationArgs = {
 
 type HandoffArgs = {
   engine: Engine;
+  /** The engine the chat is leaving — the session's own, never read off the routing store (its last plan may belong to another chat). */
+  fromEngine: Engine;
   sessionId: string;
   /** The command to continue with; the brief is sent instead when there is none. */
   text: string;
@@ -50,12 +52,11 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
   const dismiss = useCallback(() => { routingStore.patch({ escalation: null }); setError(null); }, []);
 
   /** Builds the brief, opens a session on `engine` in the same project, and queues the brief for it. */
-  const handoff = useCallback(async ({ engine, sessionId, text, reason, plan, oneShotAgent, title }: HandoffArgs) => {
+  const handoff = useCallback(async ({ engine, fromEngine, sessionId, text, reason, plan, oneShotAgent, title }: HandoffArgs) => {
     const projectPath = getProjectPath();
     if (!projectPath) { setError('인계할 프로젝트 경로를 찾지 못했습니다'); return; }
     setBusy(true);
     try {
-      const fromEngine = routingStore.get().last?.plan.engine ?? null;
       const brief = await aidevApi.handoffBrief(sessionId, { from_engine: fromEngine, to_engine: engine, reason });
       const response = await api.providers.createSession({ provider: engine, projectPath, initialMessage: text || brief.text });
       const body = await response.json() as { data?: { sessionId?: string } };
@@ -63,7 +64,7 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
       if (!response.ok || !newId) throw new Error(`세션을 만들지 못했습니다 (${response.status})`);
       handedOffSessions.current.add(sessionId);
       // the new chat remembers where it came from, so it can offer the way back once that engine is usable again
-      if (fromEngine) rememberHandoff(newId, { fromSessionId: sessionId, fromEngine, toEngine: engine, reason, at: Date.now() });
+      rememberHandoff(newId, { fromSessionId: sessionId, fromEngine, toEngine: engine, reason, at: Date.now() });
       routingStore.patch({ pendingHandoff: { sessionId: newId, text: brief.text }, oneShotPlan: plan, oneShotAgent, escalation: null });
       openSession(newId, engine, title);
     } catch (failure) {
@@ -91,6 +92,8 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
     if (!current.sessionId) { setError('인계할 세션 정보가 없습니다'); return; }
     await handoff({
       engine: next.engine,
+      // a switch_engine proposal always targets the other engine, so the failed run's engine is its opposite
+      fromEngine: next.engine === 'claude' ? 'codex' : 'claude',
       sessionId: current.sessionId,
       text,
       reason: next.reason,
@@ -139,6 +142,7 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
     setError(null);
     await handoff({
       engine: otherEngine,
+      fromEngine: args.blockedEngine,
       sessionId: args.sessionId,
       text,
       reason: args.reason,

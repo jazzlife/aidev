@@ -101,9 +101,11 @@ export function useReturnFromHandoff(sessionId: string | null, openSession: (ses
   }, [busy, openSession, origin, sessionId]);
 
   const offer = Boolean(origin && sessionId && dismissed !== sessionId && state.usable);
+  // "한도가 풀렸습니다" only for a handoff the limit caused; another reason just offers the way back
+  const wasLimit = Boolean(origin?.reason && /usage_limit|한도/.test(origin.reason));
   return {
     engine: offer && origin ? origin.fromEngine : null,
-    label: offer && origin ? `${ENGINE_LABEL[origin.fromEngine]} 한도가 풀렸습니다 — ${ENGINE_LABEL[origin.fromEngine]}로 돌아가기` : null,
+    label: offer && origin ? `${ENGINE_LABEL[origin.fromEngine]}${wasLimit ? ' 한도가 풀렸습니다' : '를 다시 쓸 수 있습니다'} — ${ENGINE_LABEL[origin.fromEngine]}로 돌아가기` : null,
     limitedUntil: origin && dismissed !== sessionId ? state.limitedUntil : null,
     busy, error, returnNow,
     dismiss: () => setDismissed(sessionId),
