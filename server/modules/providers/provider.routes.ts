@@ -699,11 +699,11 @@ router.post(
   }),
 );
 
-// Account usage limits per engine, as learned from the engines' own turn events (the drawers show them).
+// Account usage limits per engine (the drawers show them): Claude's from its turn events, Codex's from the ChatGPT account.
 router.get(
   '/usage-limits',
   asyncHandler(async (_req: Request, res: Response) => {
-    res.json(createApiSuccessResponse({ providers: providerUsageLimitsService.snapshot() }));
+    res.json(createApiSuccessResponse({ providers: await providerUsageLimitsService.snapshotLive() }));
   }),
 );
 

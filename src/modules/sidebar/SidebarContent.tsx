@@ -8,6 +8,7 @@ import type { ArchivedProjectListItem, ArchivedSessionListItem, ConversationSear
 import { collapseWorkspacesRoot } from '@/shared/utils';
 import { formatCompactAge, getAllSessions } from '@/modules/sidebar/utils/sidebarProjectFormatting';
 import SidebarFooter from '@/modules/sidebar/SidebarFooter';
+import { UsageLimitPanel } from '@/modules/aidev-router';
 import SidebarHeader from '@/modules/sidebar/SidebarHeader';
 import SidebarProjectList from '@/modules/sidebar/SidebarProjectList';
 import SidebarRecentConversations from '@/modules/sidebar/SidebarRecentConversations';
@@ -86,7 +87,7 @@ function groupArchivedSessionsByProject(sessions: ArchivedSessionListItem[]): Ar
 type SidebarContentProps = {
   isPWA: boolean;
   isMobile: boolean;
-  /** Workbench-embedded variant (see Sidebar): full width, no footer. */
+  /** Workbench-embedded variant (see Sidebar): full width, no footer (only the usage limits at the bottom). */
   embedded: boolean;
   isLoading: boolean;
   projects: Project[];
@@ -691,6 +692,14 @@ export default function SidebarContent({
           <SidebarProjectList {...projectListProps} />
         )}
       </ScrollArea>
+
+      {/* Workbench (desktop docked / tablet drawer): no footer, but the accounts' usage limits stay at the bottom (2026-10-09) */}
+      {embedded ? (
+        <div className="shrink-0 border-t border-border px-2 pb-1 pt-1" data-testid="sidebar-usage-limits">
+          <div className="px-2.5 pb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground/70">계정 한도</div>
+          <UsageLimitPanel />
+        </div>
+      ) : null}
 
       {!isRenamingOnMobile && !embedded && (
         <SidebarFooter

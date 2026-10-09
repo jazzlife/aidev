@@ -6,7 +6,7 @@ import type { ProviderUsageLimitsSnapshot, ProviderUsageWindow } from '@/shared/
 
 /** Korean names of the usage windows the engines report. */
 const WINDOW_LABEL: Record<string, string> = { five_hour: '5시간', seven_day: '주간', seven_day_opus: '주간 Opus', seven_day_sonnet: '주간 Sonnet', overage: '추가 사용', unknown: '한도' };
-/** The drawer asks again this often while open (the picture only changes when a turn runs). */
+/** The drawer asks again this often while open (the server reads the Codex account at most that often too). */
 const POLL_MS = 60_000;
 
 export type UsageWindowView = { type: string; label: string; percent: number | null; resetsAt: number | null; blocked: boolean };

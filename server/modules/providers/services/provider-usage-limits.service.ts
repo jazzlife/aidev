@@ -6,9 +6,10 @@ import type { LLMProvider, ProviderUsageLimitsSnapshot, ProviderUsageWindow } fr
 
 /**
  * Account usage limits per engine (2026-10-09), for the drawers of both apps. The runtime learns them
- * from the engines' own turn events — Claude's SDK reports a `rate_limit_event` per turn with the
- * window's utilization and reset time; Codex only shows a refusal — and keeps the last picture here,
- * persisted so a restart does not blank the drawer until the next turn.
+ * from Claude's own turn events — the SDK reports a `rate_limit_event` per turn with the window's
+ * utilization and reset time — and from the ChatGPT account's usage endpoint for Codex (whose turn
+ * events only show a refusal). The last picture is kept here, persisted so a restart does not blank
+ * the drawer until the next turn or read.
  */
 type Store = Partial<Record<LLMProvider, ProviderUsageLimitsSnapshot>>;
 
@@ -16,7 +17,18 @@ type Store = Partial<Record<LLMProvider, ProviderUsageLimitsSnapshot>>;
 const UNKNOWN_RESET_HOLD_MS = 5 * 3600_000;
 const file = () => path.join(os.homedir(), '.cloudcli', 'usage-limits.json');
 
+/**
+ * Codex gives no usage numbers in its turn events, but the CLI's own `/status` reads the ChatGPT
+ * account's windows from this endpoint with the login in `$CODEX_HOME/auth.json` (the CLI refreshes
+ * that token whenever it runs). Asked at most once a minute, when a drawer polls.
+ */
+const CODEX_USAGE_URL = 'https://chatgpt.com/backend-api/wham/usage';
+const CODEX_USAGE_CACHE_MS = 60_000;
+const CODEX_USAGE_TIMEOUT_MS = 8_000;
+const codexAuthFile = () => path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'auth.json');
+
 let store: Store | null = null;
+let codexFetchedAt = 0;
 
 function load(): Store {
   if (store) return store;
@@ -36,6 +48,55 @@ function toEpochMs(value: unknown): number | null {
   const raw = Number(value);
   if (!Number.isFinite(raw) || raw <= 0) return null;
   return raw < 1e12 ? raw * 1000 : raw;
+}
+
+function readCodexAuth(): { accessToken: string; accountId: string } | null {
+  try {
+    const parsed = JSON.parse(fs.readFileSync(codexAuthFile(), 'utf8')) as { tokens?: { access_token?: unknown; account_id?: unknown } };
+    const accessToken = parsed.tokens?.access_token;
+    if (typeof accessToken !== 'string' || !accessToken) return null;
+    return { accessToken, accountId: typeof parsed.tokens?.account_id === 'string' ? parsed.tokens.account_id : '' };
+  } catch {
+    return null;
+  }
+}
+
+/** One window of the usage API: `used_percent` 0–100, the window length, and its reset (epoch s or seconds from now). */
+function codexWindow(raw: unknown, now: number): ProviderUsageWindow | null {
+  if (!raw || typeof raw !== 'object') return null;
+  const window = raw as { used_percent?: unknown; limit_window_seconds?: unknown; reset_at?: unknown; reset_after_seconds?: unknown };
+  const usedPercent = Number(window.used_percent);
+  if (!Number.isFinite(usedPercent)) return null;
+  const seconds = Number(window.limit_window_seconds);
+  const type = Number.isFinite(seconds) && seconds > 0 && seconds <= 6 * 3600 ? 'five_hour' : 'seven_day';
+  const resetAfter = Number(window.reset_after_seconds);
+  const resetsAt = toEpochMs(window.reset_at) ?? (Number.isFinite(resetAfter) && resetAfter > 0 ? now + resetAfter * 1000 : null);
+  return { type, utilization: Math.max(0, Math.min(1, usedPercent / 100)), resetsAt, blocked: usedPercent >= 100 };
+}
+
+/** Replaces the Codex picture with the account's current windows; leaves it alone when the account cannot be read. */
+async function refreshCodexUsage(now: number) {
+  const auth = readCodexAuth();
+  if (!auth) return;
+  const response = await fetch(CODEX_USAGE_URL, {
+    headers: { Authorization: `Bearer ${auth.accessToken}`, 'ChatGPT-Account-Id': auth.accountId },
+    signal: AbortSignal.timeout(CODEX_USAGE_TIMEOUT_MS),
+  });
+  if (!response.ok) return;
+  const body = await response.json() as { rate_limit?: { allowed?: unknown; limit_reached?: unknown; primary_window?: unknown; secondary_window?: unknown } | null };
+  const limit = body.rate_limit;
+  if (!limit || typeof limit !== 'object') return;
+  let windows: ProviderUsageWindow[] = [];
+  for (const raw of [limit.primary_window, limit.secondary_window]) {
+    const window = codexWindow(raw, now);
+    if (window) windows = upsertWindow(windows, window);
+  }
+  const limitReached = limit.limit_reached === true || limit.allowed === false || windows.some((window) => window.blocked);
+  // the block lifts when the earliest full window resets; a refusal without any reset is held five hours (snapshot)
+  const resets = (windows.some((window) => window.blocked) ? windows.filter((window) => window.blocked) : windows).map((window) => window.resetsAt).filter((at): at is number => at !== null);
+  const blockedUntil = limitReached ? (resets.length ? Math.min(...resets) : 0) : null;
+  load().codex = { provider: 'codex', observedAt: now, windows, blockedUntil };
+  save();
 }
 
 function current(provider: LLMProvider): ProviderUsageLimitsSnapshot {
@@ -106,9 +167,22 @@ export const providerUsageLimitsService = {
     return out;
   },
 
-  /** Tests: forget everything (memory and file). */
+  /**
+   * The providers route: the picture per engine, with Codex's read afresh from the ChatGPT account
+   * at most once a minute. A failed read keeps the last picture (its observedAt says how old it is).
+   */
+  async snapshotLive(now = Date.now()): Promise<Partial<Record<LLMProvider, ProviderUsageLimitsSnapshot>>> {
+    if (now - codexFetchedAt >= CODEX_USAGE_CACHE_MS) {
+      codexFetchedAt = now;
+      await refreshCodexUsage(now).catch(() => undefined);
+    }
+    return providerUsageLimitsService.snapshot(now);
+  },
+
+  /** Tests: forget everything (memory, file and the Codex read cache). */
   reset() {
     store = {};
+    codexFetchedAt = 0;
     try { fs.unlinkSync(file()); } catch { /* none */ }
   },
 };
