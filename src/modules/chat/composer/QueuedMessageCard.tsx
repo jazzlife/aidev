@@ -4,17 +4,22 @@ import { PencilIcon, XIcon } from 'lucide-react';
 type QueuedMessageCardProps = {
   content: string;
   attachmentCount?: number;
+  /** 1-based place in the session's queue; shown only when there is more than one turn. */
+  position: number;
+  total: number;
   onEdit: () => void;
   onDelete: () => void;
 };
 
 /**
- * Rendered by chat's ChatComposer to show the message queued for a busy
- * session, with edit and delete actions before it is auto-sent.
+ * Rendered by chat's ChatComposer, once per turn queued behind a busy
+ * session's running turn, with edit and delete actions before it is sent.
  */
 export default function QueuedMessageCard({
   content,
   attachmentCount = 0,
+  position,
+  total,
   onEdit,
   onDelete,
 }: QueuedMessageCardProps) {
@@ -27,9 +32,14 @@ export default function QueuedMessageCard({
 
         <div className="min-w-0 flex-1">
           <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-primary/70">
-            <span>{t('input.queue.label', { defaultValue: 'Queued' })}</span>
+            <span>
+              {t('input.queue.label', { defaultValue: 'Queued' })}
+              {total > 1 && <span className="tabular-nums"> {position}/{total}</span>}
+            </span>
             <span className="normal-case text-muted-foreground/60">
-              · {t('input.queue.willSend', { defaultValue: 'Will send when this finishes' })}
+              · {position === 1
+                ? t('input.queue.willSend', { defaultValue: 'Will send when this finishes' })
+                : t('input.queue.afterPrevious', { defaultValue: 'Sent after the one above' })}
             </span>
           </div>
           <p className="mt-0.5 line-clamp-2 break-words text-sm text-foreground/90">{content}</p>

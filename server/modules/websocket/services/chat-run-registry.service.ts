@@ -59,6 +59,29 @@ const MAX_BUFFERED_EVENTS_PER_RUN = 5000;
  */
 const runs = new Map<string, ChatRun>();
 
+/**
+ * Told the moment a run flips to `completed`, with the app session id. The
+ * scheduled-messages dispatcher listens so the next queued turn for that
+ * session starts right away instead of on its 30-second poll.
+ */
+type RunSettledListener = (appSessionId: string) => void;
+const runSettledListeners = new Set<RunSettledListener>();
+
+function notifyRunSettled(appSessionId: string): void {
+  // Deferred so the terminal `complete` frame is on the wire before a
+  // listener starts the session's next run and that run's events follow it.
+  setImmediate(() => {
+    for (const listener of runSettledListeners) {
+      try {
+        listener(appSessionId);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        console.error('[ChatRunRegistry] Run-settled listener failed', { appSessionId, error: message });
+      }
+    }
+  });
+}
+
 function evictRunLater(appSessionId: string): void {
   const timer = setTimeout(() => {
     const run = runs.get(appSessionId);
@@ -105,6 +128,7 @@ function decorateAndRecordEvent(run: ChatRun, message: NormalizedMessage): Norma
     run.status = 'completed';
     run.completedAt = Date.now();
     evictRunLater(run.appSessionId);
+    notifyRunSettled(run.appSessionId);
   }
 
   run.events.push(outbound);
@@ -276,13 +300,25 @@ export const chatRunRegistry = {
    * marked running. Used when a provider runtime throws or resolves without
    * having produced its own terminal event, and by the abort path.
    */
-  completeRun(appSessionId: string, opts: { exitCode: number; aborted?: boolean }): void {
+  completeRun(appSessionId: string, opts: { exitCode: number; aborted?: boolean; superseded?: boolean }): void {
     const run = runs.get(appSessionId);
     if (!run || run.status !== 'running') {
       return;
     }
 
     run.writer.sendComplete(opts);
+  },
+
+  /**
+   * Subscribes to run completions (every provider, every session); returns the
+   * unsubscribe function. Used by the scheduled-messages dispatcher to send
+   * the next queued turn as soon as the session is idle.
+   */
+  onRunSettled(listener: RunSettledListener): () => void {
+    runSettledListeners.add(listener);
+    return () => {
+      runSettledListeners.delete(listener);
+    };
   },
 
   /**

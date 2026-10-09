@@ -122,8 +122,8 @@
     "hintText": {
       "ctrlEnter": "Ctrl+Enter to send • Shift+Enter for new line • Tab to change modes • / for slash commands",
       "enter": "Enter to send • Shift+Enter for new line • Tab to change modes • / for slash commands",
-      "queue": "Enter to queue your next message",
-      "updateQueued": "Enter to update queued message"
+      "queue": "Enter to queue • ⌘/Ctrl+Enter to interrupt and send now",
+      "queueCtrlEnter": "Ctrl+Enter to queue • Ctrl+Shift+Enter to interrupt and send now"
     },
     "clickToChangeMode": "Click to change permission mode (or press Tab in input)",
     "showAllCommands": "Show all commands",
@@ -131,11 +131,12 @@
     "scrollToBottom": "Scroll to bottom",
     "queue": {
       "sendNext": "Queue next message",
-      "update": "Update queued message",
       "label": "Queued",
       "willSend": "Will send when this finishes",
       "edit": "Edit queued message",
-      "delete": "Delete queued message"
+      "delete": "Delete queued message",
+      "interrupt": "Interrupt and send now",
+      "afterPrevious": "Sent after the one above"
     }
   },
   "composer": {

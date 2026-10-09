@@ -117,6 +117,70 @@ test('a queued message stays pending while its session is busy', async () => {
   });
 });
 
+test('queued turns go out oldest first, one per idle pass, and the rest stay queued', async () => {
+  await withIsolatedDatabase(async (userId) => {
+    sessionDraftsDb.saveDraft(userId, SESSION_ID, {
+      text: '',
+      queuedMessage: [
+        { content: 'first', options: {}, attachments: [] },
+        { content: 'second', options: {}, attachments: [] },
+        { content: 'third', options: {}, attachments: [] },
+      ],
+    });
+
+    const runs: RunCall[] = [];
+    const runtime = createRuntime(runs);
+
+    assert.equal(await dispatchQueuedMessages(runtime), 1);
+    assert.deepEqual(runs.map((run) => run.command), ['first']);
+    assert.deepEqual(
+      (sessionDraftsDb.getDrafts(userId)[0]?.queuedMessage as Array<{ content: string }>).map((turn) => turn.content),
+      ['second', 'third'],
+    );
+
+    // The runtime stub settles at once, so the session is idle again.
+    assert.equal(await dispatchQueuedMessages(runtime, SESSION_ID), 1);
+    assert.equal(await dispatchQueuedMessages(runtime, 'some-other-session'), 0, 'a session filter leaves other queues alone');
+    assert.equal(await dispatchQueuedMessages(runtime), 1);
+
+    assert.deepEqual(runs.map((run) => run.command), ['first', 'second', 'third']);
+    assert.equal(sessionDraftsDb.getDrafts(userId).length, 0);
+  });
+});
+
+test('a claimed queue head is put back in front of the rest when a run wins the race', async () => {
+  await withIsolatedDatabase(async (userId) => {
+    sessionDraftsDb.saveDraft(userId, SESSION_ID, {
+      text: '',
+      queuedMessage: [
+        { content: 'first', options: {}, attachments: [] },
+        { content: 'second', options: {}, attachments: [] },
+      ],
+    });
+
+    const runs: RunCall[] = [];
+    const runtime = createRuntime(runs) as { hasRuntime: () => boolean };
+    // A run starts between the idle check and the reservation.
+    runtime.hasRuntime = () => {
+      chatRunRegistry.startRun({
+        appSessionId: SESSION_ID,
+        provider: 'claude',
+        providerSessionId: null,
+        connection: null,
+        userId,
+      });
+      return true;
+    };
+
+    assert.equal(await dispatchQueuedMessages(runtime as never), 0);
+    assert.equal(runs.length, 0);
+    assert.deepEqual(
+      (sessionDraftsDb.getDrafts(userId)[0]?.queuedMessage as Array<{ content: string }>).map((turn) => turn.content),
+      ['first', 'second'],
+    );
+  });
+});
+
 test('a due message interrupts a run in progress instead of failing', async () => {
   await withIsolatedDatabase(async (userId) => {
     scheduledMessagesService.schedule({

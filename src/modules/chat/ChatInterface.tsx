@@ -246,7 +246,8 @@ function ChatInterface({
     isDragActive,
     openAttachmentPicker,
     handleSubmit,
-    queuedDraft,
+    handleInterruptSubmit,
+    queuedDrafts,
     editQueuedDraft,
     deleteQueuedDraft,
     handleVoiceTranscript,
@@ -634,8 +635,9 @@ function ChatInterface({
           hasInput={Boolean(input.trim())}
           onClearInput={handleClearInput}
           onSubmit={handleSubmit}
+          onInterruptSubmit={handleInterruptSubmit}
           isDragActive={isDragActive}
-          queuedDraft={queuedDraft}
+          queuedDrafts={queuedDrafts}
           onEditQueuedDraft={editQueuedDraft}
           onDeleteQueuedDraft={deleteQueuedDraft}
           attachedFiles={attachedFiles}

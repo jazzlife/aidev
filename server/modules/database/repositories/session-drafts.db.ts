@@ -19,7 +19,11 @@ type DraftRow = {
   updated_at: string;
 };
 
-/** A server-owned queued turn together with the exact stored value used to claim it once. */
+/**
+ * A server-owned queue of turns for one session together with the exact stored
+ * value used to claim its head once. `queuedMessage` is the parsed column: an
+ * array of turns, or a single turn written by an older client.
+ */
 export type QueuedSessionMessageRecord = {
   userId: number;
   sessionId: string;
@@ -96,27 +100,45 @@ export const sessionDraftsDb = {
     }));
   },
 
-  /** Atomically removes a queued turn only if it has not been edited since listing. */
-  claimQueuedMessage(candidate: QueuedSessionMessageRecord): boolean {
+  /**
+   * Atomically takes the head of a session's queue, only if the queue has not
+   * been edited since listing: the column becomes `remaining` (the turns still
+   * waiting, or NULL when the head was the last one).
+   */
+  claimQueuedMessage(candidate: QueuedSessionMessageRecord, remaining: unknown[] | null): boolean {
     const result = getConnection()
       .prepare(
         `UPDATE session_drafts
-         SET queued_message = NULL, updated_at = CURRENT_TIMESTAMP
+         SET queued_message = ?, updated_at = CURRENT_TIMESTAMP
          WHERE user_id = ? AND draft_scope = ? AND queued_message = ?`
       )
-      .run(candidate.userId, candidate.sessionId, candidate.claimToken);
+      .run(
+        remaining && remaining.length > 0 ? JSON.stringify(remaining) : null,
+        candidate.userId,
+        candidate.sessionId,
+        candidate.claimToken,
+      );
     return result.changes > 0;
   },
 
-  /** Restores a claim lost to the narrow race where another run starts first. */
-  restoreQueuedMessage(candidate: QueuedSessionMessageRecord): void {
+  /**
+   * Restores a claim lost to the narrow race where another run starts first.
+   * `remaining` must be what the claim left in the column, so a queue the user
+   * changed meanwhile is never overwritten.
+   */
+  restoreQueuedMessage(candidate: QueuedSessionMessageRecord, remaining: unknown[] | null): void {
     getConnection()
       .prepare(
         `UPDATE session_drafts
          SET queued_message = ?, updated_at = CURRENT_TIMESTAMP
-         WHERE user_id = ? AND draft_scope = ? AND queued_message IS NULL`
+         WHERE user_id = ? AND draft_scope = ? AND queued_message IS ?`
       )
-      .run(candidate.claimToken, candidate.userId, candidate.sessionId);
+      .run(
+        candidate.claimToken,
+        candidate.userId,
+        candidate.sessionId,
+        remaining && remaining.length > 0 ? JSON.stringify(remaining) : null,
+      );
   },
 
   /** Removes the placeholder row left after its last queued turn is claimed. */

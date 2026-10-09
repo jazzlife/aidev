@@ -10,7 +10,7 @@ import type {
   RefObject,
   TouchEvent,
 } from 'react';
-import { PaperclipIcon, MessageSquareIcon, XIcon, Loader2, ArrowUpIcon, PencilIcon } from 'lucide-react';
+import { PaperclipIcon, MessageSquareIcon, XIcon, Loader2, ListPlusIcon, PencilIcon, ZapIcon } from 'lucide-react';
 
 import { useVoiceInput } from '@/modules/chat/hooks/useVoiceInput';
 import { useVoiceAvailable } from '@/modules/chat/hooks/useVoiceAvailable';
@@ -72,8 +72,11 @@ type ChatComposerProps = {
   hasInput: boolean;
   onClearInput: () => void;
   onSubmit: (event: FormEvent<HTMLFormElement> | MouseEvent<HTMLButtonElement> | TouchEvent<HTMLButtonElement>) => void;
+  /** Sends the input now, cutting into the running turn, instead of queueing behind it. */
+  onInterruptSubmit: (event: MouseEvent<HTMLButtonElement>) => void;
   isDragActive: boolean;
-  queuedDraft: QueuedDraft | null;
+  /** Turns waiting behind the running one, oldest first. */
+  queuedDrafts: QueuedDraft[];
   /** Set while the composer is replacing an already-sent message. */
   isEditingSentMessage: boolean;
   onCancelEditMessage: () => void;
@@ -81,8 +84,8 @@ type ChatComposerProps = {
   scheduledMessages: ScheduledMessage[];
   onScheduleMessage: (scheduledFor: Date) => void;
   onCancelScheduledMessage: (id: string) => void;
-  onEditQueuedDraft: () => void;
-  onDeleteQueuedDraft: () => void;
+  onEditQueuedDraft: (id: string) => void;
+  onDeleteQueuedDraft: (id: string) => void;
   attachedFiles: File[];
   onRemoveAttachment: (index: number) => void;
   fileErrors: Map<string, string>;
@@ -148,8 +151,9 @@ export default function ChatComposer({
   hasInput,
   onClearInput,
   onSubmit,
+  onInterruptSubmit,
   isDragActive,
-  queuedDraft,
+  queuedDrafts,
   isEditingSentMessage,
   onCancelEditMessage,
   scheduledMessages,
@@ -254,22 +258,25 @@ export default function ChatComposer({
   const hasPendingPermissions = pendingPermissionRequests.length > 0;
   const hasActivityIndicator = Boolean(activity && !hasPendingPermissions);
 
-  const hasQueuedDraft = Boolean(queuedDraft);
+  // A turn is running and there is something to send: the send button queues
+  // it and, while the turn can be interrupted, a second button cuts in with it.
   const canQueueDraft = isLoading && Boolean(input.trim() || attachedFiles.length > 0);
-  const submitHint = canQueueDraft
-    ? hasQueuedDraft
-      ? t('input.hintText.updateQueued', { defaultValue: 'Enter to update queued message' })
-      : t('input.hintText.queue', { defaultValue: 'Enter to queue your next message' })
-    : sendByCtrlEnter
-      ? t('input.hintText.ctrlEnter')
-      : t('input.hintText.enter');
+  const canInterrupt = canQueueDraft && activity?.canInterrupt !== false;
+  const submitHint = canInterrupt
+    ? sendByCtrlEnter
+      ? t('input.hintText.queueCtrlEnter', { defaultValue: 'Ctrl+Enter to queue • Ctrl+Shift+Enter to interrupt and send now' })
+      : t('input.hintText.queue', { defaultValue: 'Enter to queue • ⌘/Ctrl+Enter to interrupt and send now' })
+    : canQueueDraft
+      ? t('input.queue.sendNext', { defaultValue: 'Queue next message' })
+      : sendByCtrlEnter
+        ? t('input.hintText.ctrlEnter')
+        : t('input.hintText.enter');
   const submitAriaLabel = canQueueDraft
-    ? hasQueuedDraft
-      ? t('input.queue.update', { defaultValue: 'Update queued message' })
-      : t('input.queue.sendNext', { defaultValue: 'Queue next message' })
+    ? t('input.queue.sendNext', { defaultValue: 'Queue next message' })
     : isLoading
       ? t('input.stop')
       : t('input.send');
+  const interruptLabel = t('input.queue.interrupt', { defaultValue: 'Interrupt and send now' });
 
   return (
     <div className="chat-composer-shell relative flex-shrink-0 px-2 pb-2 pt-0 sm:px-4 sm:pb-4 md:px-4 md:pb-6">
@@ -312,16 +319,17 @@ export default function ChatComposer({
         </div>
       )}
 
-      {queuedDraft && (
+      {queuedDrafts.map((draft, index) => (
         <QueuedMessageCard
-          content={queuedDraft.content}
-          attachmentCount={
-            queuedDraft.uploadedAttachments?.length ?? queuedDraft.attachments.length
-          }
-          onEdit={onEditQueuedDraft}
-          onDelete={onDeleteQueuedDraft}
+          key={draft.id}
+          content={draft.content}
+          attachmentCount={draft.uploadedAttachments?.length ?? draft.attachments.length}
+          position={index + 1}
+          total={queuedDrafts.length}
+          onEdit={() => onEditQueuedDraft(draft.id)}
+          onDelete={() => onDeleteQueuedDraft(draft.id)}
         />
-      )}
+      ))}
 
       {!hasQuestionPanel && <div className="relative mx-auto max-w-[54.25rem]">
         {showFileDropdown && filteredFiles.length > 0 && (
@@ -499,6 +507,20 @@ export default function ChatComposer({
               providerLabel={providerLabel}
             />
 
+            {canInterrupt && (
+              <PromptInputButton
+                onClick={onInterruptSubmit}
+                aria-label={interruptLabel}
+                tooltip={{
+                  content: interruptLabel,
+                  shortcut: sendByCtrlEnter ? 'Ctrl+Shift+Enter' : '⌘/Ctrl+Enter',
+                }}
+                className="h-10 w-10 text-amber-600 hover:bg-amber-500/10 hover:text-amber-700 dark:text-amber-400 dark:hover:text-amber-300 sm:h-10 sm:w-10"
+              >
+                <ZapIcon className="h-4 w-4" />
+              </PromptInputButton>
+            )}
+
             <PromptInputSubmit
               onClick={
                 canQueueDraft
@@ -531,7 +553,7 @@ export default function ChatComposer({
               {isTranscribing ? (
                 <Loader2 className="h-4 w-4 animate-spin" />
               ) : canQueueDraft ? (
-                <ArrowUpIcon className="h-4 w-4" />
+                <ListPlusIcon className="h-4 w-4" />
               ) : undefined}
             </PromptInputSubmit>
           </div>

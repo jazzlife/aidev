@@ -311,3 +311,88 @@ test('startRun rejects a second concurrent run for the same session', async () =
     assert.ok(third);
   });
 });
+
+const nextTick = () => new Promise<void>((resolve) => { setImmediate(resolve); });
+
+test('a run that completes tells run-settled listeners, after the complete frame', async () => {
+  await withIsolatedDatabase(async () => {
+    sessionsDb.createAppSession('app-run-10', 'claude', '/workspace/demo');
+    const connection = new FakeConnection();
+    const settled: string[] = [];
+    const stop = chatRunRegistry.onRunSettled((sessionId) => settled.push(sessionId));
+
+    try {
+      const run = chatRunRegistry.startRun({
+        appSessionId: 'app-run-10',
+        provider: 'claude',
+        providerSessionId: null,
+        connection,
+        userId: null,
+      });
+      assert.ok(run);
+      chatRunRegistry.completeRun('app-run-10', { exitCode: 0 });
+
+      // The listener runs on the next turn of the event loop, once the
+      // complete frame has been forwarded.
+      assert.deepEqual(settled, []);
+      assert.equal(connection.frames.filter((frame) => frame.kind === 'complete').length, 1);
+      await nextTick();
+      assert.deepEqual(settled, ['app-run-10']);
+
+      // A dropped duplicate complete does not notify twice.
+      chatRunRegistry.completeRun('app-run-10', { exitCode: 0 });
+      await nextTick();
+      assert.deepEqual(settled, ['app-run-10']);
+    } finally {
+      stop();
+    }
+
+    // An unsubscribed listener is not told.
+    const again = chatRunRegistry.startRun({
+      appSessionId: 'app-run-10',
+      provider: 'claude',
+      providerSessionId: null,
+      connection,
+      userId: null,
+    });
+    assert.ok(again);
+    chatRunRegistry.completeRun('app-run-10', { exitCode: 0 });
+    await nextTick();
+    assert.deepEqual(settled, ['app-run-10']);
+  });
+});
+
+test('an interrupting send ends the old run with a superseded complete; a plain abort does not', async () => {
+  await withIsolatedDatabase(() => {
+    sessionsDb.createAppSession('app-run-11', 'claude', '/workspace/demo');
+    const connection = new FakeConnection();
+
+    const first = chatRunRegistry.startRun({
+      appSessionId: 'app-run-11',
+      provider: 'claude',
+      providerSessionId: null,
+      connection,
+      userId: null,
+    });
+    assert.ok(first);
+    chatRunRegistry.completeRun('app-run-11', { exitCode: 0, aborted: true, superseded: true });
+
+    const second = chatRunRegistry.startRun({
+      appSessionId: 'app-run-11',
+      provider: 'claude',
+      providerSessionId: null,
+      connection,
+      userId: null,
+    });
+    assert.ok(second);
+    chatRunRegistry.completeRun('app-run-11', { exitCode: 0, aborted: true });
+
+    const completes = connection.frames.filter((frame) => frame.kind === 'complete');
+    assert.equal(completes.length, 2);
+    assert.equal(completes[0]?.aborted, true);
+    assert.equal(completes[0]?.superseded, true);
+    assert.equal(completes[0]?.success, false);
+    assert.equal(completes[1]?.aborted, true);
+    assert.equal('superseded' in (completes[1] ?? {}), false);
+  });
+});

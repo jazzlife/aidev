@@ -249,8 +249,12 @@ export function useChatRealtimeHandlers({
           // `complete` is the unified terminal event — every provider run ends
           // with exactly one, regardless of success, failure, or abort. The
           // indicator derives from the processing map, so deleting the entry
-          // hides it immediately and atomically.
-          onSessionIdle?.(sid);
+          // hides it immediately and atomically. Except when the user cut in:
+          // `superseded` means the next turn is already starting on the server
+          // right behind this frame, so the session stays shown as busy.
+          if (!msg.superseded) {
+            onSessionIdle?.(sid);
+          }
           if (sid === activeViewSessionId) {
             pendingPermissionRequestsRef.current = [];
             setPendingPermissionRequests([]);

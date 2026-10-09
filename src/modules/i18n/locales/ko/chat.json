@@ -115,8 +115,8 @@
     "hintText": {
       "ctrlEnter": "Ctrl+Enter로 전송 • Shift+Enter로 줄바꿈 • Tab으로 모드 변경 • /로 슬래시 명령어",
       "enter": "Enter로 전송 • Shift+Enter로 줄바꿈 • Tab으로 모드 변경 • /로 슬래시 명령어",
-      "queue": "Enter로 다음 메시지 대기열에 추가",
-      "updateQueued": "Enter로 대기 중인 메시지 업데이트"
+      "queue": "Enter로 대기열에 추가 • ⌘/Ctrl+Enter로 즉시 개입",
+      "queueCtrlEnter": "Ctrl+Enter로 대기열에 추가 • Ctrl+Shift+Enter로 즉시 개입"
     },
     "clickToChangeMode": "클릭하여 권한 모드 변경 (또는 입력창에서 Tab)",
     "showAllCommands": "모든 명령어 보기",
@@ -124,11 +124,12 @@
     "scrollToBottom": "맨 아래로 스크롤",
     "queue": {
       "sendNext": "다음 메시지 대기열에 추가",
-      "update": "대기 중인 메시지 업데이트",
       "label": "대기 중",
       "willSend": "완료되면 전송됩니다",
       "edit": "대기 중인 메시지 편집",
-      "delete": "대기 중인 메시지 삭제"
+      "delete": "대기 중인 메시지 삭제",
+      "interrupt": "지금 개입 (실행 중인 작업을 중단하고 바로 전송)",
+      "afterPrevious": "위 메시지 다음에 전송됩니다"
     }
   },
   "providerSelection": {

@@ -628,6 +628,8 @@ export type CommandModalPayload = {
 
 /** A composer message queued while its session is still busy, holding the text, the in-memory and already-uploaded attachments and the send options snapshotted at queue time so it can be auto-sent unchanged once the session goes idle. */
 export type QueuedDraft = {
+  /** Key of this turn in the session's queue, for editing or removing just it. */
+  id: string;
   content: string;
   /** Browser files retained while this composer stays mounted, for editing. */
   attachments: File[];

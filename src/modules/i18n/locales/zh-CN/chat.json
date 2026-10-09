@@ -115,8 +115,8 @@
     "hintText": {
       "ctrlEnter": "Ctrl+Enter 发送 • Shift+Enter 换行 • Tab 切换模式 • / 斜杠命令",
       "enter": "Enter 发送 • Shift+Enter 换行 • Tab 切换模式 • / 斜杠命令",
-      "queue": "Enter 排队发送下一条消息",
-      "updateQueued": "Enter 更新排队消息"
+      "queue": "Enter 加入队列 • ⌘/Ctrl+Enter 中断并立即发送",
+      "queueCtrlEnter": "Ctrl+Enter 加入队列 • Ctrl+Shift+Enter 中断并立即发送"
     },
     "clickToChangeMode": "点击更改权限模式（或在输入框中按 Tab）",
     "showAllCommands": "显示所有命令",
@@ -124,11 +124,12 @@
     "scrollToBottom": "滚动到底部",
     "queue": {
       "sendNext": "排队发送下一条消息",
-      "update": "更新排队消息",
       "label": "已排队",
       "willSend": "将在当前完成后发送",
       "edit": "编辑排队消息",
-      "delete": "删除排队消息"
+      "delete": "删除排队消息",
+      "interrupt": "中断并立即发送",
+      "afterPrevious": "将在上一条之后发送"
     }
   },
   "providerSelection": {

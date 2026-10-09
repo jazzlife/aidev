@@ -388,6 +388,9 @@ export function createNormalizedMessage(fields: NormalizedMessageInput): Normali
  *                     is reported as failure
  * - `success`       — exitCode === 0 and not aborted
  * - `aborted`       — run was cancelled by the user
+ * - `superseded`    — (only with `aborted`) the user cut in with a new message
+ *                     and that turn starts right behind this frame, so clients
+ *                     keep the session shown as busy instead of idle
  */
 export function createCompleteMessage(opts: {
   provider: NormalizedMessage['provider'];
@@ -395,6 +398,7 @@ export function createCompleteMessage(opts: {
   actualSessionId?: string | null;
   exitCode?: number | null;
   aborted?: boolean;
+  superseded?: boolean;
   usageLimit?: ProviderUsageLimit | null;
 }): NormalizedMessage {
   const exitCode = typeof opts.exitCode === 'number' ? opts.exitCode : 1;
@@ -408,6 +412,7 @@ export function createCompleteMessage(opts: {
     exitCode,
     success: exitCode === 0 && !aborted,
     aborted,
+    ...(aborted && opts.superseded ? { superseded: true } : {}),
     ...(opts.usageLimit ? { usageLimit: opts.usageLimit } : {}),
   });
 }

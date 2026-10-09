@@ -139,9 +139,43 @@ function readRequiredSessionId(data: AnyRecord): string | null {
 }
 
 /**
+ * Cancels the session's running turn, if any, and emits the terminal
+ * `complete` on its behalf (runtimes skip their own complete for aborted runs,
+ * and the registry drops any duplicate). Shared by `chat.abort`, an
+ * interrupting `chat.send`, and a scheduled message landing mid-run.
+ *
+ * `superseded` marks the frame as "another turn follows at once", so clients
+ * keep the session busy instead of flashing idle between the two runs.
+ *
+ * Returns false when nothing was running.
+ */
+async function abortActiveRun(
+  sessionId: string,
+  dependencies: ChatWebSocketDependencies,
+  opts: { superseded?: boolean } = {},
+): Promise<boolean> {
+  const run = chatRunRegistry.getRun(sessionId);
+  if (!run || run.status !== 'running') {
+    return false;
+  }
+
+  const success = await dependencies.runtime.abort(run.provider, sessionId);
+  chatRunRegistry.completeRun(sessionId, {
+    exitCode: success ? 0 : 1,
+    aborted: true,
+    superseded: opts.superseded,
+  });
+  return true;
+}
+
+/**
  * Handles `chat.send`: resolves the session row (provider, project path, and
  * provider-native id all come from the database — never from the client),
  * registers the run, and dispatches to the provider runtime.
+ *
+ * `interrupt: true` is the user cutting in: the turn in progress is aborted
+ * first and this message starts right behind it. Without the flag a busy
+ * session refuses the send (RUN_IN_PROGRESS) — the composer queues instead.
  */
 async function handleChatSend(
   ws: WebSocket,
@@ -152,6 +186,10 @@ async function handleChatSend(
   const resolved = resolveSendTarget(ws, data, dependencies, 'chat.send');
   if (!resolved) {
     return;
+  }
+
+  if (data.interrupt === true) {
+    await abortActiveRun(resolved.sessionId, dependencies, { superseded: true });
   }
 
   await dispatchRun(ws, userId, resolved.sessionId, resolved.session, data, dependencies);
@@ -423,18 +461,10 @@ async function handleChatAbort(
     return;
   }
 
-  const run = chatRunRegistry.getRun(sessionId);
-  if (!run || run.status !== 'running') {
+  const aborted = await abortActiveRun(sessionId, dependencies);
+  if (!aborted) {
     sendProtocolError(ws, 'NO_ACTIVE_RUN', `Session "${sessionId}" has no active run.`, sessionId);
-    return;
   }
-
-  const success = await dependencies.runtime.abort(run.provider, sessionId);
-
-  chatRunRegistry.completeRun(sessionId, {
-    exitCode: success ? 0 : 1,
-    aborted: true,
-  });
 }
 
 /**
@@ -525,7 +555,7 @@ function handlePermissionResponse(data: AnyRecord, dependencies: ChatWebSocketDe
  * Handles authenticated chat websocket messages used by the main chat panel.
  *
  * Inbound protocol (client to server):
- * - `chat.send`                { sessionId, content, options? }
+ * - `chat.send`                { sessionId, content, options?, interrupt? }
  * - `chat.abort`               { sessionId }
  * - `chat.subscribe`           { sessions: [{ sessionId, lastSeq? }] }
  * - `chat.permission-response` { requestId, allow, updatedInput?, message?, rememberEntry? }
@@ -573,21 +603,15 @@ export async function runDetachedChatTurn(
     return { started: false, error: `Provider "${provider}" is not available.` };
   }
 
-  const activeRun = chatRunRegistry.getRun(input.sessionId);
-  if (activeRun && activeRun.status === 'running') {
+  if (chatRunRegistry.isProcessing(input.sessionId)) {
     if (!input.interruptActiveRun) {
       return { started: false, error: 'A run was already in progress for this session.' };
     }
-    // Same shape as `chat.abort`: cancel the provider run and emit the
-    // terminal `complete` on its behalf, so every watching client sees the
-    // interrupted run end before this turn's stream begins. The interrupted
-    // run's own dispatch settles later through completeRunIfCurrent, which is
-    // scoped to that run and cannot touch the one started here.
-    const aborted = await dependencies.runtime.abort(activeRun.provider, input.sessionId);
-    chatRunRegistry.completeRun(input.sessionId, {
-      exitCode: aborted ? 0 : 1,
-      aborted: true,
-    });
+    // Every watching client sees the interrupted run end before this turn's
+    // stream begins. The interrupted run's own dispatch settles later through
+    // completeRunIfCurrent, which is scoped to that run and cannot touch the
+    // one started here.
+    await abortActiveRun(input.sessionId, dependencies, { superseded: true });
   }
 
   return dispatchRun(

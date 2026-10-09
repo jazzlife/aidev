@@ -115,8 +115,8 @@
     "hintText": {
       "ctrlEnter": "Ctrl+Enter para enviar • Shift+Enter para nueva línea • Tab para cambiar de modo • / para comandos",
       "enter": "Enter para enviar • Shift+Enter para nueva línea • Tab para cambiar de modo • / para comandos",
-      "queue": "Enter para poner en cola tu siguiente mensaje",
-      "updateQueued": "Enter para actualizar el mensaje en cola"
+      "queue": "Enter para poner en cola • ⌘/Ctrl+Enter para interrumpir y enviar ahora",
+      "queueCtrlEnter": "Ctrl+Enter para poner en cola • Ctrl+Shift+Enter para interrumpir y enviar ahora"
     },
     "clickToChangeMode": "Haz clic para cambiar el modo de permisos (o pulsa Tab en el campo de texto)",
     "showAllCommands": "Mostrar todos los comandos",
@@ -124,11 +124,12 @@
     "scrollToBottom": "Ir al final",
     "queue": {
       "sendNext": "Poner en cola el siguiente mensaje",
-      "update": "Actualizar mensaje en cola",
       "label": "En cola",
       "willSend": "Se enviará cuando esto termine",
       "edit": "Editar mensaje en cola",
-      "delete": "Eliminar mensaje en cola"
+      "delete": "Eliminar mensaje en cola",
+      "interrupt": "Interrumpir y enviar ahora",
+      "afterPrevious": "Se enviará después del anterior"
     }
   },
   "composer": {

@@ -122,8 +122,8 @@
     "hintText": {
       "ctrlEnter": "Ctrl+Enter untuk mengirim • Shift+Enter untuk baris baru • Tab untuk mengganti mode • / untuk slash command",
       "enter": "Enter untuk mengirim • Shift+Enter untuk baris baru • Tab untuk mengganti mode • / untuk slash command",
-      "queue": "Enter untuk mengantrekan pesan berikutnya",
-      "updateQueued": "Enter untuk memperbarui pesan yang diantrekan"
+      "queue": "Enter untuk mengantrekan • ⌘/Ctrl+Enter untuk menyela dan kirim sekarang",
+      "queueCtrlEnter": "Ctrl+Enter untuk mengantrekan • Ctrl+Shift+Enter untuk menyela dan kirim sekarang"
     },
     "clickToChangeMode": "Klik untuk mengganti mode izin (atau tekan Tab di input)",
     "showAllCommands": "Tampilkan semua perintah",
@@ -131,11 +131,12 @@
     "scrollToBottom": "Gulir ke bawah",
     "queue": {
       "sendNext": "Antrekan pesan berikutnya",
-      "update": "Perbarui pesan antrean",
       "label": "Diantrekan",
       "willSend": "Akan dikirim setelah proses ini selesai",
       "edit": "Edit pesan antrean",
-      "delete": "Hapus pesan antrean"
+      "delete": "Hapus pesan antrean",
+      "interrupt": "Sela dan kirim sekarang",
+      "afterPrevious": "Dikirim setelah pesan di atas"
     }
   },
   "composer": {

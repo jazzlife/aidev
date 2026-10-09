@@ -127,13 +127,38 @@ test('hydrate brings in a draft typed on another device', async () => {
 
 test('hydrate removes a mirrored queue after the server claims it', async () => {
   const store = await loadStore();
-  store.writeQueuedMessage('session-a', { content: 'server-owned queue' });
-  assert.equal(store.readQueuedMessage('session-a')?.content, 'server-owned queue');
+  store.writeQueuedMessages('session-a', [{ content: 'server-owned queue' }]);
+  assert.equal(store.readQueuedMessages('session-a')[0]?.content, 'server-owned queue');
 
   serverDrafts = [];
   await store.hydrateChatDrafts();
 
-  assert.equal(store.readQueuedMessage('session-a'), null);
+  assert.deepEqual(store.readQueuedMessages('session-a'), []);
+});
+
+test('hydrate shortens the queue to what the server has not sent yet', async () => {
+  const store = await loadStore();
+  store.writeQueuedMessages('session-a', [
+    { id: 'q1', content: 'first', attachments: [] },
+    { id: 'q2', content: 'second', attachments: [] },
+  ]);
+
+  // The server sent the head and left the rest in the column.
+  serverDrafts = [{ scope: 'session-a', text: '', queuedMessage: [{ id: 'q2', content: 'second', attachments: [] }] }];
+  await store.hydrateChatDrafts();
+
+  assert.deepEqual(store.readQueuedMessages('session-a').map((turn) => turn.id), ['q2']);
+});
+
+test('a single queued turn written by an older client reads as a one-item queue', async () => {
+  serverDrafts = [{ scope: 'session-a', text: '', queuedMessage: { content: 'old shape', images: [{ name: 'a.png' }] } }];
+
+  const store = await loadStore();
+  await store.hydrateChatDrafts();
+
+  assert.deepEqual(store.readQueuedMessages('session-a'), [
+    { content: 'old shape', attachments: [{ name: 'a.png' }] },
+  ]);
 });
 
 test('hydrate does not overwrite a scope the user is typing into right now', async () => {
@@ -157,50 +182,58 @@ test('a failed hydrate keeps the mirrored draft rather than blanking the compose
   assert.equal(store.readDraftText('session-a'), 'local work');
 });
 
-test('a queued message round-trips alongside the draft text', async () => {
+test('the queue round-trips alongside the draft text, oldest first', async () => {
   const store = await loadStore();
 
   store.writeDraftText('session-a', 'still editing');
-  store.writeQueuedMessage('session-a', { content: 'send this next', attachments: [] });
+  store.writeQueuedMessages('session-a', [{ id: 'q1', content: 'send this next', attachments: [] }]);
+  store.writeQueuedMessages('session-a', [
+    ...store.readQueuedMessages('session-a'),
+    { id: 'q2', content: 'and then this', attachments: [] },
+  ]);
 
   assert.equal(store.readDraftText('session-a'), 'still editing');
-  assert.deepEqual(store.readQueuedMessage('session-a'), {
-    content: 'send this next',
-    attachments: [],
-  });
-  assert.equal(savedDrafts.length, 1, 'queue actions persist without waiting for the draft debounce');
-  assert.deepEqual(savedDrafts, [{
+  assert.deepEqual(store.readQueuedMessages('session-a'), [
+    { id: 'q1', content: 'send this next', attachments: [] },
+    { id: 'q2', content: 'and then this', attachments: [] },
+  ]);
+  assert.equal(savedDrafts.length, 2, 'queue actions persist without waiting for the draft debounce');
+  assert.deepEqual(savedDrafts[1], {
     scope: 'session-a',
     text: 'still editing',
-    queuedMessage: { content: 'send this next', attachments: [] },
-  }]);
+    queuedMessage: [
+      { id: 'q1', content: 'send this next', attachments: [] },
+      { id: 'q2', content: 'and then this', attachments: [] },
+    ],
+  });
 });
 
-test('a queued message with neither text nor attachments reads as absent', async () => {
+test('a queued turn with neither text nor attachments is dropped from the queue', async () => {
   const store = await loadStore();
 
-  store.writeQueuedMessage('session-a', { content: '   ', attachments: [] });
+  store.writeQueuedMessages('session-a', [{ content: '   ', attachments: [] }, { content: 'real', attachments: [] }]);
 
-  assert.equal(store.readQueuedMessage('session-a'), null);
+  assert.deepEqual(store.readQueuedMessages('session-a').map((turn) => turn.content), ['real']);
 });
 
 test('legacy image-only descriptors are still readable as attachments', async () => {
   const store = await loadStore();
 
-  store.writeQueuedMessage('session-a', { content: '', images: [{ name: 'shot.png' }] });
+  store.writeQueuedMessages('session-a', [{ content: '', images: [{ name: 'shot.png' }] }]);
 
-  assert.deepEqual(store.readQueuedMessage('session-a')?.attachments, [{ name: 'shot.png' }]);
+  assert.deepEqual(store.readQueuedMessages('session-a')[0]?.attachments, [{ name: 'shot.png' }]);
 });
 
-test('clearing the queued message leaves the draft text alone', async () => {
+test('emptying the queue leaves the draft text alone and clears the server slot', async () => {
   const store = await loadStore();
   store.writeDraftText('session-a', 'keep me');
-  store.writeQueuedMessage('session-a', { content: 'queued' });
+  store.writeQueuedMessages('session-a', [{ content: 'queued' }]);
 
-  store.clearQueuedMessage('session-a');
+  store.writeQueuedMessages('session-a', []);
 
-  assert.equal(store.readQueuedMessage('session-a'), null);
+  assert.deepEqual(store.readQueuedMessages('session-a'), []);
   assert.equal(store.readDraftText('session-a'), 'keep me');
+  assert.deepEqual(savedDrafts.at(-1), { scope: 'session-a', text: 'keep me', queuedMessage: null });
 });
 
 test('subscribers are notified on a write', async () => {

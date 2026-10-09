@@ -18,13 +18,13 @@ import { readUserPreference } from '@/shared/userSettings';
 import type { CommandModalPayload, CostCommandData, HelpCommandData, MarkSessionProcessing, ModelCommandData, QueuedDraft, SessionActivityMap, StatusCommandData,QueuedSendOptions,ChatAttachment,ChatMessage,PendingPermissionRequest,PermissionMode,SessionEstablishedContext,Project,ProjectSession,LLMProvider,SlashCommand } from '@/shared/types';
 import { grantClaudeToolPermission } from '@/modules/chat/utils/chatPermissions';
 import {
-  clearQueuedMessage,
   hydrateChatDrafts,
   readDraftText,
-  readQueuedMessage,
+  readQueuedMessages,
   subscribeToChatDrafts,
   writeDraftText,
-  writeQueuedMessage,
+  writeQueuedMessages,
+  type StoredQueuedMessage,
 } from '@/shared/chatDrafts';
 import { escapeRegExp } from '@/modules/chat/utils/chatFormatting';
 import { useFileMentions } from '@/modules/chat/hooks/useFileMentions';
@@ -129,17 +129,41 @@ const uploadAttachmentFiles = async (files: File[]): Promise<unknown[]> => {
 };
 
 
-const restoreQueuedDraft = (sessionKey: string): QueuedDraft | null => {
-  const saved = readQueuedMessage(sessionKey);
-  return saved
-    ? {
-        content: saved.content,
-        attachments: [],
-        uploadedAttachments: saved.attachments ?? saved.images,
-        options: saved.options,
-      }
-    : null;
-};
+/**
+ * The session's queue as the composer shows it. The store is the source of
+ * truth (the server shortens it as it sends); browser File objects only exist
+ * in this composer and are looked up by the turn's id for editing.
+ */
+const restoreQueuedDrafts = (sessionKey: string, files: Map<string, File[]>): QueuedDraft[] => (
+  readQueuedMessages(sessionKey).map((saved, index) => {
+    // A turn queued by an older client has no id; its place in line stands in.
+    const id = saved.id ?? `queued-${index}`;
+    return {
+      id,
+      content: saved.content,
+      attachments: files.get(id) ?? [],
+      uploadedAttachments: saved.attachments,
+      options: saved.options,
+    };
+  })
+);
+
+const toStoredQueuedMessage = (draft: QueuedDraft): StoredQueuedMessage => ({
+  id: draft.id,
+  content: draft.content,
+  options: draft.options,
+  attachments: draft.uploadedAttachments,
+});
+
+const sameQueuedDrafts = (a: QueuedDraft[], b: QueuedDraft[]): boolean => (
+  a.length === b.length
+  && JSON.stringify(a.map(toStoredQueuedMessage)) === JSON.stringify(b.map(toStoredQueuedMessage))
+);
+
+const createQueuedMessageId = (): string => `q-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+
+/** How the user asked for a submit: `interrupt` cuts into the running turn instead of queueing behind it. */
+type SubmitOptions = { interrupt?: boolean };
 
 const getNotificationSessionSummary = (
   selectedSession: ProjectSession | null,
@@ -227,7 +251,7 @@ export function useChatComposerState({
   const handleSubmitRef = useRef<
     ((
       event: FormEvent<HTMLFormElement> | MouseEvent | TouchEvent | KeyboardEvent<HTMLTextAreaElement>,
-      queuedSubmission?: QueuedDraft,
+      submitOptions?: SubmitOptions,
     ) => Promise<void>) | null
   >(null);
   const inputValueRef = useRef(input);
@@ -264,17 +288,20 @@ export function useChatComposerState({
     scope: draftScope,
   });
 
-  const [queuedDraft, setQueuedDraft] = useState<QueuedDraft | null>(() => {
+  // Browser File objects of turns queued from this composer, by turn id, so
+  // editing a queued turn gets its files back. The store only keeps the
+  // uploaded descriptors, which is all the server needs to send it.
+  const queuedFilesRef = useRef<Map<string, File[]>>(new Map());
+  // The open session's command queue, as rendered. A mirror of the draft
+  // store (the one place queue edits are written), so the server shortening
+  // the queue as it sends, and another device editing it, show up the same way.
+  const [queuedDrafts, setQueuedDrafts] = useState<QueuedDraft[]>(() => {
     if (typeof window === 'undefined' || !sessionKey) {
-      return null;
+      return [];
     }
-    return restoreQueuedDraft(sessionKey);
+    // No files were queued from a composer that is only now mounting.
+    return restoreQueuedDrafts(sessionKey, new Map());
   });
-  // Which session the in-memory `queuedDraft` belongs to. On a session switch
-  // there is one commit where `sessionKey` already points at the new session
-  // while `queuedDraft` still holds the old session's draft; the persistence
-  // effect must not write across that gap.
-  const queuedDraftSessionRef = useRef<string | null>(sessionKey);
 
   const handleBuiltInCommand = useCallback(
     (result: CommandExecutionResult) => {
@@ -623,8 +650,9 @@ export function useChatComposerState({
   // never block the send — the message goes out exactly as an unrouted send would.
   const { beforeSend: aidevBeforeSend } = useAidevRouting();
   // §3.1 clarify (C-09): a routed send held until the user adds the missing detail or lets it go; the command
-  // stays in the composer, and the hold belongs to the chat it was typed in
-  const [clarifyHold, setClarifyHold] = useState<{ sessionKey: string | null; text: string; decoration: AidevSendDecoration; uploadedAttachments: unknown[] } | null>(null);
+  // stays in the composer, and the hold belongs to the chat it was typed in. `interrupt` remembers that the user
+  // was cutting into the running turn, so the release still does.
+  const [clarifyHold, setClarifyHold] = useState<{ sessionKey: string | null; text: string; decoration: AidevSendDecoration; uploadedAttachments: unknown[]; interrupt: boolean } | null>(null);
   // the hold being released: the next submit reuses its routing and uploads instead of doing both again
   const clarifyResumeRef = useRef<{ decoration: AidevSendDecoration; uploadedAttachments: unknown[] } | null>(null);
   // the command between Enter and its send (routing, uploads, a new session can take seconds): the composer clears at
@@ -638,38 +666,31 @@ export function useChatComposerState({
   const handleSubmit = useCallback(
     async (
       event: FormEvent<HTMLFormElement> | MouseEvent | TouchEvent | KeyboardEvent<HTMLTextAreaElement>,
-      queuedSubmission?: QueuedDraft,
+      submitOptions?: SubmitOptions,
     ) => {
       event.preventDefault();
-      const currentInput = queuedSubmission?.content ?? inputValueRef.current;
-      const currentAttachments = queuedSubmission?.attachments ?? attachedFiles;
-      const previouslyUploadedAttachments = queuedSubmission?.uploadedAttachments ?? [];
+      const currentInput = inputValueRef.current;
+      const currentAttachments = attachedFiles;
+      const interrupt = submitOptions?.interrupt === true;
       if (
-        (
-          !currentInput.trim()
-          && currentAttachments.length === 0
-          && previouslyUploadedAttachments.length === 0
-        )
+        (!currentInput.trim() && currentAttachments.length === 0)
         || !selectedProject
       ) {
         return;
       }
 
-      // A turn is already in flight: stash this message instead of sending it.
+      // A turn is already in flight and the user did not ask to cut in: add
+      // this message to the back of the session's queue instead of sending it.
       // Upload attached files now so the queued record contains durable image
       // descriptors that can be sent even if another session is open later.
-      if (isLoading) {
-        // A run can restart in the tiny gap between scheduling and flushing a
-        // queued submission. Put the same durable draft back without uploading
-        // its files again.
-        if (queuedSubmission) {
-          queuedDraftSessionRef.current = sessionKey;
-          setQueuedDraft(queuedSubmission);
+      if (isLoading && !interrupt) {
+        const queuedSessionKey = sessionKey;
+        if (!queuedSessionKey) {
+          // A running turn always belongs to an established session.
           return;
         }
 
         const queuedOptions = buildSendOptions(currentInput);
-        const queuedSessionKey = sessionKey;
         let uploadedAttachments: unknown[] = [];
         try {
           uploadedAttachments = await uploadAttachmentFiles(currentAttachments);
@@ -684,21 +705,14 @@ export function useChatComposerState({
           return;
         }
 
-        const durableDraft: QueuedDraft = {
-          content: currentInput,
-          attachments: currentAttachments,
-          uploadedAttachments,
-          options: queuedOptions,
-        };
-        if (queuedSessionKey) {
-          // Write the claim ticket synchronously after upload; this closes the
-          // gap before React's persistence effect runs.
-          writeQueuedMessage(queuedSessionKey, {
-            content: durableDraft.content,
-            options: durableDraft.options,
-            attachments: durableDraft.uploadedAttachments,
-          });
-        }
+        const queuedId = createQueuedMessageId();
+        queuedFilesRef.current.set(queuedId, currentAttachments);
+        // Appended to whatever the store holds right now, not to this render's
+        // list: the server may have sent the head during the upload.
+        writeQueuedMessages(queuedSessionKey, [
+          ...readQueuedMessages(queuedSessionKey),
+          { id: queuedId, content: currentInput, options: queuedOptions, attachments: uploadedAttachments },
+        ]);
 
         // Recorded under the session the message was queued FOR, and before
         // the session-switch return below — the queued text must be
@@ -706,14 +720,12 @@ export function useChatComposerState({
         recordSentMessage(currentInput, queuedSessionKey);
 
         // The server owns dispatch after persistence. If the user changed
-        // sessions during upload, the durable record is already enough; do
-        // not attach its UI card to the newly opened composer.
-        if (queuedSessionKey && sessionKeyRef.current !== queuedSessionKey) {
+        // sessions during upload, the durable record is already enough; the
+        // newly opened composer shows its own session's queue.
+        if (sessionKeyRef.current !== queuedSessionKey) {
           return;
         }
 
-        queuedDraftSessionRef.current = queuedSessionKey;
-        setQueuedDraft(durableDraft);
         setInput('');
         inputValueRef.current = '';
         setAttachedFiles([]);
@@ -773,10 +785,10 @@ export function useChatComposerState({
       const restoreInput = () => { setInput(currentInput); inputValueRef.current = currentInput; };
       try {
       const messageContent = currentInput;
-      const resume = queuedSubmission ? null : clarifyResumeRef.current;
+      const resume = clarifyResumeRef.current;
       clarifyResumeRef.current = null;
 
-      let uploadedAttachments = previouslyUploadedAttachments.length ? previouslyUploadedAttachments : resume?.uploadedAttachments ?? [];
+      let uploadedAttachments = resume?.uploadedAttachments ?? [];
       if (uploadedAttachments.length === 0 && currentAttachments.length > 0) {
         try {
           uploadedAttachments = await uploadAttachmentFiles(currentAttachments);
@@ -813,13 +825,13 @@ export function useChatComposerState({
       });
       // a new send supersedes a hold; a command missing essential detail waits for one line (ClarifyPrompt)
       setClarifyHold(null);
-      if (!resume && !queuedSubmission && shouldAskClarify(aidevDecoration)) {
-        setClarifyHold({ sessionKey, text: messageContent, decoration: aidevDecoration, uploadedAttachments });
+      if (!resume && shouldAskClarify(aidevDecoration)) {
+        setClarifyHold({ sessionKey, text: messageContent, decoration: aidevDecoration, uploadedAttachments, interrupt });
         restoreInput();
         return;
       }
       // engine priority: the chat continues on the higher engine that is usable again (unless pinned)
-      if (!resume && !queuedSubmission && aidevDecoration?.switchBack && targetSessionId && onEngineSwitchBack && (provider === 'claude' || provider === 'codex')) {
+      if (!resume && aidevDecoration?.switchBack && targetSessionId && onEngineSwitchBack && (provider === 'claude' || provider === 'codex')) {
         const moved = await onEngineSwitchBack({ sessionId: targetSessionId, engine: aidevDecoration.switchBack.engine, fromEngine: provider, text: messageContent, reason: aidevDecoration.switchBack.reason });
         if (moved) return;
       }
@@ -900,7 +912,7 @@ export function useChatComposerState({
       setIsUserScrolledUp(false);
       setTimeout(() => scrollToBottom(), 100);
 
-      const baseSendOptions = queuedSubmission?.options ?? buildSendOptions(messageContent);
+      const baseSendOptions = buildSendOptions(messageContent);
       const routedSendOptions = aidevDecoration
         ? {
           ...baseSendOptions,
@@ -920,6 +932,9 @@ export function useChatComposerState({
         type: editingAnchorId ? 'chat.edit-send' : 'chat.send',
         sessionId: targetSessionId,
         ...(editingAnchorId ? { anchorId: editingAnchorId } : {}),
+        // Cutting in: the server aborts the running turn and starts this one
+        // right behind it (a no-op when the turn finished meanwhile).
+        ...(interrupt ? { interrupt: true } : {}),
         content: messageContent,
         options: {
           ...routedSendOptions,
@@ -991,45 +1006,64 @@ export function useChatComposerState({
     const next = answer ? `${base.trimEnd()}\n\n(추가 정보) ${answer}` : base;
     setInput(next);
     inputValueRef.current = next;
-    handleSubmitRef.current?.(createFakeSubmitEvent());
+    handleSubmitRef.current?.(createFakeSubmitEvent(), { interrupt: hold.interrupt });
   }, [clarifyHold, setInput]);
   const dismissClarify = useCallback(() => setClarifyHold(null), []);
 
-  // The VPS dispatcher owns sending. While the card is visible, periodically
-  // reconcile only its removal so the UI notices when the server claims it.
+  // The rendered queue follows the store: the open session's queue on a
+  // session switch, and every later change to it (a turn queued here, the
+  // server sending the head, an edit on another device).
   useEffect(() => {
-    if (!sessionKey || !queuedDraft) {
-      return;
-    }
-    let cancelled = false;
-    const reconcile = async () => {
-      await hydrateChatDrafts();
-      if (!cancelled && !readQueuedMessage(sessionKey)) {
-        queuedDraftSessionRef.current = sessionKey;
-        setQueuedDraft(null);
-      }
+    const sync = () => {
+      const next = sessionKey ? restoreQueuedDrafts(sessionKey, queuedFilesRef.current) : [];
+      setQueuedDrafts((previous) => (sameQueuedDrafts(previous, next) ? previous : next));
     };
-    const timer = setInterval(() => void reconcile(), 5_000);
-    return () => {
-      cancelled = true;
-      clearInterval(timer);
-    };
-  }, [queuedDraft, sessionKey]);
+    sync();
+    return subscribeToChatDrafts(sync);
+  }, [sessionKey]);
 
-  const editQueuedDraft = useCallback(() => {
-    if (!queuedDraft) {
+  // The server owns sending. While the queue is visible, re-read it from the
+  // server periodically so the cards disappear as their turns go out.
+  useEffect(() => {
+    if (!sessionKey || queuedDrafts.length === 0) {
       return;
     }
-    setQueuedDraft(null);
-    setInput(queuedDraft.content);
-    inputValueRef.current = queuedDraft.content;
-    setAttachedFiles(queuedDraft.attachments);
+    const timer = setInterval(() => void hydrateChatDrafts(), 5_000);
+    return () => clearInterval(timer);
+  }, [queuedDrafts.length, sessionKey]);
+
+  /** Takes one queued turn out of the line and back into the composer. */
+  const editQueuedDraft = useCallback((id: string) => {
+    const draft = queuedDrafts.find((candidate) => candidate.id === id);
+    if (!draft || !sessionKey) {
+      return;
+    }
+    writeQueuedMessages(sessionKey, queuedDrafts.filter((candidate) => candidate.id !== id).map(toStoredQueuedMessage));
+    setInput(draft.content);
+    inputValueRef.current = draft.content;
+    setAttachedFiles(draft.attachments);
     textareaRef.current?.focus();
-  }, [queuedDraft]);
+  }, [queuedDrafts, sessionKey, setInput]);
 
-  const deleteQueuedDraft = useCallback(() => {
-    setQueuedDraft(null);
-  }, []);
+  const deleteQueuedDraft = useCallback((id: string) => {
+    if (!sessionKey) {
+      return;
+    }
+    queuedFilesRef.current.delete(id);
+    writeQueuedMessages(sessionKey, queuedDrafts.filter((candidate) => candidate.id !== id).map(toStoredQueuedMessage));
+  }, [queuedDrafts, sessionKey]);
+
+  /**
+   * Sends now, cutting into the running turn, instead of queueing behind it.
+   * A turn that cannot be interrupted right now is queued instead, so nothing
+   * typed is lost.
+   */
+  const handleInterruptSubmit = useCallback(
+    (event: FormEvent<HTMLFormElement> | MouseEvent | TouchEvent | KeyboardEvent<HTMLTextAreaElement>) => {
+      void handleSubmit(event, { interrupt: canAbortSession });
+    },
+    [canAbortSession, handleSubmit],
+  );
 
   // A voice transcript either fills the input (to edit before sending) or, when the
   // user tapped "stop and send", is submitted straight away. Mirror the value into
@@ -1076,41 +1110,6 @@ export function useChatComposerState({
     }
     writeDraftText(draftScope, inputState.value);
   }, [inputState, draftScope]);
-
-  // Persist the queued draft under its session's key. Must be defined BEFORE
-  // the swap effect below: on a session switch there is one commit where
-  // `sessionKey` already points at the new session while `queuedDraft` (and
-  // the owner ref) still describe the old one — the ref mismatch makes this
-  // effect skip that commit instead of writing/clearing across sessions.
-  useEffect(() => {
-    if (!sessionKey || queuedDraftSessionRef.current !== sessionKey) {
-      return;
-    }
-    if (
-      queuedDraft
-      && (queuedDraft.content.trim() || (queuedDraft.uploadedAttachments?.length ?? 0) > 0)
-    ) {
-      writeQueuedMessage(sessionKey, {
-        content: queuedDraft.content,
-        options: queuedDraft.options,
-        attachments: queuedDraft.uploadedAttachments,
-      });
-    } else {
-      clearQueuedMessage(sessionKey);
-    }
-  }, [queuedDraft, sessionKey]);
-
-  // Switching sessions swaps in that session's queued draft. Browser File
-  // objects are local to the mounted composer, while their already-uploaded
-  // descriptors restore from storage and remain sendable.
-  useEffect(() => {
-    queuedDraftSessionRef.current = sessionKey;
-    if (!sessionKey) {
-      setQueuedDraft(null);
-      return;
-    }
-    setQueuedDraft(restoreQueuedDraft(sessionKey));
-  }, [sessionKey]);
 
   useEffect(() => {
     if (!textareaRef.current) {
@@ -1178,10 +1177,17 @@ export function useChatComposerState({
           return;
         }
 
-        if ((event.ctrlKey || event.metaKey) && !event.shiftKey) {
+        const modifier = event.ctrlKey || event.metaKey;
+        // While a turn runs, the send key queues and one step up cuts in:
+        // Enter / ⌘Enter when Enter sends, Ctrl+Enter / Ctrl+Shift+Enter when
+        // Ctrl+Enter sends. Idle, the modifier combos all just send.
+        if (modifier && !event.shiftKey) {
           event.preventDefault();
-          handleSubmit(event);
-        } else if (!event.shiftKey && !event.ctrlKey && !event.metaKey && !sendByCtrlEnter) {
+          handleSubmit(event, { interrupt: canAbortSession && !sendByCtrlEnter });
+        } else if (modifier && event.shiftKey && sendByCtrlEnter) {
+          event.preventDefault();
+          handleSubmit(event, { interrupt: canAbortSession });
+        } else if (!event.shiftKey && !modifier && !sendByCtrlEnter) {
           event.preventDefault();
           handleSubmit(event);
         }
@@ -1192,6 +1198,7 @@ export function useChatComposerState({
       handleCommandMenuKeyDown,
       handleFileMentionsKeyDown,
       handleHistoryKeyDown,
+      canAbortSession,
       handleSubmit,
       sendByCtrlEnter,
       showCommandMenu,
@@ -1340,7 +1347,8 @@ export function useChatComposerState({
     isDragActive,
     openAttachmentPicker: open,
     handleSubmit,
-    queuedDraft,
+    handleInterruptSubmit,
+    queuedDrafts,
     editQueuedDraft,
     deleteQueuedDraft,
     handleVoiceTranscript,

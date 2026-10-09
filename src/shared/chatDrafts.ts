@@ -16,8 +16,14 @@ import type { QueuedSendOptions } from '@/shared/types';
  * alone, which meant every session in a project shared one draft.
  */
 
-/** A queued message as it is stored: text plus the send options it was composed under. */
+/**
+ * One queued turn as it is stored: text plus the send options it was composed
+ * under. A session's queue is a list of these, oldest first; the server sends
+ * the head each time the session goes idle.
+ */
 export type StoredQueuedMessage = {
+  /** Client-minted key so the composer can edit or drop one turn of the queue. */
+  id?: string;
   content: string;
   options?: QueuedSendOptions;
   /** Legacy image-only descriptors retained for queued draft compatibility. */
@@ -31,7 +37,7 @@ export type StoredQueuedMessage = {
 
 type DraftRecord = {
   text: string;
-  queuedMessage: StoredQueuedMessage | null;
+  queuedMessages: StoredQueuedMessage[];
 };
 
 /** Fired after any draft changes, from a local write or from a hydrate. */
@@ -46,7 +52,7 @@ const MIRROR_STORAGE_KEY = 'chat-drafts';
  */
 const SERVER_WRITE_DEBOUNCE_MS = 1_000;
 
-const EMPTY_DRAFT: DraftRecord = { text: '', queuedMessage: null };
+const EMPTY_DRAFT: DraftRecord = { text: '', queuedMessages: [] };
 
 const listeners = new Set<() => void>();
 
@@ -59,7 +65,46 @@ const isRecord = (value: unknown): value is Record<string, unknown> => (
 );
 
 const isEmptyDraft = (draft: DraftRecord): boolean => (
-  draft.text === '' && draft.queuedMessage === null
+  draft.text === '' && draft.queuedMessages.length === 0
+);
+
+/**
+ * One stored turn with something to send, its legacy image list folded into
+ * `attachments`; null for anything else (blank text and no files, or junk).
+ */
+function normalizeQueuedMessage(value: unknown): StoredQueuedMessage | null {
+  if (!isRecord(value) || typeof value.content !== 'string') {
+    return null;
+  }
+  const attachments = Array.isArray(value.attachments)
+    ? value.attachments
+    : Array.isArray(value.images)
+      ? value.images
+      : [];
+  if (!value.content.trim() && attachments.length === 0) {
+    return null;
+  }
+  return {
+    ...(typeof value.id === 'string' ? { id: value.id } : {}),
+    content: value.content,
+    ...(isRecord(value.options) ? { options: value.options as QueuedSendOptions } : {}),
+    attachments,
+  };
+}
+
+/**
+ * The stored queue as a list: today's array, or the single turn a client wrote
+ * before the queue held more than one message.
+ */
+function normalizeQueuedMessages(value: unknown): StoredQueuedMessage[] {
+  const items = Array.isArray(value) ? value : [value];
+  return items
+    .map(normalizeQueuedMessage)
+    .filter((message): message is StoredQueuedMessage => message !== null);
+}
+
+const sameQueue = (a: StoredQueuedMessage[], b: StoredQueuedMessage[]): boolean => (
+  a.length === b.length && JSON.stringify(a) === JSON.stringify(b)
 );
 
 function readMirror(): Map<string, DraftRecord> {
@@ -81,9 +126,8 @@ function readMirror(): Map<string, DraftRecord> {
       }
       restored.set(scope, {
         text: typeof value.text === 'string' ? value.text : '',
-        queuedMessage: isRecord(value.queuedMessage)
-          ? (value.queuedMessage as StoredQueuedMessage)
-          : null,
+        // `queuedMessage` is the single-slot mirror an older build wrote.
+        queuedMessages: normalizeQueuedMessages(value.queuedMessages ?? value.queuedMessage),
       });
     }
     return restored;
@@ -131,7 +175,7 @@ function flushServerWrites(): void {
 
       void api.user.saveDraft(scope, {
         text: draft.text,
-        queuedMessage: draft.queuedMessage,
+        queuedMessage: draft.queuedMessages.length > 0 ? draft.queuedMessages : null,
       }).catch((error: unknown) => {
         console.error('Failed to save chat draft:', error);
       });
@@ -162,7 +206,7 @@ function updateDraft(scope: string, update: Partial<DraftRecord>): void {
   const current = drafts.get(scope) ?? EMPTY_DRAFT;
   const next: DraftRecord = { ...current, ...update };
 
-  if (next.text === current.text && next.queuedMessage === current.queuedMessage) {
+  if (next.text === current.text && sameQueue(next.queuedMessages, current.queuedMessages)) {
     return;
   }
 
@@ -188,33 +232,19 @@ export function writeDraftText(scope: string, text: string): void {
   updateDraft(scope, { text });
 }
 
-export function readQueuedMessage(scope: string): StoredQueuedMessage | null {
-  const queued = drafts.get(scope)?.queuedMessage ?? null;
-  if (!queued) {
-    return null;
-  }
-
-  const attachments = Array.isArray(queued.attachments)
-    ? queued.attachments
-    : Array.isArray(queued.images)
-      ? queued.images
-      : [];
-
-  // A queued message with neither text nor attachments has nothing to send.
-  return queued.content.trim() || attachments.length > 0
-    ? { ...queued, attachments }
-    : null;
+/** The turns queued behind a session's running turn, oldest first. */
+export function readQueuedMessages(scope: string): StoredQueuedMessage[] {
+  return drafts.get(scope)?.queuedMessages ?? [];
 }
 
-export function writeQueuedMessage(scope: string, message: StoredQueuedMessage): void {
-  updateDraft(scope, { queuedMessage: message });
-  // Queueing is a send-like action, so persist it before the tab can close.
-  flushServerWritesNow();
-}
-
-export function clearQueuedMessage(scope: string): void {
-  updateDraft(scope, { queuedMessage: null });
-  // Editing or cancelling must beat the server's next dispatcher poll.
+/**
+ * Replaces a session's whole queue. Turns with nothing to send are dropped, so
+ * an empty list (or one of blanks) clears the queue.
+ */
+export function writeQueuedMessages(scope: string, messages: StoredQueuedMessage[]): void {
+  updateDraft(scope, { queuedMessages: normalizeQueuedMessages(messages) });
+  // Queueing is a send-like action, and an edit or removal must beat the
+  // server's next dispatch, so persist before the tab can close.
   flushServerWritesNow();
 }
 
@@ -262,9 +292,7 @@ export async function hydrateChatDrafts(): Promise<void> {
 
     merged.set(scope, {
       text: typeof draft.text === 'string' ? draft.text : '',
-      queuedMessage: isRecord(draft.queuedMessage)
-        ? (draft.queuedMessage as StoredQueuedMessage)
-        : null,
+      queuedMessages: normalizeQueuedMessages(draft.queuedMessage),
     });
   }
 

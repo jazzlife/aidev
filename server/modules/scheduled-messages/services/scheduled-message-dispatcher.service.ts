@@ -14,6 +14,7 @@ const POLL_INTERVAL_MS = 30_000;
 
 let pollTimer: ReturnType<typeof setInterval> | null = null;
 let dispatchInFlight = false;
+let stopListeningForSettledRuns: (() => void) | null = null;
 
 type StoredQueuedMessage = {
   content: string;
@@ -52,14 +53,36 @@ function readQueuedMessage(value: unknown): StoredQueuedMessage | null {
   return { content, options, attachments };
 }
 
-async function sendClaimedQueuedMessage(
+/**
+ * The stored column as a queue, oldest first. Today's composer writes an array;
+ * a row written before the queue held more than one turn is a single object.
+ * Turns with nothing to send are dropped.
+ */
+function readQueuedMessages(value: unknown): unknown[] {
+  const items = Array.isArray(value) ? value : [value];
+  return items.filter((item) => readQueuedMessage(item) !== null);
+}
+
+/**
+ * Takes the head of a session's queue and runs it. Resolves when that turn
+ * settles; the turns behind it go out one per settle through the registry's
+ * run-settled hook (or the poll, whichever comes first).
+ */
+async function sendQueueHead(
   candidate: QueuedSessionMessageRecord,
   runtime: ProviderRuntimeGateway,
-): Promise<void> {
-  const message = readQueuedMessage(candidate.queuedMessage);
+): Promise<boolean> {
+  const queue = readQueuedMessages(candidate.queuedMessage);
+  const message = readQueuedMessage(queue[0]);
+  const remaining = queue.length > 1 ? queue.slice(1) : null;
+
+  if (!sessionDraftsDb.claimQueuedMessage(candidate, remaining)) {
+    return false;
+  }
   if (!message) {
+    // Nothing sendable was stored: the claim already cleared the column.
     sessionDraftsDb.deleteEmptyDraft(candidate.userId, candidate.sessionId);
-    return;
+    return false;
   }
 
   const result = await runDetachedChatTurn(
@@ -73,31 +96,37 @@ async function sendClaimedQueuedMessage(
   );
 
   // The registry check and run reservation are separate operations. If a run
-  // wins that tiny race, put the turn back so the next poll tries again.
+  // wins that tiny race, put the turn back so the next pass tries again.
   if (!result.started && result.error === 'A run was already in progress for this session.') {
-    sessionDraftsDb.restoreQueuedMessage(candidate);
-    return;
+    sessionDraftsDb.restoreQueuedMessage(candidate, remaining);
+    return false;
   }
   sessionDraftsDb.deleteEmptyDraft(candidate.userId, candidate.sessionId);
+  return true;
 }
 
-/** Sends every persisted queued turn whose session is currently idle. */
-export async function dispatchQueuedMessages(runtime: ProviderRuntimeGateway): Promise<number> {
-  const candidates = sessionDraftsDb.listQueuedMessages();
-  let claimed = 0;
+/**
+ * Sends the next queued turn of every idle session — or of one session when
+ * `sessionId` is given (the run-settled hook). Returns how many were sent.
+ */
+export async function dispatchQueuedMessages(
+  runtime: ProviderRuntimeGateway,
+  sessionId?: string,
+): Promise<number> {
+  const candidates = sessionDraftsDb.listQueuedMessages()
+    .filter((candidate) => sessionId === undefined || candidate.sessionId === sessionId);
+  let sent = 0;
 
   await Promise.all(candidates.map(async (candidate) => {
     if (chatRunRegistry.isProcessing(candidate.sessionId)) {
       return;
     }
-    if (!sessionDraftsDb.claimQueuedMessage(candidate)) {
-      return;
+    if (await sendQueueHead(candidate, runtime)) {
+      sent += 1;
     }
-    claimed += 1;
-    await sendClaimedQueuedMessage(candidate, runtime);
   }));
 
-  return claimed;
+  return sent;
 }
 
 async function sendClaimedMessage(
@@ -191,11 +220,23 @@ export function initializeScheduledMessageDispatcher(runtime: ProviderRuntimeGat
   // Never keep the process alive just to poll for scheduled messages.
   pollTimer.unref?.();
 
+  // A queued turn follows the one before it at once, not on the next poll.
+  // Not gated by dispatchInFlight: the claim is atomic, and the poll may be
+  // sitting on a run that lasts minutes.
+  stopListeningForSettledRuns = chatRunRegistry.onRunSettled((sessionId) => {
+    void dispatchQueuedMessages(runtime, sessionId).catch((error: unknown) => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error('[ScheduledMessages] Queued dispatch after run settled failed', { sessionId, error: message });
+    });
+  });
+
   // Catch up on anything that came due while the server was not running.
   poll();
 }
 
 export function closeScheduledMessageDispatcher(): void {
+  stopListeningForSettledRuns?.();
+  stopListeningForSettledRuns = null;
   if (pollTimer) {
     clearInterval(pollTimer);
     pollTimer = null;
