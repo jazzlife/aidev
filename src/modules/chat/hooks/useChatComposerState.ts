@@ -162,8 +162,13 @@ const sameQueuedDrafts = (a: QueuedDraft[], b: QueuedDraft[]): boolean => (
 
 const createQueuedMessageId = (): string => `q-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 
-/** How the user asked for a submit: `interrupt` cuts into the running turn instead of queueing behind it. */
-type SubmitOptions = { interrupt?: boolean };
+/**
+ * How the user asked for a submit: `interrupt` cuts into the running turn
+ * instead of queueing behind it; `queued` sends a turn taken out of the queue
+ * (its text, already-uploaded files and the settings it was queued with)
+ * instead of what is in the composer, which stays as it is.
+ */
+type SubmitOptions = { interrupt?: boolean; queued?: QueuedDraft };
 
 const getNotificationSessionSummary = (
   selectedSession: ProjectSession | null,
@@ -669,13 +674,20 @@ export function useChatComposerState({
       submitOptions?: SubmitOptions,
     ) => {
       event.preventDefault();
-      const currentInput = inputValueRef.current;
-      const currentAttachments = attachedFiles;
+      const queued = submitOptions?.queued ?? null;
+      const currentInput = queued ? queued.content : inputValueRef.current;
+      const currentAttachments = queued ? [] : attachedFiles;
+      const queuedUploadedAttachments = queued?.uploadedAttachments ?? [];
       const interrupt = submitOptions?.interrupt === true;
       if (
-        (!currentInput.trim() && currentAttachments.length === 0)
+        (!currentInput.trim() && currentAttachments.length === 0 && queuedUploadedAttachments.length === 0)
         || !selectedProject
       ) {
+        return;
+      }
+      // A queued turn sent early must not be queued again behind the running
+      // turn; the "send now" action only fires when it can cut in.
+      if (queued && isLoading && !interrupt) {
         return;
       }
 
@@ -779,16 +791,21 @@ export function useChatComposerState({
       if (sendingRef.current) return;
       sendingRef.current = true;
       setSending(currentInput);
-      setInput('');
-      inputValueRef.current = '';
+      // the composer keeps what the user is typing when a queued turn is sent early
+      if (!queued) {
+        setInput('');
+        inputValueRef.current = '';
+      }
       // the text goes back into the composer when the send does not happen (error, or a clarify hold that edits it)
       const restoreInput = () => { setInput(currentInput); inputValueRef.current = currentInput; };
+      // Replacing an already-sent message belongs to the composer's text, not to a queued turn sent early.
+      const replacesAnchorId = queued ? null : editingAnchorId;
       try {
       const messageContent = currentInput;
-      const resume = clarifyResumeRef.current;
+      const resume = queued ? null : clarifyResumeRef.current;
       clarifyResumeRef.current = null;
 
-      let uploadedAttachments = resume?.uploadedAttachments ?? [];
+      let uploadedAttachments = queued ? queuedUploadedAttachments : resume?.uploadedAttachments ?? [];
       if (uploadedAttachments.length === 0 && currentAttachments.length > 0) {
         try {
           uploadedAttachments = await uploadAttachmentFiles(currentAttachments);
@@ -825,13 +842,14 @@ export function useChatComposerState({
       });
       // a new send supersedes a hold; a command missing essential detail waits for one line (ClarifyPrompt)
       setClarifyHold(null);
-      if (!resume && shouldAskClarify(aidevDecoration)) {
+      // a turn that was already composed and queued is not held for a clarifying question
+      if (!resume && !queued && shouldAskClarify(aidevDecoration)) {
         setClarifyHold({ sessionKey, text: messageContent, decoration: aidevDecoration, uploadedAttachments, interrupt });
         restoreInput();
         return;
       }
       // engine priority: the chat continues on the higher engine that is usable again (unless pinned)
-      if (!resume && aidevDecoration?.switchBack && targetSessionId && onEngineSwitchBack && (provider === 'claude' || provider === 'codex')) {
+      if (!resume && !queued && aidevDecoration?.switchBack && targetSessionId && onEngineSwitchBack && (provider === 'claude' || provider === 'codex')) {
         const moved = await onEngineSwitchBack({ sessionId: targetSessionId, engine: aidevDecoration.switchBack.engine, fromEngine: provider, text: messageContent, reason: aidevDecoration.switchBack.reason });
         if (moved) return;
       }
@@ -897,7 +915,7 @@ export function useChatComposerState({
         // Tags this echo as the replacement, so the truncation the server
         // broadcasts a moment later cuts the turns being replaced without
         // taking the message the user just sent with them.
-        ...(editingAnchorId ? { replacesAnchorId: editingAnchorId } : {}),
+        ...(replacesAnchorId ? { replacesAnchorId } : {}),
       };
 
       addMessage(userMessage);
@@ -912,7 +930,8 @@ export function useChatComposerState({
       setIsUserScrolledUp(false);
       setTimeout(() => scrollToBottom(), 100);
 
-      const baseSendOptions = buildSendOptions(messageContent);
+      // a queued turn goes out with the settings it was queued under
+      const baseSendOptions = queued?.options ?? buildSendOptions(messageContent);
       const routedSendOptions = aidevDecoration
         ? {
           ...baseSendOptions,
@@ -929,9 +948,9 @@ export function useChatComposerState({
         // Replacing an already-sent message is its own frame: it changes the
         // shape of the conversation, so it gets validated separately and can
         // report why it was refused.
-        type: editingAnchorId ? 'chat.edit-send' : 'chat.send',
+        type: replacesAnchorId ? 'chat.edit-send' : 'chat.send',
         sessionId: targetSessionId,
-        ...(editingAnchorId ? { anchorId: editingAnchorId } : {}),
+        ...(replacesAnchorId ? { anchorId: replacesAnchorId } : {}),
         // Cutting in: the server aborts the running turn and starts this one
         // right behind it (a no-op when the turn finished meanwhile).
         ...(interrupt ? { interrupt: true } : {}),
@@ -941,13 +960,16 @@ export function useChatComposerState({
           attachments: uploadedAttachments,
         },
       });
-      setEditingAnchorId(null);
-
       // Recorded under the (possibly just-allocated) session id, so the first
       // message of a new chat lands in the history of the session the user is
       // navigated to. Queued drafts were recorded when they were queued; the
       // consecutive-duplicate check keeps this second call a no-op.
       recordSentMessage(currentInput, targetSessionId);
+      if (queued) {
+        // nothing of the composer's own was sent
+        return;
+      }
+      setEditingAnchorId(null);
       // the composer was cleared at Enter; what was typed since stays
       resetCommandMenuState();
       setAttachedFiles([]);
@@ -1052,6 +1074,34 @@ export function useChatComposerState({
     queuedFilesRef.current.delete(id);
     writeQueuedMessages(sessionKey, queuedDrafts.filter((candidate) => candidate.id !== id).map(toStoredQueuedMessage));
   }, [queuedDrafts, sessionKey]);
+
+  /** Moves one queued turn one place up (-1) or down (+1); the server sends the head first. */
+  const moveQueuedDraft = useCallback((id: string, direction: -1 | 1) => {
+    const from = queuedDrafts.findIndex((candidate) => candidate.id === id);
+    const to = from + direction;
+    if (!sessionKey || from < 0 || to < 0 || to >= queuedDrafts.length) {
+      return;
+    }
+    const next = [...queuedDrafts];
+    [next[from], next[to]] = [next[to], next[from]];
+    writeQueuedMessages(sessionKey, next.map(toStoredQueuedMessage));
+  }, [queuedDrafts, sessionKey]);
+
+  /**
+   * Sends one queued turn right away: it leaves the queue and goes out with
+   * its own text, uploads and settings, cutting into the running turn. While
+   * a send is already under way, or the running turn cannot be interrupted,
+   * the turn stays where it is.
+   */
+  const sendQueuedDraftNow = useCallback((id: string) => {
+    const draft = queuedDrafts.find((candidate) => candidate.id === id);
+    if (!draft || !sessionKey || sendingRef.current || (isLoading && !canAbortSession)) {
+      return;
+    }
+    queuedFilesRef.current.delete(id);
+    writeQueuedMessages(sessionKey, queuedDrafts.filter((candidate) => candidate.id !== id).map(toStoredQueuedMessage));
+    void handleSubmit(createFakeSubmitEvent(), { interrupt: isLoading, queued: draft });
+  }, [canAbortSession, handleSubmit, isLoading, queuedDrafts, sessionKey]);
 
   /**
    * Sends now, cutting into the running turn, instead of queueing behind it.
@@ -1351,6 +1401,8 @@ export function useChatComposerState({
     queuedDrafts,
     editQueuedDraft,
     deleteQueuedDraft,
+    moveQueuedDraft,
+    sendQueuedDraftNow,
     handleVoiceTranscript,
     handleInputChange,
     handleKeyDown,

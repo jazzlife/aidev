@@ -136,7 +136,10 @@
       "edit": "Edit queued message",
       "delete": "Delete queued message",
       "interrupt": "Interrupt and send now",
-      "afterPrevious": "Sent after the one above"
+      "afterPrevious": "Sent after the one above",
+      "moveUp": "Send earlier",
+      "moveDown": "Send later",
+      "sendNow": "Send now (interrupts the running turn)"
     }
   },
   "composer": {

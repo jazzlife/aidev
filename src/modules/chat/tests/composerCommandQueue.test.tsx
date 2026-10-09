@@ -155,3 +155,70 @@ test('the cards follow the server as it sends the head of the queue', async () =
 
   assert.deepEqual(view.result.current.queuedDrafts.map((draft) => draft.content), ['goes second']);
 });
+
+test('a queued turn can be moved up or down the line, and the server gets the new order', async () => {
+  const view = renderComposer([]);
+  await typeAndSubmit(view, 'a');
+  await typeAndSubmit(view, 'b');
+  await typeAndSubmit(view, 'c');
+  const [a, , c] = view.result.current.queuedDrafts;
+
+  await act(async () => { view.result.current.moveQueuedDraft(c.id, -1); });
+  assert.deepEqual(view.result.current.queuedDrafts.map((draft) => draft.content), ['a', 'c', 'b']);
+
+  await act(async () => { view.result.current.moveQueuedDraft(a.id, -1); });
+  assert.deepEqual(view.result.current.queuedDrafts.map((draft) => draft.content), ['a', 'c', 'b'], 'the head cannot move further up');
+
+  await act(async () => { view.result.current.moveQueuedDraft(a.id, 1); });
+  assert.deepEqual(readQueuedMessages('session-a').map((turn) => turn.content), ['c', 'a', 'b']);
+});
+
+test('"send now" takes a queued turn out of the line and sends it with its own settings, keeping what is being typed', async () => {
+  const sent: Array<Record<string, unknown>> = [];
+  const view = renderComposer(sent);
+  await typeAndSubmit(view, 'wait your turn');
+  await typeAndSubmit(view, 'actually, this first');
+  const [, urgent] = view.result.current.queuedDrafts;
+
+  await act(async () => { view.result.current.setInput('half-typed thought'); });
+  await act(async () => { view.result.current.sendQueuedDraftNow(urgent.id); });
+
+  assert.equal(sent.length, 1);
+  assert.equal(sent[0].type, 'chat.send');
+  assert.equal(sent[0].content, 'actually, this first');
+  assert.equal(sent[0].interrupt, true);
+  assert.equal((sent[0].options as { model: string }).model, 'test-model', 'the settings it was queued with travel with it');
+  assert.deepEqual(view.result.current.queuedDrafts.map((draft) => draft.content), ['wait your turn']);
+  assert.equal(view.result.current.input, 'half-typed thought', 'the composer is left alone');
+});
+
+test('"send now" leaves the turn queued while the running turn cannot be interrupted', async () => {
+  const sent: Array<Record<string, unknown>> = [];
+  const view = renderHook(() => useChatComposerState({
+    selectedProject: PROJECT,
+    selectedSession: { id: 'session-a' },
+    currentSessionId: 'session-a',
+    provider: 'claude',
+    permissionMode: 'default',
+    cyclePermissionMode: () => undefined,
+    resolvePermissionModeForProvider: () => 'default' as PermissionMode,
+    currentProviderModel: 'test-model',
+    currentProviderEffort: 'medium',
+    isLoading: true,
+    canAbortSession: false,
+    tokenBudget: null,
+    sendMessage: (message: unknown) => { sent.push(message as Record<string, unknown>); },
+    scrollToBottom: () => undefined,
+    addMessage: () => undefined,
+    setIsUserScrolledUp: () => undefined,
+    setPendingPermissionRequests: () => undefined,
+  }));
+  await act(async () => { view.result.current.setInput('later'); });
+  await act(async () => { await view.result.current.handleSubmit(submitEvent); });
+  const [queued] = view.result.current.queuedDrafts;
+
+  await act(async () => { view.result.current.sendQueuedDraftNow(queued.id); });
+
+  assert.deepEqual(sent, []);
+  assert.deepEqual(view.result.current.queuedDrafts.map((draft) => draft.content), ['later']);
+});

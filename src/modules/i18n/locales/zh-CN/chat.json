@@ -129,7 +129,10 @@
       "edit": "编辑排队消息",
       "delete": "删除排队消息",
       "interrupt": "中断并立即发送",
-      "afterPrevious": "将在上一条之后发送"
+      "afterPrevious": "将在上一条之后发送",
+      "moveUp": "提前发送",
+      "moveDown": "推后发送",
+      "sendNow": "立即发送（中断当前运行）"
     }
   },
   "providerSelection": {

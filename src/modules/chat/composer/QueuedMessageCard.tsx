@@ -1,5 +1,5 @@
 import { useTranslation } from 'react-i18next';
-import { PencilIcon, XIcon } from 'lucide-react';
+import { ChevronDownIcon, ChevronUpIcon, PencilIcon, XIcon, ZapIcon } from 'lucide-react';
 
 type QueuedMessageCardProps = {
   content: string;
@@ -7,8 +7,14 @@ type QueuedMessageCardProps = {
   /** 1-based place in the session's queue; shown only when there is more than one turn. */
   position: number;
   total: number;
+  /** False while the running turn cannot be interrupted, which disables "send now". */
+  canSendNow: boolean;
   onEdit: () => void;
   onDelete: () => void;
+  /** Absent at the top / bottom of the queue, where the arrow is hidden. */
+  onMoveUp?: () => void;
+  onMoveDown?: () => void;
+  onSendNow: () => void;
 };
 
 /**
@@ -20,10 +26,18 @@ export default function QueuedMessageCard({
   attachmentCount = 0,
   position,
   total,
+  canSendNow,
   onEdit,
   onDelete,
+  onMoveUp,
+  onMoveDown,
+  onSendNow,
 }: QueuedMessageCardProps) {
   const { t } = useTranslation('chat');
+  const moveUpLabel = t('input.queue.moveUp', { defaultValue: 'Send earlier' });
+  const moveDownLabel = t('input.queue.moveDown', { defaultValue: 'Send later' });
+  const sendNowLabel = t('input.queue.sendNow', { defaultValue: 'Send now (interrupts the running turn)' });
+  const arrowClassName = 'rounded-md p-1 text-muted-foreground/70 transition-colors hover:bg-accent hover:text-foreground disabled:opacity-30 disabled:hover:bg-transparent';
 
   return (
     <div className="settings-content-enter mx-auto mb-2 max-w-[54.25rem] rounded-xl rounded-t-none border border-dashed border-primary/25 bg-primary/[0.04] px-3 py-2">
@@ -51,6 +65,26 @@ export default function QueuedMessageCard({
         </div>
 
         <div className="flex shrink-0 items-center gap-0.5">
+          {total > 1 && (
+            <div className="mr-1 flex flex-col">
+              <button type="button" onClick={onMoveUp} disabled={!onMoveUp} aria-label={moveUpLabel} title={moveUpLabel} className={arrowClassName}>
+                <ChevronUpIcon className="h-3 w-3" />
+              </button>
+              <button type="button" onClick={onMoveDown} disabled={!onMoveDown} aria-label={moveDownLabel} title={moveDownLabel} className={arrowClassName}>
+                <ChevronDownIcon className="h-3 w-3" />
+              </button>
+            </div>
+          )}
+          <button
+            type="button"
+            onClick={onSendNow}
+            disabled={!canSendNow}
+            aria-label={sendNowLabel}
+            title={sendNowLabel}
+            className="rounded-md p-1.5 text-amber-600 transition-colors hover:bg-amber-500/10 hover:text-amber-700 disabled:opacity-30 disabled:hover:bg-transparent dark:text-amber-400 dark:hover:text-amber-300"
+          >
+            <ZapIcon className="h-3.5 w-3.5" />
+          </button>
           <button
             type="button"
             onClick={onEdit}

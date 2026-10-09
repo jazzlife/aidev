@@ -129,7 +129,10 @@
       "edit": "Editar mensaje en cola",
       "delete": "Eliminar mensaje en cola",
       "interrupt": "Interrumpir y enviar ahora",
-      "afterPrevious": "Se enviará después del anterior"
+      "afterPrevious": "Se enviará después del anterior",
+      "moveUp": "Enviar antes",
+      "moveDown": "Enviar después",
+      "sendNow": "Enviar ahora (interrumpe el turno en curso)"
     }
   },
   "composer": {

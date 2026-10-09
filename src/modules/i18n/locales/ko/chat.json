@@ -129,7 +129,10 @@
       "edit": "대기 중인 메시지 편집",
       "delete": "대기 중인 메시지 삭제",
       "interrupt": "지금 개입 (실행 중인 작업을 중단하고 바로 전송)",
-      "afterPrevious": "위 메시지 다음에 전송됩니다"
+      "afterPrevious": "위 메시지 다음에 전송됩니다",
+      "moveUp": "앞으로 (먼저 전송)",
+      "moveDown": "뒤로 (나중에 전송)",
+      "sendNow": "지금 보내기 (실행 중인 작업을 중단하고 바로 전송)"
     }
   },
   "providerSelection": {

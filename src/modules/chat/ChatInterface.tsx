@@ -250,6 +250,8 @@ function ChatInterface({
     queuedDrafts,
     editQueuedDraft,
     deleteQueuedDraft,
+    moveQueuedDraft,
+    sendQueuedDraftNow,
     handleVoiceTranscript,
     handleInputChange,
     handleKeyDown,
@@ -640,6 +642,8 @@ function ChatInterface({
           queuedDrafts={queuedDrafts}
           onEditQueuedDraft={editQueuedDraft}
           onDeleteQueuedDraft={deleteQueuedDraft}
+          onMoveQueuedDraft={moveQueuedDraft}
+          onSendQueuedDraftNow={sendQueuedDraftNow}
           attachedFiles={attachedFiles}
           onRemoveAttachment={(index) =>
             setAttachedFiles((previous) =>

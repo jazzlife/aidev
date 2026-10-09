@@ -136,7 +136,10 @@
       "edit": "Edit pesan antrean",
       "delete": "Hapus pesan antrean",
       "interrupt": "Sela dan kirim sekarang",
-      "afterPrevious": "Dikirim setelah pesan di atas"
+      "afterPrevious": "Dikirim setelah pesan di atas",
+      "moveUp": "Kirim lebih dulu",
+      "moveDown": "Kirim nanti",
+      "sendNow": "Kirim sekarang (menyela giliran yang berjalan)"
     }
   },
   "composer": {

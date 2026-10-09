@@ -86,6 +86,10 @@ type ChatComposerProps = {
   onCancelScheduledMessage: (id: string) => void;
   onEditQueuedDraft: (id: string) => void;
   onDeleteQueuedDraft: (id: string) => void;
+  /** Moves a queued turn one place up (-1) or down (+1). */
+  onMoveQueuedDraft: (id: string, direction: -1 | 1) => void;
+  /** Takes a queued turn out of the line and sends it at once, cutting into the running turn. */
+  onSendQueuedDraftNow: (id: string) => void;
   attachedFiles: File[];
   onRemoveAttachment: (index: number) => void;
   fileErrors: Map<string, string>;
@@ -161,6 +165,8 @@ export default function ChatComposer({
   onCancelScheduledMessage,
   onEditQueuedDraft,
   onDeleteQueuedDraft,
+  onMoveQueuedDraft,
+  onSendQueuedDraftNow,
   attachedFiles,
   onRemoveAttachment,
   fileErrors,
@@ -262,6 +268,8 @@ export default function ChatComposer({
   // it and, while the turn can be interrupted, a second button cuts in with it.
   const canQueueDraft = isLoading && Boolean(input.trim() || attachedFiles.length > 0);
   const canInterrupt = canQueueDraft && activity?.canInterrupt !== false;
+  // A queued turn can be sent early whenever the session is idle or its running turn can be interrupted.
+  const canSendQueuedNow = !isLoading || activity?.canInterrupt !== false;
   const submitHint = canInterrupt
     ? sendByCtrlEnter
       ? t('input.hintText.queueCtrlEnter', { defaultValue: 'Ctrl+Enter to queue • Ctrl+Shift+Enter to interrupt and send now' })
@@ -326,8 +334,12 @@ export default function ChatComposer({
           attachmentCount={draft.uploadedAttachments?.length ?? draft.attachments.length}
           position={index + 1}
           total={queuedDrafts.length}
+          canSendNow={canSendQueuedNow}
           onEdit={() => onEditQueuedDraft(draft.id)}
           onDelete={() => onDeleteQueuedDraft(draft.id)}
+          onMoveUp={index > 0 ? () => onMoveQueuedDraft(draft.id, -1) : undefined}
+          onMoveDown={index < queuedDrafts.length - 1 ? () => onMoveQueuedDraft(draft.id, 1) : undefined}
+          onSendNow={() => onSendQueuedDraftNow(draft.id)}
         />
       ))}
 
