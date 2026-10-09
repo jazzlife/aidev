@@ -2,12 +2,15 @@ import { useCallback, useRef } from 'react';
 
 import { aidevApi, useAidevDecide } from '@/modules/aidev-router';
 
-/** The panes `ui.focus` chooses from (IMPLEMENTATION-PLAN §3.10). */
-export type FocusPane = 'chat' | 'editor' | 'diff' | 'terminal' | 'run_output' | 'preview' | 'screen' | 'debug' | 'none';
+/**
+ * The panes `ui.focus` may bring forward (IMPLEMENTATION-PLAN §3.10). The remote run panel is left out:
+ * a remote command never pulls it open by itself (Laya's `run_output` answer is ignored).
+ */
+export type FocusPane = 'chat' | 'editor' | 'diff' | 'terminal' | 'preview' | 'screen' | 'debug' | 'none';
 /** A run event and the pane it would normally bring forward (used when Laya is not confident or offline). */
 export type FocusEvent = { event: string; summary: string; suggested: FocusPane };
 
-const PANES: FocusPane[] = ['chat', 'editor', 'diff', 'terminal', 'run_output', 'preview', 'screen', 'debug', 'none'];
+const PANES: FocusPane[] = ['chat', 'editor', 'diff', 'terminal', 'preview', 'screen', 'debug', 'none'];
 // the user put the pane away this soon after it came forward → it counts as a revert
 const REVERT_WINDOW_MS = 15_000;
 const REVERTS_TO_OFF = 3;

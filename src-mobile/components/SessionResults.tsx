@@ -1,9 +1,9 @@
 import { useEffect, useState } from 'react';
-import { Camera } from 'lucide-react';
+import { Camera, ChevronDown, ChevronRight } from 'lucide-react';
 
 import { aidevApi, type RemoteRun } from '@/modules/aidev-router';
 import { ImageViewer } from '@m/components/ImageViewer';
-import { RemoteRunCard } from '@m/components/RemoteRunCard';
+import { RemoteRunCard, runStatus } from '@m/components/RemoteRunCard';
 import { useGo } from '@m/lib/nav';
 
 const POLL_MS = 5000;
@@ -36,10 +36,13 @@ function SnapshotCard({ run }: { run: RemoteRun }) {
 
 /**
  * Used by ChatScreen (F-12): what this chat ran on the user's PCs — result cards for commands and the
- * screenshots taken — so a session started on the workbench shows its outcome on the phone too.
+ * screenshots taken — so a session started on the workbench shows its outcome on the phone too. Folded
+ * into one summary line by default so the cards never crowd out the conversation; a tap opens them.
  */
 export function SessionResults({ sessionId, refreshKey }: { sessionId: string; refreshKey: number }) {
   const [runs, setRuns] = useState<RemoteRun[]>([]);
+  // the result cards are opened by the user; folded they leave the chat readable
+  const [open, setOpen] = useState(false);
   useEffect(() => {
     let stopped = false;
     const load = () => { aidevApi.sessionRemoteRuns(sessionId, 12).then((r) => { if (!stopped) setRuns(r.runs); }).catch(() => {}); };
@@ -49,10 +52,17 @@ export function SessionResults({ sessionId, refreshKey }: { sessionId: string; r
   }, [sessionId, refreshKey]);
   const shown = runs.filter((run) => run.kind === 'exec' || run.kind === 'screenshot').slice(0, 6).reverse();
   if (!shown.length) return null;
+  const latest = shown[shown.length - 1];
+  const status = latest.kind === 'screenshot' ? { label: '화면 캡처', tone: 'text-muted' } : runStatus(latest);
   return (
     <section className="space-y-2 px-4 py-2" data-testid="session-results">
-      <div className="text-[12px] uppercase tracking-wide text-muted">이 대화의 원격 실행</div>
-      {shown.map((run) => (run.kind === 'screenshot' ? <SnapshotCard key={run.id} run={run} /> : <RemoteRunCard key={run.id} run={run} lines={6} />))}
+      <button type="button" aria-expanded={open} onClick={() => setOpen((value) => !value)} className="m-touch flex w-full items-center gap-2 rounded-xl border border-line bg-surface px-3 text-left text-[13px]">
+        {open ? <ChevronDown size={15} className="shrink-0 text-muted" /> : <ChevronRight size={15} className="shrink-0 text-muted" />}
+        <span className="shrink-0 text-muted">원격 실행 {shown.length}건</span>
+        <code className="min-w-0 flex-1 truncate">{latest.cmd ?? ''}</code>
+        <span className={`shrink-0 whitespace-nowrap font-medium ${status.tone}`}>{status.label}</span>
+      </button>
+      {open ? shown.map((run) => (run.kind === 'screenshot' ? <SnapshotCard key={run.id} run={run} /> : <RemoteRunCard key={run.id} run={run} lines={6} />)) : null}
     </section>
   );
 }

@@ -23,7 +23,6 @@ import { EditorGroup, useEditorGroup } from '@/modules/workbench/EditorGroup';
 import { SplitHandle } from '@/modules/workbench/SplitHandle';
 import { layoutStore, useWorkbenchLayout, type BottomTab, type SideView, type TabletPane } from '@/modules/workbench/layoutStore';
 import { useDeviceTier, type DeviceTier } from '@/modules/workbench/hooks/useDeviceTier';
-import { useAgentRunFailures } from '@/modules/workbench/hooks/useAgentRunFailures';
 import { useUiFocus, type FocusPane } from '@/modules/workbench/hooks/useUiFocus';
 
 type WorkbenchLayoutProps = WorkspaceMainProps & {
@@ -168,18 +167,19 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
     window.addEventListener(REMOTE_RUN_FOCUS_EVENT, onFocus);
     return () => window.removeEventListener(REMOTE_RUN_FOCUS_EVENT, onFocus);
   }, [tier]);
-  // C-10 ui.focus: run events bring a pane forward (Laya decides; the event's usual pane when it is unsure)
+  // C-10 ui.focus: run events bring a pane forward (Laya decides; the event's usual pane when it is unsure).
+  // The remote run panel is never among them — it opens only from the user's own "출력 보기".
   const applyFocus = useCallback((pane: FocusPane) => {
     if (pane === 'preview' || pane === 'screen' || pane === 'debug') liveWindows.open(pane);
-    else if (isTablet) layoutStore.patch('tablet', pane === 'chat' ? { tabletShowChat: true } : { tabletShowChat: false, tabletPane: pane === 'run_output' ? 'remote' : pane === 'terminal' ? 'terminal' : 'files' });
-    else if (pane === 'run_output' || pane === 'terminal') layoutStore.patch('desktop', { workOpen: true, bottomOpen: true, bottomTab: pane });
+    else if (isTablet) layoutStore.patch('tablet', pane === 'chat' ? { tabletShowChat: true } : { tabletShowChat: false, tabletPane: pane === 'terminal' ? 'terminal' : 'files' });
+    else if (pane === 'terminal') layoutStore.patch('desktop', { workOpen: true, bottomOpen: true, bottomTab: pane });
     else if (pane === 'editor' || pane === 'diff') layoutStore.patch('desktop', { workOpen: true });
   }, [isTablet]);
   const paneShown = useCallback((pane: FocusPane) => {
     if (pane === 'preview' || pane === 'screen' || pane === 'debug') { const w = liveWindows.get(pane); return Boolean(w?.open && w.mode !== 'min'); }
     const l = layoutStore.get(tier);
-    if (isTablet) return pane === 'chat' ? l.tabletShowChat : !l.tabletShowChat && l.tabletPane === (pane === 'run_output' ? 'remote' : pane === 'terminal' ? 'terminal' : 'files');
-    if (pane === 'run_output' || pane === 'terminal') return l.workOpen && l.bottomOpen && l.bottomTab === pane;
+    if (isTablet) return pane === 'chat' ? l.tabletShowChat : !l.tabletShowChat && l.tabletPane === (pane === 'terminal' ? 'terminal' : 'files');
+    if (pane === 'terminal') return l.workOpen && l.bottomOpen && l.bottomTab === pane;
     return pane === 'chat' || ((pane === 'editor' || pane === 'diff') && l.workOpen);
   }, [isTablet, tier]);
   const { focus } = useUiFocus({ sessionId: selectedSession?.id ?? null, tier, apply: applyFocus, isShown: paneShown });
@@ -192,12 +192,6 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
     previewSeenRef.current = Math.max(...previews.map((p) => p.createdAt));
     void focus({ event: 'agent opened a preview of a running web app', summary: `${fresh.label ?? ''} port ${fresh.port} on ${fresh.targetName ?? 'PC'}`, suggested: 'preview' });
   }, [previews, focus]);
-  // A command an agent ran on the PC failed: its output, once.
-  useAgentRunFailures(!noProject, useCallback((run) => {
-    void focus({ event: 'a test or command the agent ran on the user PC failed', summary: `exit ${run.exit_code ?? run.artifacts?.signal ?? '?'}: ${run.cmd ?? ''}`, suggested: 'run_output' }).then((pane) => {
-      if (pane === 'run_output') requestRunFocus({ remoteRunId: run.id, targetId: run.target_id });
-    });
-  }, [focus]));
   // C-10 ui.artifact: when a run changed files, open the one most worth reviewing (desktop shows the code panel;
   // a tablet keeps the chat in front and only loads the tab).
   const { decide } = useAidevDecide();
