@@ -148,7 +148,8 @@ export const seedAgents: SeedAgent[] = [
   },
   // ---- meta agents: not routing targets (domain 'meta') ---------------------------------
   {
-    name: 'agent-architect', domain: 'meta', hint: 'meta', tools: ['WebSearch', 'WebFetch', 'Read', 'Glob', 'Grep'], maxTurns: 8,
+    // 20 turns (2026-10-09, was 8): designing an agent takes a run of searches and document reads, and 8 cut it off with error_max_turns
+    name: 'agent-architect', domain: 'meta', hint: 'meta', tools: ['WebSearch', 'WebFetch', 'Read', 'Glob', 'Grep'], maxTurns: 20,
     description: 'META: designs a new specialist agent (name, description, prompt, knowledge) for a domain the catalog lacks. Not a routing target.',
     prompt: `당신은 전문 agent 설계자다. 사용자의 명령과 현재 카탈로그 요약을 받아, 카탈로그에 없는 분야를 담당할 새 전문 agent를 설계한다.
 ## 절차

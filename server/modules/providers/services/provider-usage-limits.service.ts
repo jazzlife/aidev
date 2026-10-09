@@ -3,6 +3,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import type { LLMProvider, ProviderUsageLimitsSnapshot, ProviderUsageWindow } from '@/shared/types.js';
+import { isModelScopedUsageLimit } from '@/shared/utils.js';
 
 /**
  * Account usage limits per engine (2026-10-09), for the drawers of both apps. The runtime learns them
@@ -112,7 +113,9 @@ function upsertWindow(windows: ProviderUsageWindow[], next: ProviderUsageWindow)
 export const providerUsageLimitsService = {
   /**
    * Claude's `rate_limit_event`: the window named by `rateLimitType` with its utilization and reset,
-   * plus any `unifiedWindows` the CLI attaches. `status` says whether that window refuses runs.
+   * plus any `unifiedWindows` the CLI attaches. `status` says whether that window refuses runs. A
+   * model's own window (`seven_day_fable` …) refusing marks that window only — the account stays
+   * open (`blockedUntil` untouched) and the flag lives until its reset or its own allowed event.
    */
   recordClaude(info: Record<string, unknown> | null | undefined) {
     if (!info || typeof info !== 'object') return;
@@ -121,6 +124,7 @@ export const providerUsageLimitsService = {
     const now = Date.now();
     const blockedHere = info.status === 'rejected' && info.overageStatus !== 'allowed' && info.overageStatus !== 'allowed_warning';
     const type = typeof info.rateLimitType === 'string' ? info.rateLimitType : null;
+    const scoped = isModelScopedUsageLimit(type);
     if (type) {
       windows = upsertWindow(windows, { type, utilization: typeof info.utilization === 'number' ? Math.max(0, Math.min(1, info.utilization)) : null, resetsAt: toEpochMs(info.resetsAt), blocked: blockedHere });
     }
@@ -132,9 +136,11 @@ export const providerUsageLimitsService = {
         windows = upsertWindow(windows, { type: key, utilization: typeof value.utilization === 'number' ? Math.max(0, Math.min(1, value.utilization)) : existing?.utilization ?? null, resetsAt: toEpochMs(value.resetsAt) ?? existing?.resetsAt ?? null, blocked: key === type ? blockedHere : existing?.blocked ?? false });
       }
     }
-    // an allowed status lifts a block (the window reset, or an earlier read was corrected)
-    const blockedUntil = blockedHere ? (toEpochMs(info.resetsAt) ?? toEpochMs(info.overageResetsAt) ?? 0) : null;
-    load().claude = { provider: 'claude', observedAt: now, windows: blockedHere ? windows : windows.map((window) => ({ ...window, blocked: false })), blockedUntil };
+    // an allowed status on an account window lifts the account block (the window reset, or an earlier
+    // read was corrected) and the flags of the other account windows; model windows keep their own
+    const blockedUntil = scoped ? snapshot.blockedUntil : blockedHere ? (toEpochMs(info.resetsAt) ?? toEpochMs(info.overageResetsAt) ?? 0) : null;
+    if (!scoped && !blockedHere) windows = windows.map((window) => (isModelScopedUsageLimit(window.type) ? window : { ...window, blocked: false }));
+    load().claude = { provider: 'claude', observedAt: now, windows, blockedUntil };
     save();
   },
 
@@ -147,22 +153,26 @@ export const providerUsageLimitsService = {
     save();
   },
 
-  /** A run went through: no block is in force any more (windows keep their last utilization). */
+  /**
+   * A run went through: no account block is in force any more (windows keep their last utilization).
+   * A model's own window stays marked — the run may have used another model — until its reset.
+   */
   recordClear(provider: LLMProvider) {
     const snapshot = current(provider);
-    if (!snapshot.blockedUntil && !snapshot.windows.some((window) => window.blocked)) return;
-    load()[provider] = { ...snapshot, observedAt: Date.now(), blockedUntil: null, windows: snapshot.windows.filter((window) => window.type !== 'unknown').map((window) => ({ ...window, blocked: false })) };
+    if (!snapshot.blockedUntil && !snapshot.windows.some((window) => window.blocked && !isModelScopedUsageLimit(window.type))) return;
+    load()[provider] = { ...snapshot, observedAt: Date.now(), blockedUntil: null, windows: snapshot.windows.filter((window) => window.type !== 'unknown').map((window) => (isModelScopedUsageLimit(window.type) ? window : { ...window, blocked: false })) };
     save();
   },
 
-  /** The picture per engine; a block whose window has passed is reported as lifted. */
+  /** The picture per engine; a block (of the account, or of one window) whose reset has passed is reported as lifted. */
   snapshot(now = Date.now()): Partial<Record<LLMProvider, ProviderUsageLimitsSnapshot>> {
     const out: Partial<Record<LLMProvider, ProviderUsageLimitsSnapshot>> = {};
     for (const entry of Object.values(load())) {
       if (!entry) continue;
       const holdUntil = entry.blockedUntil === null ? null : (entry.blockedUntil > 0 ? entry.blockedUntil : entry.observedAt + UNKNOWN_RESET_HOLD_MS);
       const lifted = holdUntil !== null && holdUntil <= now;
-      out[entry.provider] = lifted ? { ...entry, blockedUntil: null, windows: entry.windows.map((window) => ({ ...window, blocked: false })) } : { ...entry, blockedUntil: holdUntil };
+      const windows = entry.windows.map((window) => (window.blocked && (lifted || (window.resetsAt !== null && window.resetsAt <= now)) ? { ...window, blocked: false } : window));
+      out[entry.provider] = lifted ? { ...entry, blockedUntil: null, windows } : { ...entry, blockedUntil: holdUntil, windows };
     }
     return out;
   },

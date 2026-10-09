@@ -230,7 +230,7 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
 
 ### 3.7 agent 생성 (agent-architect)
 - 트리거: `/route`가 `decision: create`이고 depth ≥ 2 (D0~1은 `create_queue`에 넣고 범용으로 처리).
-- 메타 agent `agent-architect`(시드, 도구: WebSearch/WebFetch/Read만, maxTurns 6): 입력 = 명령 + 기존 카탈로그 요약. 출력 = `<aidev-agent>{name, domain, description, prompt, tools, knowledge:[{title, body, source_url, source_date}], self_check:{task, expected}}</aidev-agent>`.
+- 메타 agent `agent-architect`(시드, 도구: WebSearch/WebFetch/Read/Glob/Grep, maxTurns 20 — 2026-10-09 8에서 올림: 검색·문서 읽기가 8턴을 넘겨 `error_max_turns`로 잘리던 문제): 입력 = 명령 + 기존 카탈로그 요약. 출력 = `<aidev-agent>{name, domain, description, prompt, tools, knowledge:[{title, body, source_url, source_date}], self_check:{task, expected}}</aidev-agent>`.
 - 프런트 watcher가 완료된 assistant 메시지에서 블록 파싱 → `AgentCreateCard` → 승인 시 `POST /agents`(+knowledge sourced) → 자가 검증 턴(`self_check.task`를 새 agent로 실행, 결과가 expected에 맞는지 Laya `selfcheck.pass`로 판정) → 통과 시 활성화 → 원래 명령을 새 agent로 자동 전송.
 - 실패 시: 카드에 사유 표시, agent는 `active=0`으로 보관.
 

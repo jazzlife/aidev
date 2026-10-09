@@ -1248,3 +1248,14 @@ export function findApplicationRoot(startDirectory: string): string {
     ? path.dirname(parentDirectory)
     : parentDirectory;
 }
+
+//----------------- USAGE LIMIT WINDOWS ------------
+/**
+ * Whether a usage window limits one model only (`seven_day_opus`, `seven_day_sonnet`, `seven_day_fable`,
+ * …) rather than the whole account. Reaching one leaves the account able to run on its other models,
+ * so it is shown in the drawers but is never a reason to hand the work to another engine. Any
+ * `seven_day_<model>` kind counts, so a window the CLI adds later is treated the same way.
+ */
+export function isModelScopedUsageLimit(type: unknown): boolean {
+  return typeof type === 'string' && /^seven_day_.+/.test(type);
+}

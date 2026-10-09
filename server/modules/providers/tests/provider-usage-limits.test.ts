@@ -37,6 +37,22 @@ test('a rejected window blocks until its reset; an allowed event afterwards lift
   assert.equal(service.snapshot(1767226000000).claude!.blockedUntil, null);
 });
 
+test("a model's weekly window (Fable) refusing marks that window only; the account stays open until its reset", () => {
+  service.reset();
+  service.recordClaude({ status: 'allowed', rateLimitType: 'five_hour', utilization: 0.2, resetsAt: 1767225600 });
+  service.recordClaude({ status: 'rejected', rateLimitType: 'seven_day_fable', utilization: 1, resetsAt: 1767830400, overageStatus: 'rejected' });
+  let claude = service.snapshot(1767200000000).claude!;
+  assert.equal(claude.blockedUntil, null, 'not an account block');
+  assert.deepEqual(claude.windows.map((window) => [window.type, window.blocked]), [['five_hour', false], ['seven_day_fable', true]]);
+  // an allowed account event and a turn that went through (on another model) leave the Fable flag alone
+  service.recordClaude({ status: 'allowed', rateLimitType: 'five_hour', utilization: 0.3, resetsAt: 1767225600 });
+  service.recordClear('claude');
+  claude = service.snapshot(1767200000000).claude!;
+  assert.equal(claude.windows.find((window) => window.type === 'seven_day_fable')?.blocked, true);
+  // its own reset lifts it
+  assert.equal(service.snapshot(1767830400001).claude!.windows.find((window) => window.type === 'seven_day_fable')?.blocked, false);
+});
+
 test('Codex only shows refusals: a block with no reset holds five hours, a completed turn clears it', () => {
   service.reset();
   const at = Date.now();

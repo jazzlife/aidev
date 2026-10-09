@@ -7,9 +7,9 @@ const ENGINE_LABEL: Record<string, string> = { claude: 'Claude', codex: 'Codex' 
  * tokens (and its CSS only carries classes used under src-mobile plus this file). So the compact (mobile)
  * variant draws with the mobile tokens and the workbench variant with its own.
  */
-type Palette = { muted: string; track: string; ok: string; warn: string; bad: string; unknownDot: string };
-const WORKBENCH: Palette = { muted: 'text-muted-foreground', track: 'bg-muted', ok: 'bg-emerald-500', warn: 'bg-amber-500', bad: 'bg-red-500', unknownDot: 'bg-muted-foreground/40' };
-const MOBILE: Palette = { muted: 'text-muted', track: 'bg-line', ok: 'bg-ok', warn: 'bg-warn', bad: 'bg-danger', unknownDot: 'bg-muted/40' };
+type Palette = { muted: string; track: string; ok: string; warn: string; bad: string; badText: string; unknownDot: string };
+const WORKBENCH: Palette = { muted: 'text-muted-foreground', track: 'bg-muted', ok: 'bg-emerald-500', warn: 'bg-amber-500', bad: 'bg-red-500', badText: 'text-red-500', unknownDot: 'bg-muted-foreground/40' };
+const MOBILE: Palette = { muted: 'text-muted', track: 'bg-line', ok: 'bg-ok', warn: 'bg-warn', bad: 'bg-danger', badText: 'text-danger', unknownDot: 'bg-muted/40' };
 
 /** Bar colour by how full the window is. */
 const tone = (palette: Palette, percent: number | null, blocked: boolean) => (blocked || (percent ?? 0) >= 90 ? palette.bad : (percent ?? 0) >= 70 ? palette.warn : palette.ok);
@@ -39,7 +39,8 @@ function EngineUsage({ view, compact, now }: { view: UsageLimitView; compact: bo
               <div className={`h-1.5 overflow-hidden rounded-full ${palette.track}`}>
                 {window.percent !== null ? <div className={`h-full rounded-full ${tone(palette, window.percent, window.blocked)}`} style={{ width: `${Math.min(100, window.percent)}%` }} /> : null}
               </div>
-              <span className="text-right tabular-nums">{window.percent !== null ? `${window.percent}%` : '—'}</span>
+              {/* a window of its own that is full (a model's weekly limit) says so without blocking the engine */}
+              <span className={`text-right tabular-nums ${window.blocked ? `font-medium ${palette.badText}` : ''}`}>{window.blocked ? '도달' : window.percent !== null ? `${window.percent}%` : '—'}</span>
             </li>
           ))}
         </ul>

@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { isBlockingRateLimit, normalizeUsageLimit, parseLegacyUsageLimit } from '@/modules/providers/list/claude/claude-runtime.provider.js';
+import { isBlockingRateLimit, modelLimitMessage, normalizeUsageLimit, parseLegacyUsageLimit } from '@/modules/providers/list/claude/claude-runtime.provider.js';
 import { isClaudeAuthFailure, isClaudeUsageLimit } from '@/modules/providers/services/claude-auth-store.service.js';
 
 // A refused usage window has to end the run as a failure carrying the limit, because
@@ -20,6 +20,17 @@ test('only a rejected window with no overage to fall back on is a block', () => 
   assert.ok(!isBlockingRateLimit({ status: 'rejected', overageStatus: 'allowed_warning' }));
   assert.ok(!isBlockingRateLimit({}));
   assert.ok(!isBlockingRateLimit(undefined));
+});
+
+test("one model's own window (Fable / Opus weekly) is never a block: the account still runs on other models", () => {
+  assert.ok(!isBlockingRateLimit({ status: 'rejected', rateLimitType: 'seven_day_fable', overageStatus: 'rejected' }));
+  assert.ok(!isBlockingRateLimit({ status: 'rejected', rateLimitType: 'seven_day_opus' }));
+  // the account-wide weekly window still is
+  assert.ok(isBlockingRateLimit({ status: 'rejected', rateLimitType: 'seven_day' }));
+  const limit = normalizeUsageLimit({ status: 'rejected', rateLimitType: 'seven_day_fable', resetsAt: 1767225600 });
+  assert.equal(limit.type, 'seven_day_fable');
+  assert.match(modelLimitMessage(limit), /주간\(Fable\) 한도/);
+  assert.match(modelLimitMessage(limit), /다른 Claude 모델/);
 });
 
 test('a rejected window is normalized with its type and reset time', () => {

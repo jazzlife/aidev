@@ -32,6 +32,7 @@ import { resolveClaudeCodeExecutablePath } from '@/shared/claude-cli-path.js';
 import { aidevToolsService, composeAgentInstructions, sanitizeAidevOptions } from '@/modules/aidev-tools/index.js';
 import { claudeAuthStore, isClaudeAuthFailure, isClaudeUsageLimit } from '@/modules/providers/services/claude-auth-store.service.js';
 import { providerUsageLimitsService } from '@/modules/providers/services/provider-usage-limits.service.js';
+import { isModelScopedUsageLimit } from '@/shared/utils.js';
 import {
   createNotificationEvent,
   notifyBackgroundWorkCompleted,
@@ -613,6 +614,7 @@ const USAGE_LIMIT_LABELS = {
   seven_day: '주간',
   seven_day_opus: '주간(Opus)',
   seven_day_sonnet: '주간(Sonnet)',
+  seven_day_fable: '주간(Fable)',
   overage: '추가 사용량',
 };
 
@@ -632,8 +634,21 @@ export function usageLimitMessage(limit) {
     : `Claude ${label} 사용량 한도에 도달했습니다.`;
 }
 
+/**
+ * The error text when one model's own window refuses the turn (2026-10-09): the account is not out,
+ * so the message says to continue on another Claude model rather than offering the other engine.
+ *
+ * @param {{ type: string, resetsAt: number | null }} limit
+ * @returns {string}
+ */
+export function modelLimitMessage(limit) {
+  const label = USAGE_LIMIT_LABELS[limit?.type] || limit?.type || '모델';
+  const resetsAt = limit?.resetsAt ? ` ${new Date(limit.resetsAt).toLocaleString()}에 초기화됩니다.` : '';
+  return `Claude ${label} 한도에 도달했습니다.${resetsAt} 이 모델만의 한도이고 계정 전체 한도가 아니므로, 다른 Claude 모델로 다시 보내세요.`;
+}
+
 /** Windows the SDK can refuse on; anything else it reports is recorded as `unknown`. */
-const USAGE_LIMIT_TYPES = new Set(['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet', 'overage']);
+const USAGE_LIMIT_TYPES = new Set(['five_hour', 'seven_day', 'seven_day_opus', 'seven_day_sonnet', 'seven_day_fable', 'overage']);
 
 /**
  * Normalizes the SDK rate-limit payload into the shape the terminal `complete`
@@ -647,7 +662,7 @@ export function normalizeUsageLimit(info) {
   const raw = Number(info?.resetsAt ?? info?.overageResetsAt);
   const resetsAt = Number.isFinite(raw) && raw > 0 ? (raw < 1e12 ? raw * 1000 : raw) : null;
   return {
-    type: USAGE_LIMIT_TYPES.has(info?.rateLimitType) ? info.rateLimitType : 'unknown',
+    type: USAGE_LIMIT_TYPES.has(info?.rateLimitType) || isModelScopedUsageLimit(info?.rateLimitType) ? info.rateLimitType : 'unknown',
     resetsAt,
   };
 }
@@ -658,13 +673,15 @@ export function normalizeUsageLimit(info) {
  * Only the window status decides this. `overageStatus: 'rejected'` arrives on
  * every response for a subscription with no overage provisioned while the window
  * itself is `allowed`, and a `rejected` window with overage `allowed` keeps
- * running on overage — neither is a block. The CLI applies the same rule.
+ * running on overage — neither is a block. The CLI applies the same rule. A window that limits one
+ * model only (`seven_day_fable`, `seven_day_opus`, …) is not a block either: the account still runs on
+ * its other models, so the work must not be handed to the other engine (2026-10-09).
  *
  * @param {Object | null | undefined} info - SDK `rate_limit_info`
  * @returns {boolean}
  */
 export function isBlockingRateLimit(info) {
-  if (info?.status !== 'rejected') return false;
+  if (info?.status !== 'rejected' || isModelScopedUsageLimit(info.rateLimitType)) return false;
   return info.overageStatus !== 'allowed' && info.overageStatus !== 'allowed_warning';
 }
 
@@ -879,6 +896,8 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
   // cannot proceed on this engine until it resets, so the terminal `complete`
   // carries it and the client hands the work to another engine (E-03).
   let blockingUsageLimit = null;
+  // One model's own window refused this turn (Fable weekly etc.): named in the error, never a handoff.
+  let modelLimitHit = null;
 
   // A new turn supersedes any earlier one still holding this session's process
   // open, so held runs cannot stack up across a conversation.
@@ -1134,6 +1153,8 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
         providerUsageLimitsService.recordClaude(info);
         if (isBlockingRateLimit(info)) {
           blockingUsageLimit = normalizeUsageLimit(info);
+        } else if (info.status === 'rejected' && isModelScopedUsageLimit(info.rateLimitType)) {
+          modelLimitHit = normalizeUsageLimit(info);
         } else if (info.status === 'allowed' || info.status === 'allowed_warning') {
           // The window opened again (or a later event corrected an earlier read),
           // so an older block must not fail a turn that then went through.
@@ -1257,7 +1278,7 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
     const installed = await context.isProviderInstalled();
     const errorContent = !installed
       ? 'Claude Code is not installed. Please install it first: https://docs.anthropic.com/en/docs/claude-code'
-      : error.message;
+      : modelLimitHit ? modelLimitMessage(modelLimitHit) : error.message;
     // Nado AI Dev: an auth refusal flips the engine to "expired" so routing and the UI offer re-login.
     if (installed && isClaudeAuthFailure(String(error?.message ?? ''))) {
       claudeAuthStore.recordFailure(String(error.message));
@@ -1265,7 +1286,8 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
     }
     // A limit reached this far as a thrown error rather than a `rate_limit_event`,
     // so the terminal `complete` still has to name it for the handoff to trigger.
-    if (installed && !blockingUsageLimit && isClaudeUsageLimit(String(error?.message ?? ''))) {
+    // (not when one model's window was what refused: that text would read as an account limit)
+    if (installed && !blockingUsageLimit && !modelLimitHit && isClaudeUsageLimit(String(error?.message ?? ''))) {
       blockingUsageLimit = { type: 'unknown', resetsAt: null };
     }
     if (blockingUsageLimit) providerUsageLimitsService.recordBlock('claude', blockingUsageLimit);

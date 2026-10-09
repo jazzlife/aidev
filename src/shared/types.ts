@@ -210,7 +210,7 @@ export type SessionActivitySnapshot = {
  */
 export type ProviderUsageLimit = {
   /** Which window was refused; the `seven_day*` kinds are the weekly limits. */
-  type: 'five_hour' | 'seven_day' | 'seven_day_opus' | 'seven_day_sonnet' | 'overage' | 'unknown';
+  type: 'five_hour' | 'seven_day' | 'seven_day_opus' | 'seven_day_sonnet' | 'seven_day_fable' | 'overage' | 'unknown';
   /** Epoch milliseconds when the window resets, when the provider reports it. */
   resetsAt: number | null;
 };
