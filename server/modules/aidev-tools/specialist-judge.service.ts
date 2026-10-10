@@ -11,9 +11,9 @@ import path from 'node:path';
  * rank the catalog relative to each other, so their top pick always "wins" even when nothing fits (Unity shader →
  * testing, Verilog → docs); this small tool-less model turn scores the fit on an absolute scale:
  *   agent + fit — the closest existing specialist; the gateway uses it unless the fit is too low (routing.ts
- *                 JUDGE_USE_FIT, 0.4 — 2026-10-10: a new agent only when the current ones fit too poorly)
+ *                 JUDGE_USE_FIT, 0.6 — 2026-10-10: a new agent only when the current ones fit too poorly)
  *   generalist  — a trivial or domain-less request (a quick question, one shell command, a tiny edit)
- *   new         — the specialist that should exist, proposed only when the closest fit is below 0.4
+ *   new         — the specialist that should exist, proposed only when the closest fit is below 0.6
  * It also writes the one question to ask when the command lacks something essential (`question`); the gateway
  * shows it only when Laya's `clarify` says to ask (§3.1), so Laya decides and the model only words it.
  * Claude haiku first, Codex luna when Claude is unavailable or not allowed. Nothing is written into any conversation.
@@ -46,7 +46,7 @@ Rules:
 - "generalist" (fit = how clearly the request is domain-less) only when the command is trivial or domain-less: a quick factual question, running one or two ready-made shell commands the user spelled out (also on their own/remote machine, e.g. "run sw_vers on my Mac", "m4pro에서 npm test 돌려서 결과 알려줘"), a tiny generic edit such as renaming.
 - Running commands — locally, on a named PC, or on a remote machine — is something every agent can do through its tools; it is never a specialist domain. Never propose a specialist for command execution, remote machines or reporting command output.
 - "generalist" also for work of any size that has no specific technology or problem domain: reading, searching or summarizing many files or logs (e.g. "이 로그 5만 줄에서 오류 패턴 요약", "src 전체를 읽고 구조를 요약"), general code review or explanation. Size alone never makes a specialist.
-- new: ONLY when the closest agent's fit is below 0.4 (or agent is null) and the command has a concrete technology or problem domain (a language, framework, platform, protocol, hardware or tool chain), propose the specialist that SHOULD exist (kebab-case name, domain, one-line description, key technologies). Otherwise null — a close-enough agent is used, not duplicated.
+- new: ONLY when the closest agent's fit is below 0.6 (or agent is null) and the command has a concrete technology or problem domain (a language, framework, platform, protocol, hardware or tool chain), propose the specialist that SHOULD exist (kebab-case name, domain, one-line description, key technologies). Otherwise null — a close-enough agent is used, not duplicated.
 - Never choose META agents.
 - question: if information ESSENTIAL to start is missing and cannot be inferred (which file or screen, which project, which target machine, what the expected behavior is), write the ONE most important question to ask, in the command's language, short and concrete. Otherwise null.
 

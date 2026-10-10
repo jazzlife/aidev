@@ -289,10 +289,12 @@ export const ROUTE_INSTRUCTIONS = {
  * The judge scores how well the closest existing agent covers a command (`fit`, 0..1). That agent is used down to this
  * fit; only below it — the catalog fits too poorly — is a new specialist created (2026-10-10: the judge's yes/no "true
  * specialist" made a near duplicate for every sub-area, e.g. node-sea-bytecode right after build-release-security).
- * The runtime judge prompt states the same 0.4 line (specialist-judge.service.ts).
+ * 0.6 = the agent covers the command's main technology (a sub-area or neighbouring tool); a same-family-only match
+ * (0.4–0.5) is too far (user decision 2026-10-10: 0.4 left too wide a gap). The runtime judge prompt states the same
+ * line (specialist-judge.service.ts).
  */
-export const JUDGE_USE_FIT = 0.4;
-/** A judge-used command becomes a routing example of its agent only at this fit: an adjacent match would blur the prior. */
+export const JUDGE_USE_FIT = 0.6;
+/** A judge-used command becomes a routing example of its agent only at this fit (a low-fit agent used for want of a proposal does not). */
 const JUDGE_EXAMPLE_FIT = 0.6;
 /** D-04: the same domain this many times → offer to create its specialist (§3.7 "동일 분야 3회"). */
 export const CREATE_PROPOSE_AT = 3;
@@ -321,8 +323,8 @@ function dismissedDomain(store: Store, userId: number, p: { name: string; domain
 }
 /** Bumped whenever the runtime judge prompt changes meaning (specialist-judge.service.ts): cached verdicts of an older
  *  prompt are not reused. 2: `question` + "command execution is never a specialist"; 3: "size alone never makes a specialist" (2026-10-01);
- *  4: the closest agent with a graded fit instead of a yes/no "true specialist" (2026-10-10). */
-const JUDGE_VERSION = 4;
+ *  4: the closest agent with a graded fit instead of a yes/no "true specialist"; 5: a proposal below 0.6, not 0.4 (2026-10-10). */
+const JUDGE_VERSION = 5;
 /** How long a send waits for the judge (env AIDEV_JUDGE_WAIT_MS). A slower verdict is still cached for the next send. */
 const JUDGE_WAIT_MS = Number(process.env.AIDEV_JUDGE_WAIT_MS ?? 20_000);
 const MAX_PREJUDGE_PER_USER = 3;
