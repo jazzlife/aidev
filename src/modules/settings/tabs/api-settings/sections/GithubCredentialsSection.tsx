@@ -1,8 +1,10 @@
+import { useState } from 'react';
 import { Eye, EyeOff, Github, Plus, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
-import { Button, Input } from '@/shared/ui';
+import { Button, GithubLogin, Input } from '@/shared/ui';
 import type { GithubCredentialItem } from '@/shared/types';
+import { cn, takeGithubReturn } from '@/shared/utils';
 
 type GithubCredentialsSectionProps = {
   githubCredentials: GithubCredentialItem[];
@@ -41,6 +43,8 @@ export default function GithubCredentialsSection({
   onDeleteGithubCredential,
 }: GithubCredentialsSectionProps) {
   const { t } = useTranslation('settings');
+  // back from "GitHub로 로그인" started here (?settings=api&github=…): its outcome, read once
+  const [githubNotice] = useState(takeGithubReturn);
 
   return (
     <div>
@@ -56,6 +60,15 @@ export default function GithubCredentialsSection({
       </div>
 
       <p className="mb-4 text-sm text-muted-foreground">{t('apiKeys.github.descriptionAlt')}</p>
+
+      <div className="mb-4 space-y-2">
+        {githubNotice ? (
+          <div role="status" className={cn('rounded-lg px-3 py-2 text-sm', githubNotice.error ? 'bg-destructive/10 text-destructive' : 'bg-green-500/10 text-green-600 dark:text-green-400')}>
+            {githubNotice.text}
+          </div>
+        ) : null}
+        <GithubLogin returnTo={`${window.location.pathname}?settings=api`} withTokenFallback={false} />
+      </div>
 
       {showNewGithubForm && (
         <div className="mb-4 space-y-3 rounded-lg border bg-card p-4">

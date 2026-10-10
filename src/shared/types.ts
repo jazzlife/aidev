@@ -1120,33 +1120,12 @@ export type ExistingPrdFile = {
 
 //----------------- PROJECT CREATION WIZARD ------------
 
-/** The one-based index of the step currently shown by the project-creation wizard: 1 configures the workspace, 2 reviews it before creation. */
-export type WizardStep = 1 | 2;
-
-/** How the project-creation wizard authenticates a GitHub clone: reuse a 'stored' credential, enter a 'new' token, or use 'none' and rely on public access or an SSH key. */
-export type TokenMode = 'stored' | 'new' | 'none';
-
-/** One filesystem directory returned by the browse-filesystem endpoint, used to populate workspace-path autocomplete and the folder browser. */
-export type FolderSuggestion = {
-  name: string;
-  path: string;
-  type?: string;
-};
-
-/** A stored GitHub token credential as returned by the credentials endpoint, listed so the user can pick which token authenticates a clone. */
-export type GithubTokenCredential = {
-  id: number;
-  credential_name: string;
-  is_active: boolean;
-};
-
-/** The full set of user-entered values carried across the project-creation wizard's steps, owned by ProjectCreationWizard and passed down to each step. */
-export type WizardFormState = {
-  workspacePath: string;
-  githubUrl: string;
-  tokenMode: TokenMode;
-  selectedGithubToken: string;
-  newGithubToken: string;
+/** What the project-creation wizard's clone tab clones: a repository picked from the connected GitHub account (with that account's token) or a typed address (`tokenId` of the listed account, if any). Produced by RepoPicker, cloned by ProjectCreationWizard. */
+export type CloneSource = {
+  url: string;
+  label: string;
+  tokenId: number | null;
+  private: boolean;
 };
 
 // ---------------------------

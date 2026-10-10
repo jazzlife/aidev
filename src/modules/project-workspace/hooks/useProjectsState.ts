@@ -388,8 +388,10 @@ export function useProjectsState({
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [isLoadingProjects, setIsLoadingProjects] = useState(true);
   const [loadingProgress, setLoadingProgress] = useState<LoadingProgress | null>(null);
-  const [showSettings, setShowSettings] = useState(false);
-  const [settingsInitialTab, setSettingsInitialTab] = useState('agents');
+  // Back from "GitHub로 로그인" started in the settings (?settings=api&github=…): reopen them on the
+  // credentials tab, whose GitHub section reads the outcome and clears the address bar.
+  const [showSettings, setShowSettings] = useState(() => new URLSearchParams(window.location.search).get('settings') === 'api');
+  const [settingsInitialTab, setSettingsInitialTab] = useState(() => (showSettings ? 'api' : 'agents'));
   const [externalMessageUpdate, setExternalMessageUpdate] = useState(0);
   /**
    * `newSessionTrigger` is an explicit, monotonic intent signal for user-driven

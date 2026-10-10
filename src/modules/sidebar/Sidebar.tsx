@@ -142,6 +142,8 @@ function Sidebar({
     collapseSidebar: handleCollapseSidebar,
     expandSidebar: handleExpandSidebar,
     setShowNewProject,
+    closeNewProject,
+    githubCloneReturn,
     setSearchFilter,
     setPendingDeletion,
     setShowVersionModal,
@@ -236,7 +238,8 @@ function Sidebar({
         settingsInitialTab={settingsInitialTab}
         onCloseSettings={onCloseSettings}
         showNewProject={showNewProject}
-        onCloseNewProject={() => setShowNewProject(false)}
+        onCloseNewProject={closeNewProject}
+        newProjectReturn={githubCloneReturn}
         onProjectCreated={handleProjectCreated}
         pendingDeletion={pendingDeletion}
         onCancelDeletion={() => setPendingDeletion(null)}

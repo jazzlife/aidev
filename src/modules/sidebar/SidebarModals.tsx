@@ -17,6 +17,8 @@ type SidebarModalsProps = {
   onCloseSettings: () => void;
   showNewProject: boolean;
   onCloseNewProject: () => void;
+  /** back from GitHub login started in the clone tab: reopen that tab with the outcome */
+  newProjectReturn: { notice: { text: string; error: boolean } | null } | null;
   onProjectCreated: () => void;
   pendingDeletion: PendingSidebarDeletion | null;
   onCancelDeletion: () => void;
@@ -52,6 +54,7 @@ export default function SidebarModals({
   onCloseSettings,
   showNewProject,
   onCloseNewProject,
+  newProjectReturn,
   onProjectCreated,
   pendingDeletion,
   onCancelDeletion,
@@ -78,6 +81,8 @@ export default function SidebarModals({
           <ProjectCreationWizard
             onClose={onCloseNewProject}
             onProjectCreated={onProjectCreated}
+            initialTab={newProjectReturn ? 'clone' : 'folder'}
+            notice={newProjectReturn?.notice}
           />,
           document.body,
         )}

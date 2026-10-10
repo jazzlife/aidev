@@ -3,6 +3,7 @@ import type { TFunction } from 'i18next';
 
 import { api } from '@/shared/api';
 import { subscribeToUserPreferences } from '@/shared/userSettings';
+import { takeGithubReturn } from '@/shared/utils';
 import { usePaletteOps } from '@/modules/command-palette';
 import type { ArchivedProjectListItem, ArchivedSessionListItem, ConversationProjectResult, ConversationSearchResults, LLMProvider, Project, ProjectSession, ProjectSortOrder, RecentConversationListItem, SearchProgress, ActiveSidebarRename, PendingSidebarDeletion, SessionTitleSearchResult, SessionWithProvider, SidebarSearchMode } from '@/shared/types';
 import {
@@ -85,7 +86,12 @@ export function useSidebarController({
   // The one rename the sidebar has open, as a single value so a project and a
   // session cannot both be mid-rename. See ActiveSidebarRename.
   const [activeRename, setActiveRename] = useState<ActiveSidebarRename | null>(null);
-  const [showNewProject, setShowNewProject] = useState(false);
+  // Back from "GitHub로 로그인" started in the add-project clone tab (?add=clone&github=…): the
+  // add-project modal reopens on that tab with the outcome. Cleared when the modal closes.
+  const [githubCloneReturn, setGithubCloneReturn] = useState(() => (
+    new URLSearchParams(window.location.search).get('add') === 'clone' ? { notice: takeGithubReturn() } : null
+  ));
+  const [showNewProject, setShowNewProject] = useState(() => githubCloneReturn !== null);
   const [initialSessionsLoaded, setInitialSessionsLoaded] = useState<Set<string>>(new Set());
   const [currentTime, setCurrentTime] = useState(new Date());
   const [projectSortOrder, setProjectSortOrder] = useState<ProjectSortOrder>('name');
@@ -1070,6 +1076,11 @@ export function useSidebarController({
     setSidebarVisible(true);
   }, [setSidebarVisible]);
 
+  const closeNewProject = useCallback(() => {
+    setShowNewProject(false);
+    setGithubCloneReturn(null);
+  }, []);
+
   return {
     isSidebarCollapsed,
     isProjectExpanded,
@@ -1122,6 +1133,8 @@ export function useSidebarController({
     collapseSidebar,
     expandSidebar,
     setShowNewProject,
+    closeNewProject,
+    githubCloneReturn,
     searchMode,
     setSearchMode,
     conversationResults,

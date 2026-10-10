@@ -86,6 +86,53 @@ export function expandWorkspacesRoot(input: string, root: string | null): string
   return input;
 }
 
+/**
+ * Joins a folder name onto a directory path with the directory's own separator
+ * (`\` for a Windows path that has no `/`), dropping trailing separators first.
+ * Used by the project-creation wizard for new folders and the clone target.
+ */
+export function joinFolderPath(directoryPath: string, folderName: string): string {
+  const normalizedDirectory = directoryPath.trim().replace(/[\\/]+$/, '');
+  const separator = normalizedDirectory.includes('\\') && !normalizedDirectory.includes('/') ? '\\' : '/';
+  return `${normalizedDirectory}${separator}${folderName.trim()}`;
+}
+
+// ---------------------------
+
+//----------------- GITHUB ------------
+
+/**
+ * The folder a clone lands in, as the server names it: the URL's last part
+ * without trailing slashes and `.git`. Empty when the URL has no usable part.
+ */
+export function repoFolderName(url: string): string {
+  return url.trim().replace(/\/+$/, '').replace(/\.git$/, '').split(/[/:]/).filter(Boolean).pop() ?? '';
+}
+
+/**
+ * Back from "GitHub로 로그인" the gateway appends `?github=connected&account=…` or
+ * `?github=error&reason=…` to the page the login started from. Reads that outcome
+ * once as a notice and removes it (and the `add`/`settings` markers that reopen the
+ * clone tab or the settings) from the address bar. Null when there is no outcome.
+ */
+export function takeGithubReturn(): { text: string; error: boolean } | null {
+  const params = new URLSearchParams(window.location.search);
+  const result = params.get('github');
+  if (!result) {
+    return null;
+  }
+  const account = params.get('account');
+  const notice = result === 'connected'
+    ? { text: `GitHub 계정이 연결되었습니다${account ? ` (@${account})` : ''}`, error: false }
+    : { text: `GitHub 로그인 실패: ${params.get('reason') || '알 수 없는 오류'}`, error: true };
+  for (const key of ['github', 'account', 'reason', 'add', 'settings']) {
+    params.delete(key);
+  }
+  const query = params.toString();
+  window.history.replaceState(window.history.state, '', `${window.location.pathname}${query ? `?${query}` : ''}`);
+  return notice;
+}
+
 // ---------------------------
 
 //----------------- CLIPBOARD ------------
