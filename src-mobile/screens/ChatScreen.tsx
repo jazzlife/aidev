@@ -39,7 +39,7 @@ import { MODE_LABELS, adoptDraftPermissionMode, buildSendOptions, uploadAttachme
 
 type SessionMeta = { id: string; provider: LLMProvider; projectId: string; projectPath: string; projectName: string; title: string };
 /** How a send goes: `interrupt` cuts into the running answer; `options` are a queued turn's own (else the screen's). */
-type DispatchOptions = { interrupt?: boolean; options?: Record<string, unknown> };
+type DispatchOptions = { interrupt?: boolean; options?: Record<string, unknown>; queuedId?: string };
 /** What the router (and the title) reads for a send of attachments only: the server takes an empty text, the router cannot. */
 const attachmentLabel = (names: string[]) => `첨부 ${names.length}개 (${names.slice(0, 3).join(', ')}${names.length > 3 ? ' …' : ''})`;
 const isImage = (a: { mimeType?: string; name?: string; path?: string }) => Boolean(a.mimeType?.startsWith('image/')) || /\.(gif|jpe?g|png|webp|heic)$/i.test(a.name || a.path || '');
@@ -270,6 +270,8 @@ export function ChatScreen() {
       type: anchorId ? 'chat.edit-send' : 'chat.send', sessionId: target.id, content: text, ...(anchorId ? { anchorId } : {}),
       // cutting in: the server stops the running answer and starts this turn right behind it
       ...(how.interrupt ? { interrupt: true } : {}),
+      // a queued turn sent early: the server drops it from the stored queue, so no older copy can queue it again
+      ...(how.queuedId ? { queuedId: how.queuedId } : {}),
       options: {
         // the conversation's permission mode (a new chat: the draft's) and the saved allow/deny rules, as the workbench sends them;
         // a queued turn goes with the ones it was queued under
@@ -382,7 +384,7 @@ export function ChatScreen() {
     setSending(routed);
     try {
       const decoration = await beforeSend(routed, { sessionId, provider, isNewSession: false, projectHint: meta?.projectName ?? null, userPinnedModel: false });
-      await dispatch(turn.content, decoration, attachments, [], { interrupt: busy, options: turn.options });
+      await dispatch(turn.content, decoration, attachments, [], { interrupt: busy, options: turn.options, queuedId: id });
     } finally {
       sendingRef.current = false;
       setSending(null);

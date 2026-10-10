@@ -954,6 +954,9 @@ export function useChatComposerState({
         // Cutting in: the server aborts the running turn and starts this one
         // right behind it (a no-op when the turn finished meanwhile).
         ...(interrupt ? { interrupt: true } : {}),
+        // A queued turn sent early: the server drops it from the stored queue,
+        // so no copy of the queue saved from before can queue it again.
+        ...(queued ? { queuedId: queued.id } : {}),
         content: messageContent,
         options: {
           ...routedSendOptions,

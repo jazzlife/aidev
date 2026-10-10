@@ -2,7 +2,7 @@ import path from 'node:path';
 
 import type { WebSocket } from 'ws';
 
-import { sessionsDb } from '@/modules/database/index.js';
+import { sessionDraftsDb, sessionsDb } from '@/modules/database/index.js';
 import { providerModelsService, sessionsService } from '@/modules/providers/index.js';
 import { chatRunRegistry } from '@/modules/websocket/services/chat-run-registry.service.js';
 import { connectedClients, WS_OPEN_STATE } from '@/modules/websocket/services/websocket-state.service.js';
@@ -188,6 +188,9 @@ async function abortActiveRun(
  * `interrupt: true` is the user cutting in: the turn in progress is aborted
  * first and this message starts right behind it. Without the flag a busy
  * session refuses the send (RUN_IN_PROGRESS) — the composer queues instead.
+ *
+ * `queuedId` names the queued turn this send takes out of the command queue
+ * (a queued card sent early); the server drops it from the stored queue.
  */
 async function handleChatSend(
   ws: WebSocket,
@@ -198,6 +201,11 @@ async function handleChatSend(
   const resolved = resolveSendTarget(ws, data, dependencies, 'chat.send');
   if (!resolved) {
     return;
+  }
+
+  const draftOwner = Number(userId);
+  if (typeof data.queuedId === 'string' && data.queuedId && Number.isInteger(draftOwner)) {
+    sessionDraftsDb.takeQueuedTurn(draftOwner, resolved.sessionId, data.queuedId);
   }
 
   if (data.interrupt === true) {
@@ -567,7 +575,7 @@ function handlePermissionResponse(data: AnyRecord, dependencies: ChatWebSocketDe
  * Handles authenticated chat websocket messages used by the main chat panel.
  *
  * Inbound protocol (client to server):
- * - `chat.send`                { sessionId, content, options?, interrupt? }
+ * - `chat.send`                { sessionId, content, options?, interrupt?, queuedId? }
  * - `chat.abort`               { sessionId }
  * - `chat.subscribe`           { sessions: [{ sessionId, lastSeq? }] }
  * - `chat.permission-response` { requestId, allow, updatedInput?, message?, rememberEntry? }

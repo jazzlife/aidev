@@ -158,12 +158,13 @@ describe('chat screen', () => {
     fireEvent.click(screen.getAllByLabelText('대기 메시지 수정')[1]);
     await settle();
     expect(contents()).toEqual(['둘']);
+    const urgentId = readQueuedMessages('s1')[0].id;
     expect((screen.getByPlaceholderText('명령을 입력하세요') as HTMLTextAreaElement).value).toBe('하나');
     fireEvent.click(screen.getByLabelText('지금 보내기'));
     await settle();
     expect(contents()).toEqual([]);
     expect(sent()).toHaveLength(1);
-    expect(sent()[0]).toMatchObject({ type: 'chat.send', sessionId: 's1', content: '둘', interrupt: true, options: { permissionMode: 'default' } });
+    expect(sent()[0]).toMatchObject({ type: 'chat.send', sessionId: 's1', content: '둘', interrupt: true, queuedId: urgentId, options: { permissionMode: 'default' } });
     // the composer keeps what it holds
     expect((screen.getByPlaceholderText('명령을 입력하세요') as HTMLTextAreaElement).value).toBe('하나');
   });

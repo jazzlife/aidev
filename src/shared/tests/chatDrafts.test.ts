@@ -17,21 +17,28 @@ const savedDrafts: SavedDraft[] = [];
 const deletedScopes: string[] = [];
 let serverDrafts: unknown[] = [];
 let draftsRequestFailed = false;
+// Held requests: a test opens the gate to let the server answer.
+let draftsGate: Promise<void> | null = null;
+let saveGate: Promise<void> | null = null;
 
 vi.mock('@/shared/api', () => ({
   api: {
     user: {
       drafts: async () => {
+        // The server reads its rows when the request arrives, not when it answers.
+        const snapshot = serverDrafts;
+        await draftsGate;
         if (draftsRequestFailed) {
           throw new Error('offline');
         }
-        return new Response(JSON.stringify({ success: true, drafts: serverDrafts }), {
+        return new Response(JSON.stringify({ success: true, drafts: snapshot }), {
           status: 200,
           headers: { 'Content-Type': 'application/json' },
         });
       },
       saveDraft: async (scope: string, draft: { text: string; queuedMessage?: unknown }) => {
         savedDrafts.push({ scope, ...draft });
+        await saveGate;
         return new Response('{}', { status: 200 });
       },
       deleteDraft: async (scope: string) => {
@@ -53,6 +60,8 @@ beforeEach(() => {
   deletedScopes.length = 0;
   serverDrafts = [];
   draftsRequestFailed = false;
+  draftsGate = null;
+  saveGate = null;
   vi.useFakeTimers();
 });
 
@@ -129,6 +138,8 @@ test('hydrate removes a mirrored queue after the server claims it', async () => 
   const store = await loadStore();
   store.writeQueuedMessages('session-a', [{ content: 'server-owned queue' }]);
   assert.equal(store.readQueuedMessages('session-a')[0]?.content, 'server-owned queue');
+  // the save lands before the server claims the turn
+  await vi.runAllTimersAsync();
 
   serverDrafts = [];
   await store.hydrateChatDrafts();
@@ -142,6 +153,7 @@ test('hydrate shortens the queue to what the server has not sent yet', async () 
     { id: 'q1', content: 'first', attachments: [] },
     { id: 'q2', content: 'second', attachments: [] },
   ]);
+  await vi.runAllTimersAsync();
 
   // The server sent the head and left the rest in the column.
   serverDrafts = [{ scope: 'session-a', text: '', queuedMessage: [{ id: 'q2', content: 'second', attachments: [] }] }];
@@ -261,4 +273,42 @@ test('reset clears the drafts so the next user does not see them', async () => {
 
   assert.equal(store.readDraftText('session-a'), '');
   assert.equal(localStorage.getItem('chat-drafts'), null);
+});
+
+const gate = () => {
+  let open = () => undefined as void;
+  const promise = new Promise<void>((resolve) => { open = resolve; });
+  return { promise, open };
+};
+
+test('a queue change is not undone by a reload the server answered from before it', async () => {
+  const store = await loadStore();
+  const first = { id: 'q-1', content: 'first', options: {}, attachments: [] };
+  const second = { id: 'q-2', content: 'second', options: {}, attachments: [] };
+  serverDrafts = [{ scope: 'session-a', text: '', queuedMessage: [first, second] }];
+  await store.hydrateChatDrafts();
+
+  // A reload is on its way when the user sends `first` now.
+  const reload = gate();
+  draftsGate = reload.promise;
+  const inFlight = store.hydrateChatDrafts();
+  store.writeQueuedMessages('session-a', [second]);
+  reload.open();
+  await inFlight;
+  assert.deepEqual(store.readQueuedMessages('session-a').map((turn) => turn.id), ['q-2']);
+
+  // A reload that starts while the save is still on its way reads the old row too.
+  draftsGate = null;
+  const saving = gate();
+  saveGate = saving.promise;
+  store.writeQueuedMessages('session-a', []);
+  await store.hydrateChatDrafts();
+  assert.deepEqual(store.readQueuedMessages('session-a'), []);
+  saving.open();
+  await vi.runAllTimersAsync();
+
+  // Once the save has landed, the server's copy is adopted again.
+  serverDrafts = [{ scope: 'session-a', text: '', queuedMessage: [second] }];
+  await store.hydrateChatDrafts();
+  assert.deepEqual(store.readQueuedMessages('session-a').map((turn) => turn.id), ['q-2']);
 });

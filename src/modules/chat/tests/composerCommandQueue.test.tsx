@@ -187,6 +187,7 @@ test('"send now" takes a queued turn out of the line and sends it with its own s
   assert.equal(sent[0].type, 'chat.send');
   assert.equal(sent[0].content, 'actually, this first');
   assert.equal(sent[0].interrupt, true);
+  assert.equal(sent[0].queuedId, urgent.id, 'the server is told which queued turn went, so no older copy re-queues it');
   assert.equal((sent[0].options as { model: string }).model, 'test-model', 'the settings it was queued with travel with it');
   assert.deepEqual(view.result.current.queuedDrafts.map((draft) => draft.content), ['wait your turn']);
   assert.equal(view.result.current.input, 'half-typed thought', 'the composer is left alone');

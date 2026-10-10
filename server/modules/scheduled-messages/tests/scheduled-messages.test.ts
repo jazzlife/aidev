@@ -208,6 +208,26 @@ test('a client saving a queue copied before the head was sent does not queue tha
   });
 });
 
+test('a queued turn the user sent early leaves the stored queue and stays out of older copies', async () => {
+  await withIsolatedDatabase(async (userId) => {
+    const early = { id: 'q-early', content: 'sent early', options: {}, attachments: [] };
+    const later = { id: 'q-later', content: 'later', options: {}, attachments: [] };
+    sessionDraftsDb.saveDraft(userId, SESSION_ID, { text: '', queuedMessage: [early, later] });
+
+    sessionDraftsDb.takeQueuedTurn(userId, SESSION_ID, 'q-early');
+    const ids = () => (sessionDraftsDb.getDrafts(userId)[0]?.queuedMessage as Array<{ id: string }> | null)?.map((turn) => turn.id) ?? null;
+    assert.deepEqual(ids(), ['q-later']);
+
+    // a copy from before the early send (a stale reload, another device)
+    sessionDraftsDb.saveDraft(userId, SESSION_ID, { text: 'typing', queuedMessage: [early, later] });
+    assert.deepEqual(ids(), ['q-later']);
+
+    const runs: RunCall[] = [];
+    assert.equal(await dispatchQueuedMessages(createRuntime(runs)), 1);
+    assert.deepEqual(runs.map((run) => run.command), ['later']);
+  });
+});
+
 test('a queued turn does not slip in while a run being cut into ends on its own', async () => {
   await withIsolatedDatabase(async (userId) => {
     sessionDraftsDb.saveDraft(userId, SESSION_ID, {

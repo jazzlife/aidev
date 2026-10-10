@@ -204,6 +204,36 @@ export const sessionDraftsDb = {
       );
   },
 
+  /**
+   * A queued turn the user sent early (it went out as its own `chat.send`):
+   * taken out of the stored queue and remembered as sent, so a copy of the
+   * queue saved from before — by this tab or another device — cannot queue it
+   * again. Compare-and-swap like a claim, so a queue edited meanwhile is
+   * left to the next save, which drops the turn too.
+   */
+  takeQueuedTurn(userId: number, scope: string, turnId: string): void {
+    rememberSentTurn(userId, scope, { id: turnId });
+    const row = getConnection()
+      .prepare('SELECT queued_message FROM session_drafts WHERE user_id = ? AND draft_scope = ?')
+      .get(userId, scope) as { queued_message: string | null } | undefined;
+    if (!row?.queued_message) {
+      return;
+    }
+    const current = parseQueuedMessage(row.queued_message);
+    const waiting = withoutSentTurns(userId, scope, current);
+    if (waiting === current) {
+      return;
+    }
+    getConnection()
+      .prepare(
+        `UPDATE session_drafts
+         SET queued_message = ?, updated_at = CURRENT_TIMESTAMP
+         WHERE user_id = ? AND draft_scope = ? AND queued_message = ?`
+      )
+      .run(waiting === null ? null : JSON.stringify(waiting), userId, scope, row.queued_message);
+    this.deleteEmptyDraft(userId, scope);
+  },
+
   /** Removes the placeholder row left after its last queued turn is claimed. */
   deleteEmptyDraft(userId: number, scope: string): void {
     getConnection()
