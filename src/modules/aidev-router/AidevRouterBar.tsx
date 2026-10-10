@@ -91,7 +91,7 @@ export function AidevRouterBar({ sessionId = null }: { sessionId?: string | null
                     <div className="line-clamp-2 text-muted-foreground">{alternative.description}</div>
                   </button>
                 ))}
-                {last.decision === 'create' || last.decision === 'create_background' ? <div className="px-2 py-1 text-amber-700">맞는 전문 agent가 없습니다 — 생성 흐름(단계 D)</div> : null}
+                {last.decision === 'create' || last.decision === 'create_background' ? <div className="px-2 py-1 text-amber-700">{last.create?.design && last.create.proposal ? `맞는 전문 agent가 없어 ${last.create.proposal.name}을(를) 뒤에서 설계합니다 — 다음 명령부터 사용` : '맞는 전문 agent가 없습니다 — 생성 흐름(단계 D)'}</div> : null}
               </div>
             ) : null}
           </span>

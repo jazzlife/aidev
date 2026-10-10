@@ -51,6 +51,8 @@ export type RouteResult = {
   decision: 'use' | 'generalist' | 'create' | 'create_background';
   /** Present when no fitting agent exists: what to send to the agent-architect first (§3.7). */
   create: { architect: ArchitectDefinition; catalog: string; background: boolean; proposal?: SpecialistProposal | null;
+    /** an ongoing chat: the gateway designs `proposal` out of band while the generalist answers (no architect turn here) */
+    design?: boolean;
     /** D-04: the create-queue entry this command counted toward (background) or is creating (from_queue) */
     queue?: { id: number; name: string; count: number; proposed_now: boolean } | null; from_queue?: boolean } | null;
   /** Specialist judge verdict (LLM / cache / judge-confirmed similar command); null when unavailable. */

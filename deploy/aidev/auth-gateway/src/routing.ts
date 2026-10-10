@@ -304,6 +304,11 @@ export function enqueueCreate(store: Store, userId: number, p: { name: string; d
   if (proposedNow) store.setCreateQueueStatus(userId, row.id, 'proposed');
   return { id: row.id, name: row.name, domain: row.domain, count: row.count, proposedNow };
 }
+/** A domain the user turned down (create queue `dismissed`) is never designed on its own. */
+function dismissedDomain(store: Store, userId: number, p: { name: string; domain: string; technologies: string[] }) {
+  const tokens = domainTokens(p);
+  return store.createQueue(userId, ['dismissed']).some((row) => row.name === p.name || cosine(tokens, domainTokens(row)) >= SAME_DOMAIN);
+}
 /** Bumped whenever the runtime judge prompt changes meaning (specialist-judge.service.ts): cached verdicts of an older
  *  prompt are not reused. 2: `question` + "command execution is never a specialist"; 3: "size alone never makes a specialist" (2026-10-01). */
 const JUDGE_VERSION = 3;
@@ -533,6 +538,15 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     decision = 'create_background';
     reason.push(`quick work (scored D${scoredDepth}) → generalist now${proposal ? `, ${proposal.name} queued for creation` : ''}`);
   }
+  // An ongoing chat never hands its turn to the agent-architect (2026-10-10): resumed with the whole conversation it
+  // answered the user's question instead of designing (server run #219, "…바이너리 형태로 배포된거 맞지?"), and the
+  // app found no design block. The generalist answers now; the proposed specialist is designed out of band
+  // (aidev-api designAgent) and takes the next command of its domain. A new chat still starts with the architect.
+  let designInBackground = false;
+  if (decision === 'create' && input.sessionId && !fromQueue) {
+    decision = 'create_background'; designInBackground = Boolean(proposal && !dismissedDomain(store, userId, proposal));
+    reason.push(`ongoing chat → generalist now${proposal ? `, ${proposal.name} ${designInBackground ? 'designed in the background' : 'dismissed before — not designed'}` : ''}`);
+  }
   // Clarify (§3.1): the judge decides when it ran — on the server Laya's clarify did not separate vague from specific
   // commands (0.36 "로그인 버튼 고쳐줘" vs 0.42 with the file and behavior named) while the judge got 3/3. Laya decides
   // only without a verdict that carries the field (judge down, a 'similar' shortcut, a cache entry from before it).
@@ -550,7 +564,7 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   // and asks back itself; the clarify card is for a first command that lacks its essentials.
   const askClarify = depth >= 2 && !prior && (judgeAsks ?? (!fallback && clarify > 0.7));
   if (depth > scoredDepth) reason.push(`depth D${scoredDepth} → D${depth} (${[kindFloor > scoredDepth ? `${taskKind} ≥ D${kindFloor}` : null, agentFloor > scoredDepth ? `${agent.name} ≥ D${agentFloor}` : null, sessionFloor > scoredDepth ? `session ≥ D${sessionFloor}` : null, architectFloor > scoredDepth ? `agent design ≥ D${architectFloor}` : null].filter(Boolean).join(', ')})`);
-  const queued = decision === 'create_background' && proposal ? enqueueCreate(store, userId, proposal, text) : null;
+  const queued = decision === 'create_background' && proposal && !designInBackground ? enqueueCreate(store, userId, proposal, text) : null;
   if (queued?.proposedNow) reason.push(`${queued.name}: ${queued.count} commands in this domain → offered for creation`);
 
   // ---- engine (§3.4) ------------------------------------------------------------------------
@@ -747,6 +761,8 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     architect: { name: architect.name, version: architect.version, description: architect.description, prompt: architect.prompt, tools: architect.tools ? JSON.parse(architect.tools) as string[] : null, maxTurns: architect.max_turns, model: architect.model },
     catalog: all.map((a) => `${a.name}: ${routingHint(a)}`).join('\n'),
     background: decision === 'create_background',
+    /** the gateway designs `proposal` out of band now (ongoing chat); the apps only say so */
+    design: designInBackground,
     proposal,
     /** D-04: the queue entry this command counted toward (background), or the one being created (from_queue) */
     queue: queued ? { id: queued.id, name: queued.name, count: queued.count, proposed_now: queued.proposedNow } : fromQueue ? { id: fromQueue.id, name: fromQueue.name, count: fromQueue.count, proposed_now: false } : null,

@@ -20,7 +20,7 @@ import { launchCommand, validateLaunch, type DebugHub } from './debug-hub.js';
 import type { ConsoleHub } from './console-hub.js';
 import { ShipError, type PlatformShip } from './platform-ship.js';
 import { GithubOauthError, type GithubOauth } from './github-oauth.js';
-import { CODEX_JUDGE_WAIT_MS, evaluateRouting, prejudge, route, TIER_TABLE, type EngineAvailability, type JudgeVerdict, type RouteInput, type SpecialistJudge } from './routing.js';
+import { applyModelFloor, ARCHITECT_MIN_DEPTH, CODEX_JUDGE_WAIT_MS, evaluateRouting, prejudge, route, TIER_TABLE, type EngineAvailability, type JudgeVerdict, type RouteInput, type SpecialistJudge } from './routing.js';
 /** Hard limit of one judge call in the runtime; a send waits less (routing.ts AIDEV_JUDGE_WAIT_MS) and the rest is cached. */
 const JUDGE_TIMEOUT_MS = Number(process.env.AIDEV_JUDGE_TIMEOUT_MS ?? 60_000);
 
@@ -283,6 +283,66 @@ export function createAidevApi(deps: AidevDeps) {
     }
   }
 
+  /** Stores a new agent with its routing examples and knowledge: the catalog's POST /agents and a background design. */
+  function createAgentFrom(session: Session, b: Record<string, unknown>) {
+    const uid = session.user.id;
+    const id = store.addAgent({ name: str(b.name, 'name', 41), domain: optStr(b.domain, 40) ?? '', description: str(b.description, 'description', 600), hint: optStr(b.hint, 60) ?? null, prompt: str(b.prompt, 'prompt'), tools: Array.isArray(b.tools) ? (b.tools as unknown[]).map(String) : null,
+      model: optStr(b.model, 100) ?? null, maxTurns: b.maxTurns === undefined ? null : num(b.maxTurns, 'maxTurns'), skills: Array.isArray(b.skills) ? (b.skills as unknown[]).map(String) : null, mcpServers: b.mcpServers && typeof b.mcpServers === 'object' ? b.mcpServers as Record<string, unknown> : null,
+      ownerId: b.global === true ? (requireAdmin(session), null) : uid, source: optStr(b.source, 20) ?? 'user' });
+    if (b.min_tier !== undefined && b.min_tier !== null) store.setAgentMinTier(id, num(b.min_tier, 'min_tier'));
+    // D-04: the specialist of a queued domain now exists
+    if (b.queue_id !== undefined && b.queue_id !== null) store.setCreateQueueStatus(uid, num(b.queue_id, 'queue_id'), 'created');
+    if (Array.isArray(b.examples)) store.addExamples(id, (b.examples as unknown[]).filter((e): e is string => typeof e === 'string').slice(0, 200).map((text) => ({ text, source: 'generated' })));
+    if (Array.isArray(b.knowledge)) for (const k of b.knowledge as Array<Record<string, unknown>>) {
+      if (typeof k?.title === 'string' && typeof k?.body === 'string') store.addKnowledge({ agentId: id, title: k.title, body: k.body, sourceUrl: optStr(k.source_url, 2000) ?? null, sourceDate: optStr(k.source_date, 40) ?? null, ownerId: uid });
+    }
+    return store.agentById(id)!;
+  }
+
+  // Background agent design (2026-10-10): an ongoing chat's command that needs a specialist the catalog lacks runs on
+  // the generalist (routing.ts), and the agent-architect designs that specialist here as a headless turn on the user's
+  // runtime. The draft becomes the agent at once, so the next command of its domain is routed to it.
+  const DESIGN_TIMEOUT_MS = 10 * 60_000;
+  /** `${uid}|${proposal name}` being designed: a burst of commands in one domain designs it once */
+  const designing = new Set<string>();
+  async function designAgent(session: Session, availability: EngineAvailability, create: { proposal: { name: string; domain: string; description: string; technologies: string[] }; catalog: string }, command: string, sessionId: string | null) {
+    const uid = session.user.id;
+    const key = `${uid}|${create.proposal.name}`;
+    const architect = store.agent(uid, 'agent-architect');
+    if (!architect || designing.has(key) || store.agent(uid, create.proposal.name)) return;
+    // the account's engine order (none set: Claude first — its web tools), skipping signed-out and usage-limited engines (D-05)
+    const usable = usableEngines(availability).filter((engine) => !availability[engine].limited_until);
+    const order = [...new Set([...store.enginePriority(uid), 'claude', 'codex'] as Engine[])].filter((engine) => usable.includes(engine));
+    if (!order.length) { console.warn(`[aidev] design ${create.proposal.name}: no usable engine`); return; }
+    const floor = store.effectiveModelFloor(uid, sessionId).floor;
+    designing.add(key);
+    try {
+      for (const engine of order) {
+        // agent design is D3 work (routing ARCHITECT_MIN_DEPTH), never below the user's model floor
+        const tier = { ...TIER_TABLE[ARCHITECT_MIN_DEPTH][engine] };
+        applyModelFloor(engine, tier, floor[engine]);
+        try {
+          const response = await deps.runtimeFetch(session, '/api/aidev-tools/design-agent', { method: 'POST', headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ command, proposal: create.proposal, catalog: create.catalog, prompt: architect.prompt, tools: architect.tools ? JSON.parse(architect.tools) as string[] : null, max_turns: architect.max_turns, engine, model: tier.model, session_id: sessionId }) }, DESIGN_TIMEOUT_MS);
+          const body = await response.json().catch(() => ({})) as { data?: { draft: Record<string, unknown> | null; note: string | null }; error?: string };
+          if (!response.ok || !body.data) { console.warn(`[aidev] design ${create.proposal.name} on ${engine} failed: ${body.error ?? response.status}`); continue; }
+          const draft = body.data.draft;
+          if (!draft) { console.log(`[aidev] design ${create.proposal.name} on ${engine}: no draft — ${body.data.note ?? ''}`); return; }
+          if (typeof draft.name === 'string' && store.agent(uid, draft.name)) { console.log(`[aidev] design ${create.proposal.name}: ${draft.name} already exists`); return; }
+          const agent = createAgentFrom(session, { ...draft, source: 'generated' });
+          console.log(`[aidev] agent ${agent.name} (#${agent.id}) designed in the background on ${engine} ${tier.model} for "${command.slice(0, 60)}"`);
+          void notifier.handle(uid, { code: 'agent.created', sessionId, sessionName: '전문 agent 생성', provider: engine,
+            detail: `'${agent.domain || create.proposal.domain}' 전문 agent ${agent.name}을(를) 만들었습니다 — 다음 명령부터 이 분야는 ${agent.name}이(가) 맡습니다` }).catch(() => undefined);
+          return;
+        } catch (error) {
+          console.warn(`[aidev] design ${create.proposal.name} on ${engine} failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+    } finally {
+      designing.delete(key);
+    }
+  }
+
   function requireAdmin(session: Session) { if (store.accountEngines(session.user.id).role !== 'admin') throw new HttpError(403, 'Administrator only'); }
   function ownAgent(session: Session, id: number, write = false) {
     const a = store.agentById(id);
@@ -326,6 +386,11 @@ export function createAidevApi(deps: AidevDeps) {
         // D-05: Codex-only judging is slow (12–28 s) — the send waits briefly, the verdict is cached for next time
         const judgeWaitMs = usableEngines(engines).includes('claude') ? undefined : CODEX_JUDGE_WAIT_MS;
         const result = await route(store, laya, uid, engines, input, { judge, judgeWaitMs });
+        // an ongoing chat's command found no specialist: the generalist answers, the specialist is designed meanwhile
+        if (result.create?.design && result.create.proposal) {
+          void designAgent(session, engines, { proposal: result.create.proposal, catalog: result.create.catalog }, input.text, input.sessionId ?? null)
+            .catch((error) => console.warn('[aidev] background design failed:', error instanceof Error ? error.message : error));
+        }
         // D-04: the same quick domain came up often enough — offer its specialist (Laya notify.level decides how loudly)
         const queued = result.create?.queue;
         if (queued?.proposed_now && result.create?.proposal) {
@@ -550,18 +615,7 @@ export function createAidevApi(deps: AidevDeps) {
         return json(res, 200, { agents: store.agents(uid, includeInactive).map(agentView) }), true;
       }
       if (rest === '/agents' && m === 'POST') {
-        const b = await readJson(req);
-        const id = store.addAgent({ name: str(b.name, 'name', 41), domain: optStr(b.domain, 40) ?? '', description: str(b.description, 'description', 600), hint: optStr(b.hint, 60) ?? null, prompt: str(b.prompt, 'prompt'), tools: Array.isArray(b.tools) ? (b.tools as unknown[]).map(String) : null,
-          model: optStr(b.model, 100) ?? null, maxTurns: b.maxTurns === undefined ? null : num(b.maxTurns, 'maxTurns'), skills: Array.isArray(b.skills) ? (b.skills as unknown[]).map(String) : null, mcpServers: b.mcpServers && typeof b.mcpServers === 'object' ? b.mcpServers as Record<string, unknown> : null,
-          ownerId: b.global === true ? (requireAdmin(session), null) : uid, source: optStr(b.source, 20) ?? 'user' });
-        if (b.min_tier !== undefined && b.min_tier !== null) store.setAgentMinTier(id, num(b.min_tier, 'min_tier'));
-        // D-04: the specialist of a queued domain now exists
-        if (b.queue_id !== undefined && b.queue_id !== null) store.setCreateQueueStatus(uid, num(b.queue_id, 'queue_id'), 'created');
-        if (Array.isArray(b.examples)) store.addExamples(id, (b.examples as unknown[]).filter((e): e is string => typeof e === 'string').slice(0, 200).map((text) => ({ text, source: 'generated' })));
-        if (Array.isArray(b.knowledge)) for (const k of b.knowledge as Array<Record<string, unknown>>) {
-          if (typeof k?.title === 'string' && typeof k?.body === 'string') store.addKnowledge({ agentId: id, title: k.title, body: k.body, sourceUrl: optStr(k.source_url, 2000) ?? null, sourceDate: optStr(k.source_date, 40) ?? null, ownerId: uid });
-        }
-        return json(res, 201, { agent: agentView(store.agentById(id)!) }), true;
+        return json(res, 201, { agent: agentView(createAgentFrom(session, await readJson(req))) }), true;
       }
       const exMatch = rest.match(/^\/agents\/(\d+)\/examples(?:\/(\d+))?$/);
       if (exMatch) {

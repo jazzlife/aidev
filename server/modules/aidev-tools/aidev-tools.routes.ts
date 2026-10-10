@@ -8,6 +8,7 @@ import { knowledgeCheckService } from '@/modules/aidev-tools/knowledge-check.ser
 import { runVerifierService } from '@/modules/aidev-tools/run-verifier.service.js';
 import { remoteSync } from '@/modules/aidev-tools/remote-sync.service.js';
 import { specialistJudgeService } from '@/modules/aidev-tools/specialist-judge.service.js';
+import { agentDesignerService } from '@/modules/aidev-tools/agent-designer.service.js';
 
 /**
  * Gateway → runtime calls made on behalf of the user (mounted at /api/aidev-tools behind
@@ -92,6 +93,31 @@ router.post('/verify', asyncHandler(async (req: Request, res: Response) => {
     verifierAgent: verifierAgent && typeof verifierAgent.name === 'string' && typeof verifierAgent.prompt === 'string' ? { name: verifierAgent.name, prompt: verifierAgent.prompt } : null,
   });
   res.json(createApiSuccessResponse(result));
+}));
+
+// Background agent design: an ongoing chat's command needed a specialist the catalog lacks (the generalist answers it).
+router.post('/design-agent', asyncHandler(async (req: Request, res: Response) => {
+  const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
+  const text = (v: unknown, max: number) => (typeof v === 'string' && v.trim() ? v.slice(0, max) : null);
+  const command = text(body.command, 32000); const prompt = text(body.prompt, 20000);
+  if (!command || !prompt) {
+    res.status(400).json({ success: false, error: 'command and prompt are required.' });
+    return;
+  }
+  const raw = body.proposal && typeof body.proposal === 'object' ? body.proposal as Record<string, unknown> : null;
+  const proposal = raw && typeof raw.name === 'string' && typeof raw.domain === 'string'
+    ? { name: raw.name, domain: raw.domain, description: typeof raw.description === 'string' ? raw.description : '', technologies: Array.isArray(raw.technologies) ? (raw.technologies as unknown[]).map(String) : [] }
+    : null;
+  const maxTurns = typeof body.max_turns === 'number' && body.max_turns > 0 ? Math.min(body.max_turns, 40) : 20;
+  try {
+    res.json(createApiSuccessResponse(await agentDesignerService.design({
+      command, proposal, catalog: text(body.catalog, 20000) ?? '', prompt, maxTurns,
+      tools: Array.isArray(body.tools) ? (body.tools as unknown[]).map(String) : ['WebSearch', 'WebFetch', 'Read', 'Glob', 'Grep'],
+      engine: body.engine === 'codex' ? 'codex' : 'claude', model: text(body.model, 100), sessionId: text(body.session_id, 200),
+    })));
+  } catch (error) {
+    res.status(502).json({ success: false, error: error instanceof Error ? error.message : 'design failed' });
+  }
 }));
 
 // Engine handoff brief for a failed run moving to the other engine (E-03).

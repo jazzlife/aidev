@@ -64,6 +64,18 @@ r = await go('Solidity 변수 주석 달아줘', newDomain('solidity-dev', 'smar
 assert.deepEqual([r.create.queue.count, r.create.queue.proposed_now], [3, false], 'a dismissed domain keeps counting but is not offered again');
 console.log('PASS other domains are separate; a dismissed domain is never offered again');
 
+// 2026-10-10: an ongoing chat never hands its turn to the architect (it answered the user instead of designing)
+r = await go('바이너리로 배포하면 소스가 안 보이는 거 맞지?', newDomain('binary-protection', 'code protection', ['Node SEA', 'obfuscation']), 2, { sessionId: 'chat-1' });
+assert.equal(r.decision, 'create_background'); assert.equal(r.agent.name, 'generalist'); assert.equal(r.create.background, true);
+assert.equal(r.create.design, true, 'the gateway designs the proposed specialist out of band');
+assert.equal(r.create.queue, null, 'designed now, not counted toward a proposal');
+assert.equal(r.scope.depth, 2, 'no architect floor (D3): the generalist answers at the command\'s own depth');
+r = await go('Solidity 컨트랙트 감사 리포트 써줘', newDomain('solidity-audit', 'smart contracts', ['Solidity', 'EVM']), 2.5, { sessionId: 'chat-1' });
+assert.equal(r.create.design, false, 'a dismissed domain is not designed on its own'); assert.equal(r.create.queue.count, 4);
+r = await go('Verilog로 UART 수신 모듈 작성', newDomain('verilog-hdl', 'hardware description', ['Verilog', 'FPGA']), 2.5);
+assert.equal(r.decision, 'create'); assert.equal(r.create.design, false, 'a new chat still starts with the architect');
+console.log('PASS an ongoing chat runs on the generalist and its specialist is designed in the background; a new chat keeps the architect turn');
+
 r = await go('[전문 agent 만들기] Unity graphics', async () => { throw new Error('judge not needed'); }, 0.6, { createProposal: id });
 assert.equal(r.decision, 'create'); assert.equal(r.create.from_queue, true); assert.equal(r.create.background, false);
 assert.equal(r.create.proposal.domain, 'Unity graphics'); assert.equal(r.create.queue.id, id);

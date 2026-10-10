@@ -245,7 +245,9 @@ function applyAidevRouting(sdkOptions, rawAidev) {
     sdkOptions.mcpServers = { ...(sdkOptions.mcpServers || {}), ...aidev.agent.mcpServers };
   }
   if (aidev.agent.tools && aidev.agent.tools.length) {
-    // Restrict to the agent's tools but keep the platform MCP tools reachable.
+    // Restrict to the agent's tools but keep the platform MCP tools reachable. `tools` is what limits the built-in
+    // set; `allowedTools` only skips the permission prompt (the architect ran Bash with it alone — run #219).
+    sdkOptions.tools = aidev.agent.tools;
     sdkOptions.allowedTools = [...new Set([...(sdkOptions.allowedTools || []), ...aidev.agent.tools, 'mcp__aidev-tools__*'])];
   }
   if (aidev.agent.maxTurns) {

@@ -62,4 +62,24 @@ describe('create queue flow (D-04)', () => {
     expect(resend).toHaveBeenCalledWith('Unity 물 셰이더 만들어줘');
     expect(routingStore.get().oneShotAgent).toBe('unity-shader');
   });
+
+  it('a finished or failed creation card left open does not block the next creation', async () => {
+    vi.spyOn(aidevApi, 'route').mockResolvedValue(architectRoute(false));
+    const { result } = renderHook(() => useAidevRouting());
+    for (const stale of [{ stage: 'review' as const, error: 'agent 설계 블록(<aidev-agent>)을 찾지 못했습니다.' }, { stage: 'done' as const, error: null }]) {
+      routingStore.patch({ pendingCreate: { ...stale, originalText: 'old', sessionId: 's0', decisionId: 1, draft: null, agentId: null, agentName: null, selfCheckResult: null } });
+      let decoration: Awaited<ReturnType<typeof result.current.beforeSend>> = null;
+      await act(async () => { decoration = await result.current.beforeSend('Verilog로 UART 수신기 설계해줘', { ...context, sessionId: null, isNewSession: true }); });
+      expect(routingStore.get().pendingCreate).toMatchObject({ stage: 'architect', originalText: 'Verilog로 UART 수신기 설계해줘' });
+      expect((decoration!.aidev.agent as { name: string }).name).toBe('agent-architect');
+    }
+  });
+
+  it('a creation still in progress is not replaced', async () => {
+    vi.spyOn(aidevApi, 'route').mockResolvedValue(architectRoute(false));
+    routingStore.patch({ pendingCreate: { stage: 'architect', originalText: 'first', sessionId: 's0', decisionId: 1, draft: null, agentId: null, agentName: null, selfCheckResult: null, error: null } });
+    const { result } = renderHook(() => useAidevRouting());
+    await act(async () => { await result.current.beforeSend('second', context); });
+    expect(routingStore.get().pendingCreate).toMatchObject({ stage: 'architect', originalText: 'first' });
+  });
 });

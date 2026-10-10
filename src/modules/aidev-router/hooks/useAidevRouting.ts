@@ -177,7 +177,9 @@ export function useAidevRouting() {
       const payload = buildAidevPayload(route, runId);
       // No fitting specialist: this turn goes to the agent-architect (design only); the original
       // command is re-sent once the user approves the draft (§3.7). Shallow tasks just run.
-      if (route.decision === 'create' && route.create && !route.create.background && !forceAgent && !current.pendingCreate) {
+      // a finished or failed creation card left open does not block the next one (it used to, silently)
+      const creating = current.pendingCreate && current.pendingCreate.stage !== 'done' && !current.pendingCreate.error;
+      if (route.decision === 'create' && route.create && !route.create.background && !forceAgent && !creating) {
         // a queued domain's commands already ran on the generalist: nothing to re-send once its agent exists
         const fromQueue = route.create.from_queue ? route.create.queue?.id ?? null : null;
         routingStore.patch({ pendingCreate: { stage: 'architect', originalText: fromQueue ? '' : text, queueId: fromQueue, sessionId: context.sessionId, decisionId: route.decision_id, draft: null, agentId: null, agentName: null, selfCheckResult: null, error: null } });
