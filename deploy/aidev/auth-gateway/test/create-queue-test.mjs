@@ -9,7 +9,7 @@ import path from 'node:path';
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aidev-cq-'));
 const { openStore } = await import('../dist/store.js');
 const { seedAgents } = await import('../dist/seed-agents.js');
-const { route, CREATE_PROPOSE_AT } = await import('../dist/routing.js');
+const { route, CREATE_PROPOSE_AT, JUDGE_USE_FIT } = await import('../dist/routing.js');
 const store = openStore(path.join(dir, 'auth.db'));
 store.seedAgents(seedAgents);
 await store.add('alice', 'pw1234pw', 'u' + 'a'.repeat(24), 1);
@@ -75,6 +75,27 @@ assert.equal(r.create.design, false, 'a dismissed domain is not designed on its 
 r = await go('Verilog로 UART 수신 모듈 작성', newDomain('verilog-hdl', 'hardware description', ['Verilog', 'FPGA']), 2.5);
 assert.equal(r.decision, 'create'); assert.equal(r.create.design, false, 'a new chat still starts with the architect');
 console.log('PASS an ongoing chat runs on the generalist and its specialist is designed in the background; a new chat keeps the architect turn');
+
+// 2026-10-10: a new agent only when the closest one fits too poorly (JUDGE_USE_FIT)
+assert.equal(JUDGE_USE_FIT, 0.4);
+const closest = (agent, fit, proposal = { name: 'node-sea-bytecode', domain: 'Node SEA', description: 'SEA builds', technologies: ['Node SEA'] }) => async () => ({ agent, fit, reason: 'closest', new: proposal, question: null });
+const devopsId = store.agent(uid, 'devops').id;
+const examplesOf = () => store.db.prepare("SELECT count(*) n FROM agent_examples WHERE agent_id=? AND source='judge'").get(devopsId).n;
+const before = examplesOf();
+r = await go('Node SEA 바이트코드로 서버 빌드해줘', closest('devops', 0.5), 2.5);
+assert.deepEqual([r.decision, r.agent.name, r.create], ['use', 'devops', null], 'an adjacent agent (fit 0.5) is used, not duplicated');
+assert.equal(examplesOf(), before, 'an adjacent match does not become a routing example');
+r = await go('SEA 빌드 스크립트에 코드 서명 추가', closest('devops', 0.8), 2.5);
+assert.equal(r.agent.name, 'devops'); assert.equal(examplesOf(), before + 1, 'a close match does');
+r = await go('SwiftUI로 iOS 위젯 만들어줘', closest('devops', 0.15, { name: 'ios-swift', domain: 'iOS', description: 'SwiftUI', technologies: ['Swift'] }), 2.5);
+assert.deepEqual([r.decision, r.create.proposal.name], ['create', 'ios-swift'], 'below the line a new specialist is created');
+assert.ok(r.plan.reason.some((line) => line.includes('fits too poorly')), r.plan.reason.join(' | '));
+r = await go('SwiftUI 위젯 색 바꿔줘', closest('devops', 0.15, null), 2.5);
+assert.deepEqual([r.decision, r.agent.name], ['use', 'devops'], 'a low fit with nothing to propose still uses the closest agent');
+const ambiguous = { status: {}, predict: async (state, questions) => { const out = await laya(2.5).predict(state, questions); out.answers.agent = { choice: 'testing', probabilities: { testing: 0.34, devops: 0.33, database: 0.33 }, confidence: 0.34 }; out.answers.needs_new = { noul: 0.9 }; return out; } };
+r = await route(store, ambiguous, uid, engines, { text: 'Zig로 커널 모듈 작성' }, {});
+assert.deepEqual([r.decision, r.agent.name, r.create], ['generalist', 'generalist', null], `no judge fit → nothing is created: ${r.plan.reason.join(' | ')}`);
+console.log('PASS the closest agent is used down to fit 0.4; only a poorer fit creates a specialist; no judge, no creation');
 
 r = await go('[전문 agent 만들기] Unity graphics', async () => { throw new Error('judge not needed'); }, 0.6, { createProposal: id });
 assert.equal(r.decision, 'create'); assert.equal(r.create.from_queue, true); assert.equal(r.create.background, false);

@@ -261,10 +261,11 @@ export async function evaluateRouting(store: Store, laya: LayaClient, userId: nu
 }
 
 /**
- * Specialist judge (§3.1): an LLM turn (runtime, Claude haiku / Codex mini) that decides whether an EXISTING
- * agent truly specialises in the command. Laya and the lexical prior only rank agents against each other,
- * so their top pick "wins" even when nothing fits; the judge makes the absolute call. Only a true specialist
- * is used; a trivial/domain-less command goes to the generalist; otherwise a new specialist is created.
+ * Specialist judge (§3.1): an LLM turn (runtime, Claude haiku / Codex mini) that picks the EXISTING agent closest
+ * to the command and scores how well it covers it. Laya and the lexical prior only rank agents against each other,
+ * so their top pick "wins" even when nothing fits; the judge scores the closest agent's fit on an absolute scale.
+ * It is used down to JUDGE_USE_FIT; a trivial/domain-less command goes to the generalist; below that a new
+ * specialist is created.
  */
 export type JudgeVerdict = { agent: string | null; fit: number; reason: string; new: { name: string; domain: string; description: string; technologies: string[] } | null; /** the judge's wording of the clarifying question (used only when Laya's clarify asks) */ question?: string | null; engine?: string; ms?: number; source?: 'llm' | 'cache' | 'similar' };
 export type SpecialistJudge = (input: { command: string; candidates: Array<{ name: string; description: string }>; project?: string | null }) => Promise<JudgeVerdict | null>;
@@ -284,6 +285,15 @@ export const ROUTE_INSTRUCTIONS = {
   task_kind: 'What kind of work is this command mainly asking for?',
   remote_action: 'Does this developer command require running something on the user\'s remote machine, and what?',
 };
+/**
+ * The judge scores how well the closest existing agent covers a command (`fit`, 0..1). That agent is used down to this
+ * fit; only below it — the catalog fits too poorly — is a new specialist created (2026-10-10: the judge's yes/no "true
+ * specialist" made a near duplicate for every sub-area, e.g. node-sea-bytecode right after build-release-security).
+ * The runtime judge prompt states the same 0.4 line (specialist-judge.service.ts).
+ */
+export const JUDGE_USE_FIT = 0.4;
+/** A judge-used command becomes a routing example of its agent only at this fit: an adjacent match would blur the prior. */
+const JUDGE_EXAMPLE_FIT = 0.6;
 /** D-04: the same domain this many times → offer to create its specialist (§3.7 "동일 분야 3회"). */
 export const CREATE_PROPOSE_AT = 3;
 /** D-04: a judge proposal belongs to a queued domain at this token similarity (names vary: verilog-hdl / fpga-hardware). */
@@ -310,8 +320,9 @@ function dismissedDomain(store: Store, userId: number, p: { name: string; domain
   return store.createQueue(userId, ['dismissed']).some((row) => row.name === p.name || cosine(tokens, domainTokens(row)) >= SAME_DOMAIN);
 }
 /** Bumped whenever the runtime judge prompt changes meaning (specialist-judge.service.ts): cached verdicts of an older
- *  prompt are not reused. 2: `question` + "command execution is never a specialist"; 3: "size alone never makes a specialist" (2026-10-01). */
-const JUDGE_VERSION = 3;
+ *  prompt are not reused. 2: `question` + "command execution is never a specialist"; 3: "size alone never makes a specialist" (2026-10-01);
+ *  4: the closest agent with a graded fit instead of a yes/no "true specialist" (2026-10-10). */
+const JUDGE_VERSION = 4;
 /** How long a send waits for the judge (env AIDEV_JUDGE_WAIT_MS). A slower verdict is still cached for the next send. */
 const JUDGE_WAIT_MS = Number(process.env.AIDEV_JUDGE_WAIT_MS ?? 20_000);
 const MAX_PREJUDGE_PER_USER = 3;
@@ -476,11 +487,12 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   if (input.forceAgent) { /* handled below */ }
   else if (verdict) {
     const judged = verdict.agent && verdict.agent !== 'generalist' ? store.agent(userId, verdict.agent) : undefined;
-    if (judged && judged.domain !== 'meta' && verdict.fit >= 0.6) {
+    // the closest agent is used unless it fits too poorly; a low fit with nothing to propose still uses it
+    if (judged && judged.domain !== 'meta' && (verdict.fit >= JUDGE_USE_FIT || !verdict.new)) {
       agentName = judged.name; decision = 'use';
-      reason.push(`specialist judge: ${judged.name} (fit ${verdict.fit.toFixed(2)}, ${verdict.source}${verdict.reason ? `: ${verdict.reason}` : ''})${agentTop.choice !== judged.name ? ` — ranker had ${agentTop.choice} ${agentTop.probability.toFixed(2)}` : ''}`);
+      reason.push(`specialist judge: ${judged.name} (fit ${verdict.fit.toFixed(2)}${verdict.fit < JUDGE_EXAMPLE_FIT ? ', closest' : ''}, ${verdict.source}${verdict.reason ? `: ${verdict.reason}` : ''})${agentTop.choice !== judged.name ? ` — ranker had ${agentTop.choice} ${agentTop.probability.toFixed(2)}` : ''}`);
       // a confirmed command becomes an example of that specialist: the lexical prior learns from the judge
-      if (verdict.source === 'llm') store.addExamples(judged.id, [{ text, source: 'judge', taskKind: null }]);
+      if (verdict.source === 'llm' && verdict.fit >= JUDGE_EXAMPLE_FIT) store.addExamples(judged.id, [{ text, source: 'judge', taskKind: null }]);
     } else if (verdict.agent === 'generalist') {
       agentName = 'generalist'; decision = 'generalist';
       reason.push(`specialist judge: general request → generalist${verdict.reason ? ` (${verdict.reason})` : ''}`);
@@ -491,20 +503,16 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
       reason.push(`specialist judge: command unclear, no domain to create for → generalist (${verdict.question})`);
     } else {
       agentName = 'generalist'; decision = 'create'; proposal = verdict.new;
-      reason.push(`specialist judge: no existing specialist${verdict.new ? ` → create ${verdict.new.name} (${verdict.new.domain})` : ''}${verdict.reason ? `: ${verdict.reason}` : ''}`);
+      reason.push(`specialist judge: ${judged ? `closest ${judged.name} fits too poorly (${verdict.fit.toFixed(2)} < ${JUDGE_USE_FIT})` : 'no existing specialist'}${verdict.new ? ` → create ${verdict.new.name} (${verdict.new.domain})` : ''}${verdict.reason ? `: ${verdict.reason}` : ''}`);
     }
   }
   else if (fallback && agentTop.probability < 0.5) { agentName = 'generalist'; decision = 'generalist'; }
   else if (fallback) { reason.push(`lexical prior ${agentName} ${(agentTop.probability * 100).toFixed(0)}%`); }
-  else if (needsNew >= 0.5 && agentTop.probability < 0.7 && nbTop.probability < 0.6) {
-    // Laya's needs_new is noisy; a confident lexical match ("react로 todo 앱" → frontend-react) vetoes creation.
-    decision = scoredDepth >= 2 ? 'create' : 'create_background';
-    agentName = 'generalist';
-    reason.push(`no fitting agent (needs_new ${needsNew.toFixed(2)}, best ${agentTop.choice} ${agentTop.probability.toFixed(2)}) → ${decision}`);
-  } else if (agentTop.probability < 0.5) {
-    // no judge available: an ambiguous pick is not a specialist — shallow work goes to the generalist, deeper work creates one
-    if (scoredDepth <= 1) { decision = 'generalist'; agentName = 'generalist'; reason.push(`ambiguous agent (${agentTop.probability.toFixed(2)}) and shallow → generalist fast path`); }
-    else { decision = 'create'; agentName = 'generalist'; reason.push(`ambiguous agent (${agentTop.probability.toFixed(2)}) and no specialist judge → create`); }
+  else if (agentTop.probability < 0.5 || (needsNew >= 0.5 && agentTop.probability < 0.7 && nbTop.probability < 0.6)) {
+    // No judge verdict (down, or still running — its verdict is cached for the next send): without a fit score there is
+    // no saying the catalog fits too poorly, so nothing is created; an ambiguous pick is not a specialist either.
+    decision = 'generalist'; agentName = 'generalist';
+    reason.push(`ambiguous agent (${agentTop.choice} ${agentTop.probability.toFixed(2)}, needs_new ${needsNew.toFixed(2)}) and no judge fit → generalist`);
   } else reason.push(`agent ${agentName} ${(agentTop.probability * 100).toFixed(0)}% (specialist judge unavailable)`);
   if (input.forceAgent && store.agent(userId, input.forceAgent)) { agentName = input.forceAgent; decision = 'use'; reason.push(`user override → ${agentName}`); }
   // D-04: the user accepted a queued proposal — this turn goes to the agent-architect with that domain

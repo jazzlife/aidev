@@ -14,6 +14,12 @@ test('existing specialist, generalist, and a proposal', () => {
   assert.equal(created?.new?.name, 'ios-swift');
 });
 
+test('a low-fit closest agent keeps the proposal next to it; the gateway decides by the fit', () => {
+  const low = parseJudge('{"agent":"frontend-react","fit":0.15,"reason":"React is not SwiftUI","new":{"name":"ios-swift","domain":"ios","description":"SwiftUI apps","technologies":["Swift"]}}', names);
+  assert.deepEqual([low?.agent, low?.fit, low?.new?.name], ['frontend-react', 0.15, 'ios-swift']);
+  assert.equal(parseJudge('{"agent":"generalist","fit":0.8,"reason":"x","new":{"name":"y","domain":"z"}}', names)?.new, null, 'the generalist never carries a proposal');
+});
+
 test('an invented agent name is treated as "no specialist"; garbage is rejected', () => {
   assert.equal(parseJudge('{"agent":"unity-expert","fit":0.9,"reason":"x","new":null}', names)?.agent, null);
   assert.equal(parseJudge('no json here', names), null);

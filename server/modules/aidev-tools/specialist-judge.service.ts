@@ -6,13 +6,14 @@ import os from 'node:os';
 import path from 'node:path';
 
 /**
- * Specialist judge (IMPLEMENTATION-PLAN §3.1 / §3.7): the gateway asks, for every routed command,
- * whether one of the existing agents is a TRUE specialist for it. Laya and the lexical prior rank the
- * catalog relative to each other, so their top pick always "wins" even when nothing fits (Unity shader →
- * testing, Verilog → docs); this small tool-less model turn makes the absolute call:
- *   agent   — an existing specialist whose declared domain covers the command's main technology/domain
- *   generalist — a trivial or domain-less request (a quick question, one shell command, a tiny edit)
- *   null    — no specialist exists → the platform creates one (`new` is the proposed domain)
+ * Specialist judge (IMPLEMENTATION-PLAN §3.1 / §3.7): the gateway asks, for every routed command, which existing
+ * agent is closest to it and how well its declared domain covers the command (`fit`). Laya and the lexical prior
+ * rank the catalog relative to each other, so their top pick always "wins" even when nothing fits (Unity shader →
+ * testing, Verilog → docs); this small tool-less model turn scores the fit on an absolute scale:
+ *   agent + fit — the closest existing specialist; the gateway uses it unless the fit is too low (routing.ts
+ *                 JUDGE_USE_FIT, 0.4 — 2026-10-10: a new agent only when the current ones fit too poorly)
+ *   generalist  — a trivial or domain-less request (a quick question, one shell command, a tiny edit)
+ *   new         — the specialist that should exist, proposed only when the closest fit is below 0.4
  * It also writes the one question to ask when the command lacks something essential (`question`); the gateway
  * shows it only when Laya's `clarify` says to ask (§3.1), so Laya decides and the model only words it.
  * Claude haiku first, Codex luna when Claude is unavailable or not allowed. Nothing is written into any conversation.
@@ -32,20 +33,25 @@ export type JudgeResult = {
   ms: number;
 };
 
-const JUDGE_PROMPT = `You route developer commands to specialist AI agents. Decide whether an EXISTING agent is a true specialist for the command.
+const JUDGE_PROMPT = `You route developer commands to specialist AI agents. Pick the EXISTING agent closest to the command and score how well its declared domain covers the command.
 
 Rules:
-- A true specialist's declared domain explicitly covers the command's MAIN technology or problem domain. Sharing a generic skill (writing code, "tests", "docs", "mobile", "frontend") is NOT enough.
-  Not a fit: SwiftUI/iOS → a React agent; Unity shaders → a testing agent; Verilog → a docs agent; Kotlin Android app → a mobile-web/PWA agent when an Android agent exists (pick the Android one); a quant backtest engine → a testing agent; Solidity → a docs agent.
-- "generalist" only when the command is trivial or domain-less: a quick factual question, running one or two ready-made shell commands the user spelled out (also on their own/remote machine, e.g. "run sw_vers on my Mac", "m4pro에서 npm test 돌려서 결과 알려줘"), a tiny generic edit such as renaming. Do not create a specialist for such requests.
+- agent: the existing specialist whose declared domain is closest to the command's MAIN technology or problem domain. null only when no listed agent shares that domain at all.
+- fit (0..1) — how much of that agent's declared expertise applies to the command:
+  0.9-1.0 its domain is exactly the command's technology.
+  0.6-0.8 it covers the command's main technology; the command is a sub-area or a neighbouring tool of it (Node SEA bytecode builds → a binary release/source protection agent).
+  0.4-0.5 adjacent: the same platform or tool-chain family, most of its knowledge still applies.
+  below 0.4 it shares only a generic skill (writing code, "tests", "docs", "mobile", "frontend"). For example: SwiftUI/iOS → a React agent; Unity shaders → a testing agent; Verilog → a docs agent; Kotlin Android app → a mobile-web/PWA agent; a quant backtest engine → a testing agent; Solidity → a docs agent.
+  When two agents cover the command, choose the narrowest one (Kotlin Android → the Android agent, not the mobile-web one).
+- "generalist" (fit = how clearly the request is domain-less) only when the command is trivial or domain-less: a quick factual question, running one or two ready-made shell commands the user spelled out (also on their own/remote machine, e.g. "run sw_vers on my Mac", "m4pro에서 npm test 돌려서 결과 알려줘"), a tiny generic edit such as renaming.
 - Running commands — locally, on a named PC, or on a remote machine — is something every agent can do through its tools; it is never a specialist domain. Never propose a specialist for command execution, remote machines or reporting command output.
 - "generalist" also for work of any size that has no specific technology or problem domain: reading, searching or summarizing many files or logs (e.g. "이 로그 5만 줄에서 오류 패턴 요약", "src 전체를 읽고 구조를 요약"), general code review or explanation. Size alone never makes a specialist.
-- Otherwise, if no listed agent is a true specialist for the command's concrete technology or problem domain (a language, framework, platform, protocol, hardware or tool chain), answer agent null and propose the specialist that SHOULD exist (kebab-case name, domain, one-line description, key technologies).
-- Prefer the narrowest agent whose domain covers the command. Never choose META agents.
+- new: ONLY when the closest agent's fit is below 0.4 (or agent is null) and the command has a concrete technology or problem domain (a language, framework, platform, protocol, hardware or tool chain), propose the specialist that SHOULD exist (kebab-case name, domain, one-line description, key technologies). Otherwise null — a close-enough agent is used, not duplicated.
+- Never choose META agents.
 - question: if information ESSENTIAL to start is missing and cannot be inferred (which file or screen, which project, which target machine, what the expected behavior is), write the ONE most important question to ask, in the command's language, short and concrete. Otherwise null.
 
 Output ONLY this JSON (no prose):
-{"agent": "<existing name>" | "generalist" | null, "fit": <0..1 how precisely the chosen agent's domain covers the command>, "reason": "<short>", "new": null | {"name": "<kebab-case>", "domain": "<domain>", "description": "<one line>", "technologies": ["..."]}, "question": null | "<one short question>"}`;
+{"agent": "<existing name>" | "generalist" | null, "fit": <0..1>, "reason": "<short>", "new": null | {"name": "<kebab-case>", "domain": "<domain>", "description": "<one line>", "technologies": ["..."]}, "question": null | "<one short question>"}`;
 
 /** The first balanced `{…}` in `text` once it is complete and parses (strings and escapes respected), else null. */
 export function firstCompleteJson(text: string): Record<string, unknown> | null {
@@ -91,7 +97,8 @@ export function parseJudge(text: string, names: Set<string>): Omit<JudgeResult, 
         }
       : null;
     const question = typeof raw.question === 'string' && raw.question.trim() ? raw.question.trim().slice(0, 300) : null;
-    return { agent, fit, reason: typeof raw.reason === 'string' ? raw.reason.slice(0, 300) : '', new: agent ? null : proposal, question };
+    // the proposal is kept next to a low-fit closest agent: the gateway decides by the fit (routing.ts JUDGE_USE_FIT)
+    return { agent, fit, reason: typeof raw.reason === 'string' ? raw.reason.slice(0, 300) : '', new: agent === 'generalist' ? null : proposal, question };
   } catch {
     return null;
   }
@@ -201,7 +208,7 @@ export const specialistJudgeService = {
     const parsed = parseJudge(text, names);
     if (!parsed) throw new Error(`judge answer not understood: ${text.replace(/\s+/g, ' ').slice(0, 200)}`);
     const result = { ...parsed, engine, ms: Date.now() - t0 };
-    console.log(`[aidev-tools] judge ${result.ms}ms ${engine}: ${input.command.slice(0, 60)} → ${result.agent ?? `NEW ${result.new?.name ?? '?'}`} fit=${result.fit} (${result.reason.slice(0, 80)})`);
+    console.log(`[aidev-tools] judge ${result.ms}ms ${engine}: ${input.command.slice(0, 60)} → ${result.agent ?? '-'} fit=${result.fit}${result.new ? ` NEW ${result.new.name}` : ''} (${result.reason.slice(0, 80)})`);
     return result;
   },
 };
