@@ -23,7 +23,7 @@ const api = {
   cloneProjectProgressUrl: vi.fn((params: Record<string, unknown>) => `/clone?${new URLSearchParams(params as Record<string, string>).toString()}`),
 };
 vi.mock('@/shared/api', async () => {
-  const actual = await vi.importActual<typeof import('@/shared/api')>('@/shared/api');
+  const actual = await vi.importActual<Record<string, unknown>>('@/shared/api');
   return { ...actual, api };
 });
 
