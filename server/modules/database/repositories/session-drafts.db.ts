@@ -37,6 +37,64 @@ type QueuedMessageRow = {
   queued_message: string;
 };
 
+/**
+ * Ids of the queued turns the server has already taken off the head of each
+ * queue, keyed by user and scope. A client saves its whole queue (with every
+ * keystroke of the draft, and with every queue edit) from the copy it last
+ * loaded, which can still hold a head the server sent since; dropping these
+ * ids on save keeps a sent turn from being queued — and sent — again. Held in
+ * memory: the window it covers is the few seconds before the client reloads.
+ */
+const sentQueuedTurnIds = new Map<string, Set<string>>();
+const SENT_IDS_KEPT_PER_SCOPE = 50;
+
+const sentIdsKey = (userId: number, scope: string) => `${userId}\u0000${scope}`;
+
+const queuedTurnId = (turn: unknown): string | null => {
+  const id = (turn as { id?: unknown } | null)?.id;
+  return typeof id === 'string' && id ? id : null;
+};
+
+function rememberSentTurn(userId: number, scope: string, turn: unknown): void {
+  const id = queuedTurnId(turn);
+  if (!id) {
+    return;
+  }
+  const key = sentIdsKey(userId, scope);
+  const ids = sentQueuedTurnIds.get(key) ?? new Set<string>();
+  ids.add(id);
+  // Sets keep insertion order: the oldest ids go first.
+  for (const oldest of ids) {
+    if (ids.size <= SENT_IDS_KEPT_PER_SCOPE) break;
+    ids.delete(oldest);
+  }
+  sentQueuedTurnIds.set(key, ids);
+}
+
+function forgetSentTurn(userId: number, scope: string, turn: unknown): void {
+  const id = queuedTurnId(turn);
+  if (id) {
+    sentQueuedTurnIds.get(sentIdsKey(userId, scope))?.delete(id);
+  }
+}
+
+/** The client's queue without the turns already sent from it; null when none are left. */
+function withoutSentTurns(userId: number, scope: string, queuedMessage: unknown | null): unknown | null {
+  const ids = sentQueuedTurnIds.get(sentIdsKey(userId, scope));
+  if (queuedMessage === null || !ids?.size) {
+    return queuedMessage;
+  }
+  const turns = Array.isArray(queuedMessage) ? queuedMessage : [queuedMessage];
+  const waiting = turns.filter((turn) => !ids.has(queuedTurnId(turn) ?? ''));
+  if (waiting.length === turns.length) {
+    return queuedMessage;
+  }
+  return waiting.length > 0 ? waiting : null;
+}
+
+/** The turn at the head of a stored queue (an array, or an older client's single turn). */
+const queueHead = (queuedMessage: unknown): unknown => (Array.isArray(queuedMessage) ? queuedMessage[0] : queuedMessage);
+
 /** A queued message that no longer parses is treated as absent, not fatal. */
 function parseQueuedMessage(raw: string | null): unknown | null {
   if (!raw) {
@@ -118,7 +176,11 @@ export const sessionDraftsDb = {
         candidate.sessionId,
         candidate.claimToken,
       );
-    return result.changes > 0;
+    if (result.changes === 0) {
+      return false;
+    }
+    rememberSentTurn(candidate.userId, candidate.sessionId, queueHead(candidate.queuedMessage));
+    return true;
   },
 
   /**
@@ -127,6 +189,7 @@ export const sessionDraftsDb = {
    * changed meanwhile is never overwritten.
    */
   restoreQueuedMessage(candidate: QueuedSessionMessageRecord, remaining: unknown[] | null): void {
+    forgetSentTurn(candidate.userId, candidate.sessionId, queueHead(candidate.queuedMessage));
     getConnection()
       .prepare(
         `UPDATE session_drafts
@@ -155,7 +218,8 @@ export const sessionDraftsDb = {
    * Writes one scope's draft, or deletes the row when nothing is left to keep.
    *
    * Deleting on empty is what stops the table growing a permanent row for every
-   * session the user ever opened and typed a character into.
+   * session the user ever opened and typed a character into. Queued turns the
+   * server already sent are dropped from the saved queue (see sentQueuedTurnIds).
    */
   saveDraft(
     userId: number,
@@ -163,8 +227,9 @@ export const sessionDraftsDb = {
     draft: { text: string; queuedMessage: unknown | null }
   ): void {
     const db = getConnection();
+    const queuedMessage = withoutSentTurns(userId, scope, draft.queuedMessage);
 
-    if (!draft.text && draft.queuedMessage === null) {
+    if (!draft.text && queuedMessage === null) {
       db.prepare('DELETE FROM session_drafts WHERE user_id = ? AND draft_scope = ?')
         .run(userId, scope);
       return;
@@ -181,7 +246,7 @@ export const sessionDraftsDb = {
       userId,
       scope,
       draft.text,
-      draft.queuedMessage === null ? null : JSON.stringify(draft.queuedMessage)
+      queuedMessage === null ? null : JSON.stringify(queuedMessage)
     );
   },
 

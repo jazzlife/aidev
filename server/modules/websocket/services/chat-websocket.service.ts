@@ -159,12 +159,24 @@ async function abortActiveRun(
     return false;
   }
 
-  const success = await dependencies.runtime.abort(run.provider, sessionId);
-  chatRunRegistry.completeRun(sessionId, {
-    exitCode: success ? 0 : 1,
-    aborted: true,
-    superseded: opts.superseded,
-  });
+  // The provider can take a while to stop, and the run may end on its own
+  // meanwhile; marked first, that end is not an idle moment the queue could
+  // fill before the turn cutting in starts (see ChatRun.superseding).
+  if (opts.superseded) {
+    run.superseding = true;
+  }
+  try {
+    const success = await dependencies.runtime.abort(run.provider, sessionId);
+    // Scoped to this run: never ends a run that has replaced it meanwhile.
+    chatRunRegistry.completeRunIfCurrent(run, {
+      exitCode: success ? 0 : 1,
+      aborted: true,
+      superseded: opts.superseded,
+    });
+  } catch (error) {
+    run.superseding = false;
+    throw error;
+  }
   return true;
 }
 

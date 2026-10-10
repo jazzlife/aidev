@@ -388,9 +388,11 @@ export function createNormalizedMessage(fields: NormalizedMessageInput): Normali
  *                     is reported as failure
  * - `success`       — exitCode === 0 and not aborted
  * - `aborted`       — run was cancelled by the user
- * - `superseded`    — (only with `aborted`) the user cut in with a new message
- *                     and that turn starts right behind this frame, so clients
- *                     keep the session shown as busy instead of idle
+ * - `superseded`    — the user cut in with a new message and that turn starts
+ *                     right behind this frame, so clients keep the session
+ *                     shown as busy instead of idle (set here with `aborted`;
+ *                     the run registry also sets it on a run's own `complete`
+ *                     that races the abort)
  */
 export function createCompleteMessage(opts: {
   provider: NormalizedMessage['provider'];

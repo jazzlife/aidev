@@ -181,6 +181,75 @@ test('a claimed queue head is put back in front of the rest when a run wins the 
   });
 });
 
+test('a client saving a queue copied before the head was sent does not queue that turn again', async () => {
+  await withIsolatedDatabase(async (userId) => {
+    const first = { id: 'q-1', content: 'first', options: {}, attachments: [] };
+    const second = { id: 'q-2', content: 'second', options: {}, attachments: [] };
+    sessionDraftsDb.saveDraft(userId, SESSION_ID, { text: '', queuedMessage: [first, second] });
+
+    const runs: RunCall[] = [];
+    const runtime = createRuntime(runs);
+    assert.equal(await dispatchQueuedMessages(runtime), 1);
+
+    // The browser still shows `first` and saves its copy with the next keystroke.
+    sessionDraftsDb.saveDraft(userId, SESSION_ID, { text: 'typing…', queuedMessage: [first, second] });
+    assert.deepEqual(
+      (sessionDraftsDb.getDrafts(userId)[0]?.queuedMessage as Array<{ id: string }>).map((turn) => turn.id),
+      ['q-2'],
+    );
+
+    assert.equal(await dispatchQueuedMessages(runtime), 1);
+    assert.deepEqual(runs.map((run) => run.command), ['first', 'second']);
+
+    // Nothing but sent turns left: the queue is cleared, the text stays.
+    sessionDraftsDb.saveDraft(userId, SESSION_ID, { text: 'typing…', queuedMessage: [first, second] });
+    assert.equal(sessionDraftsDb.getDrafts(userId)[0]?.queuedMessage, null);
+    assert.equal(sessionDraftsDb.getDrafts(userId)[0]?.text, 'typing…');
+  });
+});
+
+test('a queued turn does not slip in while a run being cut into ends on its own', async () => {
+  await withIsolatedDatabase(async (userId) => {
+    sessionDraftsDb.saveDraft(userId, SESSION_ID, {
+      text: '',
+      queuedMessage: [{ id: 'q-race', content: 'queued', options: {}, attachments: [] }],
+    });
+    scheduledMessagesService.schedule({
+      userId,
+      sessionId: SESSION_ID,
+      content: 'the schedule wins',
+      scheduledFor: new Date(Date.now() - 1_000).toISOString(),
+    });
+    const running = chatRunRegistry.startRun({
+      appSessionId: SESSION_ID,
+      provider: 'claude',
+      providerSessionId: null,
+      connection: null,
+      userId,
+    });
+    assert.ok(running);
+
+    const runs: RunCall[] = [];
+    const runtime = createRuntime(runs) as { abort: (provider: string, sessionId: string) => Promise<boolean> };
+    let queuedDuringAbort = -1;
+    runtime.abort = async () => {
+      // The provider finishes the turn before it acknowledges the abort.
+      chatRunRegistry.completeRunIfCurrent(running, { exitCode: 0 });
+      queuedDuringAbort = await dispatchQueuedMessages(runtime as never);
+      return true;
+    };
+
+    assert.equal(await dispatchDueScheduledMessages(runtime as never), 1);
+
+    assert.equal(queuedDuringAbort, 0, 'the queue waits for the turn that cut in');
+    assert.deepEqual(runs.map((run) => run.command), ['the schedule wins']);
+    assert.equal(running.events.at(-1)?.superseded, true, 'the old run ends as superseded, not idle');
+
+    assert.equal(await dispatchQueuedMessages(runtime as never), 1);
+    assert.deepEqual(runs.map((run) => run.command), ['the schedule wins', 'queued']);
+  });
+});
+
 test('a due message interrupts a run in progress instead of failing', async () => {
   await withIsolatedDatabase(async (userId) => {
     scheduledMessagesService.schedule({

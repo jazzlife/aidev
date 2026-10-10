@@ -33,6 +33,13 @@ type ChatRun = {
   writer: ChatSessionWriter;
   startedAt: number;
   completedAt: number | null;
+  /**
+   * A turn the user cut in with is replacing this run (set before the abort).
+   * However the run then ends — the abort, or its own `complete` racing it —
+   * its `complete` is flagged `superseded` and does not count as the session
+   * going idle, so the queue cannot take the session before that turn starts.
+   */
+  superseding?: boolean;
 };
 
 /**
@@ -128,7 +135,11 @@ function decorateAndRecordEvent(run: ChatRun, message: NormalizedMessage): Norma
     run.status = 'completed';
     run.completedAt = Date.now();
     evictRunLater(run.appSessionId);
-    notifyRunSettled(run.appSessionId);
+    if (run.superseding) {
+      outbound.superseded = true;
+    } else {
+      notifyRunSettled(run.appSessionId);
+    }
   }
 
   run.events.push(outbound);
@@ -237,8 +248,10 @@ export const chatRunRegistry = {
     return runs.get(appSessionId);
   },
 
+  /** True while a run is going, or while a turn that cut in is about to replace it. */
   isProcessing(appSessionId: string): boolean {
-    return runs.get(appSessionId)?.status === 'running';
+    const run = runs.get(appSessionId);
+    return run?.status === 'running' || run?.superseding === true;
   },
 
   listRunningRuns(): Array<{
@@ -329,7 +342,7 @@ export const chatRunRegistry = {
    * milliseconds of the previous turn ending) — the session-keyed
    * `completeRun` would terminate that newer run.
    */
-  completeRunIfCurrent(run: ChatRun, opts: { exitCode: number; aborted?: boolean }): void {
+  completeRunIfCurrent(run: ChatRun, opts: { exitCode: number; aborted?: boolean; superseded?: boolean }): void {
     if (runs.get(run.appSessionId) !== run || run.status !== 'running') {
       return;
     }

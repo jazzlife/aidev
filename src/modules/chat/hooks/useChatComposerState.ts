@@ -1054,6 +1054,14 @@ export function useChatComposerState({
     return () => clearInterval(timer);
   }, [queuedDrafts.length, sessionKey]);
 
+  // A turn starting or ending is when the server takes the next one off the
+  // queue: reload it then, so a sent turn's card does not linger for a poll.
+  useEffect(() => {
+    if (sessionKey && readQueuedMessages(sessionKey).length > 0) {
+      void hydrateChatDrafts();
+    }
+  }, [isLoading, sessionKey]);
+
   /** Takes one queued turn out of the line and back into the composer. */
   const editQueuedDraft = useCallback((id: string) => {
     const draft = queuedDrafts.find((candidate) => candidate.id === id);
