@@ -62,13 +62,13 @@ export function MessageBubble({ message, result, onLongPress, onPeekFile, onPeek
     return (
       <div className="flex flex-col items-end gap-1 px-3 py-1">
         <div {...press}><SentAttachments message={message} /></div>
-        {text ? <div className="max-w-[85%] rounded-2xl rounded-br-md bg-accent text-accent-ink px-3.5 py-2 text-[15px] whitespace-pre-wrap break-words" {...press}>{text}</div> : null}
+        {text ? <div className="m-selectable max-w-[85%] rounded-2xl rounded-br-md bg-accent text-accent-ink px-3.5 py-2 text-[15px] whitespace-pre-wrap break-words" {...press}>{text}</div> : null}
       </div>
     );
   }
   if (message.kind === 'text' || message.kind === 'stream_delta') {
     return (
-      <div className="px-3 py-1" {...press}>
+      <div className="m-selectable px-3 py-1" {...press}>
         <Prose text={message.content ?? ''} onFileRef={onPeekFile} />
         {message.kind === 'stream_delta' ? <span className="inline-block w-2 h-4 bg-accent/70 m-pulse align-middle ml-0.5 rounded-sm" /> : null}
       </div>

@@ -81,6 +81,10 @@ html, body {
   -webkit-tap-highlight-color: transparent;
 }
 img, a, svg { -webkit-user-drag: none; }
+/* Message text is drag-selectable with a mouse (2026-10-10); touch keeps the long-press sheet. */
+@media (pointer: fine) {
+  .m-selectable { -webkit-user-select: text; user-select: text; }
+}
 input, textarea, [contenteditable="true"] {
   -webkit-user-select: text;
   user-select: text;

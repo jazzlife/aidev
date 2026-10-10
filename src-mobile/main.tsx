@@ -9,8 +9,9 @@ if ('serviceWorker' in navigator) {
 }
 
 // The browser's own context menu (long-press on Android, right-click) never opens outside text fields;
-// the app's long-press sheets take its place.
+// the app's long-press sheets take its place. Over a text selection (message text dragged with a mouse) it opens.
 document.addEventListener('contextmenu', (event) => {
+  if (window.getSelection()?.toString()) return;
   if (!(event.target instanceof Element) || !event.target.closest('input, textarea, [contenteditable="true"]')) event.preventDefault();
 });
 

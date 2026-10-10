@@ -1039,6 +1039,12 @@ input, textarea, [contenteditable="true"], .cm-editor, .cm-content, .xterm, .xte
   user-select: text;
   -webkit-touch-callout: default;
 }
+/* Chat transcript text is drag-selectable with a mouse (2026-10-10); touch keeps the copy buttons, so scrolling and
+   long presses there never start a selection. Controls inside a message stay unselectable. */
+@media (pointer: fine) {
+  .chat-message { -webkit-user-select: text; user-select: text; }
+  .chat-message button, .chat-message [role="button"] { -webkit-user-select: none; user-select: none; }
+}
 @media (pointer: coarse) {
   body { -webkit-tap-highlight-color: transparent; }
   img, a { -webkit-user-drag: none; }

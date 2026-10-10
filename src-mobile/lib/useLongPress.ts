@@ -43,6 +43,7 @@ export function useLongPress(onLongPress: () => void) {
 
   return {
     onPointerDown, onPointerMove, onPointerUp: clear, onPointerCancel: clear, onPointerLeave: clear, onClickCapture,
-    onContextMenu: (event: ReactMouseEvent) => event.preventDefault(),
+    // a mouse selection inside (message text) keeps the browser menu for "copy"
+    onContextMenu: (event: ReactMouseEvent) => { if (!window.getSelection()?.toString()) event.preventDefault(); },
   };
 }
