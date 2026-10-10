@@ -42,6 +42,8 @@ const store = openStore(process.env.DATABASE_PATH ?? '/data/auth.db');
 }
 const laya = new LayaClient(layaUrl);
 const cookieName = '__Host-aidev-session';
+// A login lasts this long after the app was last open: the apps refresh at half of it while open and on coming back
+// (AuthContext), and each refresh starts it over.
 const ttl = 8 * 3600;
 const inflight = new Map<string, Promise<{ target: string; token: string }>>();
 const readyCache = new Map<string, { value: { target: string; token: string }; expires: number }>();
@@ -464,7 +466,12 @@ const server = http.createServer(async (req, res) => {
     if (url.pathname.startsWith('/api/auth/')) {
       if (!session) return json(res, 401, { error: 'Session expired' }, { 'x-auth-error': 'invalid-token' });
       if (url.pathname === '/api/auth/user' && req.method === 'GET') return json(res, 200, { user: { id: session.user.id, username: session.user.username } });
-      if (url.pathname === '/api/auth/refresh' && req.method === 'POST') return json(res, 200, { token: session.token });
+      if (url.pathname === '/api/auth/refresh' && req.method === 'POST') {
+        // sliding expiry: a fresh token, session row and cookie, each good for another `ttl` from now
+        store.extend(session.sid, Date.now() + ttl * 1000);
+        const token = jwt.sign({ sid: session.sid, userId: session.user.id, username: session.user.username }, secret, { expiresIn: ttl, issuer: 'aidev', audience: origin, algorithm: 'HS256' });
+        return json(res, 200, { token }, { 'set-cookie': setCookie(token) });
+      }
       if (url.pathname === '/api/auth/logout' && req.method === 'POST') {
         store.revoke(session.sid);
         return json(res, 200, { success: true }, { 'set-cookie': setCookie('', 0) });

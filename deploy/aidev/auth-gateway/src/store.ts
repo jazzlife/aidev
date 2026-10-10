@@ -134,6 +134,8 @@ export function openStore(filename: string) {
       db.prepare('INSERT INTO gateway_sessions VALUES(?,?,?)').run(sid, userId, expires);
       return sid;
     },
+    /** Pushes a live session's end out to `expires` (a session in use goes on). */
+    extend(sid: string, expires: number) { db.prepare('UPDATE gateway_sessions SET expires=? WHERE sid=? AND expires>?').run(expires, sid, Date.now()); },
     revoke(sid: string) { db.prepare('DELETE FROM gateway_sessions WHERE sid=?').run(sid); },
     async check(password: string, encoded: string) {
       const [salt, hash] = encoded.split(':');

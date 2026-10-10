@@ -28,6 +28,14 @@ get() { curl -s "$G$2" -H "authorization: Bearer $1"; }
 fail=0; check() { if node -e "const j=JSON.parse(process.argv[1]); process.exit(($2)?0:1)" "$1"; then echo "PASS $3"; else echo "FAIL $3 :: $1" | cut -c1-400; fail=1; fi; }
 
 r=$(get "$A" /api/aidev/laya/health); check "$r" 'j.status==="ok"' "laya health"
+# sliding login: a refresh hands out a new token good for another 8 h from now, and the session row follows
+sleep 1.1; r=$(post "$A" /api/auth/refresh '{}'); A2=$(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).token')
+check "{\"ok\":$( [ -n "$A2" ] && [ "$A2" != "$A" ] && echo true || echo false)}" 'j.ok' "refresh issues a new token"
+check "$(echo "$A2" | node -pe 'const p=JSON.parse(Buffer.from(require("fs").readFileSync(0,"utf8").trim().split(".")[1],"base64url")); JSON.stringify({ttl:p.exp-p.iat, fresh:p.iat>=Math.floor(Date.now()/1000)-5})')" 'j.ttl===8*3600 && j.fresh' "refreshed token runs 8 h from now"
+r=$(get "$A2" /api/auth/user); check "$r" 'j.user && j.user.username==="alice"' "refreshed token works"
+r=$(node -e "const {openStore}=await import('./dist/store.js'); const s=openStore(process.env.DATABASE_PATH); const row=s.db.prepare('SELECT MAX(expires) AS e FROM gateway_sessions s JOIN accounts a ON a.id=s.user_id WHERE a.username=?').get('alice'); console.log(JSON.stringify({left:row.e-Date.now()})); s.db.close();" --input-type=module)
+check "$r" 'j.left>8*3600*1000-60000' "session row extended to 8 h from now"
+A=$A2
 r=$(get "$A" /api/aidev/agents); check "$r" 'j.agents.length>=12 && j.agents.some(a=>a.name==="frontend-react")' "seeded agents ($(echo "$r" | node -pe 'JSON.parse(require("fs").readFileSync(0)).agents.length'))"
 r=$(get "$A" /api/aidev/engines); check "$r" 'j.engines.claude.allowed && j.engines.claude.authenticated && j.engines.codex.authenticated' "engines alice both"
 r=$(get "$B" /api/aidev/engines); check "$r" '!j.engines.claude.allowed && j.engines.codex.authenticated' "engines bob codex-only"
