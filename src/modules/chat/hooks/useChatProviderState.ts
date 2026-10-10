@@ -417,13 +417,11 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
     const sessionSavedMode = selectedSession?.id
       ? (localStorage.getItem(`permissionMode-${selectedSession.id}`) as PermissionMode | null)
       : null;
-    // Fall back to the last mode picked for this provider: a brand-new chat
-    // only receives its session id after the first send, so without this the
-    // mode chosen beforehand would snap back to the default as soon as the
-    // session id appears.
-    // A brand-new chat starts in the Settings default when one is set (2026-10-07: "매 채팅때마다 새로
-    // 설정"); the last-picked mode only carries a pre-send choice over to the session once it has an id.
-    const providerSavedMode = selectedSession?.id || !readDefaultPermissionMode(provider)
+    // A session without its own mode starts in the Settings default when one is set (2026-10-07: "매 채팅때마다
+    // 새로 설정") — also a session opened by id (a handoff or fork), where the last mode picked in some other chat
+    // used to win and sent Codex into a sandbox the server cannot run (2026-10-10). The mode picked before a new
+    // chat's first send is saved under its id at send time (useChatComposerState), so it survives the id arriving.
+    const providerSavedMode = !readDefaultPermissionMode(provider)
       ? localStorage.getItem(`permissionMode-last-${provider}`) as PermissionMode | null
       : null;
     const savedMode = [sessionSavedMode, providerSavedMode].find(

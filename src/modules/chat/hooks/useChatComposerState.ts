@@ -855,6 +855,7 @@ export function useChatComposerState({
       }
       const plannedEngine = aidevDecoration?.route.plan.engine;
       const sessionProvider: LLMProvider = !targetSessionId && (plannedEngine === 'claude' || plannedEngine === 'codex') ? plannedEngine : provider;
+      let newSessionPermissionMode: PermissionMode | null = null;
       if (!targetSessionId) {
         let createdSessionName = sessionSummary;
         try {
@@ -898,6 +899,11 @@ export function useChatComposerState({
           return;
         }
 
+        // The mode this chat was composed under becomes the new session's own; without it the session would
+        // fall back to the Settings default as soon as its id arrives. Routing may have picked the other engine.
+        newSessionPermissionMode = resolvePermissionModeForProvider(sessionProvider, permissionMode);
+        localStorage.setItem(`permissionMode-${targetSessionId}`, newSessionPermissionMode);
+
         onSessionEstablished?.(targetSessionId, {
           provider: sessionProvider,
           project: selectedProject,
@@ -931,7 +937,10 @@ export function useChatComposerState({
       setTimeout(() => scrollToBottom(), 100);
 
       // a queued turn goes out with the settings it was queued under
-      const baseSendOptions = queued?.options ?? buildSendOptions(messageContent);
+      const composedSendOptions = queued?.options ?? buildSendOptions(messageContent);
+      const baseSendOptions = newSessionPermissionMode
+        ? { ...composedSendOptions, permissionMode: newSessionPermissionMode }
+        : composedSendOptions;
       const routedSendOptions = aidevDecoration
         ? {
           ...baseSendOptions,
@@ -1003,8 +1012,10 @@ export function useChatComposerState({
       isLoading,
       onSessionProcessing,
       onSessionEstablished,
+      permissionMode,
       provider,
       recordSentMessage,
+      resolvePermissionModeForProvider,
       resetCommandMenuState,
       scrollToBottom,
       selectedProject,

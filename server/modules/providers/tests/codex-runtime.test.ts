@@ -92,3 +92,44 @@ for (const command of ['', '  \n\t']) {
     ]);
   });
 }
+
+test('Codex abort waits for the aborted exec to exit, so a turn cutting in can resume the thread', async (t) => {
+  let execExited = false;
+  let started!: () => void;
+  const running = new Promise<void>((resolve) => { started = resolve; });
+  const thread = {
+    id: 'native-thread',
+    async runStreamed(_prompt: unknown, { signal }: { signal: AbortSignal }) {
+      return { events: (async function* () {
+        yield { type: 'thread.started', thread_id: 'native-thread' };
+        started();
+        await new Promise((resolve) => signal.addEventListener('abort', resolve, { once: true }));
+        // the process still prints a line and takes a moment to exit after SIGTERM
+        yield { type: 'item.completed', item: { id: 'late', type: 'agent_message', text: 'late' } };
+        await new Promise((resolve) => setTimeout(resolve, 50));
+        execExited = true;
+        throw new Error('Codex Exec exited with signal SIGTERM: ');
+      })() };
+    },
+  } as unknown as Thread;
+
+  t.mock.method(Codex.prototype, 'resumeThread', () => thread);
+  const forwarded: unknown[] = [];
+  const messages: unknown[] = [];
+  const context: ProviderRuntimeContext = {
+    resolveProviderSessionId: () => 'native-thread',
+    resolveResumeModel: async () => 'test-model',
+    getProviderModels: async () => ({ OPTIONS: [], DEFAULT: 'test-model' }),
+    normalizeMessage: (event) => { forwarded.push(event); return []; },
+    isProviderInstalled: async () => true,
+  };
+
+  const run = codexRuntime.run('hey', { sessionId: 'app-session-abort', cwd: process.cwd() }, { isWebSocketWriter: true, send: (message) => messages.push(message) }, context);
+  await running;
+
+  assert.equal(await codexRuntime.abort('app-session-abort'), true);
+  assert.equal(execExited, true);
+  await run;
+  assert.ok(!forwarded.some((event: any) => event.itemId === 'late'));
+  assert.ok(!messages.some((message: any) => message.kind === 'error' || message.kind === 'complete'));
+});

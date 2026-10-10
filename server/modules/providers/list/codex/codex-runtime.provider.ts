@@ -11,6 +11,8 @@
  * - codexRuntime.abort(sessionId) - Cancel an active session
  */
 
+import { readFileSync } from 'node:fs';
+
 import { Codex } from '@openai/codex-sdk';
 import type { ModelReasoningEffort, Thread, ThreadOptions } from '@openai/codex-sdk';
 
@@ -32,7 +34,16 @@ type ActiveCodexSession = {
   status: 'running' | 'aborted' | 'completed';
   abortController: AbortController;
   startedAt: string;
+  /** Resolves once the run is over and its `codex exec` process has exited. */
+  settled: Promise<void>;
 };
+
+/**
+ * How long an abort waits for the aborted `codex exec` to exit. The process
+ * holds the thread's writer lock until it exits, so a turn resumed on the same
+ * thread before then fails with "thread ... already has an active writer".
+ */
+const ABORT_SETTLE_TIMEOUT_MS = 10_000;
 
 const activeCodexSessions = new Map<string, ActiveCodexSession>();
 
@@ -276,6 +287,9 @@ function mapPermissionModeToCodexOptions(permissionMode: string): Pick<ThreadOpt
  */
 function buildCodexOptions(rawAidev: unknown): ConstructorParameters<typeof Codex>[0] {
   const config: Record<string, unknown> = {};
+  if (linuxUserNamespacesBlocked()) {
+    config.features = { use_legacy_landlock: true };
+  }
   const mcpServers: Record<string, Record<string, unknown>> = {};
   const aidev = sanitizeAidevOptions(rawAidev);
   const platformMcp = aidevToolsService.getMcpServerConfig(aidev ? { runId: aidev.runId, targetId: aidev.target?.id ?? null, agent: aidev.agent.name } : undefined);
@@ -294,6 +308,29 @@ function buildCodexOptions(rawAidev: unknown): ConstructorParameters<typeof Code
     config.mcp_servers = mcpServers;
   }
   return Object.keys(config).length ? { config: config as never } : undefined;
+}
+
+let userNamespacesBlocked: boolean | null = null;
+
+/**
+ * Codex sandboxes Linux commands with bubblewrap, which needs unprivileged user
+ * namespaces. The runtime container on the server has none (the host kernel sets
+ * apparmor_restrict_unprivileged_userns=1), so every sandboxed command failed with
+ * "bwrap: No permissions to create a new namespace". Codex's Landlock sandbox
+ * needs no namespaces and enforces the same read/write policy.
+ */
+function linuxUserNamespacesBlocked(): boolean {
+  if (userNamespacesBlocked === null) {
+    const read = (file: string) => {
+      try { return readFileSync(file, 'utf8').trim(); } catch { return null; }
+    };
+    userNamespacesBlocked = process.platform === 'linux' && (
+      read('/proc/sys/kernel/apparmor_restrict_unprivileged_userns') === '1'
+      || read('/proc/sys/kernel/unprivileged_userns_clone') === '0'
+      || read('/proc/sys/user/max_user_namespaces') === '0'
+    );
+  }
+  return userNamespacesBlocked;
 }
 
 async function queryCodex(
@@ -350,6 +387,8 @@ async function queryCodex(
   // Session-map key: the app session id when the caller supplied one, else
   // the provider-native thread id once captured (legacy/direct API callers).
   const sessionKey = () => sessionId || capturedSessionId || null;
+  let markSettled = () => {};
+  const settled = new Promise<void>((resolve) => { markSettled = resolve; });
 
   try {
     codex = new Codex(buildCodexOptions(options.aidev));
@@ -383,7 +422,8 @@ async function queryCodex(
         codex,
         status: 'running',
         abortController,
-        startedAt: new Date().toISOString()
+        startedAt: new Date().toISOString(),
+        settled,
       });
     };
 
@@ -424,15 +464,11 @@ async function queryCodex(
         }
       }
 
-      // Check if session was aborted
-      if (abortController.signal.aborted) {
-        break;
-      }
-      if (sessionKey()) {
-        const session = activeCodexSessions.get(sessionKey() || '');
-        if (session?.status === 'aborted') {
-          break;
-        }
+      // An aborted run is drained, not left: breaking out kills `codex exec`
+      // without waiting for it to exit, while draining lets the SDK wait on the
+      // exit (abort already sent SIGTERM) — see ABORT_SETTLE_TIMEOUT_MS.
+      if (abortController.signal.aborted || activeCodexSessions.get(sessionKey() || '')?.status === 'aborted') {
+        continue;
       }
 
       // Progress events used to be dropped, so a long shell command or a
@@ -560,6 +596,7 @@ async function queryCodex(
         session.status = session.status === 'aborted' ? 'aborted' : 'completed';
       }
     }
+    markSettled();
   }
 }
 
@@ -568,7 +605,7 @@ async function queryCodex(
  * @param {string} sessionId - Session ID to abort
  * @returns {boolean} - Whether abort was successful
  */
-function abortCodexSession(sessionId: string) {
+async function abortCodexSession(sessionId: string) {
   const session = activeCodexSessions.get(sessionId);
 
   if (!session) {
@@ -581,6 +618,14 @@ function abortCodexSession(sessionId: string) {
   } catch (error) {
     console.warn(`[Codex] Failed to abort session ${sessionId}:`, error);
   }
+
+  // A turn that cuts in resumes this same thread right after the abort returns.
+  let timer: NodeJS.Timeout | undefined;
+  await Promise.race([
+    session.settled,
+    new Promise<void>((resolve) => { timer = setTimeout(resolve, ABORT_SETTLE_TIMEOUT_MS); }),
+  ]);
+  clearTimeout(timer);
 
   return true;
 }

@@ -146,3 +146,23 @@ test('the active provider’s model is what currentProviderModel reports', async
   });
   assert.equal(result.current.currentProviderModel, 'cursor-active');
 });
+
+test('a session opened by id starts in the Settings permission default, not a mode left from another chat', async () => {
+  // a handoff/fork opens an existing Codex session; the stale last-picked `default` sent Codex into bwrap (2026-10-10)
+  writeUserPreference('codexPermissions', { permissionMode: 'bypassPermissions' });
+  localStorage.setItem('permissionMode-last-codex', 'default');
+  const { useChatProviderState } = await import('@/modules/chat/hooks/useChatProviderState');
+  const session = { id: 'handoff-1', __provider: 'codex' } as never;
+  const { result, rerender } = renderHook(({ selected }) =>
+    useChatProviderState({ selectedSession: selected, selectedProject: null }), { initialProps: { selected: session } });
+
+  await waitFor(() => {
+    assert.equal(result.current.provider, 'codex');
+    assert.equal(result.current.permissionMode, 'bypassPermissions');
+  });
+
+  // a mode saved for the session itself (picked there, or before its first send) still wins
+  localStorage.setItem('permissionMode-handoff-2', 'acceptEdits');
+  rerender({ selected: { id: 'handoff-2', __provider: 'codex' } as never });
+  await waitFor(() => assert.equal(result.current.permissionMode, 'acceptEdits'));
+});
