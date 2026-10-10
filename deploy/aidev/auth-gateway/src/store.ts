@@ -86,18 +86,22 @@ export function openStore(filename: string) {
       }
       return added;
     },
-    /** Insert every seed agent whose name is not yet a global agent (existing rows keep their prompt; only the routing hint, tier floor and turn cap follow the seed). */
+    /** Insert every seed agent whose name is not yet a global agent (existing rows keep their prompt — except meta agents —; the routing hint, tier floor and turn cap follow the seed). */
     seedAgents(seed: Array<{ name: string; domain: string; description: string; hint?: string; prompt: string; tools?: string[]; model?: string; maxTurns?: number; skills?: string[]; minTier?: number }>) {
       let added = 0;
       db.transaction(() => {
         for (const a of seed) {
-          const existing = db.prepare('SELECT id, hint, min_tier, max_turns, source FROM agents WHERE name=? AND owner_id IS NULL').get(a.name) as { id: number; hint: string | null; min_tier: number | null; max_turns: number | null; source: string } | undefined;
+          const existing = db.prepare('SELECT id, hint, min_tier, max_turns, source, prompt FROM agents WHERE name=? AND owner_id IS NULL').get(a.name) as { id: number; hint: string | null; min_tier: number | null; max_turns: number | null; source: string; prompt: string } | undefined;
           if (existing) {
             // seeds may gain a routing hint / tier floor after the row was created (migration from older releases)
             if (!existing.hint && a.hint) db.prepare('UPDATE agents SET hint=? WHERE id=?').run(a.hint, existing.id);
             if (existing.min_tier === null && a.minTier !== undefined) db.prepare('UPDATE agents SET min_tier=? WHERE id=?').run(a.minTier, existing.id);
             // a seed row's turn cap follows the seed (2026-10-09: agent-architect 8 → 20); a user-made row of the same name is left alone
             if (existing.source === 'seed' && a.maxTurns !== undefined && existing.max_turns !== a.maxTurns) db.prepare('UPDATE agents SET max_turns=? WHERE id=?').run(a.maxTurns, existing.id);
+            // a meta agent's prompt is the platform's contract (its output block is parsed), so a seed meta row follows the
+            // seed as a new version (2026-10-10: the server's architect still had its 09-23 prompt — no hint, no examples,
+            // no "design only" — and every generated agent came without a routing hint)
+            if (existing.source === 'seed' && a.domain === 'meta' && existing.prompt !== a.prompt) this.newAgentVersion(existing.id, { prompt: a.prompt }, 'seed prompt updated');
             continue;
           }
           const id = this.addAgent({ ...a, ownerId: null, source: 'seed' }); added++;

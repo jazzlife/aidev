@@ -16,6 +16,18 @@ const store = openStore(path.join(dir, 'auth.db'));
 store.seedAgents(seedAgents);
 await store.add('alice', 'pw1234pw', 'u' + 'a'.repeat(24), 1);
 const uid = store.account('alice').id;
+
+// a meta agent's prompt follows the seed (its output block is a contract); other seeds keep an administrator's edit
+const architectId = store.agent(uid, 'agent-architect').id;
+store.db.prepare("UPDATE agents SET prompt='당신은 전문 agent 설계자다. (09-23 prompt)' WHERE id=?").run(architectId);
+store.db.prepare("UPDATE agents SET prompt='edited by an administrator for this team' WHERE name='generalist' AND owner_id IS NULL").run();
+store.seedAgents(seedAgents);
+assert.equal(store.agent(uid, 'agent-architect').prompt, seedAgents.find((a) => a.name === 'agent-architect').prompt);
+assert.equal(store.agent(uid, 'agent-architect').version, 2, 'the update is a new version');
+assert.equal(store.agent(uid, 'generalist').prompt, 'edited by an administrator for this team');
+store.seedAgents(seedAgents);
+assert.equal(store.agent(uid, 'agent-architect').version, 2, 'an unchanged seed is not versioned again');
+console.log('PASS a seed meta agent\'s prompt follows the seed; other agents keep their edits');
 const session = { user: { id: uid, username: 'alice', runtime: 'u' + 'a'.repeat(24) }, sid: 's1' };
 
 const laya = {
