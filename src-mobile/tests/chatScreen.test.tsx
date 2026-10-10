@@ -83,6 +83,11 @@ vi.mock('@/modules/aidev-router', () => ({
   useReturnFromHandoff: () => ({ engine: null, label: null, limitedUntil: null, busy: false, error: null, returnNow: async () => undefined, dismiss: () => undefined }),
   ReturnCard: () => null,
 }));
+// the draft store (the command queue) talks to the server through the shared api; here it only keeps the local copy
+vi.mock('@/shared/api', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@/shared/api')>();
+  return { ...actual, api: { ...actual.api, user: { ...actual.api.user, drafts: () => json({ success: true, drafts: [] }), saveDraft: () => json({ success: true }), deleteDraft: () => json({ success: true }) } } };
+});
 vi.mock('@/modules/remote-preview', () => ({ usePreviewList: () => ({ previews: [] }) }));
 vi.mock('@/modules/remote-debug', () => ({ useDebugSessions: () => ({ sessions: [] }) }));
 vi.mock('@m/components/RouterChip', () => ({ RouterChip: () => null }));
@@ -91,6 +96,7 @@ vi.mock('@m/components/FilePeek', () => ({ FilePeek: () => null }));
 vi.mock('@m/components/DiffPeek', () => ({ DiffPeek: () => null }));
 
 const { ChatScreen } = await import('@m/screens/ChatScreen');
+const { readQueuedMessages, resetChatDrafts } = await import('@/shared/chatDrafts');
 
 function Where() { const l = useLocation(); return <div data-testid="where">{l.pathname}</div>; }
 const open = (id = 's1') => {
@@ -106,6 +112,7 @@ const userTurn = (over: Partial<NormalizedMessage> = {}): NormalizedMessage => (
 beforeEach(() => {
   vi.clearAllMocks();
   localStorage.clear();
+  resetChatDrafts();
   hoisted.messages.clear();
   // jsdom has no object URLs
   let made = 0;
@@ -113,34 +120,64 @@ beforeEach(() => {
 });
 
 describe('chat screen', () => {
-  it('a send typed while the agent answers waits, and goes when the answer ends, with the conversation mode', async () => {
+  it('a send typed while the agent answers joins the session queue the server sends from, with the conversation mode', async () => {
     open();
     await settle();
     act(() => hoisted.realtime!.onSessionProcessing('s1'));
     type('테스트도 돌려');
     fireEvent.click(screen.getByLabelText('대기열에 넣기'));
-    expect(screen.getByTestId('chat-queued').textContent).toContain('테스트도 돌려');
+    await settle();
+    type('그 다음 문서');
+    fireEvent.click(screen.getByLabelText('대기열에 넣기'));
+    await settle();
     expect(sent()).toHaveLength(0);
+    expect(screen.getAllByTestId('chat-queued').map((card) => card.textContent)).toEqual([expect.stringContaining('테스트도 돌려'), expect.stringContaining('그 다음 문서')]);
+    const stored = readQueuedMessages('s1');
+    expect(stored.map((turn) => turn.content)).toEqual(['테스트도 돌려', '그 다음 문서']);
+    expect(stored[0].options).toMatchObject({ permissionMode: 'default', toolsSettings: { allowedTools: [] } });
+    // the server sends from the queue: going idle sends nothing from the phone
     act(() => hoisted.realtime!.onSessionIdle('s1'));
     await settle();
-    expect(sent()).toHaveLength(1);
-    expect(sent()[0]).toMatchObject({ type: 'chat.send', sessionId: 's1', content: '테스트도 돌려', options: { permissionMode: 'default', toolsSettings: { allowedTools: [] } } });
-    expect(screen.queryByTestId('chat-queued')).toBeNull();
+    expect(sent()).toHaveLength(0);
   });
 
-  it('the queued send waits while a permission request is open', async () => {
+  it('queued cards move, go back to the composer, drop, or go now cutting into the answer', async () => {
     open();
     await settle();
     act(() => hoisted.realtime!.onSessionProcessing('s1'));
-    type('다음');
-    fireEvent.click(screen.getByLabelText('대기열에 넣기'));
-    act(() => hoisted.realtime!.setPendingPermissionRequests(() => [{ requestId: 'r1', toolName: 'Bash', input: { command: 'ls' } }]));
-    act(() => hoisted.realtime!.onSessionIdle('s1'));
+    for (const text of ['하나', '둘', '셋']) {
+      type(text);
+      fireEvent.click(screen.getByLabelText('대기열에 넣기'));
+      await settle();
+    }
+    const contents = () => readQueuedMessages('s1').map((turn) => turn.content);
+    fireEvent.click(screen.getAllByLabelText('나중에 보내기')[0]);
+    expect(contents()).toEqual(['둘', '하나', '셋']);
+    fireEvent.click(screen.getAllByLabelText('대기 메시지 삭제')[2]);
+    expect(contents()).toEqual(['둘', '하나']);
+    fireEvent.click(screen.getAllByLabelText('대기 메시지 수정')[1]);
     await settle();
-    expect(sent()).toHaveLength(0);
-    fireEvent.click(screen.getByText('허용'));
+    expect(contents()).toEqual(['둘']);
+    expect((screen.getByPlaceholderText('명령을 입력하세요') as HTMLTextAreaElement).value).toBe('하나');
+    fireEvent.click(screen.getByLabelText('지금 보내기'));
+    await settle();
+    expect(contents()).toEqual([]);
+    expect(sent()).toHaveLength(1);
+    expect(sent()[0]).toMatchObject({ type: 'chat.send', sessionId: 's1', content: '둘', interrupt: true, options: { permissionMode: 'default' } });
+    // the composer keeps what it holds
+    expect((screen.getByPlaceholderText('명령을 입력하세요') as HTMLTextAreaElement).value).toBe('하나');
+  });
+
+  it('⚡ cuts into the answer: the send goes at once with the interrupt flag', async () => {
+    open();
+    await settle();
+    act(() => hoisted.realtime!.onSessionProcessing('s1'));
+    type('멈추고 이렇게 해');
+    fireEvent.click(screen.getByLabelText('지금 개입'));
     await settle();
     expect(sent()).toHaveLength(1);
+    expect(sent()[0]).toMatchObject({ type: 'chat.send', sessionId: 's1', content: '멈추고 이렇게 해', interrupt: true });
+    expect(readQueuedMessages('s1')).toEqual([]);
   });
 
   it('edits a sent message: the composer takes it, and the send replaces it from its anchor', async () => {

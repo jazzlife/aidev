@@ -5,8 +5,10 @@ import { Clock, Download, Gauge, GitBranch, MoreHorizontal, Search } from 'lucid
 import { api, grantClaudeToolPermission, buildClaudeToolPermissionEntry, useChatRealtimeHandlers, useSessionStore, useWebSocket, type LLMProvider, type NormalizedMessage, type PendingPermissionRequest, type ProjectSession } from '@/modules/chat-core';
 import { AgentCreateCard, aidevApi, routingStore, shouldAskClarify, useAgentCreation, useAidevRouting, useEscalation, usePrejudge, useReturnFromHandoff, useRoutingState, ReturnCard, VerificationCard, type AidevSendDecoration, type Engine } from '@/modules/aidev-router';
 import { parseProviderUsageLimit } from '@/shared/utils';
+import { hydrateChatDrafts, readQueuedMessages, subscribeToChatDrafts, writeQueuedMessages, type StoredQueuedMessage } from '@/shared/chatDrafts';
 import { Composer } from '@m/components/Composer';
 import { MessageList } from '@m/components/MessageList';
+import { QueuedTurns } from '@m/components/QueuedTurns';
 import { PermissionSheet, type PermissionDecision } from '@m/components/PermissionSheet';
 import { PermissionModeSheet } from '@m/components/PermissionModeSheet';
 import { RouterChip } from '@m/components/RouterChip';
@@ -36,12 +38,15 @@ import { setCurrentConversation, setCurrentProject } from '@m/lib/current';
 import { MODE_LABELS, adoptDraftPermissionMode, buildSendOptions, uploadAttachments, useCapsMap, usePermissionMode, type UploadedAttachment } from '@m/lib/chatOptions';
 
 type SessionMeta = { id: string; provider: LLMProvider; projectId: string; projectPath: string; projectName: string; title: string };
-/** A send waiting for the agent to finish (typed while it answered). */
-type Queued = { text: string; files: File[] };
+/** How a send goes: `interrupt` cuts into the running answer; `options` are a queued turn's own (else the screen's). */
+type DispatchOptions = { interrupt?: boolean; options?: Record<string, unknown> };
 /** What the router (and the title) reads for a send of attachments only: the server takes an empty text, the router cannot. */
 const attachmentLabel = (names: string[]) => `첨부 ${names.length}개 (${names.slice(0, 3).join(', ')}${names.length > 3 ? ' …' : ''})`;
 const isImage = (a: { mimeType?: string; name?: string; path?: string }) => Boolean(a.mimeType?.startsWith('image/')) || /\.(gif|jpe?g|png|webp|heic)$/i.test(a.name || a.path || '');
 const PROVIDER_KEY = 'm.provider';
+const createQueuedId = () => `q-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+/** The session's command queue (shared with the workbench); a turn queued by an older client gets its place as id. */
+const readQueue = (sessionId: string | null): StoredQueuedMessage[] => (sessionId ? readQueuedMessages(sessionId).map((turn, index) => ({ ...turn, id: turn.id ?? `queued-${index}` })) : []);
 const readProvider = (): LLMProvider => { try { const value = localStorage.getItem(PROVIDER_KEY); return value === 'codex' ? 'codex' : 'claude'; } catch { return 'claude'; } };
 
 /**
@@ -81,8 +86,6 @@ export function ChatScreen() {
   const [sending, setSending] = useState<string | null>(null);
   // a send that did not happen puts its text back in the composer
   const [restore, setRestore] = useState<{ text: string; files?: File[]; n: number } | null>(null);
-  // a send typed while the agent answered: it goes by itself when the answer ends (and nothing waits for approval)
-  const [queued, setQueued] = useState<Queued | null>(null);
   // the permission request whose sheet was closed without an answer (a banner reopens it)
   const [laterRequestId, setLaterRequestId] = useState<string | null>(null);
   // the permission-mode sheet (from the composer's pill)
@@ -227,7 +230,7 @@ export function ChatScreen() {
 
   // ---- send ------------------------------------------------------------------------------------
   // Creates the session for a new chat (on the routed engine) and sends the turn with the routing decoration.
-  const dispatch = useCallback(async (text: string, decoration: AidevSendDecoration | null, attachments: UploadedAttachment[] = [], previews: string[] = []) => {
+  const dispatch = useCallback(async (text: string, decoration: AidevSendDecoration | null, attachments: UploadedAttachment[] = [], previews: string[] = [], how: DispatchOptions = {}) => {
     let target = meta;
     if (!target && project) {
       // The router's engine choice decides the provider of a brand-new session (§0: sessions are provider-bound).
@@ -265,9 +268,12 @@ export function ChatScreen() {
     setEditingAnchorId(null);
     sendMessage({
       type: anchorId ? 'chat.edit-send' : 'chat.send', sessionId: target.id, content: text, ...(anchorId ? { anchorId } : {}),
+      // cutting in: the server stops the running answer and starts this turn right behind it
+      ...(how.interrupt ? { interrupt: true } : {}),
       options: {
-        // the conversation's permission mode (a new chat: the draft's) and the saved allow/deny rules, as the workbench sends them
-        ...buildSendOptions(target.provider, permission.mode),
+        // the conversation's permission mode (a new chat: the draft's) and the saved allow/deny rules, as the workbench sends them;
+        // a queued turn goes with the ones it was queued under
+        ...(how.options ?? buildSendOptions(target.provider, permission.mode)),
         ...(decoration?.model ? { model: decoration.model } : {}),
         ...(decoration?.effort ? { effort: decoration.effort } : {}),
         ...(decoration ? { aidev: decoration.aidev } : {}),
@@ -278,9 +284,9 @@ export function ChatScreen() {
     return true;
   }, [editingAnchorId, meta, navigate, permission.mode, project, provider, sendMessage, sessionStore]);
 
-  const send = useCallback(async (text: string, files: File[] = []) => {
-    // a send in flight (routing can take seconds): a repeated tap is not a second send
-    if (busy || sendingRef.current) return;
+  const send = useCallback(async (text: string, files: File[] = [], how: { interrupt?: boolean } = {}) => {
+    // a send in flight (routing can take seconds): a repeated tap is not a second send; while answering only a cut-in goes
+    if ((busy && !how.interrupt) || sendingRef.current) return;
     if (!meta && !project) { setPickingProject(true); setRestore({ text, files, n: Date.now() }); return; }
     setClarify(null);
     sendingRef.current = true;
@@ -309,7 +315,7 @@ export function ChatScreen() {
         const moved = await switchBackRef.current?.({ sessionId: meta.id, engine: switchBack.engine, fromEngine: meta.provider, text: routed, reason: switchBack.reason });
         if (moved) return;
       }
-      if (!(await dispatch(text, decoration, attachments, previews))) {
+      if (!(await dispatch(text, decoration, attachments, previews, { interrupt: busy }))) {
         for (const url of previews) if (url) { URL.revokeObjectURL(url); pendingPreviewsRef.current.delete(url); }
         setRestore({ text, files, n: Date.now() });
       }
@@ -320,12 +326,68 @@ export function ChatScreen() {
   }, [beforeSend, busy, dispatch, meta, project, provider, setClarify]);
 
   useEffect(() => { sendRef.current = (text) => { void send(text); }; }, [send]);
-  // the queued send goes once the answer has ended and nothing waits for the user's approval
+
+  // ---- command queue ---------------------------------------------------------------------------
+  // The session's queue lives in the draft store, as on the workbench: the server sends the head each time the answer
+  // ends, so it goes even with the phone locked, and both devices show and edit the same list.
+  const [queue, setQueue] = useState<StoredQueuedMessage[]>(() => readQueue(sessionId));
   useEffect(() => {
-    if (!queued || busy || sendingRef.current || pendingPermissionRequests.length) return;
-    setQueued(null);
-    void send(queued.text, queued.files);
-  }, [busy, pendingPermissionRequests.length, queued, send]);
+    const sync = () => setQueue(readQueue(sessionId));
+    sync();
+    return subscribeToChatDrafts(sync);
+  }, [sessionId]);
+  // the cards follow the server shortening the queue: reloaded while any wait, and when an answer starts or ends
+  useEffect(() => {
+    if (!sessionId || !queue.length) return undefined;
+    const timer = setInterval(() => void hydrateChatDrafts(), 5_000);
+    return () => clearInterval(timer);
+  }, [queue.length, sessionId]);
+  useEffect(() => { if (readQueue(sessionId).length) void hydrateChatDrafts(); }, [busy, sessionId]);
+  const writeQueue = (next: StoredQueuedMessage[]) => { if (sessionId) writeQueuedMessages(sessionId, next); };
+  // typed while answering: goes to the back of the queue, files uploaded now so the server can send it without the phone
+  const enqueue = async (text: string, files: File[]) => {
+    if (!sessionId) { setRestore({ text, files, n: Date.now() }); return; }
+    let attachments: UploadedAttachment[] = [];
+    try { attachments = await uploadAttachments(files); } catch (error) {
+      setLoadError(error instanceof Error ? error.message : '첨부를 올리지 못했습니다');
+      setRestore({ text, files, n: Date.now() });
+      return;
+    }
+    const label = text || attachmentLabel(files.map((file) => file.name));
+    // appended to the store's copy as it is now, not this render's: the server may have sent the head meanwhile
+    writeQueuedMessages(sessionId, [...readQueuedMessages(sessionId), { id: createQueuedId(), content: text, options: { ...buildSendOptions(provider, permission.mode), sessionSummary: label.slice(0, 80) }, attachments }]);
+  };
+  const moveQueued = (id: string, direction: -1 | 1) => {
+    const from = queue.findIndex((turn) => turn.id === id);
+    const to = from + direction;
+    if (from < 0 || to < 0 || to >= queue.length) return;
+    const next = [...queue];
+    [next[from], next[to]] = [next[to], next[from]];
+    writeQueue(next);
+  };
+  const editQueued = (id: string) => {
+    const turn = queue.find((candidate) => candidate.id === id);
+    if (!turn) return;
+    writeQueue(queue.filter((candidate) => candidate.id !== id));
+    setRestore({ text: turn.content, n: Date.now() });
+  };
+  // one queued turn goes now, with its own text, uploads and settings, cutting into the answer; the composer is untouched
+  const sendQueuedNow = async (id: string) => {
+    const turn = queue.find((candidate) => candidate.id === id);
+    if (!turn || sendingRef.current) return;
+    writeQueue(queue.filter((candidate) => candidate.id !== id));
+    const attachments = (turn.attachments ?? []) as UploadedAttachment[];
+    const routed = turn.content || attachmentLabel(attachments.map((a) => a.name ?? '파일'));
+    sendingRef.current = true;
+    setSending(routed);
+    try {
+      const decoration = await beforeSend(routed, { sessionId, provider, isNewSession: false, projectHint: meta?.projectName ?? null, userPinnedModel: false });
+      await dispatch(turn.content, decoration, attachments, [], { interrupt: busy, options: turn.options });
+    } finally {
+      sendingRef.current = false;
+      setSending(null);
+    }
+  };
   useEffect(() => {
     const text = composeRef.current;
     if (!text || meta || !isConnected || !project) return;
@@ -489,7 +551,7 @@ export function ChatScreen() {
       {routingState.verification && !busy ? <VerificationCard compact status={routingState.verification.status} result={routingState.verification.result} onDismiss={() => routingStore.patch({ verification: null })} /> : null}
       {escalation.escalation && !busy ? <EscalationPrompt next={escalation.escalation.next} label={escalation.label} busy={escalation.busy} error={escalation.error} onRun={() => { void escalation.run(); }} onDismiss={escalation.dismiss} /> : null}
       {lastRunFinished && !busy ? <RunFeedback key={lastRunFinished} onFeedback={(value) => { void reportOutcome({ user_feedback: value }); }} /> : null}
-      {clarify ? <ClarifyPrompt key={clarify.decoration.route.decision_id} text={clarify.text || attachmentLabel(clarify.attachments.map((a) => a.name ?? '파일'))} question={clarify.decoration.route.scope.clarify_question} onProceed={() => { setClarify(null); void dispatch(clarify.text, clarify.decoration, clarify.attachments, clarify.previews); }} onAnswer={(answer) => { setClarify(null); void dispatch(`${clarify.text}\n\n(추가 정보) ${answer}`, clarify.decoration, clarify.attachments, clarify.previews); }} /> : null}
+      {clarify ? <ClarifyPrompt key={clarify.decoration.route.decision_id} text={clarify.text || attachmentLabel(clarify.attachments.map((a) => a.name ?? '파일'))} question={clarify.decoration.route.scope.clarify_question} onProceed={() => { setClarify(null); void dispatch(clarify.text, clarify.decoration, clarify.attachments, clarify.previews, { interrupt: busy }); }} onAnswer={(answer) => { setClarify(null); void dispatch(`${clarify.text}\n\n(추가 정보) ${answer}`, clarify.decoration, clarify.attachments, clarify.previews, { interrupt: busy }); }} /> : null}
       <RouterChip sessionId={sessionId} />
       {sending ? (
         <div className="mx-3 mb-1 flex items-center gap-2 rounded-xl border border-accent/30 bg-accent/5 px-3 py-2 text-[13px]" role="status" data-testid="chat-sending">
@@ -498,14 +560,7 @@ export function ChatScreen() {
           <span className="min-w-0 flex-1 truncate">{sending}</span>
         </div>
       ) : null}
-      {queued ? (
-        <div className="mx-3 mb-1 flex items-center gap-2 rounded-xl border border-line bg-surface px-3 py-2 text-[13px]" data-testid="chat-queued">
-          <span className="shrink-0 rounded-md bg-elevated px-1.5 py-0.5 text-[11px] text-muted">대기 중</span>
-          <span className="min-w-0 flex-1 truncate">{queued.text}{queued.files.length ? ` · 첨부 ${queued.files.length}` : ''}</span>
-          <button type="button" className="shrink-0 px-1 text-accent" onClick={() => { setRestore({ text: queued.text, files: queued.files, n: Date.now() }); setQueued(null); }}>수정</button>
-          <button type="button" className="shrink-0 px-1 text-muted" onClick={() => setQueued(null)}>취소</button>
-        </div>
-      ) : null}
+      <QueuedTurns queue={queue} onMove={moveQueued} onSendNow={(id) => { void sendQueuedNow(id); }} onEdit={editQueued} onDelete={(id) => writeQueue(queue.filter((turn) => turn.id !== id))} />
       {contextShare !== null && contextShare >= 0.8 ? <div className="mx-3 mb-1 rounded-lg bg-warn/10 px-3 py-1.5 text-[12px] text-warn" role="status" data-testid="context-warning">컨텍스트 {Math.round(contextShare * 100)}% 사용 · 곧 자동으로 요약됩니다</div> : null}
       {waiting && !sheetRequest ? (
         <button type="button" onClick={() => setLaterRequestId(null)} className="mx-3 mb-1 flex items-center gap-2 rounded-xl border border-warn/50 bg-warn/10 px-3 py-2 text-left text-[13px]" data-testid="permission-waiting">
@@ -520,9 +575,13 @@ export function ChatScreen() {
         extra={<MicButton disabled={!isConnected} onError={setVoiceError} onText={(text) => setRestore({ text: draft.trim() ? `${draft.trimEnd()} ${text}` : text, n: Date.now() })} />}
         onSend={(text, files) => {
           if (sendingRef.current) return false;
-          // answering: the send waits its turn (typed again: added to the waiting one)
-          if (busy) { setQueued((prev) => (prev ? { text: `${prev.text}\n\n${text}`, files: [...prev.files, ...files] } : { text, files })); return true; }
+          // answering: the send joins the back of the queue (⚡ cuts in instead)
+          if (busy) { void enqueue(text, files); return true; }
           void send(text, files); return true;
+        }}
+        onInterrupt={(text, files) => {
+          if (sendingRef.current) return false;
+          void send(text, files, { interrupt: true }); return true;
         }}
         onAbort={abort} placeholder={meta ? undefined : '무엇을 만들까요?'}
         mode={{ label: MODE_LABELS[permission.mode]?.short ?? permission.mode, onOpen: () => setModeSheet(true) }}

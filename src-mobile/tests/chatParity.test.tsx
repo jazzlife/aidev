@@ -98,6 +98,24 @@ describe('composer', () => {
     expect(onAbort).toHaveBeenCalled();
   });
 
+  it('cuts in while the agent answers: ⚡ and ⌘/Ctrl+Shift+Enter send now, ⌘/Ctrl+Enter queues', () => {
+    const onSend = vi.fn(() => true); const onInterrupt = vi.fn(() => true);
+    const { rerender } = render(<Composer busy onSend={onSend} onInterrupt={onInterrupt} onAbort={vi.fn()} />);
+    const box = screen.getByPlaceholderText('명령을 입력하세요');
+    fireEvent.change(box, { target: { value: '멈추고 이렇게 해' } });
+    fireEvent.click(screen.getByLabelText('지금 개입'));
+    expect(onInterrupt).toHaveBeenCalledWith('멈추고 이렇게 해', []);
+    fireEvent.change(box, { target: { value: '바로 이것' } });
+    fireEvent.keyDown(box, { key: 'Enter', metaKey: true, shiftKey: true });
+    expect(onInterrupt).toHaveBeenLastCalledWith('바로 이것', []);
+    fireEvent.change(box, { target: { value: '그 다음' } });
+    fireEvent.keyDown(box, { key: 'Enter', metaKey: true });
+    expect(onSend).toHaveBeenCalledWith('그 다음', []);
+    // idle: no cut-in button
+    rerender(<Composer busy={false} onSend={onSend} onInterrupt={onInterrupt} onAbort={vi.fn()} />);
+    expect(screen.queryByLabelText('지금 개입')).toBeNull();
+  });
+
   it('attaches files (10 at most, 10MB each) and shows the permission-mode pill', () => {
     const onSend = vi.fn(() => true); const onMode = vi.fn();
     // jsdom has no object URLs

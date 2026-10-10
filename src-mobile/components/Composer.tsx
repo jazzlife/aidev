@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type KeyboardEvent, type ReactNode } from 'react';
-import { ArrowUp, FileText, Paperclip, Pencil, ShieldCheck, Square, X } from 'lucide-react';
+import { ArrowUp, FileText, Paperclip, Pencil, ShieldCheck, Square, X, Zap } from 'lucide-react';
 
 import { attachmentProblem } from '@m/lib/chatOptions';
 import { useLongPress } from '@m/lib/useLongPress';
@@ -10,6 +10,8 @@ type ComposerProps = {
   busy: boolean;
   /** false: not taken (a send is still on its way) — the text stays */
   onSend: (text: string, files: File[]) => boolean | void;
+  /** while answering: send now, cutting into the answer, instead of queueing (⚡, or ⌘/Ctrl+Shift+Enter) */
+  onInterrupt?: (text: string, files: File[]) => boolean | void;
   onAbort: () => void;
   placeholder?: string;
   /** the draft as typed, with the cursor (ChatScreen pre-judges it and suggests `/` commands and `@` files) */
@@ -35,9 +37,9 @@ function useThumbs(files: File[]) {
 
 /**
  * Used by ChatScreen: bottom-anchored input with auto-grow; one row under it — 📎 attach (the phone offers camera,
- * photos and files), the permission-mode pill, then stop (while answering) and send. Safe-area padding.
+ * photos and files), the permission-mode pill, then stop and ⚡ cut-in (while answering) and send. Safe-area padding.
  */
-export function Composer({ disabled, busy, onSend, onAbort, placeholder, onDraftChange, restore, mode, editing, extra, onSchedule }: ComposerProps) {
+export function Composer({ disabled, busy, onSend, onInterrupt, onAbort, placeholder, onDraftChange, restore, mode, editing, extra, onSchedule }: ComposerProps) {
   const [value, setValueState] = useState('');
   // files picked for the next send (uploaded when it goes)
   const [files, setFiles] = useState<File[]>([]);
@@ -57,15 +59,21 @@ export function Composer({ disabled, busy, onSend, onAbort, placeholder, onDraft
   }, [restore]);   // eslint-disable-line react-hooks/exhaustive-deps -- only a new restore
   // attachments alone can go too (the server takes an empty text; ChatScreen describes them to the router)
   const canSend = Boolean(value.trim() || files.length) && !disabled;
-  const send = () => {
+  const send = (handler: ComposerProps['onSend'] = onSend) => {
     const text = value.trim();
     if (!canSend) return;
-    if (onSend(text, files) === false) return;
+    if (handler(text, files) === false) return;
     setValue(''); setFiles([]); setFileError(null);
     requestAnimationFrame(grow);
   };
   const holdSend = useLongPress(() => { const text = value.trim(); if (text && onSchedule && !disabled) onSchedule(text, files); });
-  const onKey = (event: KeyboardEvent<HTMLTextAreaElement>) => { if (event.key === 'Enter' && (event.metaKey || event.ctrlKey)) { event.preventDefault(); send(); } };
+  const interrupt = busy && onInterrupt ? onInterrupt : null;
+  // ⌘/Ctrl+Enter sends (queues while answering); with Shift it cuts in
+  const onKey = (event: KeyboardEvent<HTMLTextAreaElement>) => {
+    if (event.key !== 'Enter' || !(event.metaKey || event.ctrlKey) || event.nativeEvent.isComposing) return;
+    event.preventDefault();
+    send(event.shiftKey && interrupt ? interrupt : onSend);
+  };
   const pick = (list: FileList | null) => {
     const next = [...files];
     let problem: string | null = null;
@@ -112,7 +120,8 @@ export function Composer({ disabled, busy, onSend, onAbort, placeholder, onDraft
           ) : null}
           <span className="flex-1" />
           {busy ? <button type="button" onClick={onAbort} aria-label="중지" className="m-touch w-9 h-9 min-w-9 min-h-9 rounded-full bg-ink text-bg flex items-center justify-center"><Square size={14} /></button> : null}
-          <button type="button" onClick={send} disabled={!canSend} {...(onSchedule ? holdSend : {})} aria-label={busy ? '대기열에 넣기' : '보내기'} className="w-9 h-9 min-w-9 min-h-9 ml-1 rounded-full bg-accent text-accent-ink flex items-center justify-center disabled:opacity-40"><ArrowUp size={18} /></button>
+          {interrupt ? <button type="button" onClick={() => send(interrupt)} disabled={!canSend} aria-label="지금 개입" className="m-touch ml-1 flex h-9 w-9 min-h-9 min-w-9 items-center justify-center rounded-full text-warn disabled:opacity-40"><Zap size={17} /></button> : null}
+          <button type="button" onClick={() => send()} disabled={!canSend} {...(onSchedule ? holdSend : {})} aria-label={busy ? '대기열에 넣기' : '보내기'} className="w-9 h-9 min-w-9 min-h-9 ml-1 rounded-full bg-accent text-accent-ink flex items-center justify-center disabled:opacity-40"><ArrowUp size={18} /></button>
         </div>
       </div>
       {fileError ? <div className="px-2 pt-1 text-[12px] text-danger" role="alert">{fileError}</div> : null}
