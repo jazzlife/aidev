@@ -56,7 +56,7 @@ export default function LoginForm() {
       }
 
       if (mustChange) {
-        if (formState.newPassword.length < 8) { setErrorMessage(t('login.changePassword.tooShort')); return; }
+        if (formState.newPassword.length < 4) { setErrorMessage(t('login.changePassword.tooShort')); return; }
         if (formState.newPassword !== formState.confirmPassword) { setErrorMessage(t('login.changePassword.mismatch')); return; }
       }
 

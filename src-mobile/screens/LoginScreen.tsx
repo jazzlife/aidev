@@ -22,7 +22,7 @@ export function LoginScreen() {
   const submit = async (event: FormEvent) => {
     event.preventDefault();
     setError(null);
-    if (mustChange && newPassword.length < 8) { setError('새 비밀번호는 8자 이상이어야 합니다'); return; }
+    if (mustChange && newPassword.length < 4) { setError('새 비밀번호는 4자 이상이어야 합니다'); return; }
     if (mustChange && newPassword !== confirmPassword) { setError('비밀번호가 일치하지 않습니다'); return; }
     setBusy(true);
     const result = mustChange ? await changePassword(username.trim().toLowerCase(), password, newPassword) : await login(username.trim().toLowerCase(), password);
@@ -49,7 +49,7 @@ export function LoginScreen() {
             <>
               <div className="text-[14px] font-semibold">새 비밀번호 정하기</div>
               <div className="text-muted text-sm">처음 로그인하거나 비밀번호가 초기화된 계정입니다. 사용할 비밀번호를 정하면 로그인됩니다.</div>
-              <input className={field} placeholder="새 비밀번호 (8자 이상)" type="password" autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
+              <input className={field} placeholder="새 비밀번호 (4자 이상)" type="password" autoComplete="new-password" value={newPassword} onChange={(event) => setNewPassword(event.target.value)} />
               <input className={field} placeholder="새 비밀번호 확인" type="password" autoComplete="new-password" value={confirmPassword} onChange={(event) => setConfirmPassword(event.target.value)} />
             </>
           ) : (

@@ -469,7 +469,7 @@ const server = http.createServer(async (req, res) => {
       if (!user?.active || !valid) return json(res, 401, { error: 'Invalid username or password' });
       if (url.pathname === '/api/auth/change-password') {
         const next = typeof data.newPassword === 'string' ? data.newPassword : '';
-        if (next.length < 8 || next.length > 256) return json(res, 400, { error: '새 비밀번호는 8자 이상이어야 합니다' });
+        if (next.length < 4 || next.length > 256) return json(res, 400, { error: '새 비밀번호는 4자 이상이어야 합니다' });
         if (next === password || next === INITIAL_PASSWORD) return json(res, 400, { error: '지금 비밀번호와 다른 비밀번호를 정하세요' });
         await store.setPassword(user.id, next, false);
         limits.delete(key);

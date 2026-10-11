@@ -93,7 +93,7 @@ read -rs PW && printf '%s\n' "$PW" | docker exec -i aidev-auth-gateway node /srv
 ```
 
 A new account and a reset password start as `123456`; signing in with it asks for a new password
-(8+ characters) before the first session.
+(4+ characters) before the first session.
 
 ## Simple user command
 

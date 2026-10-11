@@ -164,7 +164,7 @@ export function openStore(filename: string) {
     },
     /** The administrator page's sign-in (app_kv `admin.login`, never in the repository): username + scrypt hash. */
     async setAdminLogin(username: string, password: string) {
-      if (!/^[a-z0-9_.-]{3,64}$/.test(username) || password.length < 8 || password.length > 256) throw new Error('admin login: a lowercase username and a password of 8–256 characters');
+      if (!/^[a-z0-9_.-]{3,64}$/.test(username) || password.length < 4 || password.length > 256) throw new Error('admin login: a lowercase username and a password of 4–256 characters');
       db.prepare('INSERT INTO app_kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').run('admin.login', JSON.stringify({ username, hash: await hashPassword(password) }));
     },
     remove(username: string) {

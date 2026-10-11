@@ -65,7 +65,7 @@ r = await login('carol', '123456');
 assert.equal(r.status, 403); assert.equal(r.json.code, 'password_change_required'); assert.equal(r.json.token, undefined, 'no session yet');
 assert.equal((await login('carol', 'nope')).status, 401);
 const change = (password, newPassword) => req('POST', '/api/auth/change-password', { username: 'carol', password, newPassword });
-assert.equal((await change('123456', 'short')).status, 400, 'at least 8 characters');
+assert.equal((await change('123456', 'abc')).status, 400, 'at least 4 characters');
 assert.equal((await change('123456', '123456')).status, 400);
 assert.equal((await change('wrong-pass', 'carolpass1')).status, 401, 'the current password proves who it is');
 r = await change('123456', 'carolpass1');
