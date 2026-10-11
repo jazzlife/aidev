@@ -64,7 +64,7 @@ describe('remote picture zoom (this device only)', () => {
     unbind(); zoom.cleanup();
   });
 
-  it('a two-finger tap is a right click where the fingers touched (a little jitter is fine)', () => {
+  it('a two-finger tap is a right click where the cursor is — nothing moves it (a little jitter is fine)', () => {
     const { canvas, keys, gesture, zoom } = setup();
     const sent: InputEvent[] = [];
     const unbind = bindRemoteInput(canvas, keys, (ev) => sent.push(ev), () => ({}), gesture);
@@ -74,8 +74,7 @@ describe('remote picture zoom (this device only)', () => {
     canvas.dispatchEvent(pointer('pointerup', 1, 100, 100));
     canvas.dispatchEvent(pointer('pointermove', 2, 150, 130));   // the last finger moving: no drag
     canvas.dispatchEvent(pointer('pointerup', 2, 150, 130));
-    expect(sent.filter((e) => e.t === 'wheel')).toEqual([]);
-    expect(sent.filter((e) => e.t === 'button').map((e) => (e.t === 'button' ? `${e.b}:${e.down}` : ''))).toEqual(['right:true', 'right:false']);
+    expect(sent).toEqual([{ t: 'button', b: 'right', down: true }, { t: 'button', b: 'right', down: false }]);
     unbind(); zoom.cleanup();
   });
 

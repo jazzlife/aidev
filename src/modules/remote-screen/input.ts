@@ -5,7 +5,8 @@ import type { ZoomGesture } from '@/modules/remote-screen/viewZoom';
  * Remote-control input (F-07b), non-visual: pointer, touch, wheel and keyboard on the screen canvas →
  * runner input events. Coordinates are normalized to the picture (0..1), so the canvas may be scaled.
  *   mouse: move (one per animation frame), buttons, wheel, no context menu
- *   touch: tap = click, long press or a two-finger tap = right click, one-finger drag = left drag, two-finger pan = scroll
+ *   touch: tap = click, long press = right click there, a two-finger tap = right click where the PC's cursor is,
+ *   one-finger drag = left drag, two-finger pan = scroll
  *   (a pinch and ctrl + wheel zoom the picture on this device instead — viewZoom.ts — and send nothing)
  *   keyboard: a hidden textarea keeps focus: named keys and shortcuts go as key presses with modifiers,
  *   typed text (IME / phone keyboards included) as text.
@@ -36,7 +37,7 @@ export function bindRemoteInput(canvas: HTMLCanvasElement, keys: HTMLTextAreaEle
   let longTimer = 0; let longFired = false; let dragging = false; let panY: number | null = null; let panX: number | null = null;
   // a second finger joined this touch: lifting the last one is not a tap
   let multi = false;
-  // the two-finger touch so far: where it started (the right click goes there) and whether it became a scroll / pinch
+  // the two-finger touch so far: where it started and whether it became a scroll / pinch
   let two: { at: number; x: number; y: number; moved: boolean; fingers: number } | null = null;
   const clearLong = () => { if (longTimer) { window.clearTimeout(longTimer); longTimer = 0; } };
 
@@ -90,10 +91,9 @@ export function bindRemoteInput(canvas: HTMLCanvasElement, keys: HTMLTextAreaEle
     touches.delete(e.pointerId);
     if (touches.size >= 1) { panY = null; panX = null; return; }
     clearLong(); panY = null; panX = null;
-    // two fingers that came and went without moving: a right click where they touched
+    // two fingers that came and went without moving: a right click where the PC's cursor is (no position: it stays put)
     if (multi && two && !two.moved && two.fingers === 2 && Date.now() - two.at <= TWO_TAP_MS) {
-      const at = norm(two.x, two.y);
-      send({ t: 'move', ...at }); send({ t: 'button', b: 'right', down: true, ...at }); send({ t: 'button', b: 'right', down: false, ...at });
+      send({ t: 'button', b: 'right', down: true }); send({ t: 'button', b: 'right', down: false });
     }
     two = null;
     if (!t || multi) { multi = false; return; }
