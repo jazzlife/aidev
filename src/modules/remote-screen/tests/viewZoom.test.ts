@@ -78,6 +78,17 @@ describe('remote picture zoom (this device only)', () => {
     unbind(); zoom.cleanup();
   });
 
+  it('a long press is a right click where the cursor is — nothing moves it; lifting the finger adds no click', async () => {
+    const { canvas, keys, gesture, zoom } = setup();
+    const sent: InputEvent[] = [];
+    const unbind = bindRemoteInput(canvas, keys, (ev) => sent.push(ev), () => ({}), gesture);
+    canvas.dispatchEvent(pointer('pointerdown', 1, 100, 100));
+    await new Promise((r) => setTimeout(r, 600));
+    canvas.dispatchEvent(pointer('pointerup', 1, 100, 100));
+    expect(sent).toEqual([{ t: 'button', b: 'right', down: true }, { t: 'button', b: 'right', down: false }]);
+    unbind(); zoom.cleanup();
+  });
+
   it('two fingers moving together still scroll the PC', () => {
     const { canvas, keys, gesture, zoom } = setup();
     const sent: InputEvent[] = [];

@@ -5,7 +5,7 @@ import type { ZoomGesture } from '@/modules/remote-screen/viewZoom';
  * Remote-control input (F-07b), non-visual: pointer, touch, wheel and keyboard on the screen canvas →
  * runner input events. Coordinates are normalized to the picture (0..1), so the canvas may be scaled.
  *   mouse: move (one per animation frame), buttons, wheel, no context menu
- *   touch: tap = click, long press = right click there, a two-finger tap = right click where the PC's cursor is,
+ *   touch: tap = click, long press or a two-finger tap = right click where the PC's cursor is (it does not move),
  *   one-finger drag = left drag, two-finger pan = scroll
  *   (a pinch and ctrl + wheel zoom the picture on this device instead — viewZoom.ts — and send nothing)
  *   keyboard: a hidden textarea keeps focus: named keys and shortcuts go as key presses with modifiers,
@@ -51,7 +51,8 @@ export function bindRemoteInput(canvas: HTMLCanvasElement, keys: HTMLTextAreaEle
     touches.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY });
     if (touches.size === 1) {
       longFired = false; dragging = false; multi = false;
-      longTimer = window.setTimeout(() => { longFired = true; send({ t: 'move', ...p }); send({ t: 'button', b: 'right', down: true, ...p }); send({ t: 'button', b: 'right', down: false, ...p }); }, LONG_PRESS_MS);
+      // no position: the right click lands where the PC's cursor is, like the two-finger tap
+      longTimer = window.setTimeout(() => { longFired = true; send({ t: 'button', b: 'right', down: true }); send({ t: 'button', b: 'right', down: false }); }, LONG_PRESS_MS);
     } else {
       clearLong(); multi = true;
       if (dragging) { const t = [...touches.values()][0]; send({ t: 'button', b: 'left', down: false, ...norm(t.x, t.y) }); dragging = false; }
