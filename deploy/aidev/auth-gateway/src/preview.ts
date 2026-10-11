@@ -160,16 +160,17 @@ export function createPreview(opts: { store: Store; runners: RunnerHub; secret: 
   const preview = {
     baseFor, capFor, resolve,
 
-    /** Opened from the workbench (user) or the remote_preview tool (agent): probe and remember it. */
-    async open(target: TargetRow, port: number, by: 'user' | 'agent', label: string | null, publicOrigin: string): Promise<PreviewEntry> {
+    /** Opened from the workbench (user) or the remote_preview tool (agent): probe and remember it in the list of
+     *  `userId` — the one who opened it, who may use a PC shared by its owner. */
+    async open(userId: number, target: TargetRow, port: number, by: 'user' | 'agent', label: string | null, publicOrigin: string): Promise<PreviewEntry> {
       const base = baseFor(target, port);
       const entry: PreviewEntry = { targetId: target.id, targetName: target.name, port, url: `${publicOrigin}${base}`, base, mode: null, by, label, createdAt: Date.now(), status: null, error: null };
       modes.delete(`${target.id}:${port}`);   // the server may have been restarted with another base
       try { const p = await probeMode(target, port, base); entry.mode = p.mode; entry.status = p.status; }
       catch (error) { entry.error = describe(error).detail; }
-      const list = (recent.get(target.user_id) ?? []).filter((e) => !(e.targetId === target.id && e.port === port));
+      const list = (recent.get(userId) ?? []).filter((e) => !(e.targetId === target.id && e.port === port));
       list.unshift(entry);
-      recent.set(target.user_id, list.slice(0, MAX_RECENT));
+      recent.set(userId, list.slice(0, MAX_RECENT));
       return entry;
     },
     list(userId: number) { return recent.get(userId) ?? []; },

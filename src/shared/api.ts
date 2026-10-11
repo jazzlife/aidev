@@ -568,6 +568,10 @@ export const api = {
     refreshPairing: (targetId: number) => post(`/api/aidev/targets/${targetId}/pair/refresh`),
     ping: (targetId: number) => post(`/api/aidev/targets/${targetId}/ping`),
     refreshCapabilities: (targetId: number) => post(`/api/aidev/targets/${targetId}/refresh-caps`),
+    /** Accounts the owner shared the PC with (they watch, run and control it; only the owner manages it). */
+    shares: (targetId: number) => get(`/api/aidev/targets/${targetId}/shares`),
+    share: (targetId: number, username: string) => post(`/api/aidev/targets/${targetId}/shares`, { username }),
+    unshare: (targetId: number, userId: number) => del(`/api/aidev/targets/${targetId}/shares/${userId}`),
     /** aidev-runner binaries shipped with the active release (served by the gateway without a session). */
     runnerDownloads: () => get('/_runner/download'),
     /** F-03: run a command on the target (the user's own hand; agents use remote_exec with approval). */

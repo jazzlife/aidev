@@ -38,7 +38,8 @@ export type LessonRow = { id: number; agent_id: number; engine: string | null; t
 export type CreateQueueRow = { id: number; user_id: number; name: string; domain: string; description: string; technologies: string; count: number; commands: string; status: string; created_at: number; updated_at: number };
 export type RunRow = { id: number; user_id: number; session_id: string | null; decision_id: number | null; agent_id: number | null; agent_version: number | null; engine: string | null; model: string | null; effort: string | null; depth: number | null; task_kind: string | null; risk: number | null; target_id: number | null; started_at: number; finished_at: number | null; exit_code: number | null; tool_errors: number; user_feedback: string | null; reverted: number; reasked: number; test_result: string | null; cost_tokens: number | null; escalated_from_run: number | null; outcome: string | null; next_action: string | null; verification: string | null; usage_limit_resets_at: number | null };
 export type RemoteRunRow = { id: number; run_id: number | null; target_id: number; user_id: number; kind: string; cmd: string | null; cwd: string | null; risk: number | null; approved_by: string | null; started_at: number; finished_at: number | null; exit_code: number | null; artifacts: string | null; target_name?: string | null };
-export type TargetRow = { id: number; user_id: number; name: string; platform: string | null; arch: string | null; tags: string | null; description: string; token_hash: string | null; pairing_code: string | null; pairing_expires: number | null; policy: string; allowed_roots: string | null; capabilities: string | null; status: string; last_seen: number | null; created_at: number; /** the account's default PC for remote work (F-08) */ is_default: number };
+export type TargetRow = { id: number; user_id: number; name: string; platform: string | null; arch: string | null; tags: string | null; description: string; token_hash: string | null; pairing_code: string | null; pairing_expires: number | null; policy: string; allowed_roots: string | null; capabilities: string | null; status: string; last_seen: number | null; created_at: number; /** the account's default PC for remote work (F-08) */ is_default: number;
+  /** set when the PC is another account's, shared with this one: the owner's username (targetAccess / targets) */ shared_by?: string | null };
 
 const agentName = /^[a-z0-9][a-z0-9-]{1,40}$/;
 const json = (v: unknown) => (v === undefined || v === null ? null : JSON.stringify(v));
@@ -143,6 +144,13 @@ export function migrateAidev(db: Database.Database) {
       id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
       endpoint TEXT NOT NULL UNIQUE, keys TEXT NOT NULL, user_agent TEXT, created_at INTEGER NOT NULL, last_ok INTEGER, failures INTEGER NOT NULL DEFAULT 0);
     CREATE INDEX IF NOT EXISTS push_subscriptions_user ON push_subscriptions(user_id);
+    -- a PC shared with other accounts (2026-10-11): they watch, run and control it as the owner does; only the owner
+    -- manages it (pairing, policy, consent, sharing). Access stops with the owner's account (accounts.active).
+    CREATE TABLE IF NOT EXISTS target_shares (
+      target_id INTEGER NOT NULL REFERENCES targets(id) ON DELETE CASCADE,
+      user_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
+      created_at INTEGER NOT NULL, PRIMARY KEY(target_id, user_id));
+    CREATE INDEX IF NOT EXISTS target_shares_user ON target_shares(user_id);
   `);
   // 2026-10-01 (user decision): agents get full permissions — every PC registered so far moves to policy
   // `full` once; new PCs start there (the user can still pick ask / auto / deny per PC).
@@ -326,9 +334,9 @@ export function aidevMethods(db: Database.Database) {
       const row = db.prepare('SELECT target_id FROM session_settings WHERE user_id=? AND session_id=?').get(userId, sessionId) as { target_id: number | null } | undefined;
       return row?.target_id ?? null;
     },
-    /** Pins (or with null unpins) this chat's PC; the target must be the user's. */
+    /** Pins (or with null unpins) this chat's PC; the user must be able to use it (own or shared). */
     setSessionTarget(userId: number, sessionId: string, targetId: number | null) {
-      if (targetId !== null && !m.target(userId, targetId)) throw new Error('Target not found');
+      if (targetId !== null && !m.targetAccess(userId, targetId)) throw new Error('Target not found');
       db.prepare('INSERT INTO session_settings(user_id,session_id,target_id,updated_at) VALUES(?,?,?,?) ON CONFLICT(user_id,session_id) DO UPDATE SET target_id=excluded.target_id, updated_at=excluded.updated_at')
         .run(userId, sessionId, targetId, Date.now());
       db.prepare('DELETE FROM session_settings WHERE user_id=? AND session_id=? AND effort_cap IS NULL AND target_id IS NULL AND model_floor IS NULL AND pinned_engine IS NULL').run(userId, sessionId);
@@ -752,8 +760,41 @@ export function aidevMethods(db: Database.Database) {
       return db.prepare('SELECT command, state, answer, COALESCE(final_agent, agent) AS label, final_engine, final_model, probabilities, confidence, fallback, created_at FROM decision_log WHERE kind=? ORDER BY id').all(kind);
     },
     // ---- remote targets ---------------------------------------------------------
-    targets(userId: number) { return db.prepare('SELECT * FROM targets WHERE user_id=? ORDER BY name').all(userId) as TargetRow[]; },
+    /** The PCs this user may use: their own, then the ones shared with them (`shared_by`; never their default PC). */
+    targets(userId: number) {
+      const own = db.prepare('SELECT * FROM targets WHERE user_id=? ORDER BY name').all(userId) as TargetRow[];
+      const shared = db.prepare(`SELECT t.*, a.username AS shared_by FROM target_shares s JOIN targets t ON t.id=s.target_id JOIN accounts a ON a.id=t.user_id
+        WHERE s.user_id=? AND a.active=1 ORDER BY t.name`).all(userId) as TargetRow[];
+      return [...own, ...shared.map((t) => ({ ...t, is_default: 0 }))];
+    },
+    /** The user's own PC (managing it: pairing, policy, consent, sharing, deleting). */
     target(userId: number, id: number) { return db.prepare('SELECT * FROM targets WHERE id=? AND user_id=?').get(id, userId) as TargetRow | undefined; },
+    /** A PC the user may use — their own, or one shared with them while the owner's account is active (`shared_by`). */
+    targetAccess(userId: number, id: number) {
+      const own = m.target(userId, id);
+      if (own) return own;
+      const shared = db.prepare(`SELECT t.*, a.username AS shared_by FROM target_shares s JOIN targets t ON t.id=s.target_id JOIN accounts a ON a.id=t.user_id
+        WHERE s.user_id=? AND s.target_id=? AND a.active=1`).get(userId, id) as TargetRow | undefined;
+      return shared ? { ...shared, is_default: 0 } : undefined;
+    },
+    /** Who the owner shared the PC with. */
+    targetShares(ownerId: number, id: number) {
+      if (!m.target(ownerId, id)) throw new Error('Target not found');
+      return db.prepare('SELECT s.user_id, a.username, s.created_at FROM target_shares s JOIN accounts a ON a.id=s.user_id WHERE s.target_id=? ORDER BY a.username').all(id) as Array<{ user_id: number; username: string; created_at: number }>;
+    },
+    /** Shares the owner's PC with another account (by username); returns that account's id. */
+    shareTarget(ownerId: number, id: number, username: string) {
+      if (!m.target(ownerId, id)) throw new Error('Target not found');
+      const account = db.prepare('SELECT id FROM accounts WHERE username=? AND active=1').get(username) as { id: number } | undefined;
+      if (!account) throw new Error(`사용자 ${username}이(가) 없습니다`);
+      if (account.id === ownerId) throw new Error('자기 자신에게는 공유할 수 없습니다');
+      db.prepare('INSERT OR IGNORE INTO target_shares(target_id,user_id,created_at) VALUES(?,?,?)').run(id, account.id, Date.now());
+      return account.id;
+    },
+    unshareTarget(ownerId: number, id: number, userId: number) {
+      if (!m.target(ownerId, id)) throw new Error('Target not found');
+      return db.prepare('DELETE FROM target_shares WHERE target_id=? AND user_id=?').run(id, userId).changes;
+    },
     targetById(id: number) { return db.prepare('SELECT * FROM targets WHERE id=?').get(id) as TargetRow | undefined; },
     targetByTokenHash(hash: string) { return db.prepare('SELECT * FROM targets WHERE token_hash=?').get(hash) as TargetRow | undefined; },
     targetByPairingCode(code: string) { return db.prepare('SELECT * FROM targets WHERE pairing_code=? AND pairing_expires>?').get(code, Date.now()) as TargetRow | undefined; },

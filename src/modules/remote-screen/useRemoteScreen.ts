@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { bindRemoteInput, type StickyMods } from '@/modules/remote-screen/input';
-import { RemoteScreenSession, type InputEvent, type ScreenOptions, type ScreenState } from '@/modules/remote-screen/session';
+import { RemoteScreenSession, type ControlRequestOp, type InputEvent, type ScreenOptions, type ScreenState } from '@/modules/remote-screen/session';
+import type { ControlOp } from '@/modules/remote-screen/utils/controlButton';
 
-const IDLE: ScreenState = { status: 'closed', codec: null, note: null, error: null, controlAvailable: false, control: false, width: 0, height: 0, fps: 0, kbps: 0, stats: null, direct: false, fastPath: false };
+const IDLE: ScreenState = { status: 'closed', codec: null, note: null, error: null, controlAvailable: false, control: false, width: 0, height: 0, fps: 0, kbps: 0, stats: null, direct: false, fastPath: false, holder: null, requests: [], owner: false, controlNote: null };
 
 /**
  * Used by the workbench ScreenPane and the mobile remote screen: streams a PC's screen into `canvasRef`
@@ -47,6 +48,12 @@ export function useRemoteScreen(p: { targetId: number | null; live: boolean; opt
   }, [state.control]);
 
   const setControl = useCallback((on: boolean) => sessionRef.current?.setControl(on), []);
+  /** The control button's op (controlButton), or the holder's answer to a request (grant / deny, `to` = request id). */
+  const control = useCallback((op: ControlOp | ControlRequestOp, to?: number) => {
+    const session = sessionRef.current;
+    if (op === 'on' || op === 'off') session?.setControl(op === 'on');
+    else session?.controlRequest(op, to);
+  }, []);
   const input = useCallback((ev: InputEvent) => sessionRef.current?.input(ev), []);
-  return { canvasRef, keysRef, state, setControl, input };
+  return { canvasRef, keysRef, state, setControl, control, input };
 }

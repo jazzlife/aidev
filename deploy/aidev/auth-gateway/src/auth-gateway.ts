@@ -516,23 +516,26 @@ server.on('upgrade', async (req, socket, head) => {
     const pathname = new URL(req.url ?? '/', origin).pathname;
     if (runners.upgrade(req, socket, head, pathname)) return;
     if (preview.upgrade(req, socket, head, new URL(req.url ?? '/', origin))) return;
-    // Remote run streams for the workbench (F-03): session cookie + same origin + the caller's own target.
+    // Remote run streams for the workbench (F-03): session cookie + same origin + a target the caller may use (own or
+    // shared with them — re-checked every 5 s, so a share taken back or the owner's account disabled ends the socket).
     // Remote screen (F-07): same checks as the run streams; one program window (F-07c) as H.264 or JPEG frames.
     const screenMatch = pathname.match(/^\/api\/aidev\/targets\/(\d+)\/screen$/);
     if (screenMatch) {
       if (req.headers.origin !== origin) throw new Error('Origin rejected');
       const session = authenticate(req);
-      if (!session || !store.target(session.user.id, Number(screenMatch[1]))) throw new Error('Authentication required');
+      const targetId = Number(screenMatch[1]);
+      if (!session || !store.targetAccess(session.user.id, targetId)) throw new Error('Authentication required');
       const q = new URL(req.url ?? '/', origin).searchParams;
-      runners.attachScreen(req, socket, head, Number(screenMatch[1]), session.user.id, () => Boolean(store.session(session.sid)), screenOpts({ mode: q.get('mode'), window: q.get('window'), display: q.get('display'), fps: q.get('fps'), maxWidth: q.get('maxWidth'), bitrate: q.get('bitrate'), codec: q.get('codec'), codecs: q.get('codecs') }), Number(q.get('v') ?? 1) || 1);
+      runners.attachScreen(req, socket, head, targetId, { id: session.user.id, name: session.user.username }, () => Boolean(store.session(session.sid) && store.targetAccess(session.user.id, targetId)), screenOpts({ mode: q.get('mode'), window: q.get('window'), display: q.get('display'), fps: q.get('fps'), maxWidth: q.get('maxWidth'), bitrate: q.get('bitrate'), codec: q.get('codec'), codecs: q.get('codecs') }), Number(q.get('v') ?? 1) || 1);
       return;
     }
     const streamMatch = pathname.match(/^\/api\/aidev\/targets\/(\d+)\/stream$/);
     if (streamMatch) {
       if (req.headers.origin !== origin) throw new Error('Origin rejected');
       const session = authenticate(req);
-      if (!session || !store.target(session.user.id, Number(streamMatch[1]))) throw new Error('Authentication required');
-      runners.attachBrowser(req, socket, head, Number(streamMatch[1]), () => Boolean(store.session(session.sid)));
+      const targetId = Number(streamMatch[1]);
+      if (!session || !store.targetAccess(session.user.id, targetId)) throw new Error('Authentication required');
+      runners.attachBrowser(req, socket, head, targetId, () => Boolean(store.session(session.sid) && store.targetAccess(session.user.id, targetId)));
       return;
     }
     if (!['/ws', '/shell', '/desktop-notifications'].includes(pathname) && !/^\/plugin-ws\/[a-zA-Z0-9_-]+$/.test(pathname)) throw new Error('Unknown WS endpoint');

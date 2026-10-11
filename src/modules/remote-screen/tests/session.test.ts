@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import { RemoteScreenSession } from '@/modules/remote-screen/session';
 import type { ScreenState } from '@/modules/remote-screen/session';
+import { controlButton } from '@/modules/remote-screen/utils/controlButton';
 import { streamStatsDetail, streamStatusLine } from '@/modules/remote-screen/utils/streamStats';
 
 /** A WebSocket the test drives: what the page sent, and messages pushed to it. */
@@ -122,17 +123,77 @@ describe('remote screen session (numbered frames, acks, latency)', () => {
     await new Promise((r) => setTimeout(r, 10));
     expect(drawn).toHaveBeenCalledTimes(2);
 
-    // with control on, input goes over the channel too
+    // with control on, input goes over the channel too — once the gateway says the runner takes it there
     ws.push(JSON.stringify({ type: 'control', on: true }));
+    session.input({ t: 'move', x: 0.2, y: 0.2 });
+    expect(ws.sent).toContain(JSON.stringify({ op: 'input', ev: { t: 'move', x: 0.2, y: 0.2 } }));
+    ws.push(JSON.stringify({ type: 'control-direct', on: true }));
     session.input({ t: 'move', x: 0.5, y: 0.5 });
     expect(dc.sent).toContain(JSON.stringify({ input: { t: 'move', x: 0.5, y: 0.5 } }));
-    expect(ws.sent.some((m) => m.includes('"op":"input"'))).toBe(false);
+    expect(ws.sent.filter((m) => m.includes('"op":"input"'))).toHaveLength(1);
 
     dc.onclose?.();
     session.input({ t: 'move', x: 0.1, y: 0.1 });
     expect(ws.sent).toContain(JSON.stringify({ op: 'input', ev: { t: 'move', x: 0.1, y: 0.1 } }));
     expect(ws.sent).toContain(JSON.stringify({ op: 'p2p', on: false }));
     expect(state!.direct).toBe(false);
+    session.close();
+  });
+
+  it('control held by someone else: the button asks, withdraws, or (the owner) takes it back; the holder answers', () => {
+    vi.stubGlobal('WebSocket', FakeSocket);
+    let state: ScreenState | null = null;
+    const session = new RemoteScreenSession(() => 'ws://test/screen?v=2', document.createElement('canvas'), { mode: 'jpeg', window: 1, display: 0, fps: 5, maxWidth: 640, bitrate: 1000 }, (s) => { state = s; });
+    const ws = FakeSocket.last!;
+    expect(controlButton(state ?? session.state)).toMatchObject({ label: '제어', op: 'on' });
+
+    ws.push(JSON.stringify({ type: 'control-state', owner: false, holder: { name: 'alice', owner: true, me: false, mine: false }, requests: [] }));
+    expect(controlButton(state!)).toMatchObject({ label: '제어권 요청', op: 'request', hint: 'alice 님이 제어 중' });
+    session.controlRequest('request');
+    expect(ws.sent).toContain(JSON.stringify({ op: 'control-request' }));
+    ws.push(JSON.stringify({ type: 'control-state', owner: false, holder: { name: 'alice', owner: true, me: false, mine: false }, requests: [{ id: 4, name: 'bob', me: true }] }));
+    expect(controlButton(state!)).toMatchObject({ label: '요청 취소', op: 'cancel' });
+    ws.push(JSON.stringify({ type: 'control-note', message: 'alice 님이 제어권 요청을 거절했습니다' }));
+    expect(state!.controlNote).toBe('alice 님이 제어권 요청을 거절했습니다');
+
+    // the owner takes it back; the same account on another screen moves it here
+    ws.push(JSON.stringify({ type: 'control-state', owner: true, holder: { name: 'bob', owner: false, me: false, mine: false }, requests: [] }));
+    expect(controlButton(state!)).toMatchObject({ label: '제어권 회수', op: 'take' });
+    ws.push(JSON.stringify({ type: 'control-state', owner: false, holder: { name: 'bob', owner: false, me: false, mine: true }, requests: [] }));
+    expect(controlButton(state!)).toMatchObject({ label: '여기서 제어', op: 'on' });
+
+    // the holder answers the first who asked
+    ws.push(JSON.stringify({ type: 'control', on: true }));
+    expect(controlButton(state!)).toMatchObject({ label: '제어 중', op: 'off', active: true });
+    session.controlRequest('grant', 4);
+    expect(ws.sent).toContain(JSON.stringify({ op: 'control-grant', to: 4 }));
+    ws.push(JSON.stringify({ type: 'control', on: false, message: 'bob 님에게 제어권을 넘겨주었습니다' }));
+    expect(state!).toMatchObject({ control: false, controlNote: 'bob 님에게 제어권을 넘겨주었습니다' });
+    session.close();
+  });
+
+  it('only the holder connects directly: control opens the channel, losing control drops it', async () => {
+    vi.stubGlobal('WebSocket', FakeSocket);
+    vi.stubGlobal('RTCPeerConnection', FakePeer);
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ width: 64, height: 36, close: () => undefined })));
+    FakePeer.last = null;
+    let state: ScreenState | null = null;
+    const session = new RemoteScreenSession(() => 'ws://test/screen?v=2', document.createElement('canvas'), { mode: 'jpeg', window: 1, display: 0, fps: 5, maxWidth: 640, bitrate: 1000 }, (s) => { state = s; });
+    const ws = FakeSocket.last!;
+    ws.push(JSON.stringify({ type: 'started', streamId: 3, p2p: false, p2pInput: true }));
+    await new Promise((r) => setTimeout(r, 10));
+    expect(FakePeer.last).toBeNull();
+    ws.push(JSON.stringify({ type: 'control', on: true, p2p: true, streamId: 3 }));
+    await vi.waitFor(() => expect(ws.sent.some((m) => m.includes('"op":"rtc"'))).toBe(true));
+    ws.push(JSON.stringify({ type: 'rtc', streamId: 3, answer: 'v=0 answer' }));
+    const f1 = new Uint8Array(numberedJpeg(1));
+    FakePeer.last!.channel.push(new Uint8Array([1, ...f1]));
+    await vi.waitFor(() => expect(state!.direct).toBe(true));
+
+    ws.push(JSON.stringify({ type: 'control', on: false, message: '소유자 alice 님이 제어권을 가져갔습니다' }));
+    expect(state!).toMatchObject({ control: false, direct: false, controlNote: '소유자 alice 님이 제어권을 가져갔습니다' });
+    expect(FakePeer.last!.connectionState).toBe('closed');
+    expect(ws.sent).toContain(JSON.stringify({ op: 'p2p', on: false }));
     session.close();
   });
 

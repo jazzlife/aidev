@@ -49,7 +49,15 @@ import type { TargetRow } from './store-aidev.js';
  * says {op:"p2p", on:true} and gets no more frames here (on:false: back to this path from the next keyframe). While
  * every viewer of a stream is direct, the runner sends its frames nowhere else (`screen.relay {on:false}`).
  * While a viewer has control, the runner knows it for that viewer's stream (`screen.control {streamId, on}`): runners
- * with "p2p-input" (0.18.1+) then also take that viewer's input straight over the channel (`started.p2pInput`). */
+ * with "p2p-input" (0.18.1+) then also take that viewer's input straight over the channel (`started.p2pInput`).
+ * Several people (2026-10-11, PCs shared between accounts): viewers of one window share one runner stream whatever
+ * quality each asked for — the PC encodes each window once; the quality is the controlling viewer's, else the first
+ * viewer's (the stream restarts for everyone when it changes). One person controls a PC at a time (the control lock):
+ * the others ask ({op:"control-request"}), the holder hands over ({op:"control-grant"}) or lets go, and the owner may
+ * take it ({op:"control-take"}); every viewer gets {type:"control-state"}. Only the holder gets a direct connection —
+ * the PC sends a frame at most twice (gateway + holder) — and the runner takes direct input for a stream only while
+ * the holder is the one viewer there that ever opened a channel ({type:"control-direct"}); otherwise the holder's
+ * input goes through here, where only the holder's input passes. */
 type Store = ReturnType<typeof openStore>;
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
 type Conn = { ws: WebSocket; targetId: number; userId: number; connectedAt: number; lastFrame: number; pending: Map<number, Pending>; nextId: number; hello: boolean; version: string;
@@ -138,8 +146,23 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
   /** A viewer of a screen stream. v2 viewers (session.ts with `v=2`) take numbered frames and ack each one they
    *  have shown; older pages get the frames without the number and are acked for when sent. */
   type ScreenViewer = { needKey: boolean; v2: boolean; inFlight: Array<[number, number]>; p2p: boolean };
-  type ScreenStream = { targetId: number; streamId: number; config: string; window: number | null; viewers: Map<WebSocket, ScreenViewer>; gop: Buffer[]; gopBytes: number; format: { codec: string; width?: number; height?: number; reason?: string | null } | null; lastAt: number; frames: number; bytes: number; stopTimer: NodeJS.Timeout | null; keyAskedAt: number; acked: number; relay: boolean; loggedAt: number; controllers: number };
+  type ScreenStream = { targetId: number; streamId: number;
+    /** viewers with the same key share the stream: per window (0.7+) mode·window·codecs, else every option */ share: string;
+    /** what the runner was asked for (the quality is the holder's or the first viewer's) */ opts: ScreenOpts; perWindow: boolean;
+    window: number | null; viewers: Map<WebSocket, ScreenViewer>; gop: Buffer[]; gopBytes: number; format: { codec: string; width?: number; height?: number; reason?: string | null } | null; lastAt: number; frames: number; bytes: number; stopTimer: NodeJS.Timeout | null; keyAskedAt: number; acked: number; relay: boolean; loggedAt: number;
+    /** viewers that ever offered a direct channel for this stream (kept until they leave it: the gateway cannot see a channel close) */ rtc: Set<WebSocket>;
+    /** the runner takes input over this stream's channels (screen.control) */ directInput: boolean };
   const screens = new Map<string, ScreenStream>();          // `${targetId}:${streamId}` (F-07)
+  /** A browser on a target's screen socket, with the hooks the control lock drives. */
+  type ScreenPeer = { id: number; ws: WebSocket; userId: number; name: string; owner: boolean; send: (obj: unknown) => void;
+    /** checks consent and policy, starts the control record; false (and the reason sent) when refused */ controlOn: () => boolean;
+    controlOff: (message: string | null) => void; move: (sc: ScreenStream) => void };
+  /** One person controls a PC at a time (2026-10-11): the holder, and who asked for it, in order. */
+  type ControlLock = { holder: ScreenPeer; requests: ScreenPeer[] };
+  const peers = new Map<number, Set<ScreenPeer>>();         // targetId → its screen sockets
+  const locks = new Map<number, ControlLock>();             // targetId → who controls it
+  let nextPeer = 1;
+  const sameQuality = (a: ScreenOpts, b: ScreenOpts) => a.fps === b.fps && a.maxWidth === b.maxWidth && a.bitrate === b.bitrate;
   // F-07d (2026-10-02): a viewer more than a second behind (or with 2 MB unsent) skips to the next keyframe — the
   // runner paces itself to the quickest viewer's acks, so one slow page never holds up the others
   const SCREEN_VIEWER_BUFFER = 2 * 1024 * 1024;
@@ -182,11 +205,79 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
     if (on) askKey(sc);
   }
   const GOP_MAX = 12 * 1024 * 1024;
-  const controllers = new Map<number, Set<WebSocket>>();     // targetId → viewers with control on (input errors go to them)
   function stopScreen(sc: ScreenStream, notifyRunner: boolean) {
     if (sc.stopTimer) clearTimeout(sc.stopTimer);
     screens.delete(key(sc.targetId, sc.streamId));
     if (notifyRunner) void hub.call(sc.targetId, 'screen.stop', { streamId: sc.streamId }, 5000).catch(() => {});
+  }
+  /** Asks the runner for a stream (registered first, so viewers arriving meanwhile join it). */
+  async function openScreen(targetId: number, o: ScreenOpts, perWindow: boolean, share: string) {
+    nextStream = nextStream >= 0x3fff_fff0 ? 1 : nextStream + 1;
+    const sc: ScreenStream = { targetId, streamId: nextStream, share, opts: o, perWindow, window: perWindow ? o.window : null, viewers: new Map(), gop: [], gopBytes: 0, format: null, lastAt: 0, frames: 0, bytes: 0, stopTimer: null, keyAskedAt: 0, acked: 0, relay: true, loggedAt: 0, rtc: new Set(), directInput: false };
+    screens.set(key(targetId, sc.streamId), sc);
+    // 0.15+ runners number their frames and pace themselves by the acks (F-07d)
+    const acks = Boolean(screenCaps(targetId).features?.includes('acks'));
+    const params = perWindow
+      ? { streamId: sc.streamId, mode: o.mode, window: o.window, fps: o.fps, maxWidth: o.maxWidth, bitrate: o.bitrate, acks, codecs: o.codecs }
+      : { streamId: sc.streamId, mode: o.mode, display: o.display, fps: o.fps, maxWidth: o.maxWidth, bitrate: o.bitrate, codec: o.codec };
+    try { await hub.call(targetId, 'screen.start', params, 10_000); }
+    catch (error) { screens.delete(key(targetId, sc.streamId)); throw error; }
+    return sc;
+  }
+  /** The same window at another quality: a new runner stream, every viewer moved to it (the old one stops). */
+  async function restartScreen(sc: ScreenStream, quality: ScreenOpts) {
+    const next = await openScreen(sc.targetId, { ...sc.opts, fps: quality.fps, maxWidth: quality.maxWidth, bitrate: quality.bitrate }, sc.perWindow, sc.share);
+    const byWs = new Map([...(peers.get(sc.targetId) ?? [])].map((p) => [p.ws, p]));
+    for (const v of [...sc.viewers.keys()]) byWs.get(v)?.move(next);
+    stopScreen(sc, true);
+    return next;
+  }
+  /** Every viewer of the PC learns who controls it and who asked (`me`: this socket, `mine`: this account). */
+  function broadcastControl(targetId: number) {
+    const lock = locks.get(targetId);
+    for (const p of peers.get(targetId) ?? []) {
+      p.send({ type: 'control-state', owner: p.owner,
+        holder: lock ? { name: lock.holder.name, owner: lock.holder.owner, me: lock.holder === p, mine: lock.holder.userId === p.userId } : null,
+        requests: (lock?.requests ?? []).map((r) => ({ id: r.id, name: r.name, me: r === p })) });
+    }
+  }
+  /** The runner takes direct input for a stream only while the holder is the one viewer there with a channel. */
+  function syncDirect(targetId: number) {
+    const holder = locks.get(targetId)?.holder ?? null;
+    for (const sc of screens.values()) {
+      if (sc.targetId !== targetId) continue;
+      const on = Boolean(holder && sc.viewers.has(holder.ws) && [...sc.rtc].every((v) => v === holder.ws));
+      if (on === sc.directInput) continue;
+      sc.directInput = on;
+      hub.notifyRunner(targetId, 'screen.control', { streamId: sc.streamId, on });
+      if (holder && sc.viewers.has(holder.ws)) holder.send({ type: 'control-direct', on });
+    }
+  }
+  /** Control goes to `to` (when its checks pass); whoever had it loses it with `why`. */
+  function handOver(targetId: number, to: ScreenPeer, why: string) {
+    const lock = locks.get(targetId);
+    if (lock?.holder === to) { to.send({ type: 'control', on: true }); return broadcastControl(targetId); }
+    if (!to.controlOn()) return broadcastControl(targetId);
+    locks.set(targetId, { holder: to, requests: (lock?.requests ?? []).filter((r) => r !== to) });
+    lock?.holder.controlOff(why);
+    console.log(`[screen] target #${targetId}: control → ${to.name}${lock ? ` (from ${lock.holder.name})` : ''}`);
+    syncDirect(targetId);
+    broadcastControl(targetId);
+  }
+  /** The holder lets go (or left, or the PC went away): the first one who asked and may control gets it. */
+  function release(targetId: number, why: string | null, successors = true) {
+    const lock = locks.get(targetId);
+    if (!lock) return;
+    locks.delete(targetId);
+    lock.holder.controlOff(why);
+    const queue = successors ? [...lock.requests] : [];
+    while (queue.length) {
+      const next = queue.shift()!;
+      if (next.controlOn()) { locks.set(targetId, { holder: next, requests: queue }); break; }
+    }
+    console.log(`[screen] target #${targetId}: ${lock.holder.name} released control${locks.get(targetId) ? ` → ${locks.get(targetId)!.holder.name}` : ''}`);
+    syncDirect(targetId);
+    broadcastControl(targetId);
   }
   const notificationListeners = new Set<(targetId: number, method: string, params: unknown) => void>();
   const screenCaps = (targetId: number) => { try { return JSON.parse(store.targetById(targetId)?.capabilities ?? '{}') as { runner?: string; features?: string[]; screen?: boolean; control?: boolean }; } catch { return {}; } };
@@ -307,6 +398,8 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
       for (const v of sc.viewers.keys()) if (v.readyState === WebSocket.OPEN) v.send(JSON.stringify({ type: 'offline' }));
       stopScreen(sc, false);
     }
+    // nobody controls a PC that is gone (and no request carries over to its next connection)
+    if (conns.get(conn.targetId) === conn) release(conn.targetId, '원격 PC 연결이 끊겨 제어가 해제되었습니다', false);
     if (conns.get(conn.targetId) === conn) {
       conns.delete(conn.targetId);
       const t = store.targetById(conn.targetId);
@@ -462,7 +555,7 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
           }
           if (msg.method === 'input.error' && msg.params && typeof msg.params === 'object') {
             const text = String((msg.params as { error?: string }).error ?? 'input failed').slice(0, 500);
-            for (const v of controllers.get(conn.targetId) ?? []) if (v.readyState === WebSocket.OPEN) v.send(JSON.stringify({ type: 'error', message: text }));
+            locks.get(conn.targetId)?.holder.send({ type: 'error', message: text });
             return;
           }
           if (msg.method === 'tunnel.closed' && msg.params && typeof msg.params === 'object') {
@@ -611,39 +704,49 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
       c.ws.send(JSON.stringify({ jsonrpc: '2.0', method, params }));
       return true;
     },
-    /** Browser side of `/api/aidev/targets/:id/screen` (session and ownership checked by the caller).
+    /** Who controls the PC's screen now (the REST input API lets only that account through). */
+    controlHolder(targetId: number) { const h = locks.get(targetId)?.holder; return h ? { userId: h.userId, name: h.name } : null; },
+    /** Browser side of `/api/aidev/targets/:id/screen` (session and access checked by the caller; `alive` re-checks both).
      *  client → {op:"config", mode, window, display, fps, maxWidth, bitrate, codec, codecs} | {op:"control", on} | {op:"input", ev}
      *           | {op:"ack", seq} | {op:"rtc", offer} | {op:"p2p", on}
-     *  server → {type:"started"|"format"|"control"|"error"|"offline"} + binary frames `[kind][flags][data]` */
-    attachScreen(req: IncomingMessage, socket: Duplex, head: Buffer, targetId: number, userId: number, alive: () => boolean, initial: ScreenOpts, proto = 1) {
+     *           | {op:"control-request"} | {op:"control-cancel"} | {op:"control-grant", to?} | {op:"control-deny", to?} | {op:"control-take"} (owner)
+     *  server → {type:"started"|"format"|"control"|"control-state"|"control-direct"|"control-note"|"error"|"offline"} + binary frames `[kind][flags][data]` */
+    attachScreen(req: IncomingMessage, socket: Duplex, head: Buffer, targetId: number, user: { id: number; name: string }, alive: () => boolean, initial: ScreenOpts, proto = 1) {
       wss.handleUpgrade(req, socket, head, (ws) => {
         let current: ScreenStream | null = null;
         let control: { remoteRunId: number; events: number; startedAt: number; perWindow: boolean } | null = null;
+        /** the quality this viewer asked for last: its stream takes it while this viewer leads (holder, or first there) */
+        let prefs = initial;
         let windowStart = Date.now(); let windowCount = 0;
         const send = (obj: unknown) => { if (ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj)); };
-        // input over the direct channel: the runner takes it only for the stream a controlling viewer watches
-        const controlStream = (sc: ScreenStream | null, on: boolean) => {
-          if (!sc) return;
-          sc.controllers = Math.max(0, sc.controllers + (on ? 1 : -1));
-          hub.notifyRunner(targetId, 'screen.control', { streamId: sc.streamId, on: sc.controllers > 0 });
-        };
+        const isHolder = () => locks.get(targetId)?.holder === peer;
+        // a direct path is worth trying for numbered video (the page acks over it); only the holder opens one
+        const p2pOf = (sc: ScreenStream) => { const f = screenCaps(targetId).features ?? []; return sc.opts.mode === 'video' && proto >= 2 && f.includes('p2p') && f.includes('acks'); };
         const leave = () => {
           const sc = current; current = null;
           if (!sc) return;
-          if (control) controlStream(sc, false);
-          sc.viewers.delete(ws);
+          sc.viewers.delete(ws); sc.rtc.delete(ws);
           relay(sc);
+          syncDirect(targetId);
           if (!sc.viewers.size && !sc.stopTimer) sc.stopTimer = setTimeout(() => { if (!sc.viewers.size) stopScreen(sc, true); }, 8000);
         };
-        const controlOff = () => {
-          if (!control) return;
-          controlStream(current, false);
-          hub.notifyRunner(targetId, 'input.end', {});
-          store.finishRemoteRun(control.remoteRunId, { exitCode: 0, artifacts: { events: control.events, durationMs: Date.now() - control.startedAt } });
-          control = null;
-          controllers.get(targetId)?.delete(ws);
+        /** This viewer takes `sc`'s frames from now on (it joined, or was moved there when the stream restarted). */
+        const attach = (sc: ScreenStream) => {
+          const caps = screenCaps(targetId);
+          if (sc.stopTimer) { clearTimeout(sc.stopTimer); sc.stopTimer = null; }
+          const p2p = p2pOf(sc);
+          send({ type: 'started', ...sc.opts, perWindow: sc.perWindow, control: Boolean(caps.control && caps.features?.includes('input')), streamId: sc.streamId, p2p: p2p && isHolder(), p2pInput: p2p && Boolean(caps.features?.includes('p2p-input')) });
+          if (sc.format) send({ type: 'format', ...sc.format });
+          const v2 = proto >= 2;
+          for (const f of sc.gop) ws.send(v2 ? f : unnumbered(f), { binary: true });
+          sc.viewers.set(ws, { needKey: sc.gop.length === 0, v2, inFlight: [], p2p: false });
+          relay(sc);
+          if (sc.gop.length === 0 && sc.format) askKey(sc);   // a running stream of an unchanged window sends nothing on its own
+          current = sc;
+          syncDirect(targetId);
         };
         const join = async (o: ScreenOpts) => {
+          prefs = o;
           leave();
           try {
             if (!hub.online(targetId)) throw new RpcError(-32010, '원격 PC가 오프라인입니다');
@@ -651,42 +754,72 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
             const caps = screenCaps(targetId);
             const perWindow = Boolean(caps.features?.includes('windows'));
             if (perWindow && o.window === null) throw new RpcError(-32602, '볼 프로그램 창을 고르세요 (창 목록: GET /api/aidev/targets/:id/windows)');
-            const win = perWindow ? o.window : null;
             const mode = o.mode === 'video' && !caps.features?.includes('video') ? 'jpeg' : o.mode;   // runner < 0.6: JPEG only
             const codec = perWindow ? 'h264' : o.codec;   // the runner's own encoder is H.264 (0.6 used ffmpeg: h264/vp8)
-            // viewers that decode different codecs get their own stream (the runner picks VP9 only when asked)
-            const config = `${mode}|${win ?? `d${o.display}`}|${o.fps}|${o.maxWidth}|${o.bitrate}|${codec}|${o.codecs.join(',')}`;
-            let sc = [...screens.values()].find((s) => s.targetId === targetId && s.config === config);
-            if (!sc) {
-              nextStream = nextStream >= 0x3fff_fff0 ? 1 : nextStream + 1;
-              sc = { targetId, streamId: nextStream, config, window: win, viewers: new Map(), gop: [], gopBytes: 0, format: null, lastAt: 0, frames: 0, bytes: 0, stopTimer: null, keyAskedAt: 0, acked: 0, relay: true, loggedAt: 0, controllers: 0 };
-              screens.set(key(targetId, sc.streamId), sc);
-              // 0.15+ runners number their frames and pace themselves by the acks (F-07d)
-              const acks = Boolean(caps.features?.includes('acks'));
-              const params = perWindow
-                ? { streamId: sc.streamId, mode, window: win, fps: o.fps, maxWidth: o.maxWidth, bitrate: o.bitrate, acks, codecs: o.codecs }
-                : { streamId: sc.streamId, mode, display: o.display, fps: o.fps, maxWidth: o.maxWidth, bitrate: o.bitrate, codec };
-              try { await hub.call(targetId, 'screen.start', params, 10_000); }
-              catch (error) { screens.delete(key(targetId, sc.streamId)); throw error; }
-            }
-            if (sc.stopTimer) { clearTimeout(sc.stopTimer); sc.stopTimer = null; }
+            const n: ScreenOpts = { ...o, mode, codec, window: perWindow ? o.window : null };
+            // one stream per window for everyone who decodes the same codecs (the runner picks VP9 only when asked);
+            // older runners stream a whole display with each viewer's own options
+            const share = perWindow ? `${mode}|${n.window}|${n.codecs.join(',')}` : `${mode}|d${n.display}|${n.fps}|${n.maxWidth}|${n.bitrate}|${codec}|${n.codecs.join(',')}`;
+            let sc = [...screens.values()].filter((s) => s.targetId === targetId && s.share === share).pop() ?? null;   // the newest: a restart may be in flight
+            // the quality is the holder's, else the first viewer's
+            if (sc && (isHolder() || !sc.viewers.size) && !sameQuality(sc.opts, n)) { const old = sc; sc = await restartScreen(old, n).catch(() => old); }
+            sc ??= await openScreen(targetId, n, perWindow, share);
             if (ws.readyState !== WebSocket.OPEN) return;
-            // a direct path is worth trying for numbered video (the page acks over it)
-            const p2p = mode === 'video' && proto >= 2 && Boolean(caps.features?.includes('p2p') && caps.features.includes('acks'));
-            const p2pInput = p2p && Boolean(caps.features?.includes('p2p-input'));
-            send({ type: 'started', ...o, window: win, mode, codec, perWindow, control: Boolean(caps.control && caps.features?.includes('input')), streamId: sc.streamId, p2p, p2pInput });
-            if (sc.format) send({ type: 'format', ...sc.format });
-            const v2 = proto >= 2;
-            for (const f of sc.gop) ws.send(v2 ? f : unnumbered(f), { binary: true });
-            sc.viewers.set(ws, { needKey: sc.gop.length === 0, v2, inFlight: [], p2p: false });
-            relay(sc);
-            if (sc.gop.length === 0 && sc.format) askKey(sc);   // a running stream of an unchanged window sends nothing on its own
-            current = sc;
-            if (control) controlStream(sc, true);
+            attach(sc);
           } catch (error) {
             send({ type: 'error', message: error instanceof Error ? error.message : String(error) });
           }
         };
+        const controlOn = () => {
+          const caps = screenCaps(targetId);
+          const target = store.targetById(targetId);
+          if (!caps.features?.includes('input')) { send({ type: 'error', message: tooOld(caps, '원격 제어', '0.7.0') }); return false; }
+          if (!caps.control) { send({ type: 'error', message: '이 PC에서 원격 제어가 꺼져 있습니다 — 러너를 0.13.2 이상으로 업데이트하면 첫 실행에서 자동으로 켜집니다 (PC에서 직접 껐다면 `aidev-runner consent control on`)' }); return false; }
+          if (!target || target.policy === 'deny') { send({ type: 'error', message: '이 대상의 실행 정책이 "실행 금지"입니다' }); return false; }
+          if (!control) {
+            const remoteRunId = store.addRemoteRun({ runId: null, targetId, userId: user.id, kind: 'control', cmd: current?.window != null ? `remote control (window #${current.window})` : 'remote control (mouse/keyboard)', cwd: null, risk: null, approvedBy: 'user' });
+            control = { remoteRunId, events: 0, startedAt: Date.now(), perWindow: Boolean(caps.features?.includes('windows')) };
+          }
+          const sc = current;
+          send({ type: 'control', on: true, ...(sc && p2pOf(sc) ? { p2p: true, streamId: sc.streamId } : {}) });
+          // the stream takes the holder's quality (everyone watching moves with it)
+          if (sc?.perWindow && !sameQuality(sc.opts, prefs)) void restartScreen(sc, prefs).catch(() => {});
+          return true;
+        };
+        const controlOff = (message: string | null) => {
+          if (!control) return;
+          hub.notifyRunner(targetId, 'input.end', {});
+          store.finishRemoteRun(control.remoteRunId, { exitCode: 0, artifacts: { events: control.events, durationMs: Date.now() - control.startedAt } });
+          control = null;
+          // the direct connection was the holder's: frames come through here again (from the next keyframe)
+          const sc = current; const state = sc?.viewers.get(ws);
+          if (sc && state?.p2p) { state.p2p = false; state.needKey = true; state.inFlight = []; relay(sc); askKey(sc); }
+          send({ type: 'control', on: false, ...(message ? { message } : {}) });
+        };
+        const peer: ScreenPeer = {
+          id: nextPeer++, ws, userId: user.id, name: user.name, owner: store.targetById(targetId)?.user_id === user.id, send, controlOn, controlOff,
+          move: (sc) => {
+            const old = current; current = null;
+            if (old) { old.viewers.delete(ws); old.rtc.delete(ws); }
+            if (ws.readyState === WebSocket.OPEN) attach(sc);
+          },
+        };
+        /** Asks for control: free, or held by this account elsewhere → taken now; else in line until the holder answers or lets go. */
+        const claim = () => {
+          const lock = locks.get(targetId);
+          if (!lock || lock.holder === peer || lock.holder.userId === user.id) return handOver(targetId, peer, '같은 계정의 다른 화면으로 제어가 옮겨졌습니다');
+          if (!lock.requests.includes(peer)) lock.requests.push(peer);
+          broadcastControl(targetId);
+        };
+        const dropRequest = () => {
+          const lock = locks.get(targetId);
+          if (!lock?.requests.includes(peer)) return;
+          lock.requests = lock.requests.filter((r) => r !== peer);
+          broadcastControl(targetId);
+        };
+        if (!peers.has(targetId)) peers.set(targetId, new Set());
+        peers.get(targetId)!.add(peer);
+        broadcastControl(targetId);
         void join(initial);
         const timer = setInterval(() => { if (!alive()) ws.close(1008, 'Session expired'); else if (ws.readyState === WebSocket.OPEN) ws.ping(); }, 5000);
         ws.on('message', (data, binary) => {
@@ -703,7 +836,10 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
           }
           if (msg.op === 'rtc') {
             const sc = current;
-            if (!sc || typeof msg.offer !== 'string' || msg.offer.length > 20_000) return send({ type: 'rtc', error: '직접 연결을 시작할 수 없습니다' });
+            if (!sc || !isHolder() || typeof msg.offer !== 'string' || msg.offer.length > 20_000) return send({ type: 'rtc', streamId: sc?.streamId, error: isHolder() ? '직접 연결을 시작할 수 없습니다' : '직접 연결은 제어하는 사람만 씁니다' });
+            // from now on this viewer may hold a channel on the stream (the runner cannot tell whose input comes over it)
+            sc.rtc.add(ws);
+            syncDirect(targetId);
             hub.call<{ answer?: string }>(targetId, 'screen.rtc', { streamId: sc.streamId, offer: msg.offer }, 10_000)
               .then((r) => send({ type: 'rtc', streamId: sc.streamId, answer: r.answer }))
               .catch((error) => {
@@ -715,30 +851,37 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
           }
           if (msg.op === 'p2p') {
             const sc = current; const state = sc?.viewers.get(ws);
-            if (!sc || !state) return;
+            if (!sc || !state || (msg.on && !isHolder())) return;   // only the holder takes frames directly
             state.p2p = Boolean(msg.on);
             console.log(`[screen] target #${targetId} stream ${sc.streamId}: a viewer is ${state.p2p ? 'direct (p2p)' : 'back on the gateway path'}`);
             // back on this path: from the next keyframe
             if (!state.p2p) { state.needKey = true; state.inFlight = []; askKey(sc); }
             return relay(sc);
           }
-          if (msg.op === 'control') {
-            if (!msg.on) { controlOff(); return send({ type: 'control', on: false }); }
-            const caps = screenCaps(targetId);
-            const target = store.targetById(targetId);
-            if (!caps.features?.includes('input')) return send({ type: 'error', message: tooOld(caps, '원격 제어', '0.7.0') });
-            if (!caps.control) return send({ type: 'error', message: '이 PC에서 원격 제어가 꺼져 있습니다 — 러너를 0.13.2 이상으로 업데이트하면 첫 실행에서 자동으로 켜집니다 (PC에서 직접 껐다면 `aidev-runner consent control on`)' });
-            if (!target || target.policy === 'deny') return send({ type: 'error', message: '이 대상의 실행 정책이 "실행 금지"입니다' });
-            if (!control) {
-              const remoteRunId = store.addRemoteRun({ runId: null, targetId, userId, kind: 'control', cmd: current?.window != null ? `remote control (window #${current.window})` : 'remote control (mouse/keyboard)', cwd: null, risk: null, approvedBy: 'user' });
-              control = { remoteRunId, events: 0, startedAt: Date.now(), perWindow: Boolean(caps.features?.includes('windows')) };
-              if (!controllers.has(targetId)) controllers.set(targetId, new Set());
-              controllers.get(targetId)!.add(ws);
-              controlStream(current, true);
+          if (msg.op === 'control' || msg.op === 'control-request') {
+            if (msg.op === 'control' && !msg.on) {
+              if (isHolder()) release(targetId, null);
+              else { dropRequest(); send({ type: 'control', on: false }); }
+              return;
             }
-            return send({ type: 'control', on: true });
+            return claim();
           }
-          if (msg.op === 'input' && control && msg.ev && typeof msg.ev === 'object') {
+          if (msg.op === 'control-cancel') return dropRequest();
+          if (msg.op === 'control-take') {
+            if (!peer.owner) return send({ type: 'error', message: '제어권 회수는 이 PC의 소유자만 할 수 있습니다' });
+            return handOver(targetId, peer, `소유자 ${user.name} 님이 제어권을 가져갔습니다`);
+          }
+          if (msg.op === 'control-grant' || msg.op === 'control-deny') {
+            const lock = locks.get(targetId);
+            if (lock?.holder !== peer) return;
+            const to = lock.requests.find((r) => r.id === Number(msg.to)) ?? lock.requests[0];
+            if (!to) return;
+            if (msg.op === 'control-grant') return handOver(targetId, to, `${to.name} 님에게 제어권을 넘겨주었습니다`);
+            lock.requests = lock.requests.filter((r) => r !== to);
+            to.send({ type: 'control-note', message: `${user.name} 님이 제어권 요청을 거절했습니다` });
+            return broadcastControl(targetId);
+          }
+          if (msg.op === 'input' && control && isHolder() && msg.ev && typeof msg.ev === 'object') {
             const now = Date.now();
             if (now - windowStart > 1000) { windowStart = now; windowCount = 0; }
             if (++windowCount > 300) return;   // a stuck client cannot flood the PC
@@ -749,7 +892,14 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
             hub.notifyRunner(targetId, 'input.event', current?.window != null ? { ...ev, win: current.window } : ev);
           }
         });
-        ws.on('close', () => { clearInterval(timer); controlOff(); leave(); });
+        ws.on('close', () => {
+          clearInterval(timer);
+          peers.get(targetId)?.delete(peer);
+          if (!peers.get(targetId)?.size) peers.delete(targetId);
+          leave();
+          if (isHolder()) release(targetId, null); else dropRequest();
+          controlOff(null);   // a record left open by a lock lost meanwhile
+        });
         ws.on('error', () => ws.terminate());
       });
     },

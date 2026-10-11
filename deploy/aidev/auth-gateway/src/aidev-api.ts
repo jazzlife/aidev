@@ -760,10 +760,11 @@ export function createAidevApi(deps: AidevDeps) {
       }
 
       // ---- targets (remote PCs with aidev-runner; F-02) ----------------------------------------
+      // a shared PC (2026-10-11) shows who shared it and never its pairing code (that would let a runner take its place)
       const targetView = (t: NonNullable<ReturnType<Store['target']>>) => ({
-        ...t, token_hash: undefined, paired: Boolean(t.token_hash),
-        pairing_code: t.pairing_expires && t.pairing_expires > Date.now() ? t.pairing_code : null,
-        pairing_expires: t.pairing_expires && t.pairing_expires > Date.now() ? t.pairing_expires : null,
+        ...t, token_hash: undefined, paired: Boolean(t.token_hash), owner: !t.shared_by, shared_by: t.shared_by ?? null,
+        pairing_code: !t.shared_by && t.pairing_expires && t.pairing_expires > Date.now() ? t.pairing_code : null,
+        pairing_expires: !t.shared_by && t.pairing_expires && t.pairing_expires > Date.now() ? t.pairing_expires : null,
         tags: t.tags ? JSON.parse(t.tags) : [], capabilities: t.capabilities ? JSON.parse(t.capabilities) : null,
         allowed_roots: t.allowed_roots ? JSON.parse(t.allowed_roots) : [],
         online: deps.runners?.online(t.id) ?? false, connection: deps.runners?.connection(t.id) ?? null,
@@ -792,7 +793,7 @@ export function createAidevApi(deps: AidevDeps) {
       const rpcMatch = rest.match(/^\/targets\/(\d+)\/(rpc|sync-report)$/);
       if (rpcMatch && m === 'POST') {
         const id = Number(rpcMatch[1]);
-        const target = store.target(uid, id);
+        const target = store.targetAccess(uid, id);
         if (!target) throw new HttpError(404, 'Target not found');
         if (rpcMatch[2] === 'sync-report') {
           const b = await readJson(req);
@@ -825,7 +826,7 @@ export function createAidevApi(deps: AidevDeps) {
       if (screenMatch) {
         if (!deps.runners) throw new HttpError(503, 'runner hub unavailable');
         const id = Number(screenMatch[1]);
-        const target = store.target(uid, id);
+        const target = store.targetAccess(uid, id);
         if (!target) throw new HttpError(404, 'Target not found');
         const agentCall = session.sid.startsWith('runtime:');
         const status = (error: unknown) => (error instanceof RpcError ? (error.code === -32010 ? 409 : error.code === -32030 ? 403 : error.code === -32021 ? 501 : error.code === -32032 ? 404 : 503) : 503);
@@ -865,13 +866,16 @@ export function createAidevApi(deps: AidevDeps) {
       if (inputMatch && m === 'POST') {
         if (!deps.runners) throw new HttpError(503, 'runner hub unavailable');
         const id = Number(inputMatch[1]);
-        const target = store.target(uid, id);
+        const target = store.targetAccess(uid, id);
         if (!target) throw new HttpError(404, 'Target not found');
         if (target.policy === 'deny') throw new HttpError(403, '이 대상의 실행 정책이 "실행 금지"입니다');
         if (!deps.runners.online(id)) throw new HttpError(409, 'target is offline');
         const caps = (() => { try { return JSON.parse(target.capabilities ?? '{}') as { control?: boolean; features?: string[]; runner?: string }; } catch { return {}; } })();
         if (!caps.features?.includes('input') || !caps.features?.includes('windows')) throw new HttpError(501, `이 PC의 러너(${caps.runner ?? '?'})는 창 제어를 지원하지 않습니다 — 0.7.0 이상으로 교체하세요`);
         if (!caps.control) throw new HttpError(403, '이 PC에서 원격 제어가 꺼져 있습니다 — 러너를 0.13.2 이상으로 업데이트하면 첫 실행에서 자동으로 켜집니다 (PC에서 직접 껐다면 `aidev-runner consent control on`)');
+        // one person controls a PC at a time (2026-10-11): while someone else holds the screen control, input waits
+        const holder = deps.runners.controlHolder(id);
+        if (holder && holder.userId !== uid) throw new HttpError(409, `${holder.name} 님이 이 PC를 원격 제어 중입니다 — 제어가 끝난 뒤 다시 시도하세요`);
         const b = await readJson(req);
         const win = Number(b.window);
         if (!Number.isInteger(win) || win <= 0) throw new HttpError(400, 'window (id from the window list) is required');
@@ -917,7 +921,7 @@ export function createAidevApi(deps: AidevDeps) {
       if (deviceMatch) {
         if (!deps.runners) throw new HttpError(503, 'runner hub unavailable');
         const id = Number(deviceMatch[1]);
-        const target = store.target(uid, id);
+        const target = store.targetAccess(uid, id);
         if (!target) throw new HttpError(404, 'Target not found');
         const agentCall = session.sid.startsWith('runtime:');
         const status = (error: unknown) => (error instanceof RpcError ? (error.code === -32010 ? 409 : error.code === -32030 ? 403 : error.code === -32021 ? 501 : error.code === -32033 ? 404 : error.code === -32034 || error.code === -32602 ? 400 : 503) : 503);
@@ -954,7 +958,7 @@ export function createAidevApi(deps: AidevDeps) {
       if (devMatch && m === 'GET') {
         if (!deps.runners || !deps.preview) throw new HttpError(503, 'runner hub unavailable');
         const id = Number(devMatch[1]);
-        const target = store.target(uid, id);
+        const target = store.targetAccess(uid, id);
         if (!target) throw new HttpError(404, 'Target not found');
         const port = Math.round(Number(url.searchParams.get('port')) || 5173);
         if (port < 1024 || port > 65535) throw new HttpError(400, 'port must be 1024-65535');
@@ -970,7 +974,7 @@ export function createAidevApi(deps: AidevDeps) {
       if (previewMatch) {
         if (!deps.preview) throw new HttpError(503, 'preview unavailable');
         const id = Number(previewMatch[1]);
-        const target = store.target(uid, id);
+        const target = store.targetAccess(uid, id);
         if (!target) throw new HttpError(404, 'Target not found');
         if (m === 'DELETE' && previewMatch[2]) { deps.preview.forget(uid, id, Number(previewMatch[2])); return json(res, 200, { ok: true }), true; }
         if (m === 'POST' && !previewMatch[2]) {
@@ -979,7 +983,7 @@ export function createAidevApi(deps: AidevDeps) {
           if (port < 1024 || port > 65535) throw new HttpError(400, 'port must be 1024-65535');
           if (target.policy === 'deny') throw new HttpError(403, '이 대상의 실행 정책이 "실행 금지"입니다');
           const agentCall = session.sid.startsWith('runtime:');
-          const entry = await deps.preview.open(target, port, agentCall ? 'agent' : 'user', optStr(b.label, 120) ?? null, deps.publicOrigin ?? '');
+          const entry = await deps.preview.open(uid, target, port, agentCall ? 'agent' : 'user', optStr(b.label, 120) ?? null, deps.publicOrigin ?? '');
           const hint = entry.error
             ? /업데이트|오프라인/.test(entry.error)
               ? `미리보기 준비 실패: ${entry.error}`
@@ -993,7 +997,7 @@ export function createAidevApi(deps: AidevDeps) {
       const execMatch = rest.match(/^\/targets\/(\d+)\/(exec|runs)$/);
       if (execMatch) {
         const id = Number(execMatch[1]);
-        const target = store.target(uid, id);
+        const target = store.targetAccess(uid, id);
         if (!target) throw new HttpError(404, 'Target not found');
         if (execMatch[2] === 'runs' && m === 'GET') {
           const limit = Math.min(Math.max(Number(url.searchParams.get('limit')) || 30, 1), 200);
@@ -1042,7 +1046,7 @@ export function createAidevApi(deps: AidevDeps) {
       if (debugStart && m === 'POST') {
         const dbg = deps.debug;
         if (!dbg || !deps.runners) throw new HttpError(503, 'debugging unavailable');
-        const target = store.target(uid, Number(debugStart[1]));
+        const target = store.targetAccess(uid, Number(debugStart[1]));
         if (!target) throw new HttpError(404, 'Target not found');
         const agentCall = session.sid.startsWith('runtime:');
         const b = await readJson(req);
@@ -1121,7 +1125,7 @@ export function createAidevApi(deps: AidevDeps) {
       if (consoleStart && m === 'POST') {
         const con = deps.console;
         if (!con || !deps.runners) throw new HttpError(503, 'consoles unavailable');
-        const target = store.target(uid, Number(consoleStart[1]));
+        const target = store.targetAccess(uid, Number(consoleStart[1]));
         if (!target) throw new HttpError(404, 'Target not found');
         const agentCall = session.sid.startsWith('runtime:');
         const b = await readJson(req);
@@ -1174,7 +1178,7 @@ export function createAidevApi(deps: AidevDeps) {
       // a text file on the PC (allowed folders only) — the debugger's source view (runner ≥ 0.8)
       const fileMatch = rest.match(/^\/targets\/(\d+)\/file$/);
       if (fileMatch && m === 'GET') {
-        const target = store.target(uid, Number(fileMatch[1]));
+        const target = store.targetAccess(uid, Number(fileMatch[1]));
         if (!target) throw new HttpError(404, 'Target not found');
         if (!deps.runners?.online(target.id)) throw new HttpError(409, `대상 ${target.name}이(가) 오프라인입니다`);
         try {
@@ -1267,10 +1271,29 @@ export function createAidevApi(deps: AidevDeps) {
           return json(res, 200, { ok: true }), true;
         }
       }
+      // ---- sharing (2026-10-11): the owner lets other accounts use the PC — GET / POST {username} / DELETE :userId ----
+      const shareMatch = rest.match(/^\/targets\/(\d+)\/shares(?:\/(\d+))?$/);
+      if (shareMatch) {
+        const id = Number(shareMatch[1]);
+        if (!store.target(uid, id)) throw store.targetAccess(uid, id) ? new HttpError(403, '공유는 이 PC의 소유자만 관리합니다') : new HttpError(404, 'Target not found');
+        if (session.sid.startsWith('runtime:')) throw new HttpError(403, 'sharing is managed by the user');
+        if (!shareMatch[2] && m === 'GET') return json(res, 200, { shares: store.targetShares(uid, id) }), true;
+        if (!shareMatch[2] && m === 'POST') {
+          const b = await readJson(req);
+          try { store.shareTarget(uid, id, str(b.username, 'username', 64).trim().toLowerCase()); } catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'share failed'); }
+          console.log(`[runner] target #${id} shared by user #${uid} with ${String(b.username).slice(0, 64)}`);
+          return json(res, 200, { shares: store.targetShares(uid, id) }), true;
+        }
+        // their open screens and terminals close within 5 s (the sockets re-check access)
+        if (shareMatch[2] && m === 'DELETE') { store.unshareTarget(uid, id, Number(shareMatch[2])); return json(res, 200, { shares: store.targetShares(uid, id) }), true; }
+      }
       const targetMatch = rest.match(/^\/targets\/(\d+)(\/pair\/refresh|\/ping|\/refresh-caps|\/consent)?$/);
       if (targetMatch) {
         const id = Number(targetMatch[1]);
-        if (!store.target(uid, id)) throw new HttpError(404, 'Target not found');
+        const access = store.targetAccess(uid, id);
+        if (!access) throw new HttpError(404, 'Target not found');
+        // pairing, consent, policy, name and deleting stay with the owner
+        if (access.shared_by && targetMatch[2] !== '/ping' && targetMatch[2] !== '/refresh-caps') throw new HttpError(403, `이 PC는 ${access.shared_by} 님이 공유한 PC입니다 — 설정은 소유자만 바꿀 수 있습니다`);
         if (targetMatch[2] === '/ping' && m === 'POST') {
           const t0 = Date.now();
           try { const result = await deps.runners!.call(id, 'runner.ping', {}, 10_000); return json(res, 200, { ok: true, rtt_ms: Date.now() - t0, result }), true; }
@@ -1292,8 +1315,8 @@ export function createAidevApi(deps: AidevDeps) {
         if (targetMatch[2] === '/refresh-caps' && m === 'POST') {
           try {
             const caps = await deps.runners!.call<Record<string, unknown>>(id, 'runner.capabilities', {}, 20_000);
-            store.updateTarget(uid, id, { capabilities: caps, lastSeen: Date.now(), allowedRoots: Array.isArray(caps.allowed_roots) ? (caps.allowed_roots as unknown[]).map(String) : null });
-            return json(res, 200, { target: targetView(store.target(uid, id)!) }), true;
+            store.updateTarget(access.user_id, id, { capabilities: caps, lastSeen: Date.now(), allowedRoots: Array.isArray(caps.allowed_roots) ? (caps.allowed_roots as unknown[]).map(String) : null });
+            return json(res, 200, { target: targetView(store.targetAccess(uid, id)!) }), true;
           } catch (error) { throw new HttpError(409, error instanceof Error ? error.message : 'runner unavailable'); }
         }
         if (targetMatch[2] && m === 'POST') { const code = crypto.randomBytes(4).toString('hex').toUpperCase(); store.updateTarget(uid, id, { pairingCode: code, pairingExpires: Date.now() + 10 * 60_000 }); return json(res, 200, { pairing_code: code, expires_in: 600 }), true; }

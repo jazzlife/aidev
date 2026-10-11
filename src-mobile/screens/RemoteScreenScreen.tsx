@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 
 import { aidevApi } from '@/modules/aidev-router';
-import { isWholeScreen, RemoteConsole, screenSocketUrl, streamStatusLine, useRemoteScreen, useScreenSources, type ScreenOptions, type StickyMods } from '@/modules/remote-screen';
+import { controlButton, isWholeScreen, RemoteConsole, screenSocketUrl, streamStatusLine, useRemoteScreen, useScreenSources, type ScreenOptions, type StickyMods } from '@/modules/remote-screen';
 import type { RemoteScreenSource } from '@/shared/types';
 import { TopBar } from '@m/components/TopBar';
 import { useOpener, useParent } from '@m/lib/nav';
@@ -12,7 +12,8 @@ import { useOpener, useParent } from '@m/lib/nav';
  * window — starts paused on one snapshot (data and battery); "스트리밍" plays it live (H.264/WebCodecs,
  * JPEG fallback); with control on: tap = click, long press = right click, drag = drag, two fingers =
  * scroll, the key bar and the phone keyboard type into that window — or a console program running
- * through the runner (its terminal, with a key bar for Esc/Tab/Ctrl-C/arrows).
+ * through the runner (its terminal, with a key bar for Esc/Tab/Ctrl-C/arrows). One person controls a PC at a time:
+ * the others ask for it, the holder hands it over, the PC's owner takes it back.
  */
 type Target = { id: number; name: string; online: boolean; capabilities?: { screen?: boolean; control?: boolean } | null };
 const QUALITY: Array<{ id: string; label: string; opts: Omit<ScreenOptions, 'window' | 'display'> }> = [
@@ -55,7 +56,7 @@ export function RemoteScreenScreen() {
   const q = QUALITY.find((x) => x.id === quality) ?? QUALITY[0];
   const watching = source?.kind === 'window' || source?.kind === 'display';
   const opts: ScreenOptions = { ...q.opts, window: source?.kind === 'window' ? source.id : null, display: source?.kind === 'display' ? source.id : 1 };
-  const { canvasRef, keysRef, state, setControl, input } = useRemoteScreen({ targetId, live: streaming && watching, opts, url: screenSocketUrl, sticky: () => stickyRef.current });
+  const { canvasRef, keysRef, state, control, input } = useRemoteScreen({ targetId, live: streaming && watching, opts, url: screenSocketUrl, sticky: () => stickyRef.current });
 
   useEffect(() => { stickyRef.current = sticky; }, [sticky]);
   useEffect(() => { aidevApi.targets().then((r) => setTarget((r.targets as unknown as Target[]).find((t) => t.id === targetId) ?? null)).catch(() => setTarget(null)); }, [targetId]);
@@ -78,6 +79,10 @@ export function RemoteScreenScreen() {
   const pressKey = (k: { key: string; code: string }) => { input({ t: 'key', key: k.key, code: k.code, mods: sticky }); setSticky({}); };
   const toggle = (m: keyof StickyMods) => setSticky((s) => ({ ...s, [m]: !s[m] }));
   const win = source?.kind === 'window' ? windows.find((w) => w.id === source.id) ?? null : null;
+  const button = controlButton(state);
+  // the first who asked, for the holder to answer
+  const asker = state.control ? state.requests[0] ?? null : null;
+  const controlLine = state.controlNote ?? (button.op === 'on' || button.op === 'off' ? null : button.hint);
   const subtitle = !watching ? (source?.kind === 'console' ? '콘솔' : '프로그램을 고르세요') : streaming ? streamStatusLine(state) : '정지됨 — 마지막 화면';
 
   return (
@@ -98,9 +103,17 @@ export function RemoteScreenScreen() {
       {watching ? (
         <div className="flex items-center gap-2 border-b border-line bg-bg px-3 py-2 text-[13px]">
           {!streaming ? <button type="button" onClick={() => { void snapshot(); }} className="m-touch rounded-lg border border-line px-3 py-1">새로 찍기</button> : null}
-          <button type="button" disabled={!streaming || !state.controlAvailable} onClick={() => setControl(!state.control)} className={`m-touch ml-auto rounded-lg px-3 py-1 disabled:opacity-40 ${state.control ? 'bg-danger text-white' : 'border border-line'}`}>{state.control ? '제어 중' : '제어'}</button>
+          <button type="button" disabled={!streaming || !state.controlAvailable} onClick={() => control(button.op)} className={`m-touch ml-auto rounded-lg px-3 py-1 disabled:opacity-40 ${button.active ? 'bg-danger text-white' : 'border border-line'}`}>{button.label}</button>
         </div>
       ) : null}
+      {watching && asker ? (
+        <div className="flex items-center gap-2 border-b border-line bg-bg px-3 py-2 text-[13px]">
+          <span className="min-w-0 flex-1">{asker.name} 님이 제어권을 요청했습니다{state.requests.length > 1 ? ` (대기 ${state.requests.length}명)` : ''}</span>
+          <button type="button" onClick={() => control('grant', asker.id)} className="m-touch rounded-lg bg-accent px-3 py-1 text-accent-ink">넘겨주기</button>
+          <button type="button" onClick={() => control('deny', asker.id)} className="m-touch rounded-lg border border-line px-3 py-1">계속 사용</button>
+        </div>
+      ) : null}
+      {watching && streaming && controlLine ? <div className="bg-bg px-3 py-1.5 text-[12px] text-muted">{controlLine}</div> : null}
       {(watching && (state.error || snapNote || state.note)) || sources.error ? <div className="bg-bg px-3 py-1.5 text-[12px] text-danger">{(watching ? state.error ?? snapNote ?? state.note : null) ?? sources.error}</div> : null}
       {watching && !state.controlAvailable && streaming && state.status === 'live' ? <div className="bg-bg px-3 py-1.5 text-[12px] text-muted">이 PC는 원격 제어가 꺼져 있습니다 (PC에서 <code>aidev-runner consent control on</code>).</div> : null}
       {source?.kind === 'console' && targetId ? (

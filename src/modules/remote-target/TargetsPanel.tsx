@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Check, ChevronDown, ChevronRight, Copy, Laptop, Plus, RefreshCw, Star, Trash2, Wifi, WifiOff } from 'lucide-react';
+import { Check, ChevronDown, ChevronRight, Copy, Laptop, Plus, RefreshCw, Star, Trash2, Users, Wifi, WifiOff, X } from 'lucide-react';
 
 import { api, readApiJson } from '@/shared/api';
 import { copyTextToClipboard } from '@/shared/utils';
@@ -20,6 +20,8 @@ type Target = {
   status: string;
   /** F-08: the account's default PC for remote work (1/0 from the gateway) */
   is_default?: number | boolean;
+  /** another account's PC shared with this one: the owner's username (only the owner manages it) */
+  shared_by?: string | null;
   last_seen: number | null;
   pairing_code: string | null;
   pairing_expires: number | null;
@@ -84,13 +86,46 @@ function PairingCard({ target, files, onRefresh }: { target: Target; files: Runn
   );
 }
 
-/** One target row: status, platform, and (expanded) capabilities and actions. */
+/** The owner's list of accounts that may use the PC (watch, run, control — one controller at a time). */
+function SharesSection({ targetId, setNote }: { targetId: number; setNote: (note: string | null) => void }) {
+  // shares: accounts the PC is shared with; null until loaded
+  const [shares, setShares] = useState<Array<{ user_id: number; username: string }> | null>(null);
+  // username: the account being added
+  const [username, setUsername] = useState('');
+  const apply = useCallback(async (work: () => Promise<Response>) => {
+    try { setShares((await readApiJson<{ shares: Array<{ user_id: number; username: string }> }>(await work())).shares); }
+    catch (error) { setNote(error instanceof Error ? error.message : '공유 처리 실패'); }
+  }, [setNote]);
+  useEffect(() => { void apply(() => api.targets.shares(targetId)); }, [apply, targetId]);
+  const add = () => { const name = username.trim().toLowerCase(); if (!name) return; setUsername(''); void apply(() => api.targets.share(targetId, name)); };
+  return (
+    <div className="space-y-1">
+      <div className="flex items-center gap-1.5 text-muted-foreground"><Users size={11} /> 공유 — 화면·명령·터미널을 함께 쓰고, 제어는 한 번에 한 명</div>
+      <div className="flex flex-wrap gap-1">
+        {shares?.map((share) => (
+          <span key={share.user_id} className="inline-flex items-center gap-0.5 rounded bg-muted px-1.5 text-[11px]">
+            {share.username}
+            <button type="button" aria-label={`${share.username} 공유 해제`} title="공유 해제 — 열려 있는 화면·터미널도 몇 초 안에 닫힙니다" onClick={() => { void apply(() => api.targets.unshare(targetId, share.user_id)); }} className="rounded hover:text-red-600"><X size={10} /></button>
+          </span>
+        ))}
+        {shares && !shares.length ? <span className="text-[11px] text-muted-foreground">공유한 사용자 없음</span> : null}
+      </div>
+      <div className="flex gap-1.5">
+        <input aria-label="공유할 사용자 이름" placeholder="사용자 이름" value={username} onChange={(event) => setUsername(event.target.value)} onKeyDown={(event) => { if (event.key === 'Enter') add(); }} className="h-6 w-36 rounded border border-border bg-background px-1.5" />
+        <button type="button" disabled={!username.trim()} onClick={add} className="h-6 rounded border border-border px-2 hover:bg-accent disabled:opacity-50">공유</button>
+      </div>
+    </div>
+  );
+}
+
+/** One target row: status, platform, and (expanded) capabilities and actions (managing it: the owner only). */
 function TargetRow({ target, files, reload, setNote }: { target: Target; files: RunnerFile[]; reload: () => void; setNote: (note: string | null) => void }) {
   // expanded: details (tools, devices, roots) and actions are shown on demand to keep the list short
   const [open, setOpen] = useState(false);
   // confirmDelete: deleting disconnects the runner immediately, so it takes a second click
   const [confirmDelete, setConfirmDelete] = useState(false);
   const caps = target.capabilities;
+  const shared = Boolean(target.shared_by);
   const act = async (work: () => Promise<Response>, done?: (body: Record<string, unknown>) => string | null) => {
     setNote(null);
     try {
@@ -107,11 +142,12 @@ function TargetRow({ target, files, reload, setNote }: { target: Target; files: 
         {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         <span className={`h-2 w-2 shrink-0 rounded-full ${state.dot}`} aria-hidden />
         <span className="font-medium">{target.name}</span>
+        {shared ? <span title={`${target.shared_by} 님이 공유한 PC — 설정은 소유자만 바꿀 수 있습니다`} className="inline-flex items-center gap-0.5 rounded bg-sky-500/15 px-1 text-[10px] text-sky-700 dark:text-sky-300"><Users size={9} /> {target.shared_by} 공유</span> : null}
         {target.is_default ? <span title="기본 PC — 명령이 PC를 지정하지 않으면 여기서 실행" className="inline-flex items-center gap-0.5 rounded bg-amber-500/15 px-1 text-[10px] text-amber-700 dark:text-amber-400"><Star size={9} className="fill-current" /> 기본</span> : null}
         <span className="truncate text-muted-foreground">{[caps?.os ?? target.platform, caps?.arch ?? target.arch, caps?.hostname].filter(Boolean).join(' · ')}</span>
         <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{state.text}</span>
       </button>
-      {!target.paired || target.pairing_code ? (target.pairing_code ? <PairingCard target={target} files={files} onRefresh={() => { void act(() => api.targets.refreshPairing(target.id)); }} /> : (
+      {!shared && (!target.paired || target.pairing_code) ? (target.pairing_code ? <PairingCard target={target} files={files} onRefresh={() => { void act(() => api.targets.refreshPairing(target.id)); }} /> : (
         <button type="button" onClick={() => { void act(() => api.targets.refreshPairing(target.id)); }} className="mt-1 inline-flex h-6 items-center gap-1 rounded border border-border px-2 hover:bg-accent"><RefreshCw size={11} /> 페어링 코드 발급</button>
       )) : null}
       {open ? (
@@ -125,21 +161,26 @@ function TargetRow({ target, files, reload, setNote }: { target: Target; files: 
               <div className="aidev-selectable text-[10px] text-muted-foreground">러너 {caps.runner ?? '?'} · 셸 {caps.shell ?? '?'} · 화면 캡처 {caps.screen ? '허용' : '꺼짐'}</div>
             </>
           ) : <div className="text-muted-foreground">러너가 아직 연결된 적이 없습니다.</div>}
-          <label className="flex items-center gap-1.5">
-            <span className="text-muted-foreground">원격 실행</span>
-            <select aria-label="실행 정책" value={target.policy} onChange={(event) => { void act(() => api.targets.update(target.id, { policy: event.target.value })); }} className="h-6 rounded border border-border bg-background px-1">
-              {(Object.keys(POLICY_LABEL) as Target['policy'][]).map((policy) => <option key={policy} value={policy}>{POLICY_LABEL[policy]}</option>)}
-            </select>
-          </label>
-          <label className="flex items-center gap-1.5" title="명령이 PC를 지정하지 않고 채팅에 고정된 PC도 없으면 이 PC에서 실행합니다">
-            <input type="checkbox" checked={Boolean(target.is_default)} onChange={(event) => { void act(() => api.targets.update(target.id, { default: event.target.checked })); }} />
-            <span>기본 PC (원격 작업을 보낼 곳)</span>
-          </label>
+          {shared ? <div className="text-muted-foreground">원격 실행: {POLICY_LABEL[target.policy]} · {target.shared_by} 님이 관리</div> : (
+            <>
+              <label className="flex items-center gap-1.5">
+                <span className="text-muted-foreground">원격 실행</span>
+                <select aria-label="실행 정책" value={target.policy} onChange={(event) => { void act(() => api.targets.update(target.id, { policy: event.target.value })); }} className="h-6 rounded border border-border bg-background px-1">
+                  {(Object.keys(POLICY_LABEL) as Target['policy'][]).map((policy) => <option key={policy} value={policy}>{POLICY_LABEL[policy]}</option>)}
+                </select>
+              </label>
+              <label className="flex items-center gap-1.5" title="명령이 PC를 지정하지 않고 채팅에 고정된 PC도 없으면 이 PC에서 실행합니다">
+                <input type="checkbox" checked={Boolean(target.is_default)} onChange={(event) => { void act(() => api.targets.update(target.id, { default: event.target.checked })); }} />
+                <span>기본 PC (원격 작업을 보낼 곳)</span>
+              </label>
+              <SharesSection targetId={target.id} setNote={setNote} />
+            </>
+          )}
           <div className="flex flex-wrap gap-1.5">
             <button type="button" disabled={!target.online} onClick={() => { void act(() => api.targets.ping(target.id), (b) => (b.ok ? `응답 ${String(b.rtt_ms)}ms` : `응답 없음: ${String(b.error)}`)); }} className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 hover:bg-accent disabled:opacity-50"><Wifi size={11} /> 연결 확인</button>
             <button type="button" disabled={!target.online} onClick={() => { void act(() => api.targets.refreshCapabilities(target.id), () => '정보를 새로 받았습니다'); }} className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 hover:bg-accent disabled:opacity-50"><RefreshCw size={11} /> 정보 새로고침</button>
-            {target.paired && !target.pairing_code ? <button type="button" onClick={() => { void act(() => api.targets.refreshPairing(target.id), () => '새 코드로 다시 페어링하면 기존 러너 연결은 끊어집니다'); }} className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 hover:bg-accent">다시 페어링</button> : null}
-            {confirmDelete
+            {!shared && target.paired && !target.pairing_code ? <button type="button" onClick={() => { void act(() => api.targets.refreshPairing(target.id), () => '새 코드로 다시 페어링하면 기존 러너 연결은 끊어집니다'); }} className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 hover:bg-accent">다시 페어링</button> : null}
+            {shared ? null : confirmDelete
               ? <button type="button" onClick={() => { void act(() => api.targets.remove(target.id), () => `${target.name} 삭제 — 러너 연결을 끊었습니다`); }} className="inline-flex h-6 items-center gap-1 rounded bg-red-600 px-2 text-white"><Trash2 size={11} /> 삭제 확인</button>
               : <button type="button" onClick={() => setConfirmDelete(true)} className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 text-red-600 hover:bg-accent"><Trash2 size={11} /> 삭제</button>}
           </div>

@@ -19,6 +19,10 @@
  * channel; if the channel fails it says `on:false` and the gateway path resumes from the next keyframe. With runners
  * that take it (`started.p2pInput`, 0.18.1+) the remote-control input goes over the channel as well — the gateway path
  * crosses the server (and its CDN) twice per event, the channel goes straight to the PC.
+ * Several people (2026-10-11, PCs shared between accounts): one of them controls the PC at a time. `control-state`
+ * says who (`holder`) and who asked (`requests`); the others ask (`controlRequest('request')`), the holder hands over
+ * or declines, and the owner may take it back. Only the holder opens a direct connection (`control {on, p2p}`), and its
+ * input goes over the channel only while the gateway says the runner takes it there (`control-direct`).
  * Fast path (F-18, docs/aidev/CONNECTIVITY.md): where the gateway has an address that skips the CDN
  * (`/api/aidev/realtime` → origin and a 2-minute ticket; the session cookie is host-only), the socket opens there
  * first and falls back to this origin when it does not open within FAST_OPEN_MS.
@@ -54,7 +58,17 @@ export type ScreenState = {
   direct: boolean;
   /** the socket goes to the gateway's CDN-free address */
   fastPath: boolean;
+  /** who controls the PC now (`me`: this page, `mine`: this account elsewhere, `owner`: the PC's owner); null = nobody */
+  holder: { name: string; owner: boolean; me: boolean; mine: boolean } | null;
+  /** who asked for control, in order (the holder answers the first) */
+  requests: Array<{ id: number; name: string; me: boolean }>;
+  /** this account owns the PC: it may take control back from whoever has it */
+  owner: boolean;
+  /** what happened to control here (taken back by the owner, handed over, a request declined) */
+  controlNote: string | null;
 };
+/** What a viewer asks about control of a PC someone else may hold (the holder answers with grant / deny). */
+export type ControlRequestOp = 'request' | 'cancel' | 'grant' | 'deny' | 'take';
 
 const KIND_H264 = 1;
 const KIND_VP8 = 2;
@@ -164,7 +178,9 @@ export class RemoteScreenSession {
   private peer: DirectPeer | null = null;
   /** the runner takes input over the direct channel (else it always goes through the gateway) */
   private directInput = false;
-  state: ScreenState = { status: 'connecting', codec: null, note: null, error: null, controlAvailable: false, control: false, width: 0, height: 0, fps: 0, kbps: 0, stats: null, direct: false, fastPath: false };
+  /** the gateway says the runner takes this page's input over the channel now (only the holder's, alone there) */
+  private controlDirect = false;
+  state: ScreenState = { status: 'connecting', codec: null, note: null, error: null, controlAvailable: false, control: false, width: 0, height: 0, fps: 0, kbps: 0, stats: null, direct: false, fastPath: false, holder: null, requests: [], owner: false, controlNote: null };
 
   constructor(private url: (opts: ScreenOptions) => string, private canvas: HTMLCanvasElement, private opts: ScreenOptions, private onState: (s: ScreenState) => void) {
     if (opts.mode === 'video' && !webCodecsAvailable()) this.opts = { ...opts, mode: 'jpeg', fps: 5 };
@@ -204,7 +220,8 @@ export class RemoteScreenSession {
   }
 
   private onText(raw: string) {
-    let m: { type: string; message?: string; codec?: string; reason?: string | null; control?: boolean; on?: boolean; seq?: number; streamId?: number; p2p?: boolean; p2pInput?: boolean; answer?: string } & Record<string, unknown>;
+    let m: { type: string; message?: string; codec?: string; reason?: string | null; control?: boolean; on?: boolean; seq?: number; streamId?: number; p2p?: boolean; p2pInput?: boolean; answer?: string;
+      holder?: ScreenState['holder']; requests?: ScreenState['requests']; owner?: boolean } & Record<string, unknown>;
     try { m = JSON.parse(raw); } catch { return; }
     if (m.type === 'stats') return this.onStats(m);
     if (m.type === 'started') {
@@ -212,6 +229,7 @@ export class RemoteScreenSession {
       this.lastSeq = 0;
       this.closePeer();
       this.directInput = Boolean(m.p2pInput);
+      this.controlDirect = false;
       this.patch({ status: 'live', error: null, controlAvailable: Boolean(m.control), direct: false });
       if (m.p2p && typeof m.streamId === 'number' && typeof RTCPeerConnection !== 'undefined') void this.openPeer(m.streamId);
     } else if (m.type === 'rtc') {
@@ -223,9 +241,22 @@ export class RemoteScreenSession {
       // the note may come after its keyframe (it travels the other path): reset only before that frame
       if (!(typeof m.seq === 'number' && this.lastSeq >= m.seq)) this.resetDecoder();
     }
-    else if (m.type === 'control') this.patch({ control: Boolean(m.on), error: null });
+    else if (m.type === 'control') this.onControl(m);
+    else if (m.type === 'control-state') this.patch({ holder: m.holder ?? null, requests: m.requests ?? [], owner: Boolean(m.owner) });
+    else if (m.type === 'control-direct') this.controlDirect = Boolean(m.on);
+    else if (m.type === 'control-note') this.patch({ controlNote: m.message ?? null });
     else if (m.type === 'error') this.patch({ error: m.message ?? '오류' });
     else if (m.type === 'offline') this.patch({ status: 'closed', error: '원격 PC가 오프라인입니다', control: false });
+  }
+
+  /** Control on or off here. Only the holder takes frames directly: it opens the channel now, and drops it when control goes. */
+  private onControl(m: { on?: boolean; message?: string; p2p?: boolean; streamId?: number }) {
+    const on = Boolean(m.on);
+    this.patch({ control: on, error: null, controlNote: m.message ?? null });
+    if (!on) {
+      this.controlDirect = false;
+      if (this.peer) this.peerLost(this.peer);
+    } else if (m.p2p && typeof m.streamId === 'number' && !this.peer && typeof RTCPeerConnection !== 'undefined') void this.openPeer(m.streamId);
   }
 
   private onStats(m: Record<string, unknown>) {
@@ -384,9 +415,13 @@ export class RemoteScreenSession {
 
   setControl(on: boolean) { this.send({ op: 'control', on }); }
 
+  /** Control held by someone else: ask for it or withdraw; as the holder, hand it to `to` (first asker by default) or
+   *  decline; as the PC's owner, take it back. */
+  controlRequest(op: ControlRequestOp, to?: number) { this.send({ op: `control-${op}`, ...(to !== undefined ? { to } : {}) }); }
+
   input(ev: InputEvent) {
     if (!this.state.control) return;
-    const channel = this.directInput && this.peer?.live ? this.peer.channel : null;
+    const channel = this.directInput && this.controlDirect && this.peer?.live ? this.peer.channel : null;
     if (channel?.readyState === 'open') channel.send(JSON.stringify({ input: ev }));
     else this.send({ op: 'input', ev });
   }
