@@ -7,6 +7,7 @@ import { useTheme } from '@/shared/context/ThemeContext';
 import { useQuickSettingsDrag } from '@/modules/quick-settings-panel/hooks/useQuickSettingsDrag';
 import { useQuickSettingsOpen } from '@/modules/quick-settings-panel/hooks/useQuickSettingsOpen';
 import type { PreferenceToggleKey, QuickSettingsPreferences } from '@/shared/types';
+import QuickSettingsAccount from '@/modules/quick-settings-panel/QuickSettingsAccount';
 import QuickSettingsContent from '@/modules/quick-settings-panel/QuickSettingsContent';
 import QuickSettingsHandle from '@/modules/quick-settings-panel/QuickSettingsHandle';
 import QuickSettingsPanelHeader from '@/modules/quick-settings-panel/QuickSettingsPanelHeader';
@@ -85,6 +86,7 @@ function QuickSettingsPanelView({ showHandle = true }: QuickSettingsPanelViewPro
             preferences={quickSettingsPreferences}
             onPreferenceChange={handlePreferenceChange}
           />
+          <QuickSettingsAccount />
         </div>
       </div>
 

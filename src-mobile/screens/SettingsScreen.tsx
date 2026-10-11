@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react';
 
-import { useAuth } from '@/modules/chat-core';
 import { aidevApi, claudeAuth, PRIORITY_CHOICES, priorityKey, routingStore, useClaudeAuth, useEnginePriority, useRoutingState, type EnginesResult, type RoutingMode } from '@/modules/aidev-router';
 import { EffortCapControl } from '@m/components/EffortCapControl';
 import { ClaudeLoginSheet } from '@m/components/ClaudeLoginSheet';
@@ -21,7 +20,6 @@ const MODES: Array<{ value: RoutingMode; label: string; hint: string }> = [
 
 /** Mobile settings: routing mode, effort cap, engines, saved permission rules, voice, notifications, UI switch, sign out. */
 export function SettingsScreen() {
-  const { user, logout } = useAuth();
   useParent('/');
   const routing = useRoutingState();
   // back from GitHub login started here: its outcome above the accounts
@@ -117,13 +115,6 @@ export function SettingsScreen() {
         <section>
           <div className="text-[12px] uppercase tracking-wide text-muted mb-2">화면</div>
           <button type="button" onClick={switchToWorkbench} className="w-full rounded-xl2 border border-line bg-surface px-4 py-3 text-left text-[15px]">데스크탑 작업대(IDE)로 전환</button>
-        </section>
-        <section>
-          <div className="text-[12px] uppercase tracking-wide text-muted mb-2">계정</div>
-          <div className="rounded-xl2 border border-line bg-surface px-4 py-3 flex items-center">
-            <span className="flex-1 text-[15px]">{user?.username}</span>
-            <button type="button" onClick={logout} className="text-danger text-[14px]">로그아웃</button>
-          </div>
         </section>
       </main>
     </div>

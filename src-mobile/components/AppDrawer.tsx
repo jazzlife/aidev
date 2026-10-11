@@ -1,5 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from 'react';
-import { AppWindow, Bot, Bug, FolderGit2, Link2, MessageSquare, Monitor, Settings, X } from 'lucide-react';
+import { AppWindow, Bot, Bug, FolderGit2, Link2, LogOut, MessageSquare, Monitor, Settings, X } from 'lucide-react';
 import { useLocation } from 'react-router-dom';
 
 import { useAuth } from '@/modules/chat-core';
@@ -14,7 +14,8 @@ import { collapseWorkspacesRoot } from '@/shared/utils';
  * The app's common menu, reachable from every screen (☰ in the top bar, or a swipe from the left edge). No lists here
  * (C-12.1): "현재 작업" — the project a new conversation starts in and the conversation last opened (running or not) —
  * then the remote tools (remote control, preview, debugger, PC pairing), the agent catalog and settings. Projects and
- * conversations are listed on the home tabs. Top bars keep only the page's own actions.
+ * conversations are listed on the home tabs. Top bars keep only the page's own actions. The account (who is signed in,
+ * and signing out) sits at the bottom.
  */
 type DrawerApi = { open: () => void };
 const DrawerContext = createContext<DrawerApi>({ open: () => undefined });
@@ -31,7 +32,7 @@ const SWIPE_PX = 60;
 function Drawer({ onClose }: { onClose: () => void }) {
   const go = useGo();
   const { pathname } = useLocation();
-  const { user } = useAuth();
+  const { user, logout } = useAuth();
   const project = useCurrentProject();
   const conversation = useCurrentConversation();
   const [targets, setTargets] = useState<Target[] | null>(null);
@@ -98,6 +99,11 @@ function Drawer({ onClose }: { onClose: () => void }) {
           {section('기타')}
           <button type="button" className={row(pathname.startsWith('/catalog'))} onClick={() => open('/catalog')}><Bot size={18} className="text-muted" /> Agent 카탈로그</button>
           <button type="button" className={row(pathname === '/settings')} onClick={() => open('/settings')}><Settings size={18} className="text-muted" /> 설정</button>
+        </div>
+        <div className="flex items-center gap-3 border-t border-line px-4 py-2" data-testid="drawer-account">
+          <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-elevated text-[14px] font-semibold uppercase">{user?.username?.charAt(0) ?? '?'}</span>
+          <span className="min-w-0 flex-1 truncate text-[15px]">{user?.username ?? ''}</span>
+          <button type="button" onClick={() => { onClose(); logout(); }} className="m-touch flex items-center gap-1.5 rounded-lg px-2 text-[14px] text-danger"><LogOut size={16} /> 로그아웃</button>
         </div>
       </nav>
     </div>
