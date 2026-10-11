@@ -82,6 +82,19 @@ No `ports:` entries are present in the stack. The NPM Proxy Host should be:
 NPM's normal Websocket Support setting adds the HTTP/1.1 upgrade headers. Do not
 create an additional Nginx or Caddy instance.
 
+## User administration page
+
+`https://dev.nado.work/admin` manages accounts in the browser: add, rename, admin role, disable/enable,
+password reset, delete. It has its own sign-in, stored as a hash in the gateway database (never in this
+repository); set or change it on the AI-PC with the password on stdin:
+
+```sh
+read -rs PW && printf '%s\n' "$PW" | docker exec -i aidev-auth-gateway node /srv/app/current/control/gateway/dist/manage-users.js admin-login <admin-username>
+```
+
+A new account and a reset password start as `123456`; signing in with it asks for a new password
+(8+ characters) before the first session.
+
 ## Simple user command
 
 The AI-PC has a small host command for routine account management. `add` creates
@@ -109,9 +122,9 @@ sudo install -m 0755 deploy/aidev/aidev-user /usr/local/bin/aidev-user
 The internal command is also available when a shell wrapper is inconvenient:
 
 ```sh
-printf '%s\n' 'use-a-long-password' | docker exec -i aidev-auth-gateway node /app/dist/manage-users.js add alice
-docker exec aidev-auth-gateway node /app/dist/manage-users.js list
-docker exec aidev-auth-gateway node /app/dist/manage-users.js delete alice
+printf '%s\n' 'use-a-long-password' | docker exec -i aidev-auth-gateway node /srv/app/current/control/gateway/dist/manage-users.js add alice
+docker exec aidev-auth-gateway node /srv/app/current/control/gateway/dist/manage-users.js list
+docker exec aidev-auth-gateway node /srv/app/current/control/gateway/dist/manage-users.js delete alice
 ```
 
 The username is only the account label. The manager assigns a non-reusable runtime

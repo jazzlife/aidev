@@ -24,11 +24,14 @@ const AUTH_ERROR_MESSAGES = {
   sessionExpired: 'errors.sessionExpired',
 } as const;
 
-type AuthActionResult = { success: true } | { success: false; error: string };
+/** `passwordChangeRequired`: the password was right, but the account must choose a new one first (changePassword). */
+type AuthActionResult = { success: true } | { success: false; error: string; passwordChangeRequired?: boolean };
 
 type AuthSessionPayload = {
   token?: string;
   user?: AuthUser;
+  /** `password_change_required` for a new or reset account (gateway /admin) */
+  code?: string;
   error?: string;
   message?: string;
 };
@@ -58,6 +61,8 @@ type AuthContextValue = {
   hasCompletedOnboarding: boolean;
   error: string | null;
   login: (username: string, password: string) => Promise<AuthActionResult>;
+  /** Sets a new password (the account's current one proves who it is) and signs in with it. */
+  changePassword: (username: string, password: string, newPassword: string) => Promise<AuthActionResult>;
   register: (username: string, password: string) => Promise<AuthActionResult>;
   logout: () => void;
   refreshOnboardingStatus: () => Promise<void>;
@@ -300,6 +305,9 @@ export function AuthProvider({ children }: AuthProviderProps) {
         const response = await api.auth.login(username, password);
         const payload = await parseJsonSafely<AuthSessionPayload>(response);
 
+        if (payload?.code === 'password_change_required') {
+          return { success: false, error: resolveApiErrorMessage(payload, ''), passwordChangeRequired: true };
+        }
         if (!response.ok || !payload?.token || !payload.user) {
           const message = resolveApiErrorMessage(payload, t(AUTH_ERROR_MESSAGES.loginFailed));
           setError(message);
@@ -313,6 +321,27 @@ export function AuthProvider({ children }: AuthProviderProps) {
       } catch (caughtError) {
         console.error('Login error:', caughtError);
         setError(t(AUTH_ERROR_MESSAGES.networkError));
+        return { success: false, error: t(AUTH_ERROR_MESSAGES.networkError) };
+      }
+    },
+    [checkOnboardingStatus, setSession, t],
+  );
+
+  const changePassword = useCallback<AuthContextValue['changePassword']>(
+    async (username, password, newPassword) => {
+      try {
+        setError(null);
+        const response = await api.auth.changePassword(username, password, newPassword);
+        const payload = await parseJsonSafely<AuthSessionPayload>(response);
+        if (!response.ok || !payload?.token || !payload.user) {
+          return { success: false, error: resolveApiErrorMessage(payload, t(AUTH_ERROR_MESSAGES.loginFailed)) };
+        }
+        setSession(payload.user, payload.token);
+        setNeedsSetup(false);
+        await checkOnboardingStatus();
+        return { success: true };
+      } catch (caughtError) {
+        console.error('Password change error:', caughtError);
         return { success: false, error: t(AUTH_ERROR_MESSAGES.networkError) };
       }
     },
@@ -363,11 +392,13 @@ export function AuthProvider({ children }: AuthProviderProps) {
       hasCompletedOnboarding,
       error,
       login,
+      changePassword,
       register,
       logout,
       refreshOnboardingStatus,
     }),
     [
+      changePassword,
       error,
       hasCompletedOnboarding,
       isLoading,

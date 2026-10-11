@@ -166,6 +166,12 @@ export const api = {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ username, password }),
     }),
+    /** A new or reset account (gateway /admin) chooses its password before it gets a session; answers like login. */
+    changePassword: (username: string, password: string, newPassword: string) => fetch('/api/auth/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password, newPassword }),
+    }),
     register: (username: string, password: string) => fetch('/api/auth/register', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

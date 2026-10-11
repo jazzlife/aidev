@@ -37,7 +37,9 @@ export function openStore(filename: string) {
     CREATE INDEX IF NOT EXISTS decision_log_user ON decision_log(user_id, created_at);
   `);
   migrateAidev(db);
-  type Account = { id: number; username: string; password_hash: string; runtime: string; active: number; engines: string; default_engine: string | null; role: string };
+  type Account = { id: number; username: string; password_hash: string; runtime: string; active: number; engines: string; default_engine: string | null; role: string;
+    /** set by the administrator (new account, password reset): the next sign-in must choose a new password first */ must_change_password: number };
+  const hashPassword = async (password: string) => { const salt = crypto.randomBytes(16).toString('hex'); return `${salt}:${(await derive(password, salt)).toString('hex')}`; };
   const aidev = aidevMethods(db);
   return {
     db,
@@ -147,11 +149,23 @@ export function openStore(filename: string) {
       const expected = Buffer.from(hash, 'hex');
       return expected.length === derived.length && crypto.timingSafeEqual(expected, derived);
     },
-    async add(username: string, password: string, runtime: string, active = 1) {
+    async add(username: string, password: string, runtime: string, active = 1, mustChange = false) {
       if (!/^[a-z0-9_.-]{3,64}$/.test(username) || password.length < 4 || password.length > 256) throw new Error('Use a lowercase username and a password of 4–256 characters');
-      const salt = crypto.randomBytes(16).toString('hex');
-      const encoded = `${salt}:${(await derive(password, salt)).toString('hex')}`;
-      db.prepare('INSERT INTO accounts(username,password_hash,runtime,active) VALUES(?,?,?,?)').run(username, encoded, runtime, active);
+      db.prepare('INSERT INTO accounts(username,password_hash,runtime,active,must_change_password) VALUES(?,?,?,?,?)').run(username, await hashPassword(password), runtime, active, mustChange ? 1 : 0);
+    },
+    /** A new password (the user's own change, or the administrator's reset with `mustChange`); every session ends. */
+    async setPassword(userId: number, password: string, mustChange: boolean) {
+      if (password.length < 4 || password.length > 256) throw new Error('password of 4–256 characters');
+      const encoded = await hashPassword(password);
+      db.transaction(() => {
+        db.prepare('UPDATE accounts SET password_hash=?, must_change_password=? WHERE id=?').run(encoded, mustChange ? 1 : 0, userId);
+        db.prepare('DELETE FROM gateway_sessions WHERE user_id=?').run(userId);
+      })();
+    },
+    /** The administrator page's sign-in (app_kv `admin.login`, never in the repository): username + scrypt hash. */
+    async setAdminLogin(username: string, password: string) {
+      if (!/^[a-z0-9_.-]{3,64}$/.test(username) || password.length < 8 || password.length > 256) throw new Error('admin login: a lowercase username and a password of 8–256 characters');
+      db.prepare('INSERT INTO app_kv(k,v) VALUES(?,?) ON CONFLICT(k) DO UPDATE SET v=excluded.v').run('admin.login', JSON.stringify({ username, hash: await hashPassword(password) }));
     },
     remove(username: string) {
       db.transaction(() => {

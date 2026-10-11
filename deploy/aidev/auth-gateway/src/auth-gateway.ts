@@ -19,6 +19,7 @@ import { startBackupSchedule } from './db-backup.js';
 import { seedAgents } from './seed-agents.js';
 import { createPlatformShip } from './platform-ship.js';
 import { createGithubOauth } from './github-oauth.js';
+import { createAdmin, INITIAL_PASSWORD } from './admin.js';
 
 const port = Number(process.env.PORT ?? 8080);
 // The release this process was started from; differs from /srv/app/current/RELEASE until restarted.
@@ -85,7 +86,7 @@ async function body(req: IncomingMessage) {
     if (size > 4096) throw new Error('Body exceeds 4KB');
     chunks.push(Buffer.from(chunk));
   }
-  return JSON.parse(Buffer.concat(chunks).toString()) as { username?: unknown; password?: unknown };
+  return JSON.parse(Buffer.concat(chunks).toString()) as { username?: unknown; password?: unknown; newPassword?: unknown };
 }
 async function managerRequest(runtimeName: string, operation: 'provision' | 'start' | 'delete') {
   if (!/^[a-z0-9_.-]{3,64}$/.test(runtimeName)) throw new Error('Invalid runtime');
@@ -211,6 +212,16 @@ const aidev = createAidevApi({
   },
 });
 aidev.knowledgeRefresher.startSchedule();
+// /admin: user administration with its own sign-in (admin.ts)
+const admin = createAdmin({ store, secret, origin, json, provision: (runtime) => managerRequest(runtime, 'provision'), removeRuntime: (runtime) => managerRequest(runtime, 'delete') });
+/** A signed-in session for `user`: the token in the body and the host-only cookie. */
+async function signIn(res: ServerResponse, user: { id: number; username: string; runtime: string }) {
+  await ready(user.runtime);
+  if (!store.account(user.username)?.active) return json(res, 401, { error: 'Account disabled' });
+  const sid = store.issue(user.id, Date.now() + ttl * 1000);
+  const token = jwt.sign({ sid, userId: user.id, username: user.username }, secret, { expiresIn: ttl, issuer: 'aidev', audience: origin, algorithm: 'HS256' });
+  return json(res, 200, { success: true, user: { id: user.id, username: user.username }, token }, { 'set-cookie': setCookie(token) });
+}
 startTierPolicySchedule(store);
 startBackupSchedule(store);   // B-17: daily DB backup, 7 days kept
 // The SPA is served by the gateway for every user, signed in or not, from STATIC_ROOT.
@@ -437,10 +448,11 @@ const server = http.createServer(async (req, res) => {
       catch (error) { return json(res, (error as { status?: number }).status ?? 400, { error: error instanceof Error ? error.message : 'pairing failed' }); }
     }
     if (req.headers.origin && req.headers.origin !== origin) return json(res, 403, { error: 'Origin rejected' });
-    if (url.pathname.startsWith('/admin')) return json(res, 404, { error: 'Not found' });
+    if (await admin.handle(req, res, url)) return;
     if (url.pathname === '/api/auth/status') return json(res, 200, { needsSetup: false, isAuthenticated: Boolean(authenticate(req)) });
     if (url.pathname === '/api/auth/register') return json(res, 403, { error: 'Contact the administrator to create an account' });
-    if (url.pathname === '/api/auth/login' && req.method === 'POST') {
+    // sign-in, and the password change a new or reset account must make first (the same limits on both)
+    if ((url.pathname === '/api/auth/login' || url.pathname === '/api/auth/change-password') && req.method === 'POST') {
       const data = await body(req);
       const username = typeof data.username === 'string' ? data.username.trim().toLowerCase() : '';
       const password = typeof data.password === 'string' ? data.password : '';
@@ -455,12 +467,19 @@ const server = http.createServer(async (req, res) => {
       const user = store.account(username);
       const valid = password.length <= 256 && await store.check(password, user?.password_hash ?? dummyHash);
       if (!user?.active || !valid) return json(res, 401, { error: 'Invalid username or password' });
-      await ready(user.runtime);
-      if (!store.account(username)?.active) return json(res, 401, { error: 'Account disabled' });
-      const sid = store.issue(user.id, now + ttl * 1000);
-      const token = jwt.sign({ sid, userId: user.id, username }, secret, { expiresIn: ttl, issuer: 'aidev', audience: origin, algorithm: 'HS256' });
+      if (url.pathname === '/api/auth/change-password') {
+        const next = typeof data.newPassword === 'string' ? data.newPassword : '';
+        if (next.length < 8 || next.length > 256) return json(res, 400, { error: '새 비밀번호는 8자 이상이어야 합니다' });
+        if (next === password || next === INITIAL_PASSWORD) return json(res, 400, { error: '지금 비밀번호와 다른 비밀번호를 정하세요' });
+        await store.setPassword(user.id, next, false);
+        limits.delete(key);
+        console.log(`[auth] ${user.username} changed the password`);
+        return await signIn(res, user);
+      }
+      // a new or reset account (/admin) chooses its own password before it gets a session
+      if (user.must_change_password) return json(res, 403, { error: '처음 로그인하거나 비밀번호가 초기화된 계정입니다 — 새 비밀번호를 정하세요', code: 'password_change_required' });
       limits.delete(key);
-      return json(res, 200, { success: true, user: { id: user.id, username }, token }, { 'set-cookie': setCookie(token) });
+      return await signIn(res, user);
     }
     const session = authenticate(req);
     if (url.pathname.startsWith('/api/auth/')) {

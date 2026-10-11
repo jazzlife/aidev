@@ -57,6 +57,7 @@ export function migrateAidev(db: Database.Database) {
   addColumn(db, 'accounts', 'engines', "TEXT NOT NULL DEFAULT 'claude,codex'");
   addColumn(db, 'accounts', 'default_engine', 'TEXT');
   addColumn(db, 'accounts', 'role', "TEXT NOT NULL DEFAULT 'user'");
+  addColumn(db, 'accounts', 'must_change_password', 'INTEGER NOT NULL DEFAULT 0');   // 2026-10-12: new / reset by the administrator
   addColumn(db, 'decision_log', 'kind', "TEXT NOT NULL DEFAULT 'route'");
   addColumn(db, 'decision_log', 'fallback', 'INTEGER NOT NULL DEFAULT 0');
   addColumn(db, 'decision_log', 'answer', 'TEXT');
