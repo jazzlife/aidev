@@ -42,7 +42,7 @@ export function ScreenPane({ isVisible = true }: { isVisible?: boolean }) {
   const watching = source?.kind === 'window' || source?.kind === 'display';
   const opts: ScreenOptions = { ...q.opts, window: source?.kind === 'window' ? source.id : null, display: source?.kind === 'display' ? source.id : 1 };
   const screen = useRemoteScreen({ targetId, live: isVisible && streaming && watching, opts, url: screenSocketUrl });
-  const { canvasRef, keysRef, state, control } = screen;
+  const { canvasRef, keysRef, state, control, zoom } = screen;
 
   useEffect(() => {
     if (!isVisible) return;
@@ -154,6 +154,7 @@ export function ScreenPane({ isVisible = true }: { isVisible?: boolean }) {
       ) : (
         <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden bg-black/85">
           <canvas ref={canvasRef} className={`max-h-full max-w-full ${state.control ? 'cursor-none outline outline-2 outline-rose-500' : ''}`} style={{ touchAction: 'none' }} />
+          {zoom.scale > 1 ? <button type="button" title="원래 크기로 (Ctrl+스크롤·두 손가락으로 확대/축소)" onClick={zoom.reset} className="absolute right-2 top-2 rounded bg-black/60 px-2 py-0.5 text-white">×{zoom.scale.toFixed(1)} ⟲</button> : null}
           {/* keyboard sink: keeps focus while controlling, receives IME text */}
           <textarea ref={keysRef} aria-label="원격 키보드 입력" autoCapitalize="off" autoCorrect="off" spellCheck={false} className="pointer-events-none absolute left-0 top-0 h-px w-px opacity-0" />
           {!state.width && streaming ? (

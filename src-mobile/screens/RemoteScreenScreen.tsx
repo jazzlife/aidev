@@ -11,7 +11,8 @@ import { useOpener, useParent } from '@m/lib/nav';
  * A program on a PC, on the phone (IMPLEMENTATION-PLAN §3.12, F-07b/F-07c). The source is one program
  * window — starts paused on one snapshot (data and battery); "스트리밍" plays it live (H.264/WebCodecs,
  * JPEG fallback); with control on: tap = click, long press = right click, drag = drag, two fingers =
- * scroll, the key bar and the phone keyboard type into that window — or a console program running
+ * scroll, the key bar and the phone keyboard type into that window (one scrolling row); pinch or ctrl + wheel zooms the
+ * picture here (the PC sees nothing of it) — or a console program running
  * through the runner (its terminal, with a key bar for Esc/Tab/Ctrl-C/arrows). One person controls a PC at a time:
  * the others ask for it, the holder hands it over, the PC's owner takes it back.
  */
@@ -56,7 +57,7 @@ export function RemoteScreenScreen() {
   const q = QUALITY.find((x) => x.id === quality) ?? QUALITY[0];
   const watching = source?.kind === 'window' || source?.kind === 'display';
   const opts: ScreenOptions = { ...q.opts, window: source?.kind === 'window' ? source.id : null, display: source?.kind === 'display' ? source.id : 1 };
-  const { canvasRef, keysRef, state, control, input } = useRemoteScreen({ targetId, live: streaming && watching, opts, url: screenSocketUrl, sticky: () => stickyRef.current });
+  const { canvasRef, keysRef, state, control, input, zoom } = useRemoteScreen({ targetId, live: streaming && watching, opts, url: screenSocketUrl, sticky: () => stickyRef.current });
 
   useEffect(() => { stickyRef.current = sticky; }, [sticky]);
   useEffect(() => { aidevApi.targets().then((r) => setTarget((r.targets as unknown as Target[]).find((t) => t.id === targetId) ?? null)).catch(() => setTarget(null)); }, [targetId]);
@@ -88,7 +89,13 @@ export function RemoteScreenScreen() {
   return (
     <div className="flex h-[100dvh] flex-col bg-black">
       <TopBar title={win ? win.app || '프로그램' : target ? `${target.name}` : '원격 화면'} subtitle={subtitle} back
-        right={watching ? <button type="button" onClick={() => setStreaming((v) => !v)} className={`m-touch rounded-full px-3 py-1.5 text-[13px] ${streaming ? 'bg-surface text-ink' : 'bg-accent text-accent-ink'}`}>{streaming ? '정지' : '스트리밍'}</button> : undefined} />
+        right={watching ? (
+          <div className="flex shrink-0 items-center gap-1.5">
+            {!streaming ? <button type="button" onClick={() => { void snapshot(); }} className="m-touch rounded-full border border-line px-2.5 py-1.5 text-[13px]">새로 찍기</button> : null}
+            {streaming ? <button type="button" disabled={!state.controlAvailable} onClick={() => control(button.op)} className={`m-touch rounded-full px-2.5 py-1.5 text-[13px] disabled:opacity-40 ${button.active ? 'bg-danger text-white' : 'border border-line'}`}>{button.label}</button> : null}
+            <button type="button" onClick={() => setStreaming((v) => !v)} className={`m-touch rounded-full px-2.5 py-1.5 text-[13px] ${streaming ? 'bg-surface text-ink' : 'bg-accent text-accent-ink'}`}>{streaming ? '정지' : '스트리밍'}</button>
+          </div>
+        ) : undefined} />
       <div className="flex items-center gap-2 border-b border-line bg-bg px-3 py-2 text-[13px]">
         <select aria-label="프로그램" value={sourceKey(source)} onChange={(e) => setChosen(parse(e.target.value))} className="min-w-0 flex-1 rounded-lg border border-line bg-surface px-2 py-1">
           {!source ? <option value="">{sources.loading ? '불러오는 중…' : '프로그램 없음'}</option> : null}
@@ -100,12 +107,6 @@ export function RemoteScreenScreen() {
         <button type="button" aria-label="목록 새로 고침" onClick={() => { void refresh(); }} className="m-touch rounded-lg border border-line px-2 py-1">↻</button>
         {watching ? <select aria-label="화질" value={quality} onChange={(e) => setQuality(e.target.value)} className="rounded-lg border border-line bg-surface px-2 py-1">{QUALITY.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}</select> : null}
       </div>
-      {watching ? (
-        <div className="flex items-center gap-2 border-b border-line bg-bg px-3 py-2 text-[13px]">
-          {!streaming ? <button type="button" onClick={() => { void snapshot(); }} className="m-touch rounded-lg border border-line px-3 py-1">새로 찍기</button> : null}
-          <button type="button" disabled={!streaming || !state.controlAvailable} onClick={() => control(button.op)} className={`m-touch ml-auto rounded-lg px-3 py-1 disabled:opacity-40 ${button.active ? 'bg-danger text-white' : 'border border-line'}`}>{button.label}</button>
-        </div>
-      ) : null}
       {watching && asker ? (
         <div className="flex items-center gap-2 border-b border-line bg-bg px-3 py-2 text-[13px]">
           <span className="min-w-0 flex-1">{asker.name} 님이 제어권을 요청했습니다{state.requests.length > 1 ? ` (대기 ${state.requests.length}명)` : ''}</span>
@@ -121,15 +122,16 @@ export function RemoteScreenScreen() {
       ) : (
         <div className="relative flex min-h-0 flex-1 items-center justify-center overflow-hidden">
           <canvas ref={canvasRef} className={`max-h-full max-w-full ${state.control ? 'outline outline-2 outline-danger' : ''}`} style={{ touchAction: 'none' }} />
+          {zoom.scale > 1 ? <button type="button" onClick={zoom.reset} className="absolute right-2 top-2 rounded-full bg-black/60 px-2.5 py-1 text-[12px] text-white">×{zoom.scale.toFixed(1)} ⟲</button> : null}
           <textarea ref={keysRef} aria-label="원격 키보드 입력" autoCapitalize="off" autoCorrect="off" spellCheck={false} className="absolute left-0 top-0 h-px w-px opacity-0" />
           {!source && !sources.loading ? <div className="absolute px-6 text-center text-[13px] text-muted">{target && !target.capabilities?.screen ? '이 PC에서 화면 보기가 꺼져 있고 실행 중인 콘솔도 없습니다.' : '보이는 프로그램 창이나 실행 중인 콘솔이 없습니다.'}</div> : null}
         </div>
       )}
       {watching && state.control ? (
-        <div className="flex flex-wrap gap-1.5 border-t border-line bg-bg px-2 pt-2 pb-[calc(env(safe-area-inset-bottom)+8px)] text-[13px]">
-          <button type="button" onClick={() => keysRef.current?.focus()} className="m-touch rounded-lg bg-accent px-3 py-1.5 text-accent-ink">⌨ 키보드</button>
-          {(['ctrl', 'alt', 'meta', 'shift'] as const).map((m) => <button key={m} type="button" aria-pressed={Boolean(sticky[m])} onClick={() => toggle(m)} className={`m-touch rounded-lg px-2.5 py-1.5 ${sticky[m] ? 'bg-ink text-bg' : 'border border-line'}`}>{m === 'meta' ? '⌘' : m === 'ctrl' ? 'Ctrl' : m === 'alt' ? 'Alt' : '⇧'}</button>)}
-          {KEYS.map((k) => <button key={k.code} type="button" onClick={() => pressKey(k)} className="m-touch rounded-lg border border-line px-2.5 py-1.5">{k.label}</button>)}
+        <div className="flex gap-1.5 overflow-x-auto whitespace-nowrap border-t border-line bg-bg px-2 pt-2 pb-[calc(env(safe-area-inset-bottom)+8px)] text-[13px]">
+          <button type="button" aria-label="키보드" onClick={() => keysRef.current?.focus()} className="m-touch shrink-0 rounded-lg bg-accent px-2.5 py-1.5 text-accent-ink">⌨</button>
+          {(['ctrl', 'alt', 'meta', 'shift'] as const).map((m) => <button key={m} type="button" aria-pressed={Boolean(sticky[m])} onClick={() => toggle(m)} className={`m-touch shrink-0 rounded-lg px-2 py-1.5 ${sticky[m] ? 'bg-ink text-bg' : 'border border-line'}`}>{m === 'meta' ? '⌘' : m === 'ctrl' ? 'Ctrl' : m === 'alt' ? 'Alt' : '⇧'}</button>)}
+          {KEYS.map((k) => <button key={k.code} type="button" onClick={() => pressKey(k)} className="m-touch shrink-0 rounded-lg border border-line px-2 py-1.5">{k.label}</button>)}
         </div>
       ) : null}
     </div>

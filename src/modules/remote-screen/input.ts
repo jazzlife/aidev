@@ -1,10 +1,12 @@
 import type { InputEvent as RemoteInputEvent } from '@/modules/remote-screen/session';
+import type { ZoomGesture } from '@/modules/remote-screen/viewZoom';
 
 /**
  * Remote-control input (F-07b), non-visual: pointer, touch, wheel and keyboard on the screen canvas →
  * runner input events. Coordinates are normalized to the picture (0..1), so the canvas may be scaled.
  *   mouse: move (one per animation frame), buttons, wheel, no context menu
  *   touch: tap = click, long press = right click, one-finger drag = left drag, two-finger pan = scroll
+ *   (a pinch and ctrl + wheel zoom the picture on this device instead — viewZoom.ts — and send nothing)
  *   keyboard: a hidden textarea keeps focus: named keys and shortcuts go as key presses with modifiers,
  *   typed text (IME / phone keyboards included) as text.
  */
@@ -17,7 +19,7 @@ const DRAG_PX = 10;
 export type StickyMods = { ctrl?: boolean; alt?: boolean; meta?: boolean; shift?: boolean };
 
 /** Used by the workbench ScreenPane and the mobile remote screen to drive a PC. Returns a cleanup. */
-export function bindRemoteInput(canvas: HTMLCanvasElement, keys: HTMLTextAreaElement, send: (ev: RemoteInputEvent) => void, sticky: () => StickyMods = () => ({})) {
+export function bindRemoteInput(canvas: HTMLCanvasElement, keys: HTMLTextAreaElement, send: (ev: RemoteInputEvent) => void, sticky: () => StickyMods = () => ({}), gesture: ZoomGesture = { pinching: false }) {
   const norm = (clientX: number, clientY: number) => {
     const r = canvas.getBoundingClientRect();
     return { x: Math.min(Math.max((clientX - r.left) / r.width, 0), 1), y: Math.min(Math.max((clientY - r.top) / r.height, 0), 1) };
@@ -30,6 +32,8 @@ export function bindRemoteInput(canvas: HTMLCanvasElement, keys: HTMLTextAreaEle
   // ---- touch ----------------------------------------------------------------------------------------
   const touches = new Map<number, { x: number; y: number; sx: number; sy: number }>();
   let longTimer = 0; let longFired = false; let dragging = false; let panY: number | null = null; let panX: number | null = null;
+  // a second finger joined this touch: lifting the last one is not a tap
+  let multi = false;
   const clearLong = () => { if (longTimer) { window.clearTimeout(longTimer); longTimer = 0; } };
 
   const onDown = (e: PointerEvent) => {
@@ -41,10 +45,10 @@ export function bindRemoteInput(canvas: HTMLCanvasElement, keys: HTMLTextAreaEle
     if (e.pointerType !== 'touch') { ownsContext = e.button === 2; send({ t: 'button', b: buttonName(e.button), down: true, ...p }); return; }
     touches.set(e.pointerId, { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY });
     if (touches.size === 1) {
-      longFired = false; dragging = false;
+      longFired = false; dragging = false; multi = false;
       longTimer = window.setTimeout(() => { longFired = true; send({ t: 'move', ...p }); send({ t: 'button', b: 'right', down: true, ...p }); send({ t: 'button', b: 'right', down: false, ...p }); }, LONG_PRESS_MS);
     } else {
-      clearLong();
+      clearLong(); multi = true;
       if (dragging) { const t = [...touches.values()][0]; send({ t: 'button', b: 'left', down: false, ...norm(t.x, t.y) }); dragging = false; }
       const ts = [...touches.values()];
       panY = (ts[0].y + ts[1].y) / 2; panX = (ts[0].x + ts[1].x) / 2;
@@ -58,8 +62,8 @@ export function bindRemoteInput(canvas: HTMLCanvasElement, keys: HTMLTextAreaEle
     if (touches.size >= 2 && panY !== null && panX !== null) {
       const ts = [...touches.values()];
       const my = (ts[0].y + ts[1].y) / 2; const mx = (ts[0].x + ts[1].x) / 2;
-      // fingers move up → content scrolls down (like a trackpad)
-      send({ t: 'wheel', dx: (panX - mx) * 3, dy: (panY - my) * 3 });
+      // fingers move up → content scrolls down (like a trackpad); a pinch zooms this view instead
+      if (!gesture.pinching) send({ t: 'wheel', dx: (panX - mx) * 3, dy: (panY - my) * 3 });
       panY = my; panX = mx;
       return;
     }
@@ -77,11 +81,11 @@ export function bindRemoteInput(canvas: HTMLCanvasElement, keys: HTMLTextAreaEle
     touches.delete(e.pointerId);
     if (touches.size >= 1) { panY = null; panX = null; return; }
     clearLong(); panY = null; panX = null;
-    if (!t) return;
+    if (!t || multi) { multi = false; return; }
     if (dragging) { flushMove(); send({ t: 'button', b: 'left', down: false, ...p }); dragging = false; return; }
     if (!longFired) { send({ t: 'move', ...p }); send({ t: 'button', b: 'left', down: true, ...p }); send({ t: 'button', b: 'left', down: false, ...p }); }
   };
-  const onWheel = (e: WheelEvent) => { e.preventDefault(); const k = e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 400 : 1; send({ t: 'wheel', dx: e.deltaX * k, dy: e.deltaY * k }); };
+  const onWheel = (e: WheelEvent) => { if (e.ctrlKey) return; e.preventDefault(); const k = e.deltaMode === 1 ? 33 : e.deltaMode === 2 ? 400 : 1; send({ t: 'wheel', dx: e.deltaX * k, dy: e.deltaY * k }); };
   // A right press on the canvas owns the next context menu wherever it opens: Windows opens it on the
   // release, so a right drag that ends off the canvas would otherwise get the browser's menu.
   let ownsContext = false;

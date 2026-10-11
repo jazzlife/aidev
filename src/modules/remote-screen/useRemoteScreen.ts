@@ -3,12 +3,14 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { bindRemoteInput, type StickyMods } from '@/modules/remote-screen/input';
 import { RemoteScreenSession, type ControlRequestOp, type InputEvent, type ScreenOptions, type ScreenState } from '@/modules/remote-screen/session';
 import type { ControlOp } from '@/modules/remote-screen/utils/controlButton';
+import { bindViewZoom, type ZoomGesture } from '@/modules/remote-screen/viewZoom';
 
 const IDLE: ScreenState = { status: 'closed', codec: null, note: null, error: null, controlAvailable: false, control: false, width: 0, height: 0, fps: 0, kbps: 0, stats: null, direct: false, fastPath: false, holder: null, requests: [], owner: false, controlNote: null };
 
 /**
  * Used by the workbench ScreenPane and the mobile remote screen: streams a PC's screen into `canvasRef`
- * while `live` is true (paused = the last picture stays), and forwards input while control is on.
+ * while `live` is true (paused = the last picture stays), and forwards input while control is on. The picture can
+ * be zoomed on this device (pinch, ctrl + wheel; viewZoom.ts) — `zoom.scale`, `zoom.reset()`.
  */
 export function useRemoteScreen(p: { targetId: number | null; live: boolean; opts: ScreenOptions; url: (targetId: number, opts: ScreenOptions) => string; sticky?: () => StickyMods }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -18,8 +20,15 @@ export function useRemoteScreen(p: { targetId: number | null; live: boolean; opt
   const optsRef = useRef(p.opts);
   const urlRef = useRef(p.url);
   const stickyRef = useRef(p.sticky);
+  // a pinch in progress (viewZoom) — the remote input then sends no two-finger scroll
+  const gestureRef = useRef<ZoomGesture>({ pinching: false });
+  const zoomRef = useRef<{ canvas: HTMLCanvasElement; reset: () => void; cleanup: () => void } | null>(null);
+  // control on: a press goes to the PC, so dragging does not move the zoomed picture
+  const controlRef = useRef(false);
+  // how far the picture is zoomed here, for the page's "×2.0" chip (1 = fit)
+  const [zoomScale, setZoomScale] = useState(1);
   // latest values for the effects below (declared first, so they run first)
-  useEffect(() => { optsRef.current = p.opts; urlRef.current = p.url; stickyRef.current = p.sticky; });
+  useEffect(() => { optsRef.current = p.opts; urlRef.current = p.url; stickyRef.current = p.sticky; controlRef.current = state.control; });
 
   // one session per target while live; option changes move the viewer without reconnecting
   useEffect(() => {
@@ -30,6 +39,18 @@ export function useRemoteScreen(p: { targetId: number | null; live: boolean; opt
     sessionRef.current = session;
     return () => { session.close(); sessionRef.current = null; };
   }, [p.live, p.targetId]);
+
+  const zoomChanged = useCallback((scale: number) => setZoomScale(scale), []);
+  // zoom follows the canvas element (pages mount it only for program windows): rebind when it changes
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if ((zoomRef.current?.canvas ?? null) === canvas) return;
+    zoomRef.current?.cleanup(); zoomRef.current = null;
+    if (!canvas?.parentElement) return;
+    const zoom = bindViewZoom(canvas.parentElement, canvas, gestureRef.current, () => !controlRef.current, zoomChanged);
+    zoomRef.current = { canvas, ...zoom };
+  });
+  useEffect(() => () => { zoomRef.current?.cleanup(); zoomRef.current = null; }, []);
 
   const optsKey = JSON.stringify(p.opts);
   const firstOpts = useRef(true);
@@ -42,7 +63,7 @@ export function useRemoteScreen(p: { targetId: number | null; live: boolean; opt
     const canvas = canvasRef.current; const keys = keysRef.current;
     if (!canvas || !keys || !state.control) return undefined;
     const send = (ev: InputEvent) => sessionRef.current?.input(ev);
-    const unbind = bindRemoteInput(canvas, keys, send, () => stickyRef.current?.() ?? {});
+    const unbind = bindRemoteInput(canvas, keys, send, () => stickyRef.current?.() ?? {}, gestureRef.current);
     if (!window.matchMedia?.('(pointer: coarse)').matches) keys.focus({ preventScroll: true });
     return unbind;
   }, [state.control]);
@@ -55,5 +76,6 @@ export function useRemoteScreen(p: { targetId: number | null; live: boolean; opt
     else session?.controlRequest(op, to);
   }, []);
   const input = useCallback((ev: InputEvent) => sessionRef.current?.input(ev), []);
-  return { canvasRef, keysRef, state, setControl, control, input };
+  const resetZoom = useCallback(() => zoomRef.current?.reset(), []);
+  return { canvasRef, keysRef, state, setControl, control, input, zoom: { scale: zoomScale, reset: resetZoom } };
 }
