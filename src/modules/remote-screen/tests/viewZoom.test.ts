@@ -31,6 +31,15 @@ describe('remote picture zoom (this device only)', () => {
     expect(ctrl.defaultPrevented).toBe(true);
     expect(scales.at(-1)).toBeGreaterThan(1.4);
     expect(canvas.style.transform).toContain('scale(');
+    // a press on a button over the picture (the reset chip) is not a drag: no pointer capture, its click arrives
+    const chip = document.createElement('button'); container.append(chip);
+    const captured: number[] = []; container.setPointerCapture = (id: number) => { captured.push(id); };
+    chip.dispatchEvent(pointer('pointerdown', 9, 10, 10, 'mouse'));
+    chip.dispatchEvent(pointer('pointerup', 9, 10, 10, 'mouse'));
+    expect(captured).toEqual([]);
+    canvas.dispatchEvent(pointer('pointerdown', 8, 10, 10, 'mouse'));
+    expect(captured).toEqual([8]);
+    canvas.dispatchEvent(pointer('pointerup', 8, 10, 10, 'mouse'));
     zoom.reset();
     expect(scales.at(-1)).toBe(1);
     expect(canvas.style.transform).toBe('');

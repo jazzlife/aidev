@@ -46,7 +46,8 @@ export function bindViewZoom(container: HTMLElement, canvas: HTMLCanvasElement, 
   const onDown = (e: PointerEvent) => {
     points.set(e.pointerId, { x: e.clientX, y: e.clientY });
     if (points.size === 2) { const p = pair(); pinch = { dist: p.dist, scale, mx: p.mx, my: p.my }; drag = null; return; }
-    if (points.size === 1 && scale > 1 && canPan() && (e.pointerType !== 'mouse' || e.button === 0)) {
+    // a drag starts on the picture only: a button over it (the ×N reset chip) must still get its click
+    if (points.size === 1 && e.target === canvas && scale > 1 && canPan() && (e.pointerType !== 'mouse' || e.button === 0)) {
       drag = { id: e.pointerId, x: e.clientX, y: e.clientY };
       container.setPointerCapture?.(e.pointerId);
     }
