@@ -336,7 +336,9 @@ export class RemoteScreenSession {
   }
 
   private draw(source: CanvasImageSource, w: number, h: number) {
-    if (this.canvas.width !== w || this.canvas.height !== h) { this.canvas.width = w; this.canvas.height = h; this.patch({ width: w, height: h }); }
+    if (this.canvas.width !== w || this.canvas.height !== h) { this.canvas.width = w; this.canvas.height = h; }
+    // the state follows what this session drew, not the canvas: a snapshot taken while paused may have sized it already
+    if (this.state.width !== w || this.state.height !== h) this.patch({ width: w, height: h });
     this.canvas.getContext('2d')?.drawImage(source, 0, 0, w, h);
   }
 

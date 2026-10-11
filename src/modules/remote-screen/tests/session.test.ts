@@ -78,6 +78,18 @@ describe('remote screen session (numbered frames, acks, latency)', () => {
     session.close();
   });
 
+  it('the picture size is known even when a paused snapshot already sized the canvas', async () => {
+    vi.stubGlobal('WebSocket', FakeSocket);
+    vi.stubGlobal('createImageBitmap', vi.fn(async () => ({ width: 64, height: 36, close: () => undefined })));
+    const canvas = document.createElement('canvas'); canvas.width = 64; canvas.height = 36;   // the snapshot's size
+    let state: ScreenState | null = null;
+    const session = new RemoteScreenSession(() => 'ws://test/screen?v=2', canvas, { mode: 'jpeg', window: 1, display: 0, fps: 5, maxWidth: 640, bitrate: 1000 }, (s) => { state = s; });
+    FakeSocket.last!.push(numberedJpeg(1));
+    await vi.waitFor(() => expect(state!.width).toBe(64));
+    expect(state!.height).toBe(36);
+    session.close();
+  });
+
   it('an unnumbered frame (older runner) is shown and never acked', async () => {
     vi.stubGlobal('WebSocket', FakeSocket);
     const drawn = vi.fn(async () => ({ width: 10, height: 10, close: () => undefined }));
