@@ -4,6 +4,7 @@ import { AppWindow, Camera, MousePointer2, Pause, Play, RefreshCw } from 'lucide
 import { controlButton, isWholeScreen, RemoteConsole, screenSocketUrl, streamStatsDetail, streamStatusLine, useRemoteScreen, useScreenSources, type ScreenOptions } from '@/modules/remote-screen';
 import { SCREEN_REQUEST_EVENT, takeScreenRequest } from '@/modules/remote-target/utils/screenRequest';
 import { api, readApiJson } from '@/shared/api';
+import { readUserPreference, writeUserPreference } from '@/shared/userSettings';
 import type { RemoteConsoleSource, RemoteScreenSource, RemoteWindow } from '@/shared/types';
 
 /**
@@ -11,7 +12,8 @@ import type { RemoteConsoleSource, RemoteScreenSource, RemoteWindow } from '@/sh
  * source is a program window (live H.264 from the runner's built-in encoder, decoded with WebCodecs, or
  * JPEG; paused = the last picture, snapshots on demand) or a console program running through the runner
  * (its terminal, live and typeable). With control on, mouse, wheel and keyboard on the window's picture
- * drive that window on the PC (the owner's `consent control on` is required; every session is recorded). One person
+ * drive that window on the PC (the owner's `consent control on` is required; every session is recorded). It opens on the
+ * PC picked last (remembered for the account) paused on one picture; streaming starts with "스트리밍". One person
  * controls a PC at a time (PCs shared between accounts): the others ask, the holder hands over, the owner takes it back.
  */
 type Target = { id: number; name: string; online: boolean; shared_by?: string | null; capabilities: { screen?: boolean; control?: boolean; features?: string[] } | null };
@@ -34,7 +36,8 @@ export function ScreenPane({ isVisible = true }: { isVisible?: boolean }) {
   // the user's pick, remembered per target (another target starts from its focused window)
   const [chosen, setChosen] = useState<{ targetId: number | null; source: RemoteScreenSource | null }>({ targetId: null, source: null });
   const [quality, setQuality] = useState('std');
-  const [streaming, setStreaming] = useState(true);
+  // paused when the pane opens (one picture), live once the user starts it or an agent shows a window
+  const [streaming, setStreaming] = useState(false);
   const [snapNote, setSnapNote] = useState<string | null>(null);
   const sources = useScreenSources(targetId, isVisible, chosen.targetId === targetId ? chosen.source : null);
   const { windows, consoles, displays, perWindow, refresh, source, parse } = sources;
@@ -50,7 +53,8 @@ export function ScreenPane({ isVisible = true }: { isVisible?: boolean }) {
       try {
         const r = await readApiJson<{ targets: Target[] }>(await api.targets.list());
         setTargets(r.targets ?? []);
-        setTargetId((current) => current ?? r.targets.find((t) => t.online && t.capabilities?.screen)?.id ?? r.targets.find((t) => t.online)?.id ?? r.targets[0]?.id ?? null);
+        const last = readUserPreference<number | null>('remoteScreenTarget', null);
+        setTargetId((current) => current ?? r.targets.find((t) => t.id === last)?.id ?? r.targets.find((t) => t.online && t.capabilities?.screen)?.id ?? r.targets.find((t) => t.online)?.id ?? r.targets[0]?.id ?? null);
       } catch { /* the targets panel shows the error */ }
     })();
   }, [isVisible]);
@@ -94,6 +98,8 @@ export function ScreenPane({ isVisible = true }: { isVisible?: boolean }) {
       setSnapNote(null);
     } catch (error) { setSnapNote(error instanceof Error ? error.message : '화면을 가져오지 못했습니다'); }
   }, [targetId, source, q.opts.maxWidth, canvasRef]);
+  // paused (as the pane opens, or stopped): one fresh picture of the chosen window
+  useEffect(() => { if (isVisible && !streaming && watching) void snapshot(); }, [isVisible, streaming, watching, snapshot]);
 
   const target = targets.find((t) => t.id === targetId) ?? null;
   const win = source?.kind === 'window' ? windows.find((w) => w.id === source.id) ?? null : null;
@@ -113,7 +119,7 @@ export function ScreenPane({ isVisible = true }: { isVisible?: boolean }) {
     <div className="flex h-full min-h-0 flex-col text-xs">
       <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-border px-2 py-1.5">
         <AppWindow size={13} className="text-muted-foreground" />
-        <select aria-label="원격 대상" value={targetId ?? ''} onChange={(event) => setTargetId(Number(event.target.value) || null)} className="h-7 rounded border border-border bg-background px-1">
+        <select aria-label="원격 대상" value={targetId ?? ''} onChange={(event) => { const id = Number(event.target.value) || null; setTargetId(id); if (id) writeUserPreference('remoteScreenTarget', id); }} className="h-7 rounded border border-border bg-background px-1">
           {targets.map((t) => <option key={t.id} value={t.id}>{t.name}{t.shared_by ? ` · ${t.shared_by} 공유` : ''}{t.online ? '' : ' (오프라인)'}{t.capabilities?.screen ? '' : ' · 화면 미허용'}</option>)}
         </select>
         <select aria-label="프로그램" value={sourceKey(source)} onChange={(event) => setChosen({ targetId, source: parse(event.target.value) })} className="h-7 max-w-[22rem] rounded border border-border bg-background px-1">

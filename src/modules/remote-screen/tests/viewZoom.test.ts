@@ -64,6 +64,21 @@ describe('remote picture zoom (this device only)', () => {
     unbind(); zoom.cleanup();
   });
 
+  it('a two-finger tap is a right click where the fingers touched (a little jitter is fine)', () => {
+    const { canvas, keys, gesture, zoom } = setup();
+    const sent: InputEvent[] = [];
+    const unbind = bindRemoteInput(canvas, keys, (ev) => sent.push(ev), () => ({}), gesture);
+    canvas.dispatchEvent(pointer('pointerdown', 1, 100, 100));
+    canvas.dispatchEvent(pointer('pointerdown', 2, 140, 100));
+    canvas.dispatchEvent(pointer('pointermove', 2, 142, 102));
+    canvas.dispatchEvent(pointer('pointerup', 1, 100, 100));
+    canvas.dispatchEvent(pointer('pointermove', 2, 150, 130));   // the last finger moving: no drag
+    canvas.dispatchEvent(pointer('pointerup', 2, 150, 130));
+    expect(sent.filter((e) => e.t === 'wheel')).toEqual([]);
+    expect(sent.filter((e) => e.t === 'button').map((e) => (e.t === 'button' ? `${e.b}:${e.down}` : ''))).toEqual(['right:true', 'right:false']);
+    unbind(); zoom.cleanup();
+  });
+
   it('two fingers moving together still scroll the PC', () => {
     const { canvas, keys, gesture, zoom } = setup();
     const sent: InputEvent[] = [];
@@ -74,6 +89,9 @@ describe('remote picture zoom (this device only)', () => {
     for (let y = 195; y >= 150; y -= 5) { canvas.dispatchEvent(pointer('pointermove', 1, 100, y)); canvas.dispatchEvent(pointer('pointermove', 2, 140, y)); }
     expect(gesture.pinching).toBe(false);
     expect(sent.some((e) => e.t === 'wheel')).toBe(true);
+    canvas.dispatchEvent(pointer('pointerup', 1, 100, 150));
+    canvas.dispatchEvent(pointer('pointerup', 2, 140, 150));
+    expect(sent.some((e) => e.t === 'button')).toBe(false);   // a scroll is not a right click
     unbind(); zoom.cleanup();
   });
 });

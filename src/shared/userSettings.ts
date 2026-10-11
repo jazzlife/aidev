@@ -29,6 +29,8 @@ export type UserPreferences = {
   uiPreferences: unknown;
   selectedProvider: string;
   remoteScreenLast: unknown;
+  /** the PC the workbench's remote screen showed last (its id) — the screen opens on it */
+  remoteScreenTarget: unknown;
 };
 
 export type UserPreferenceKey = keyof UserPreferences;
@@ -70,6 +72,7 @@ const LEGACY_STORAGE_KEYS: Record<UserPreferenceKey, string> = {
   selectedProvider: 'selected-provider',
   // Unused: new with the server store, there is nothing to migrate.
   remoteScreenLast: '',
+  remoteScreenTarget: '',
 };
 
 const PREFERENCE_KEYS = Object.keys(LEGACY_STORAGE_KEYS) as UserPreferenceKey[];

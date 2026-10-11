@@ -5,7 +5,7 @@ import type { ZoomGesture } from '@/modules/remote-screen/viewZoom';
  * Remote-control input (F-07b), non-visual: pointer, touch, wheel and keyboard on the screen canvas →
  * runner input events. Coordinates are normalized to the picture (0..1), so the canvas may be scaled.
  *   mouse: move (one per animation frame), buttons, wheel, no context menu
- *   touch: tap = click, long press = right click, one-finger drag = left drag, two-finger pan = scroll
+ *   touch: tap = click, long press or a two-finger tap = right click, one-finger drag = left drag, two-finger pan = scroll
  *   (a pinch and ctrl + wheel zoom the picture on this device instead — viewZoom.ts — and send nothing)
  *   keyboard: a hidden textarea keeps focus: named keys and shortcuts go as key presses with modifiers,
  *   typed text (IME / phone keyboards included) as text.
@@ -14,6 +14,8 @@ const NAMED = new Set(['Enter', 'Backspace', 'Tab', 'Escape', 'Delete', 'ArrowUp
   'F1', 'F2', 'F3', 'F4', 'F5', 'F6', 'F7', 'F8', 'F9', 'F10', 'F11', 'F12', 'CapsLock']);
 const MODIFIERS = new Set(['Shift', 'Control', 'Alt', 'Meta', 'OS', 'AltGraph']);
 const LONG_PRESS_MS = 550;
+/** two fingers down and up within this, without moving: a right click */
+const TWO_TAP_MS = 500;
 const DRAG_PX = 10;
 
 export type StickyMods = { ctrl?: boolean; alt?: boolean; meta?: boolean; shift?: boolean };
@@ -34,6 +36,8 @@ export function bindRemoteInput(canvas: HTMLCanvasElement, keys: HTMLTextAreaEle
   let longTimer = 0; let longFired = false; let dragging = false; let panY: number | null = null; let panX: number | null = null;
   // a second finger joined this touch: lifting the last one is not a tap
   let multi = false;
+  // the two-finger touch so far: where it started (the right click goes there) and whether it became a scroll / pinch
+  let two: { at: number; x: number; y: number; moved: boolean; fingers: number } | null = null;
   const clearLong = () => { if (longTimer) { window.clearTimeout(longTimer); longTimer = 0; } };
 
   const onDown = (e: PointerEvent) => {
@@ -52,6 +56,8 @@ export function bindRemoteInput(canvas: HTMLCanvasElement, keys: HTMLTextAreaEle
       if (dragging) { const t = [...touches.values()][0]; send({ t: 'button', b: 'left', down: false, ...norm(t.x, t.y) }); dragging = false; }
       const ts = [...touches.values()];
       panY = (ts[0].y + ts[1].y) / 2; panX = (ts[0].x + ts[1].x) / 2;
+      if (touches.size === 2 && !two) two = { at: Date.now(), x: panX, y: panY, moved: false, fingers: 2 };
+      else if (two) two.fingers = touches.size;
     }
   };
   const onMove = (e: PointerEvent) => {
@@ -62,11 +68,14 @@ export function bindRemoteInput(canvas: HTMLCanvasElement, keys: HTMLTextAreaEle
     if (touches.size >= 2 && panY !== null && panX !== null) {
       const ts = [...touches.values()];
       const my = (ts[0].y + ts[1].y) / 2; const mx = (ts[0].x + ts[1].x) / 2;
+      // a scroll starts once the fingers really move (a two-finger tap jitters a little)
+      if (two && !two.moved && (gesture.pinching || Math.hypot(mx - two.x, my - two.y) > DRAG_PX)) two.moved = true;
       // fingers move up → content scrolls down (like a trackpad); a pinch zooms this view instead
-      if (!gesture.pinching) send({ t: 'wheel', dx: (panX - mx) * 3, dy: (panY - my) * 3 });
+      if (!gesture.pinching && (!two || two.moved)) send({ t: 'wheel', dx: (panX - mx) * 3, dy: (panY - my) * 3 });
       panY = my; panX = mx;
       return;
     }
+    if (multi) return;   // the finger left after a two-finger gesture does not drag
     if (!dragging && Math.hypot(t.x - t.sx, t.y - t.sy) > DRAG_PX && !longFired) {
       clearLong(); dragging = true;
       const start = norm(t.sx, t.sy);
@@ -81,6 +90,12 @@ export function bindRemoteInput(canvas: HTMLCanvasElement, keys: HTMLTextAreaEle
     touches.delete(e.pointerId);
     if (touches.size >= 1) { panY = null; panX = null; return; }
     clearLong(); panY = null; panX = null;
+    // two fingers that came and went without moving: a right click where they touched
+    if (multi && two && !two.moved && two.fingers === 2 && Date.now() - two.at <= TWO_TAP_MS) {
+      const at = norm(two.x, two.y);
+      send({ t: 'move', ...at }); send({ t: 'button', b: 'right', down: true, ...at }); send({ t: 'button', b: 'right', down: false, ...at });
+    }
+    two = null;
     if (!t || multi) { multi = false; return; }
     if (dragging) { flushMove(); send({ t: 'button', b: 'left', down: false, ...p }); dragging = false; return; }
     if (!longFired) { send({ t: 'move', ...p }); send({ t: 'button', b: 'left', down: true, ...p }); send({ t: 'button', b: 'left', down: false, ...p }); }
