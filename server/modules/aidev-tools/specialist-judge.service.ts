@@ -25,7 +25,7 @@ import { codexSandboxConfig, noteCodexTurnError } from '@/shared/index.js';
  *                 unreachable and the strongest models never ran (2026-10-13)
  * It also writes the one question to ask when the command lacks something essential (`question`); the gateway
  * shows it only when Laya's `clarify` says to ask (§3.1), so Laya decides and the model only words it.
- * Claude sonnet first (JUDGE_CLAUDE_MODEL), Codex luna when Claude is unavailable or not allowed. Nothing is written into any conversation.
+ * Claude sonnet first (JUDGE_CLAUDE_MODEL), Codex terra (JUDGE_CODEX_MODEL) when Claude is unavailable or not allowed. Nothing is written into any conversation.
  */
 export type JudgeCandidate = { name: string; description: string };
 export type JudgeInput = { command: string; candidates: JudgeCandidate[]; project?: string | null;
@@ -178,8 +178,12 @@ async function askClaude(prompt: string): Promise<string> {
   }
 }
 
-/** Light Codex model for side turns: gpt-5.4-mini is refused for ChatGPT-account logins (server 2026-10-01); luna is the D0 tier. */
-const CODEX_SIDE_MODEL = 'gpt-5.6-luna';
+/**
+ * The Codex model of the judge turn (env AIDEV_JUDGE_CODEX_MODEL): terra, the D1–D2 tier — the judge sets the model tier
+ * and the chat handoff, which the D0 luna was not trusted with (user decision 2026-10-13, as sonnet for Claude).
+ * gpt-5.4-mini is refused for ChatGPT-account logins (server 2026-10-01).
+ */
+const JUDGE_CODEX_MODEL = process.env.AIDEV_JUDGE_CODEX_MODEL || 'gpt-5.6-terra';
 
 // Codex is an agent: left alone it searches the web or looks around the folder before answering (server bench:
 // median 13 s, up to 45 s). The judge is a lookup — no search, an empty folder, and an explicit "answer only".
@@ -193,7 +197,7 @@ async function askCodex(prompt: string): Promise<string> {
   const codex = new Codex({ config: { ...codexSandboxConfig(), developer_instructions: JUDGE_PROMPT } as never });
   const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'aidev-judge-'));
   try {
-    const thread = codex.startThread({ threadSource: SIDE_TURN_SOURCE, workingDirectory: empty, skipGitRepoCheck: true, sandboxMode: 'read-only', approvalPolicy: 'never', model: CODEX_SIDE_MODEL, modelReasoningEffort: 'low', webSearchMode: 'disabled' });
+    const thread = codex.startThread({ threadSource: SIDE_TURN_SOURCE, workingDirectory: empty, skipGitRepoCheck: true, sandboxMode: 'read-only', approvalPolicy: 'never', model: JUDGE_CODEX_MODEL, modelReasoningEffort: 'low', webSearchMode: 'disabled' });
     const turn = await thread.run(`${prompt}${CODEX_JUDGE_RULE}`, { signal: AbortSignal.timeout(HARD_TIMEOUT_MS) }).catch((error: unknown) => { noteCodexTurnError(error); throw error; });
     return turn.finalResponse ?? '';
   } finally {
@@ -229,7 +233,7 @@ export const specialistJudgeService = {
       ...candidates.map((c) => `- ${c.name}: ${c.description.replace(/\s+/g, ' ').slice(0, 260)}`),
       current ? `\nCurrent agent of this conversation: ${current}` : null,
     ].filter((line) => line !== null).join('\n');
-    // Claude first, Codex luna when Claude fails — only among the engines the account may use
+    // Claude first, Codex when Claude fails — only among the engines the account may use
     const order = (['claude', 'codex'] as const).filter((e) => !input.engines?.length || input.engines.includes(e));
     if (!order.length) throw new Error('no engine available for the judge');
     let engine: string = order[0];

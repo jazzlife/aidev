@@ -307,7 +307,7 @@ export async function evaluateJudge(store: Store, userId: number, judge: Special
 }
 
 /**
- * Specialist judge (§3.1): an LLM turn (runtime, Claude sonnet / Codex luna) that picks the EXISTING agent closest
+ * Specialist judge (§3.1): an LLM turn (runtime, Claude sonnet / Codex terra) that picks the EXISTING agent closest
  * to the command and scores how well it covers it. Laya and the lexical prior only rank agents against each other,
  * so their top pick "wins" even when nothing fits; the judge scores the closest agent's fit on an absolute scale.
  * It is used down to JUDGE_USE_FIT; a trivial/domain-less command goes to the generalist; below that a new

@@ -142,8 +142,8 @@ export function createAidevApi(deps: AidevDeps) {
   const usableEngines = (engines: EngineAvailability) => (['claude', 'codex'] as const).filter((e) => engines[e].allowed && engines[e].authenticated);
 
   /** The specialist judge runs in the user's runtime (their Claude/Codex login); off when no engine is usable. */
-  function judgeFor(session: Session, engines: EngineAvailability): SpecialistJudge | undefined {
-    const usable = usableEngines(engines);
+  function judgeFor(session: Session, engines: EngineAvailability, only?: Engine): SpecialistJudge | undefined {
+    const usable = usableEngines(engines).filter((engine) => !only || engine === only);
     if (!usable.length) return undefined;
     return async (payload) => {
       // D-05: the judge turn runs only on engines this account may use (a Codex-only account never gets Claude)
@@ -450,9 +450,11 @@ export function createAidevApi(deps: AidevDeps) {
           const file = process.env.AIDEV_JUDGE_EVAL_FILE ?? new URL('../data/judge-eval.jsonl', import.meta.url).pathname;
           rows = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line) as { text: string; level?: [number, number]; current?: string; handoff?: boolean });
         }
-        const judge = judgeFor(session, await engineAvailability(session));
-        if (!judge) throw new HttpError(409, 'no engine available for the judge');
-        return json(res, 200, await evaluateJudge(store, uid, judge, rows.slice(0, 200))), true;
+        // {"engine":"codex"} measures the Codex judge alone (Codex answers in 12–28 s: four at a time)
+        const only = ENGINES.includes(b.engine as Engine) ? b.engine as Engine : undefined;
+        const judge = judgeFor(session, await engineAvailability(session), only);
+        if (!judge) throw new HttpError(409, only ? `${only} is not available for the judge` : 'no engine available for the judge');
+        return json(res, 200, { engine: only ?? null, ...await evaluateJudge(store, uid, judge, rows.slice(0, 200), only === 'codex' ? 4 : 3) }), true;
       }
       if (rest === '/route/eval' && m === 'POST') {
         const b = await readJson(req, 4 * 1024 * 1024);
