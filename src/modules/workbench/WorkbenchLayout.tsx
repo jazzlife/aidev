@@ -310,9 +310,11 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
           {quickSettingsButton}
           {settingsButton}
         </div>
-        {/* sessions drawer: slides over the panes instead of docking beside them */}
-        <div className={`absolute inset-0 z-40 ${drawerOpen ? '' : 'pointer-events-none'}`} aria-hidden={!drawerOpen}>
-          <button type="button" aria-label="세션 닫기" tabIndex={drawerOpen ? 0 : -1} onClick={() => setDrawerOpen(false)} className={`absolute inset-0 bg-background/60 backdrop-blur-[1px] transition-opacity duration-150 ${drawerOpen ? 'opacity-100' : 'opacity-0'}`} />
+        {/* sessions drawer: slides over the panes instead of docking beside them. Closed, it is `invisible` (after the
+            slide-out) so nothing of it is painted: on a Xiaomi tablet the transparent backdrop's backdrop-filter stayed on
+            screen as a frozen blur over the whole workbench, and no click seemed to do anything. */}
+        <div className={`absolute inset-0 z-40 transition-[visibility] duration-150 ${drawerOpen ? 'visible' : 'invisible pointer-events-none'}`} aria-hidden={!drawerOpen}>
+          <button type="button" aria-label="세션 닫기" tabIndex={drawerOpen ? 0 : -1} onClick={() => setDrawerOpen(false)} className={`absolute inset-0 bg-background/60 transition-opacity duration-150 ${drawerOpen ? 'opacity-100' : 'opacity-0'}`} />
           <div className={`aidev-chrome absolute left-0 top-0 bottom-0 w-[320px] max-w-[85vw] border-r border-border bg-background shadow-xl transition-transform duration-150 ease-out flex flex-col ${drawerOpen ? 'translate-x-0' : '-translate-x-full'}`}>
             {/* closes on backdrop tap, Escape, or once a session is picked */}
             <div className="flex-1 min-h-0">{sessionsPanel}</div>
