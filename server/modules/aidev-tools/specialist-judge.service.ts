@@ -48,11 +48,11 @@ export type JudgeResult = {
   ms: number;
 };
 
-const JUDGE_PROMPT = `You route developer commands to specialist AI agents. Pick the EXISTING agent closest to the command and score how well its declared domain covers the command.
+const JUDGE_PROMPT = `You route developer commands to specialist AI agents. The question is whether an agent can carry the command out with real expertise — the best result, not the nearest name. Pick the EXISTING agent with the most expertise for the command and score how expertly it can carry it out from its declared domain.
 
 Rules:
-- agent: the existing specialist whose declared domain is closest to the command's MAIN technology or problem domain. null only when no listed agent shares that domain at all.
-- fit (0..1) — how much of that agent's declared expertise applies to the command:
+- agent: the existing specialist whose declared expertise best covers what the command's MAIN technology or problem actually requires. null only when no listed agent shares that domain at all.
+- fit (0..1) — how expertly that agent can carry the command out: how much of what the work requires lies inside its declared expertise (an agent that would only manage it as a generalist would is not a fit):
   0.9-1.0 its domain is exactly the command's technology.
   0.6-0.8 it covers the command's main technology; the command is a sub-area or a neighbouring tool of it (Node SEA bytecode builds → a binary release/source protection agent).
   0.4-0.5 adjacent: the same platform or tool-chain family, most of its knowledge still applies.
@@ -61,7 +61,7 @@ Rules:
 - "generalist" (fit = how clearly the request is domain-less) only when the command is trivial or domain-less: a quick factual question, running one or two ready-made shell commands the user spelled out (also on their own/remote machine, e.g. "run sw_vers on my Mac", "m4pro에서 npm test 돌려서 결과 알려줘"), a tiny generic edit such as renaming.
 - Running commands — locally, on a named PC, or on a remote machine — is something every agent can do through its tools; it is never a specialist domain. Never propose a specialist for command execution, remote machines or reporting command output.
 - "generalist" also for work of any size that has no specific technology or problem domain: reading, searching or summarizing many files or logs (e.g. "이 로그 5만 줄에서 오류 패턴 요약", "src 전체를 읽고 구조를 요약"), general code review or explanation. Size alone never makes a specialist.
-- new: ONLY when the closest agent's fit is below 0.6 (or agent is null) and the command has a concrete technology or problem domain (a language, framework, platform, protocol, hardware or tool chain), propose the specialist that SHOULD exist (kebab-case name, domain, one-line description, key technologies). Otherwise null — a close-enough agent is used, not duplicated.
+- new: ONLY when no listed agent has the expertise (fit below 0.6, or agent null) and the command has a concrete technology or problem domain (a language, framework, platform, protocol, hardware or tool chain), propose the specialist with that expertise that SHOULD exist (kebab-case name, domain, one-line description, key technologies). Otherwise null — an agent with the expertise is used, not duplicated.
 - Never choose META agents.
 - current_fit: REQUIRED (a number) whenever a "Current agent of this conversation" is given, also when you propose a new agent or pick the generalist; null only without one — how well THAT agent carries this command as the next turn of its conversation. A follow-up on the ongoing work — continue, retry, fix, rerun or test what was just done, commit/push/tag it, a rule for how to keep working, or a question about it — keeps it at 0.8 or more whatever its domain, even when another agent would be closest for the words alone. For example, with a React agent: "앞으로 수정을 하면 푸시해" (push after every change from now on) → 0.85; "방금 고친 거 테스트 다시 돌려봐" → 0.85; "커밋하고 태그 달아" → 0.8; a question about what it just did or tested ("그 결과가 맞게 나온 거야?") → 0.85. Every agent commits, pushes, tags and opens pull requests for its own work, so git chores and working rules inside a conversation (how to commit, when to push, the message language) are follow-ups too, never a reason to change agent. Work in a different technology or problem domain than that agent's is scored on the fit scale above (with a git agent, "카드 간격을 맞춰줘" in a UI → 0.2).
 - level (0..4): the model tier that carries this command out COMFORTABLY — with capacity to spare, not a model that would barely manage it. What each tier does reliably, and where it starts to fail:

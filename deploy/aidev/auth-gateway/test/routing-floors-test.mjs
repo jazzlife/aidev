@@ -17,7 +17,7 @@ const engines = { claude: { allowed: true, authenticated: true }, codex: { allow
 
 /** Laya stand-in: fixed agent, depth score and task kind. */
 const laya = ({ agent, depth, kind }) => ({
-  status: {},
+  agent, status: {},
   predict: async (_state, questions) => {
     const answers = {};
     for (const [id, q] of Object.entries(questions)) {
@@ -32,7 +32,9 @@ const laya = ({ agent, depth, kind }) => ({
     return { answers, latency_ms: 1, device: 'mock' };
   },
 });
-const go = (l, text = 'React 컴포넌트 수정') => route(store, l, uid, engines, { text });
+// the specialist is the judge's call (2026-10-13): the stand-in judge names the agent the test is about, with no level
+const judgeFor = (agent) => async () => ({ agent: agent && agent !== 'generalist' ? agent : 'generalist', fit: 0.9, reason: 'r', new: null, question: null });
+const go = (l, text = 'React 컴포넌트 수정') => route(store, l, uid, engines, { text }, { judge: judgeFor(l.agent) });
 
 let r = await go(laya({ agent: 'frontend-react', depth: 1.4, kind: 'implement' }));
 assert.equal(r.scope.depth, 2, `1.4 → ${r.scope.depth}`); assert.equal(r.plan.model, 'sonnet'); assert.equal(r.plan.effort, 'high');

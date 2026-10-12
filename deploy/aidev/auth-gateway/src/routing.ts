@@ -271,16 +271,18 @@ export async function evaluateRouting(store: Store, laya: LayaClient, userId: nu
 }
 
 /**
- * The real judge on a labelled set (admin; verify-b.sh): does it place commands at a tier that carries them out
- * comfortably (`level` inside the row's range — the D4 rows are the strongest-model cases from the server), and does it
- * score a chat's agent low exactly when the chat should be handed off. The unit tests use a stand-in judge, so only
+ * The real judge on a labelled set (admin; verify-b.sh): does it give a command to an agent with the expertise for it
+ * (`agent`: one of the row's agents at fit ≥ JUDGE_USE_FIT, or `create`: none fits and it proposes the specialist), place
+ * commands at a tier that carries them out comfortably (`level` inside the row's range — the D4 rows are the
+ * strongest-model cases from the server), and score a chat's agent low exactly when the chat should be handed off. The unit tests use a stand-in judge, so only
  * this says whether the model itself judges as intended.
  */
-export async function evaluateJudge(store: Store, userId: number, judge: SpecialistJudge, rows: Array<{ text: string; level?: [number, number]; current?: string; handoff?: boolean }>, concurrency = 3) {
+export async function evaluateJudge(store: Store, userId: number, judge: SpecialistJudge, rows: Array<{ text: string; level?: [number, number]; current?: string; handoff?: boolean; agent?: string[]; create?: boolean }>, concurrency = 3) {
   const specialists = store.agents(userId).filter((a) => a.domain !== 'meta' && a.name !== 'generalist');
   const names = new Set(specialists.map((a) => a.name));
-  const usable = rows.filter((row) => !row.current || names.has(row.current));
-  const results: Array<{ text: string; level: number | null; expected_level: [number, number] | null; current: string | null; current_fit: number | null; handoff_expected: boolean | null; ok_level: boolean | null; ok_handoff: boolean | null; error?: string }> = [];
+  // a row about an agent this catalog lacks says nothing here
+  const usable = rows.filter((row) => (!row.current || names.has(row.current)) && (!row.agent || row.agent.some((name) => name === 'generalist' || names.has(name))));
+  const results: Array<{ text: string; agent: string | null; fit: number | null; proposal: string | null; expected_agent: string[] | null; create_expected: boolean | null; level: number | null; expected_level: [number, number] | null; current: string | null; current_fit: number | null; handoff_expected: boolean | null; ok_agent: boolean | null; ok_level: boolean | null; ok_handoff: boolean | null; error?: string }> = [];
   let next = 0;
   const worker = async () => {
     while (next < usable.length) {
@@ -289,7 +291,10 @@ export async function evaluateJudge(store: Store, userId: number, judge: Special
       try { verdict = await judge({ command: row.text, candidates: specialists.map((a) => ({ name: a.name, description: a.description })), current: row.current ?? null }); } catch (e) { error = e instanceof Error ? e.message : String(e); }
       const level = typeof verdict?.level === 'number' ? verdict.level : null;
       const currentFit = typeof verdict?.current_fit === 'number' ? verdict.current_fit : null;
-      results.push({ text: row.text, level, expected_level: row.level ?? null, current: row.current ?? null, current_fit: currentFit, handoff_expected: row.handoff ?? null,
+      const fit = typeof verdict?.fit === 'number' ? verdict.fit : null;
+      const okAgent = row.create ? Boolean(verdict?.new) && (fit === null || fit < JUDGE_USE_FIT || !verdict?.agent)
+        : row.agent ? Boolean(verdict?.agent && row.agent.includes(verdict.agent) && (verdict.agent === 'generalist' || (fit ?? 0) >= JUDGE_USE_FIT)) : null;
+      results.push({ text: row.text, agent: verdict?.agent ?? null, fit, proposal: verdict?.new?.name ?? null, expected_agent: row.agent ?? null, create_expected: row.create ?? null, ok_agent: okAgent, level, expected_level: row.level ?? null, current: row.current ?? null, current_fit: currentFit, handoff_expected: row.handoff ?? null,
         ok_level: row.level ? level !== null && level >= row.level[0] && level <= row.level[1] : null,
         ok_handoff: typeof row.handoff === 'boolean' ? currentFit !== null && (currentFit < JUDGE_USE_FIT) === row.handoff : null, ...(error ? { error } : {}) });
     }
@@ -299,6 +304,7 @@ export async function evaluateJudge(store: Store, userId: number, judge: Special
   const top = results.filter((r) => r.expected_level && r.expected_level[0] >= 4);
   return {
     n: results.length, failures: results.filter((r) => r.error).length,
+    agent_accuracy: rate(results.map((r) => r.ok_agent)),
     level_accuracy: rate(results.map((r) => r.ok_level)),
     strongest_recall: rate(top.map((r) => r.level === 4)),
     handoff_accuracy: rate(results.map((r) => r.ok_handoff)),
@@ -314,9 +320,9 @@ export async function evaluateJudge(store: Store, userId: number, judge: Special
  * specialist is created.
  */
 export type JudgeVerdict = { agent: string | null; fit: number; reason: string; new: { name: string; domain: string; description: string; technologies: string[] } | null; /** the judge's wording of the clarifying question (used only when Laya's clarify asks) */ question?: string | null;
-  /** inside a chat: how well the chat's current agent carries the command as its next turn (absent: not asked, e.g. a similar-command verdict) */ current_fit?: number | null;
+  /** inside a chat: how well the chat's current agent carries the command as its next turn (absent: not asked, or the judge left it out) */ current_fit?: number | null;
   /** the model tier (0–4) that carries the command out comfortably (absent: an older cached verdict) — the depth the command runs at */ level?: number | null;
-  engine?: string; ms?: number; source?: 'llm' | 'cache' | 'similar' };
+  engine?: string; ms?: number; source?: 'llm' | 'cache' };
 export type SpecialistJudge = (input: { command: string; candidates: Array<{ name: string; description: string }>; project?: string | null; /** the chat's current agent */ current?: string | null }) => Promise<JudgeVerdict | null>;
 const normText = (text: string) => text.toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 500);
 function cosine(a: string[], b: string[]) {
@@ -327,7 +333,6 @@ function cosine(a: string[], b: string[]) {
   const na = Math.sqrt([...ca.values()].reduce((x, n) => x + n * n, 0)); const nb = Math.sqrt([...cb.values()].reduce((x, n) => x + n * n, 0));
   return na && nb ? dot / (na * nb) : 0;
 }
-const SIMILAR_JUDGED = 0.8;
 /** The route questions' wording — one source for the gateway and the Laya calibration bench (pack.sh → questions.json). */
 export const ROUTE_INSTRUCTIONS = {
   agent: 'Which specialist should handle the developer request in `command`?',
@@ -354,7 +359,7 @@ export const JUDGE_USE_FIT = 0.6;
  * frontend-react 0.7 (#301), while lowering it to 0.6 alone would have moved a "push from now on" to the git agent (#294).
  */
 const SESSION_SWITCH_MARGIN = 0.2;
-/** The same, for a verdict without `current_fit` (a judge-confirmed similar command): the rule before 2026-10-13. */
+/** The same, for a verdict without `current_fit` (the judge left it out): the rule before 2026-10-13. */
 const SESSION_SWITCH_FIT_UNSCORED = 0.8;
 /** A judge-used command becomes a routing example of its agent only at this fit (a low-fit agent used for want of a proposal does not). */
 const JUDGE_EXAMPLE_FIT = 0.6;
@@ -387,37 +392,31 @@ function dismissedDomain(store: Store, userId: number, p: { name: string; domain
  *  prompt are not reused. 2: `question` + "command execution is never a specialist"; 3: "size alone never makes a specialist" (2026-10-01);
  *  4: the closest agent with a graded fit instead of a yes/no "true specialist"; 5: a proposal below 0.6, not 0.4 (2026-10-10);
  *  6: `current_fit` of the chat's current agent (2026-10-13);
- *  7: `level`, the model tier that carries the command out comfortably (2026-10-13); 8: sonnet, tier anchors, current_fit required. */
-const JUDGE_VERSION = 8;
-/** How long a send waits for the judge (env AIDEV_JUDGE_WAIT_MS). A slower verdict is still cached for the next send. */
-const JUDGE_WAIT_MS = Number(process.env.AIDEV_JUDGE_WAIT_MS ?? 20_000);
+ *  7: `level`, the model tier that carries the command out comfortably (2026-10-13); 8: sonnet, tier anchors, current_fit required;
+ *  9: fit = whether the agent carries the command out with expertise, not the closest domain (2026-10-13). */
+const JUDGE_VERSION = 9;
+/**
+ * How long a send waits for the judge (env AIDEV_JUDGE_WAIT_MS): as long as one judge call may take (aidev-api
+ * JUDGE_TIMEOUT_MS), since without its verdict no specialist is used. The typing-time pre-judge usually has it cached.
+ */
+const JUDGE_WAIT_MS = Number(process.env.AIDEV_JUDGE_WAIT_MS ?? 60_000);
 const MAX_PREJUDGE_PER_USER = 3;
-/** D-05: a send judged by Codex alone waits this long (env AIDEV_CODEX_JUDGE_WAIT_MS). Codex answers in 12–28 s on the
- *  server even for "reply OK" — past the "10 s is abnormal" line of the routing principle — so the send goes on with
- *  Laya + the lexical prior and the late verdict is cached for the next time (typing-time pre-judge still runs). */
-export const CODEX_JUDGE_WAIT_MS = Number(process.env.AIDEV_CODEX_JUDGE_WAIT_MS ?? 5_000);
 
 /** Running judge calls, keyed by user + catalog + command: the typing-time pre-judge and the send share one call. */
 const judging = new Map<string, Promise<JudgeVerdict | null>>();
 
 type JudgeContext = { specialists: ReturnType<Store['agents']>; catalogSig: string; textNorm: string; key: string; known: JudgeVerdict | null; current: string | null };
-/** What the judge would be asked, and a verdict that is already known (cache, or a judge-confirmed similar command).
- *  Inside a chat the verdict also scores the chat's current agent, so the cache keeps one per current agent. */
-function judgeContext(store: Store, userId: number, text: string, nbTop: { choice: string | null; probability: number }, current: string | null = null): JudgeContext {
+/** What the judge would be asked, and its verdict when this command was already judged against this catalog (cache).
+ *  Inside a chat the verdict also scores the chat's current agent, so the cache keeps one per current agent. There is
+ *  no shortcut past the judge: whether an agent can carry a command out with expertise is its call, not a word
+ *  statistic's (2026-10-13 — the lexical prior's ≥0.9 plus a similar judged command used to stand in for it). */
+function judgeContext(store: Store, userId: number, text: string, current: string | null = null): JudgeContext {
   const specialists = store.agents(userId).filter((a) => a.domain !== 'meta' && a.name !== 'generalist');
   const chatAgent = current && specialists.some((a) => a.name === current) ? current : null;
   const catalogSig = crypto.createHash('sha1').update(`judge${JUDGE_VERSION}|${specialists.map((a) => `${a.name}@${a.version}`).sort().join(',')}${chatAgent ? `|current:${chatAgent}` : ''}`).digest('hex').slice(0, 16);
   const textNorm = normText(text);
   let known = store.judgeCached(userId, textNorm, catalogSig) as JudgeVerdict | null;
   if (known) known = { ...known, source: 'cache' };
-  if (!known && nbTop.choice && nbTop.probability >= 0.9) {
-    const candidate = specialists.find((a) => a.name === nbTop.choice);
-    const tokens = tokenize(text);
-    let best = 0; let bestText: string | null = null;
-    for (const example of candidate ? store.judgedExamples(candidate.id) : []) { const score = cosine(tokens, tokenize(example)); if (score > best) { best = score; bestText = example; } }
-    // the similar command's own verdict carries its level, so the shortcut still runs the work at a comfortable tier
-    if (candidate && bestText && best >= SIMILAR_JUDGED) known = { agent: candidate.name, fit: 0.9, reason: `judge confirmed a similar command (${best.toFixed(2)})`, new: null, level: store.judgedLevel(userId, normText(bestText)), source: 'similar' };
-  }
   return { specialists, catalogSig, textNorm, key: `${userId}|${catalogSig}|${textNorm}`, known, current: chatAgent };
 }
 
@@ -461,9 +460,9 @@ export function prejudge(store: Store, userId: number, input: { text: string; pr
   if (text.length < 4) return { status: 'skipped' as const, reason: 'too short' };
   if (!judge) return { status: 'skipped' as const, reason: 'no engine for the judge' };
   const names = store.agents(userId).filter((a) => a.domain !== 'meta').map((a) => a.name);
-  const ctx = judgeContext(store, userId, text, topChoice({ probabilities: lexicalPrior(store, text, names) }), chatAgent(store, userId, input.sessionId));
+  const ctx = judgeContext(store, userId, text, chatAgent(store, userId, input.sessionId));
   if (!ctx.specialists.length) return { status: 'skipped' as const, reason: 'no specialists' };
-  if (ctx.known) return { status: ctx.known.source === 'cache' ? 'cached' as const : 'similar' as const, agent: ctx.known.agent };
+  if (ctx.known) return { status: 'cached' as const, agent: ctx.known.agent };
   if (judging.has(ctx.key)) return { status: 'running' as const };
   // a fast typist would otherwise start one judge per pause; the latest few are enough
   if ([...judging.keys()].filter((k) => k.startsWith(`${userId}|`)).length >= MAX_PREJUDGE_PER_USER) return { status: 'skipped' as const, reason: 'busy' };
@@ -515,10 +514,10 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   // remote_action: only asked when a PC is online; Laya fused with the lexical prior (bench: /route/eval remote)
   const remoteNbProbs = targets.length ? remotePrior(text) : {};
   let layaProbs: Record<string, number> | null = null;
-  // ---- specialist judge: cached verdict → a judge-confirmed similar command → an LLM turn (runs alongside Laya)
+  // ---- specialist judge: cached verdict, else an LLM turn (runs alongside Laya)
   // inside a chat the judge also scores the chat's agent (a forced agent or a queued design keeps no chat agent); with a
   // forced agent the judge still runs: its level sets the model tier, its agent is not used
-  const jctx = judgeContext(store, userId, text, nbTop, input.forceAgent || input.createProposal ? null : chatAgent(store, userId, input.sessionId));
+  const jctx = judgeContext(store, userId, text, input.forceAgent || input.createProposal ? null : chatAgent(store, userId, input.sessionId));
   let verdict: JudgeVerdict | null = jctx.known;
   const judgeT0 = Date.now();
   let judgeTimedOut = false;
@@ -557,7 +556,7 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   // Quality first (§3.4): an in-between depth score rounds up from .35, not .5 — a too-weak model costs
   // a failed run, a slightly stronger one only some usage.
   const layaDepth = clampDepth(Math.floor(depthRaw + (risk >= 1.5 ? 1 : 0) + DEPTH_ROUND_UP));
-  let agentName = agentTop.choice && catalog[agentTop.choice] ? agentTop.choice : 'generalist';
+  let agentName = 'generalist';
   let decision: 'use' | 'generalist' | 'create' | 'create_background' = 'use';
   // how long the send waited for the judge beyond Laya (0 when the verdict was cached or pre-judged in time)
   const layaDoneAt = Date.now();
@@ -576,10 +575,10 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   if (input.forceAgent) { /* handled below */ }
   else if (verdict) {
     const judged = verdict.agent && verdict.agent !== 'generalist' ? store.agent(userId, verdict.agent) : undefined;
-    // the closest agent is used unless it fits too poorly; a low fit with nothing to propose still uses it
-    if (judged && judged.domain !== 'meta' && (verdict.fit >= JUDGE_USE_FIT || !verdict.new)) {
+    // an agent is used only when the judge finds it carries the command out with expertise (fit ≥ JUDGE_USE_FIT)
+    if (judged && judged.domain !== 'meta' && verdict.fit >= JUDGE_USE_FIT) {
       agentName = judged.name; decision = 'use';
-      reason.push(`specialist judge: ${judged.name} (fit ${verdict.fit.toFixed(2)}${verdict.fit < JUDGE_EXAMPLE_FIT ? ', closest' : ''}, ${verdict.source}${verdict.reason ? `: ${verdict.reason}` : ''})${agentTop.choice !== judged.name ? ` — ranker had ${agentTop.choice} ${agentTop.probability.toFixed(2)}` : ''}`);
+      reason.push(`specialist judge: ${judged.name} (fit ${verdict.fit.toFixed(2)}, ${verdict.source}${verdict.reason ? `: ${verdict.reason}` : ''})${agentTop.choice !== judged.name ? ` — ranker had ${agentTop.choice} ${agentTop.probability.toFixed(2)}` : ''}`);
       // a confirmed command becomes an example of that specialist: the lexical prior learns from the judge — not when it
       // is the chat's own agent, whose fit a follow-up ("진행해봐") lifts without saying anything about its domain
       if (verdict.source === 'llm' && verdict.fit >= JUDGE_EXAMPLE_FIT && judged.name !== jctx.current) store.addExamples(judged.id, [{ text, source: 'judge', taskKind: null }]);
@@ -591,19 +590,22 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
       // creating an agent would be a guess — the generalist runs it and the clarify prompt can ask first
       agentName = 'generalist'; decision = 'generalist';
       reason.push(`specialist judge: command unclear, no domain to create for → generalist (${verdict.question})`);
+    } else if (!verdict.new) {
+      // no agent has the expertise and the judge names no concrete domain to create one for: not a weak specialist
+      agentName = 'generalist'; decision = 'generalist';
+      reason.push(`specialist judge: ${judged ? `${judged.name} lacks the expertise (${verdict.fit.toFixed(2)} < ${JUDGE_USE_FIT})` : 'no specialist has the expertise'}, no domain to create for → generalist${verdict.reason ? ` (${verdict.reason})` : ''}`);
     } else {
       agentName = 'generalist'; decision = 'create'; proposal = verdict.new;
       reason.push(`specialist judge: ${judged ? `closest ${judged.name} fits too poorly (${verdict.fit.toFixed(2)} < ${JUDGE_USE_FIT})` : 'no existing specialist'}${verdict.new ? ` → create ${verdict.new.name} (${verdict.new.domain})` : ''}${verdict.reason ? `: ${verdict.reason}` : ''}`);
     }
   }
-  else if (fallback && agentTop.probability < 0.5) { agentName = 'generalist'; decision = 'generalist'; }
-  else if (fallback) { reason.push(`lexical prior ${agentName} ${(agentTop.probability * 100).toFixed(0)}%`); }
-  else if (agentTop.probability < 0.5 || (needsNew >= 0.5 && agentTop.probability < 0.7 && nbTop.probability < 0.6)) {
-    // No judge verdict (down, or still running — its verdict is cached for the next send): without a fit score there is
-    // no saying the catalog fits too poorly, so nothing is created; an ambiguous pick is not a specialist either.
-    decision = 'generalist'; agentName = 'generalist';
-    reason.push(`ambiguous agent (${agentTop.choice} ${agentTop.probability.toFixed(2)}, needs_new ${needsNew.toFixed(2)}) and no judge fit → generalist`);
-  } else reason.push(`agent ${agentName} ${(agentTop.probability * 100).toFixed(0)}% (specialist judge unavailable)`);
+  else {
+    // No verdict (no engine for the judge, or it failed): no specialist is picked or created by probability — whether
+    // an agent can carry the command out with expertise is the judge's call alone (user decision 2026-10-13). Laya's
+    // and the lexical prior's pick stays in the log (probabilities) only.
+    agentName = 'generalist'; decision = 'generalist';
+    reason.push(`no specialist judge verdict → generalist (ranker had ${agentTop.choice ?? '-'} ${agentTop.probability.toFixed(2)}, not used)`);
+  }
   if (input.forceAgent && store.agent(userId, input.forceAgent)) { agentName = input.forceAgent; decision = 'use'; reason.push(`user override → ${agentName}`); }
   // D-04: the user accepted a queued proposal — this turn goes to the agent-architect with that domain
   const fromQueue = input.createProposal ? store.createQueueEntry(userId, input.createProposal) : null;

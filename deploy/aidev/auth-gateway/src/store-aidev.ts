@@ -308,18 +308,6 @@ export function aidevMethods(db: Database.Database) {
     cacheJudge(userId: number, textNorm: string, catalogSig: string, result: unknown) {
       db.prepare('INSERT OR REPLACE INTO judge_cache(user_id,text_norm,catalog_sig,result,created_at) VALUES(?,?,?,?,?)').run(userId, textNorm, catalogSig, JSON.stringify(result), Date.now());
     },
-    /** The model tier the judge gave this command in its latest verdict (any catalog), or null. */
-    judgedLevel(userId: number, textNorm: string): number | null {
-      const rows = db.prepare('SELECT result FROM judge_cache WHERE user_id=? AND text_norm=? ORDER BY created_at DESC LIMIT 5').all(userId, textNorm) as Array<{ result: string }>;
-      for (const row of rows) {
-        try { const level = (JSON.parse(row.result) as { level?: unknown }).level; if (typeof level === 'number' && Number.isFinite(level)) return level; } catch { /* a broken row */ }
-      }
-      return null;
-    },
-    /** Commands the judge already confirmed for an agent (source 'judge'). */
-    judgedExamples(agentId: number, limit = 300) {
-      return (db.prepare("SELECT text FROM agent_examples WHERE agent_id=? AND source='judge' ORDER BY id DESC LIMIT ?").all(agentId, limit) as Array<{ text: string }>).map((r) => r.text);
-    },
     /** A chat's own ceiling (set from the chat); engines it leaves out follow the account default. */
     sessionEffortCap(userId: number, sessionId: string): Partial<Record<Engine, string>> | null {
       const row = db.prepare('SELECT effort_cap FROM session_settings WHERE user_id=? AND session_id=?').get(userId, sessionId) as { effort_cap: string | null } | undefined;

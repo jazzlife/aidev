@@ -60,10 +60,6 @@ assert.equal(r.agent.name, 'backend-node'); assert.equal(r.scope.depth, 4);
 // the floors still apply on top of a low level (debug ≥ D2)
 r = await route(store, laya({ kind: 'debug' }), uid, claudeOnly, { text: '왜 저장이 안 되는지 봐줘' }, { judge: judgeSays({ agent: 'frontend-react', fit: 0.8, level: 1 }) });
 assert.equal(r.scope.depth, 2);
-// the similar-command shortcut keeps the level of the verdict it stands on
-store.cacheJudge(uid, '도커 컴포즈로 전체 스택 마이그레이션', 'any-catalog', { agent: 'devops', fit: 0.9, level: 4 });
-assert.equal(store.judgedLevel(uid, '도커 컴포즈로 전체 스택 마이그레이션'), 4);
-assert.equal(store.judgedLevel(uid, 'never judged'), null);
 console.log('PASS the model tier comes from the judge\'s comfortable level: D4 runs Fable / Astra, light work runs light');
 
 // ---- 2. handoff: the ComfyUI chat that became security-review's (server session b9344e7c, decisions #2025 → #2274)
@@ -94,6 +90,14 @@ r = await route(store, laya({ agent: 'dotnet-wpf' }), uid, claudeOnly, { text: '
 assert.equal(r.agent.name, 'security-review'); assert.equal(r.scope.depth, 3, 'the chat keeps its tier');
 console.log('PASS a chat whose agent does not fit the command is handed off (new, fitting or general agent); a follow-up keeps it');
 
+// ---- 2b. only the judge's view of expertise picks a specialist: the ranker's confident pick alone is never used
+const solo = await route(store, laya({ agent: 'database', kind: 'implement' }), uid, claudeOnly, { text: '주문 테이블에 인덱스 추가해줘 (판정 없음)' });
+assert.equal(solo.agent.name, 'generalist', solo.plan.reason.join(' | '));
+assert.ok(solo.plan.reason.some((line) => line.startsWith('no specialist judge verdict → generalist (ranker had database')));
+const poor = await route(store, laya({ agent: 'database' }), uid, claudeOnly, { text: 'SwiftUI 위젯 색 바꿔줘' }, { judge: judgeSays({ agent: 'mobile-responsive', fit: 0.3, level: 1 }) });
+assert.equal(poor.agent.name, 'generalist', 'an agent without the expertise is not used for want of a better one');
+console.log('PASS a specialist is used only on the judge\'s word that it has the expertise; no verdict or a poor fit → generalist');
+
 // ---- 3. the lexical prior learns only from commands routed to their agent
 const answerOf = (id) => store.db.prepare('SELECT answer FROM decision_log WHERE id=?').get(id).answer;
 assert.equal(JSON.parse(answerOf(r.decision_id)).agent_source, 'session');
@@ -102,9 +106,10 @@ r = await route(store, laya({ agent: 'database' }), uid, claudeOnly, { text: '�
 assert.equal(runTeachesAgent(answerOf(r.decision_id)), true, 'a command routed to its agent still teaches it');
 assert.equal(runTeachesAgent(null), true); assert.equal(runTeachesAgent('{"agent":"x"}'), true, 'older decisions still teach');
 // the judge's own pick is not learned when it is the chat's agent (a follow-up lifts that fit)
-const before = store.judgedExamples(store.agent(uid, 'security-review').id).length;
+const judgedOf = (name) => store.db.prepare("SELECT count(*) n FROM agent_examples WHERE agent_id=? AND source='judge'").get(store.agent(uid, name).id).n;
+const before = judgedOf('security-review');
 await route(store, laya(), uid, claudeOnly, { text: '그 작업 계속 이어서 해', sessionId: sid, sessionEngine: 'claude' }, { judge: inChat({ agent: 'security-review', fit: 0.85, current_fit: 0.85, level: 2 }) });
-assert.equal(store.judgedExamples(store.agent(uid, 'security-review').id).length, before);
+assert.equal(judgedOf('security-review'), before);
 console.log('PASS routing examples come only from commands routed to their agent, not from a chat that continued');
 
 console.log('capability routing: all checks passed');

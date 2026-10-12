@@ -20,7 +20,7 @@ import { launchCommand, validateLaunch, type DebugHub } from './debug-hub.js';
 import type { ConsoleHub } from './console-hub.js';
 import { ShipError, type PlatformShip } from './platform-ship.js';
 import { GithubOauthError, type GithubOauth } from './github-oauth.js';
-import { applyModelFloor, ARCHITECT_MIN_DEPTH, CODEX_JUDGE_WAIT_MS, evaluateJudge, evaluateRouting, prejudge, route, runTeachesAgent, TIER_TABLE, type EngineAvailability, type JudgeVerdict, type RouteInput, type SpecialistJudge } from './routing.js';
+import { applyModelFloor, ARCHITECT_MIN_DEPTH, evaluateJudge, evaluateRouting, prejudge, route, runTeachesAgent, TIER_TABLE, type EngineAvailability, type JudgeVerdict, type RouteInput, type SpecialistJudge } from './routing.js';
 /** Hard limit of one judge call in the runtime; a send waits less (routing.ts AIDEV_JUDGE_WAIT_MS) and the rest is cached. */
 const JUDGE_TIMEOUT_MS = Number(process.env.AIDEV_JUDGE_TIMEOUT_MS ?? 60_000);
 
@@ -383,9 +383,8 @@ export function createAidevApi(deps: AidevDeps) {
           modelFloor: b.modelFloor && typeof b.modelFloor === 'object' ? { claude: optStr((b.modelFloor as Record<string, unknown>).claude, 40), codex: optStr((b.modelFloor as Record<string, unknown>).codex, 40) } as Partial<Record<Engine, string>> : null };
         const engines = await engineAvailability(session);
         const judge = judgeFor(session, engines);
-        // D-05: Codex-only judging is slow (12–28 s) — the send waits briefly, the verdict is cached for next time
-        const judgeWaitMs = usableEngines(engines).includes('claude') ? undefined : CODEX_JUDGE_WAIT_MS;
-        const result = await route(store, laya, uid, engines, input, { judge, judgeWaitMs });
+        // the send waits for the judge (Codex alone answers in 12–28 s): no specialist is used without its verdict
+        const result = await route(store, laya, uid, engines, input, { judge });
         // an ongoing chat's command found no specialist: the generalist answers, the specialist is designed meanwhile
         if (result.create?.design && result.create.proposal) {
           void designAgent(session, engines, { proposal: result.create.proposal, catalog: result.create.catalog }, input.text, input.sessionId ?? null)

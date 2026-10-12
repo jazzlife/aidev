@@ -91,12 +91,12 @@ r = await go('SwiftUI로 iOS 위젯 만들어줘', closest('devops', 0.15, { nam
 assert.deepEqual([r.decision, r.create.proposal.name], ['create', 'ios-swift'], 'below the line a new specialist is created');
 assert.ok(r.plan.reason.some((line) => line.includes('fits too poorly')), r.plan.reason.join(' | '));
 r = await go('SwiftUI 위젯 색 바꿔줘', closest('devops', 0.15, null), 2.5);
-assert.deepEqual([r.decision, r.agent.name], ['use', 'devops'], 'a low fit with nothing to propose still uses the closest agent');
+assert.deepEqual([r.decision, r.agent.name], ['generalist', 'generalist'], 'a low fit with nothing to propose is not a specialist (2026-10-13): the generalist');
 assert.equal(examplesOf(), before + 1, 'without becoming its routing example');
 const ambiguous = { status: {}, predict: async (state, questions) => { const out = await laya(2.5).predict(state, questions); out.answers.agent = { choice: 'testing', probabilities: { testing: 0.34, devops: 0.33, database: 0.33 }, confidence: 0.34 }; out.answers.needs_new = { noul: 0.9 }; return out; } };
 r = await route(store, ambiguous, uid, engines, { text: 'Zig로 커널 모듈 작성' }, {});
 assert.deepEqual([r.decision, r.agent.name, r.create], ['generalist', 'generalist', null], `no judge fit → nothing is created: ${r.plan.reason.join(' | ')}`);
-console.log('PASS the closest agent is used down to fit 0.6; only a poorer fit creates a specialist; no judge, no creation');
+console.log('PASS an agent is used only with the expertise (fit 0.6+); a poorer fit creates a specialist or goes to the generalist; no judge, no specialist');
 
 r = await go('[전문 agent 만들기] Unity graphics', async () => { throw new Error('judge not needed'); }, 0.6, { createProposal: id });
 assert.equal(r.decision, 'create'); assert.equal(r.create.from_queue, true); assert.equal(r.create.background, false);

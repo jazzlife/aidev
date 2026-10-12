@@ -117,10 +117,12 @@ assert.equal(asked.at(-1), null);
 const creator = async () => ({ agent: null, fit: 0, reason: 'none', new: { name: 'game-loop-player', domain: 'games', description: 'x', technologies: ['d3d'] }, question: null, source: 'llm' });
 r = await route(store, laya({ agent: 'generalist', depth: 2, needsNew: 0.9 }), uid, claudeOnly, { text: '너 게임루프가 뭔지 모르는구나?', sessionId: sid, sessionEngine: 'claude' }, { judge: creator });
 assert.equal(r.decision, 'use'); assert.equal(r.agent.name, 'ai-integration'); assert.equal(r.create, null);
-// a chat that started on the generalist may still move to a specialist (judge or ranker)
+// a chat that started on the generalist may still move to a specialist — the judge's, never the ranker's alone
 const gsid = 'sess-general';
 store.addRun({ userId: uid, sessionId: gsid, agentId: store.agent(uid, 'generalist').id, engine: 'claude', model: 'sonnet', effort: 'medium', depth: 1 });
 r = await route(store, laya({ agent: 'database', depth: 2 }), uid, claudeOnly, { text: '인덱스 설계', sessionId: gsid, sessionEngine: 'claude' });
+assert.equal(r.agent.name, 'generalist', 'no verdict: the ranker\'s database is not used');
+r = await route(store, laya({ agent: 'database', depth: 2 }), uid, claudeOnly, { text: '인덱스 설계', sessionId: gsid, sessionEngine: 'claude' }, { judge: async () => ({ agent: 'database', fit: 0.9, reason: 'r', new: null, question: null }) });
 assert.equal(r.agent.name, 'database');
 // a forced agent (app re-send / user pick) bypasses the stickiness
 r = await route(store, laya({ agent: 'generalist', depth: 1 }), uid, claudeOnly, { text: '진행해', sessionId: sid, sessionEngine: 'claude', forceAgent: 'frontend-react' });
