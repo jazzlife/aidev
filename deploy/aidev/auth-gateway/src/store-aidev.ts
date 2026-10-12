@@ -305,6 +305,11 @@ export function aidevMethods(db: Database.Database) {
       if (!row || row.created_at < Date.now() - 30 * 86_400_000) return null;
       try { return JSON.parse(row.result) as Record<string, unknown>; } catch { return null; }
     },
+    /** Verdicts judged against this catalog since `since` (newest first): the drafts a sent command may match. */
+    recentJudged(userId: number, catalogSig: string, since: number) {
+      return (db.prepare('SELECT text_norm, result FROM judge_cache WHERE user_id=? AND catalog_sig=? AND created_at>=? ORDER BY created_at DESC LIMIT 30').all(userId, catalogSig, since) as Array<{ text_norm: string; result: string }>)
+        .flatMap((row) => { try { return [{ text_norm: row.text_norm, result: JSON.parse(row.result) as Record<string, unknown> }]; } catch { return []; } });
+    },
     cacheJudge(userId: number, textNorm: string, catalogSig: string, result: unknown) {
       db.prepare('INSERT OR REPLACE INTO judge_cache(user_id,text_norm,catalog_sig,result,created_at) VALUES(?,?,?,?,?)').run(userId, textNorm, catalogSig, JSON.stringify(result), Date.now());
     },

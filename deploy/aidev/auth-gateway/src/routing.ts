@@ -282,7 +282,7 @@ export async function evaluateJudge(store: Store, userId: number, judge: Special
   const names = new Set(specialists.map((a) => a.name));
   // a row about an agent this catalog lacks says nothing here
   const usable = rows.filter((row) => (!row.current || names.has(row.current)) && (!row.agent || row.agent.some((name) => name === 'generalist' || names.has(name))));
-  const results: Array<{ text: string; agent: string | null; fit: number | null; proposal: string | null; expected_agent: string[] | null; create_expected: boolean | null; level: number | null; expected_level: [number, number] | null; current: string | null; current_fit: number | null; handoff_expected: boolean | null; ok_agent: boolean | null; ok_level: boolean | null; ok_handoff: boolean | null; error?: string }> = [];
+  const results: Array<{ text: string; ms: number | null; agent: string | null; fit: number | null; proposal: string | null; expected_agent: string[] | null; create_expected: boolean | null; level: number | null; expected_level: [number, number] | null; current: string | null; current_fit: number | null; handoff_expected: boolean | null; ok_agent: boolean | null; ok_level: boolean | null; ok_handoff: boolean | null; error?: string }> = [];
   let next = 0;
   const worker = async () => {
     while (next < usable.length) {
@@ -294,7 +294,7 @@ export async function evaluateJudge(store: Store, userId: number, judge: Special
       const fit = typeof verdict?.fit === 'number' ? verdict.fit : null;
       const okAgent = row.create ? Boolean(verdict?.new) && (fit === null || fit < JUDGE_USE_FIT || !verdict?.agent)
         : row.agent ? Boolean(verdict?.agent && row.agent.includes(verdict.agent) && (verdict.agent === 'generalist' || (fit ?? 0) >= JUDGE_USE_FIT)) : null;
-      results.push({ text: row.text, agent: verdict?.agent ?? null, fit, proposal: verdict?.new?.name ?? null, expected_agent: row.agent ?? null, create_expected: row.create ?? null, ok_agent: okAgent, level, expected_level: row.level ?? null, current: row.current ?? null, current_fit: currentFit, handoff_expected: row.handoff ?? null,
+      results.push({ text: row.text, ms: typeof verdict?.ms === 'number' ? verdict.ms : null, agent: verdict?.agent ?? null, fit, proposal: verdict?.new?.name ?? null, expected_agent: row.agent ?? null, create_expected: row.create ?? null, ok_agent: okAgent, level, expected_level: row.level ?? null, current: row.current ?? null, current_fit: currentFit, handoff_expected: row.handoff ?? null,
         ok_level: row.level ? level !== null && level >= row.level[0] && level <= row.level[1] : null,
         ok_handoff: typeof row.handoff === 'boolean' ? currentFit !== null && (currentFit < JUDGE_USE_FIT) === row.handoff : null, ...(error ? { error } : {}) });
     }
@@ -305,6 +305,9 @@ export async function evaluateJudge(store: Store, userId: number, judge: Special
   return {
     n: results.length, failures: results.filter((r) => r.error).length,
     agent_accuracy: rate(results.map((r) => r.ok_agent)),
+    // how long one verdict takes (three at a time here, so a little slower than a lone send)
+    ms_p50: (() => { const ms = results.map((r) => r.ms).filter((x): x is number => x !== null).sort((a, b) => a - b); return ms.length ? ms[Math.floor(ms.length / 2)] : null; })(),
+    ms_p90: (() => { const ms = results.map((r) => r.ms).filter((x): x is number => x !== null).sort((a, b) => a - b); return ms.length ? ms[Math.floor(ms.length * 0.9)] : null; })(),
     level_accuracy: rate(results.map((r) => r.ok_level)),
     strongest_recall: rate(top.map((r) => r.level === 4)),
     handoff_accuracy: rate(results.map((r) => r.ok_handoff)),
@@ -323,7 +326,8 @@ export type JudgeVerdict = { agent: string | null; fit: number; reason: string; 
   /** inside a chat: how well the chat's current agent carries the command as its next turn (absent: not asked, or the judge left it out) */ current_fit?: number | null;
   /** the model tier (0–4) that carries the command out comfortably (absent: an older cached verdict) — the depth the command runs at */ level?: number | null;
   engine?: string; ms?: number; source?: 'llm' | 'cache' };
-export type SpecialistJudge = (input: { command: string; candidates: Array<{ name: string; description: string }>; project?: string | null; /** the chat's current agent */ current?: string | null }) => Promise<JudgeVerdict | null>;
+export type SpecialistJudge = (input: { command: string; candidates: Array<{ name: string; description: string }>; project?: string | null; /** the chat's current agent */ current?: string | null;
+  /** the command starts a new conversation: the judge words a clarifying question (shown only there) */ ask?: boolean }) => Promise<JudgeVerdict | null>;
 const normText = (text: string) => text.toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 500);
 function cosine(a: string[], b: string[]) {
   const ca = new Map<string, number>(); const cb = new Map<string, number>();
@@ -396,29 +400,61 @@ function dismissedDomain(store: Store, userId: number, p: { name: string; domain
  *  9: fit = whether the agent carries the command out with expertise, not the closest domain (2026-10-13). */
 const JUDGE_VERSION = 9;
 /**
- * How long a send waits for the judge (env AIDEV_JUDGE_WAIT_MS): as long as one judge call may take (aidev-api
- * JUDGE_TIMEOUT_MS), since without its verdict no specialist is used. The typing-time pre-judge usually has it cached.
+ * How long a send waits for the judge (env AIDEV_JUDGE_WAIT_MS). A verdict takes 1.5–4 s (a warm sonnet process,
+ * 2026-10-13) and the typing-time pre-judge usually has it ready; past this the generalist starts the work — never a
+ * specialist picked by probability — and the late verdict is cached, so the chat's next command is judged with it in
+ * place (a specialist that fits takes the chat over then).
  */
-const JUDGE_WAIT_MS = Number(process.env.AIDEV_JUDGE_WAIT_MS ?? 60_000);
+const JUDGE_WAIT_MS = Number(process.env.AIDEV_JUDGE_WAIT_MS ?? 10_000);
 const MAX_PREJUDGE_PER_USER = 3;
 
 /** Running judge calls, keyed by user + catalog + command: the typing-time pre-judge and the send share one call. */
 const judging = new Map<string, Promise<JudgeVerdict | null>>();
 
-type JudgeContext = { specialists: ReturnType<Store['agents']>; catalogSig: string; textNorm: string; key: string; known: JudgeVerdict | null; current: string | null };
+type JudgeContext = { specialists: ReturnType<Store['agents']>; catalogSig: string; textNorm: string; key: string; known: JudgeVerdict | null; current: string | null; ask: boolean;
+  /** an in-flight judge call for the same command as typed a moment ago (sameCommand) */ joinable: Promise<JudgeVerdict | null> | null };
+
+/** How far back a draft's verdict stands for the sent command (the typing-time pre-judge, item 2 of 2026-10-13). */
+const DRAFT_VERDICT_MS = 10 * 60_000;
+/**
+ * The sent command is the draft the judge already saw: equal once spacing and punctuation are dropped, or the draft
+ * plus/minus at most two trailing characters ("…추가해" → "…추가해줘"). A judged draft that close is the same
+ * command, so its verdict is reused rather than asked again; anything more is judged afresh.
+ */
+export function sameCommand(a: string, b: string): boolean {
+  const strip = (t: string) => t.toLowerCase().replace(/[\s.,!?~…'"`·]+/g, '');
+  const x = strip(a); const y = strip(b);
+  if (x === y) return true;
+  const [short, long] = x.length <= y.length ? [x, y] : [y, x];
+  return short.length >= 8 && long.length - short.length <= 2 && long.startsWith(short);
+}
 /** What the judge would be asked, and its verdict when this command was already judged against this catalog (cache).
  *  Inside a chat the verdict also scores the chat's current agent, so the cache keeps one per current agent. There is
  *  no shortcut past the judge: whether an agent can carry a command out with expertise is its call, not a word
  *  statistic's (2026-10-13 — the lexical prior's ≥0.9 plus a similar judged command used to stand in for it). */
-function judgeContext(store: Store, userId: number, text: string, current: string | null = null): JudgeContext {
+function judgeContext(store: Store, userId: number, text: string, current: string | null = null, ask = true): JudgeContext {
   const specialists = store.agents(userId).filter((a) => a.domain !== 'meta' && a.name !== 'generalist');
   const chatAgent = current && specialists.some((a) => a.name === current) ? current : null;
-  const catalogSig = crypto.createHash('sha1').update(`judge${JUDGE_VERSION}|${specialists.map((a) => `${a.name}@${a.version}`).sort().join(',')}${chatAgent ? `|current:${chatAgent}` : ''}`).digest('hex').slice(0, 16);
+  const catalogSig = crypto.createHash('sha1').update(`judge${JUDGE_VERSION}|${specialists.map((a) => `${a.name}@${a.version}`).sort().join(',')}${chatAgent ? `|current:${chatAgent}` : ''}${ask ? '' : '|continues'}`).digest('hex').slice(0, 16);
   const textNorm = normText(text);
   let known = store.judgeCached(userId, textNorm, catalogSig) as JudgeVerdict | null;
+  let joinable: Promise<JudgeVerdict | null> | null = null;
+  if (!known) {
+    // the draft typed a moment ago, already judged (or being judged) against the same catalog and chat
+    const draft = store.recentJudged(userId, catalogSig, Date.now() - DRAFT_VERDICT_MS).find((row) => sameCommand(row.text_norm, textNorm));
+    if (draft) known = draft.result as JudgeVerdict;
+    else {
+      const prefix = `${userId}|${catalogSig}|`;
+      const running = [...judging.entries()].find(([key]) => key.startsWith(prefix) && sameCommand(key.slice(prefix.length), textNorm));
+      joinable = running?.[1] ?? null;
+    }
+  }
   if (known) known = { ...known, source: 'cache' };
-  return { specialists, catalogSig, textNorm, key: `${userId}|${catalogSig}|${textNorm}`, known, current: chatAgent };
+  return { specialists, catalogSig, textNorm, key: `${userId}|${catalogSig}|${textNorm}`, known, current: chatAgent, ask, joinable };
 }
+
+/** Whether a command starts a conversation (no run in its chat yet): only there is a clarifying question shown. */
+const startsChat = (store: Store, userId: number, sessionId: string | null | undefined) => !(sessionId && store.lastRunForSession(userId, sessionId));
 
 /**
  * The specialist a chat is with, which its follow-ups keep (2026-10-07): the agent of the chat's last run, unless that
@@ -432,9 +468,9 @@ function chatAgent(store: Store, userId: number, sessionId: string | null | unde
 
 /** Start (or join) the judge for this command. The verdict is cached when it arrives, even if nobody waits any more. */
 function startJudge(store: Store, userId: number, ctx: JudgeContext, text: string, projectHint: string | null, judge: SpecialistJudge): Promise<JudgeVerdict | null> {
-  const running = judging.get(ctx.key);
+  const running = judging.get(ctx.key) ?? ctx.joinable;
   if (running) return running;
-  const promise = judge({ command: text, candidates: ctx.specialists.map((a) => ({ name: a.name, description: a.description })), project: projectHint, current: ctx.current })
+  const promise = judge({ command: text, candidates: ctx.specialists.map((a) => ({ name: a.name, description: a.description })), project: projectHint, current: ctx.current, ask: ctx.ask })
     .then((v) => (v ? { ...v, source: 'llm' as const } : null))
     .catch(() => null)
     .then((v) => {
@@ -460,10 +496,10 @@ export function prejudge(store: Store, userId: number, input: { text: string; pr
   if (text.length < 4) return { status: 'skipped' as const, reason: 'too short' };
   if (!judge) return { status: 'skipped' as const, reason: 'no engine for the judge' };
   const names = store.agents(userId).filter((a) => a.domain !== 'meta').map((a) => a.name);
-  const ctx = judgeContext(store, userId, text, chatAgent(store, userId, input.sessionId));
+  const ctx = judgeContext(store, userId, text, chatAgent(store, userId, input.sessionId), startsChat(store, userId, input.sessionId));
   if (!ctx.specialists.length) return { status: 'skipped' as const, reason: 'no specialists' };
   if (ctx.known) return { status: 'cached' as const, agent: ctx.known.agent };
-  if (judging.has(ctx.key)) return { status: 'running' as const };
+  if (judging.has(ctx.key) || ctx.joinable) return { status: 'running' as const };
   // a fast typist would otherwise start one judge per pause; the latest few are enough
   if ([...judging.keys()].filter((k) => k.startsWith(`${userId}|`)).length >= MAX_PREJUDGE_PER_USER) return { status: 'skipped' as const, reason: 'busy' };
   void startJudge(store, userId, ctx, text, input.projectHint ?? null, judge);
@@ -517,11 +553,11 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   // ---- specialist judge: cached verdict, else an LLM turn (runs alongside Laya)
   // inside a chat the judge also scores the chat's agent (a forced agent or a queued design keeps no chat agent); with a
   // forced agent the judge still runs: its level sets the model tier, its agent is not used
-  const jctx = judgeContext(store, userId, text, input.forceAgent || input.createProposal ? null : chatAgent(store, userId, input.sessionId));
+  const jctx = judgeContext(store, userId, text, input.forceAgent || input.createProposal ? null : chatAgent(store, userId, input.sessionId), startsChat(store, userId, input.sessionId));
   let verdict: JudgeVerdict | null = jctx.known;
   const judgeT0 = Date.now();
   let judgeTimedOut = false;
-  const joined = !verdict && judging.has(jctx.key);
+  const joined = !verdict && (judging.has(jctx.key) || Boolean(jctx.joinable));
   const judgePromise: Promise<JudgeVerdict | null> = verdict || !opts.judge || !jctx.specialists.length
     ? Promise.resolve(verdict)
     : waitAtMost(startJudge(store, userId, jctx, text, input.projectHint ?? null, opts.judge), opts.judgeWaitMs ?? JUDGE_WAIT_MS, null, () => { judgeTimedOut = true; });

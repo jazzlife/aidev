@@ -59,10 +59,11 @@ r=$(jget "/api/aidev/decisions?limit=5"); check "$r" 'j.decisions.length>=3' "de
 echo "## specialist judge on its labelled set (the real model): agent with the expertise, comfortable model tier, chat handoff"
 # one judge turn per row (~3-8 s each, three at a time): beyond the 30 s request cap of jpost
 r=$(docker run --rm -i --network $NET curlimages/curl:8.16.0 -sS -m 300 -X POST -H "authorization: Bearer $TOK" -H 'content-type: application/json' --data-binary '{}' "$GW/api/aidev/route/eval-judge")
-echo "$(jeval "$r" 'JSON.stringify({ n: j.n, failures: j.failures, agent: j.agent_accuracy, level: j.level_accuracy, strongest: j.strongest_recall, handoff: j.handoff_accuracy })')"
+echo "$(jeval "$r" 'JSON.stringify({ n: j.n, failures: j.failures, ms_p50: j.ms_p50, ms_p90: j.ms_p90, agent: j.agent_accuracy, level: j.level_accuracy, strongest: j.strongest_recall, handoff: j.handoff_accuracy })')"
 jeval "$r" '(j.results||[]).filter((x) => x.ok_agent === false || x.ok_level === false || x.ok_handoff === false || x.error).map((x) => `  miss: ${x.ok_agent === false ? `${x.agent} ${x.fit}${x.proposal ? ` new ${x.proposal}` : ""} want ${x.create_expected ? "create" : x.expected_agent.join("/")} | ` : ""}L${x.level} want ${x.expected_level ? x.expected_level.join("-") : "-"}${x.current ? ` | ${x.current} fit ${x.current_fit} want ${x.handoff_expected ? "handoff" : "keep"}` : ""}${x.error ? ` | ${x.error}` : ""} — ${x.text.slice(0, 60)}`).join("\n")'
 check "$r" 'j.failures===0 && j.level_accuracy>=0.8 && j.strongest_recall>=0.66' "judge places work at a comfortable tier (level in range >= 0.8, D4 cases >= 2/3)"
 check "$r" 'j.agent_accuracy>=0.85' "judge gives a command to an agent with the expertise, or creates one (>= 0.85)"
+check "$r" 'j.ms_p90!==null && j.ms_p90<=6000' "judge answers fast: p90 <= 6 s per verdict (p50 $(jeval "$r" 'j.ms_p50') ms, p90 $(jeval "$r" 'j.ms_p90') ms)"
 check "$r" 'j.handoff_accuracy>=0.85' "judge hands a chat off exactly when its agent does not fit (>= 0.85)"
 # the Codex judge (a Codex-only account, or Claude down) on the same set, when this account can use Codex
 r=$(docker run --rm -i --network $NET curlimages/curl:8.16.0 -sS -m 600 -X POST -H "authorization: Bearer $TOK" -H 'content-type: application/json' --data-binary '{"engine":"codex"}' "$GW/api/aidev/route/eval-judge")

@@ -6,6 +6,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { codexSandboxConfig, noteCodexTurnError } from '@/shared/index.js';
+import { askCodexJudge, CodexJudgeTurnError } from '@/modules/aidev-tools/codex-judge.client.js';
 
 /**
  * Specialist judge (IMPLEMENTATION-PLAN §3.1 / §3.7): the gateway asks, for every routed command, which existing
@@ -32,7 +33,9 @@ export type JudgeInput = { command: string; candidates: JudgeCandidate[]; projec
   /** the agent the command's chat is with (one of the candidates), when the command continues a chat */
   current?: string | null;
   /** the engines this account may use (D-05: a Codex-only account never gets a Claude turn); default both */
-  engines?: Array<'claude' | 'codex'> };
+  engines?: Array<'claude' | 'codex'>;
+  /** the command starts a new conversation, the only place a clarifying question is shown (default true) */
+  ask?: boolean };
 export type JudgeResult = {
   agent: string | null;
   fit: number;
@@ -71,10 +74,11 @@ Rules:
   3 strong model (Opus / Sol): debugging an unknown or intermittent cause (a CI-only test failure, a leak after hours of uptime), refactoring a cross-cutting concern (swapping the state library, changing how errors are handled everywhere), design, unfamiliar technology, packaging or porting software to other platforms, setting up and wiring one tool chain or environment. Shaky on long autonomous work where early mistakes compound.
   4 strongest model (Fable / Astra): architecture and migrations; long multi-step autonomous work across several tools, services or machines (install, configure and integrate several tools, build a pipeline, automate end to end without check-ins); research-level or high-stakes work where a mistake is expensive.
   Choose the lowest tier whose RELIABLE range clearly contains the command. When the command sits at a tier's upper edge, or it is unclear between two tiers, choose the higher one — a tier that would only barely manage is too low. Anything that names a cause to be found, or a change of approach across a codebase, is never below 3. Destructive or hard-to-undo work (deleting data, rewriting history, production changes) goes one tier up. A short follow-up whose work you cannot see ("진행해", "계속해") is judged from its words alone; the gateway keeps the conversation's tier.
-- question: if information ESSENTIAL to start is missing and cannot be inferred (which file or screen, which project, which target machine, what the expected behavior is), write the ONE most important question to ask, in the command's language, short and concrete. Otherwise null.
+- question: ONLY when the request says the command starts a new conversation (otherwise null): if information ESSENTIAL to start is missing and cannot be inferred (which file or screen, which project, which target machine, what the expected behavior is), write the ONE most important question to ask, in the command's language, short and concrete. Otherwise null.
 
 Output ONLY this JSON (no prose):
-{"agent": "<existing name>" | "generalist" | null, "fit": <0..1>, "reason": "<short>", "new": null | {"name": "<kebab-case>", "domain": "<domain>", "description": "<one line>", "technologies": ["..."]}, "question": null | "<one short question>", "current_fit": <0..1 when a current agent is given, else null>, "level": <0..4>}`;
+Keep it short — the verdict is awaited before the work starts: "reason" is at most eight words, and "new" is null unless no listed agent has the expertise.
+{"agent": "<existing name>" | "generalist" | null, "fit": <0..1>, "reason": "<at most eight words>", "new": null | {"name": "<kebab-case>", "domain": "<domain>", "description": "<one line>", "technologies": ["..."]}, "question": null | "<one short question>", "current_fit": <0..1 when a current agent is given, else null>, "level": <0..4>}`;
 
 /** The first balanced `{…}` in `text` once it is complete and parses (strings and escapes respected), else null. */
 export function firstCompleteJson(text: string): Record<string, unknown> | null {
@@ -146,28 +150,71 @@ const HARD_TIMEOUT_MS = 45_000;
  */
 const JUDGE_CLAUDE_MODEL = process.env.AIDEV_JUDGE_MODEL || 'sonnet';
 
-async function askClaude(prompt: string): Promise<string> {
-  let output = '';
+/**
+ * One judge process, started before its command is known: the CLI boots (~0.6 s measured) while it waits for the
+ * prompt it is streamed later. After every judge turn the next one is started, so a send after a typing-time
+ * pre-judge finds a booted process; an unused one is stopped after WARM_IDLE_MS (env AIDEV_JUDGE_PREWARM=off: none).
+ */
+type JudgeProcess = { messages: AsyncIterator<unknown>; send: (prompt: string) => void; abortController: AbortController; idle: NodeJS.Timeout };
+const WARM_IDLE_MS = Number(process.env.AIDEV_JUDGE_WARM_IDLE_MS ?? 5 * 60_000);
+const PREWARM = process.env.AIDEV_JUDGE_PREWARM !== 'off';
+let warmJudge: JudgeProcess | null = null;
+
+/**
+ * A judge process. Without `prompt` it boots now and takes its prompt later (streamed input: the warm process); with
+ * one it is the plain single-prompt call. Streamed input left a fresh process without a single message once in nine
+ * concurrent calls (2026-10-13, local), which the plain call never did in 132 — so only the warm process streams, and
+ * an empty answer from it is asked again the plain way.
+ */
+function startJudgeProcess(fixedPrompt?: string): JudgeProcess {
+  let send!: (prompt: string) => void;
+  const prompt = new Promise<string>((resolve) => { send = resolve; });
+  async function* input() {
+    yield { type: 'user' as const, message: { role: 'user' as const, content: await prompt }, parent_tool_use_id: null, session_id: '' };
+  }
   const abortController = new AbortController();
+  const stream = query({
+    prompt: fixedPrompt ?? input(),
+    options: {
+      cwd: os.homedir(), maxTurns: 1, model: JUDGE_CLAUDE_MODEL, allowedTools: [], tools: [], permissionMode: 'bypassPermissions', systemPrompt: JUDGE_PROMPT,
+      settingSources: [], persistSession: false, thinking: { type: 'disabled' }, includePartialMessages: true, abortController,
+    },
+  });
+  const judgeProcess: JudgeProcess = { messages: stream[Symbol.asyncIterator](), send, abortController,
+    idle: setTimeout(() => { if (warmJudge === judgeProcess) warmJudge = null; abortController.abort(); }, WARM_IDLE_MS) };
+  judgeProcess.idle.unref();
+  return judgeProcess;
+}
+
+async function askClaude(prompt: string): Promise<string> {
+  const warm = warmJudge;
+  warmJudge = null;
+  if (warm) {
+    // a warm process that died while waiting (a CLI update, a sign-out) or streamed nothing: ask the plain way
+    const answer = await askClaudeOn(warm, prompt).catch(() => '');
+    if (answer) return answer;
+    console.warn('[aidev-tools] warm judge process answered nothing; asking on a fresh one');
+  }
+  return askClaudeOn(startJudgeProcess(prompt), prompt);
+}
+
+async function askClaudeOn(judgeProcess: JudgeProcess, prompt: string): Promise<string> {
+  let output = '';
+  clearTimeout(judgeProcess.idle);
+  const { abortController } = judgeProcess;
   const timer = setTimeout(() => abortController.abort(), HARD_TIMEOUT_MS);
   try {
-    const stream = query({
-      prompt,
-      options: {
-        cwd: os.homedir(), maxTurns: 1, model: JUDGE_CLAUDE_MODEL, allowedTools: [], tools: [], permissionMode: 'bypassPermissions', systemPrompt: JUDGE_PROMPT,
-        settingSources: [], persistSession: false, thinking: { type: 'disabled' }, includePartialMessages: true, abortController,
-      },
-    });
+    judgeProcess.send(prompt);
     let streamed = '';
-    for await (const message of stream) {
-      const record = message as { type?: string; event?: { type?: string; delta?: { text?: string } }; message?: { content?: Array<{ type?: string; text?: string }> }; result?: string };
+    for (let step = await judgeProcess.messages.next(); !step.done; step = await judgeProcess.messages.next()) {
+      const record = step.value as { type?: string; event?: { type?: string; delta?: { text?: string } }; message?: { content?: Array<{ type?: string; text?: string }> }; result?: string };
       if (record.type === 'stream_event' && record.event?.type === 'content_block_delta' && record.event.delta?.text) {
         streamed += record.event.delta.text;
         // the verdict is complete: stop here instead of waiting for any prose the model adds after it
-        if (firstCompleteJson(streamed)) { output = streamed; abortController.abort(); break; }
+        if (firstCompleteJson(streamed)) { output = streamed; break; }
       }
       if (record.type === 'assistant') for (const block of record.message?.content ?? []) if (block.type === 'text' && block.text) output += block.text;
-      if (record.type === 'result' && typeof record.result === 'string' && !output) output = record.result;
+      if (record.type === 'result') { if (typeof record.result === 'string' && !output) output = record.result; break; }
     }
     return output || streamed;
   } catch (error) {
@@ -175,6 +222,9 @@ async function askClaude(prompt: string): Promise<string> {
     throw error;
   } finally {
     clearTimeout(timer);
+    abortController.abort();
+    // the next verdict starts on a booted process
+    if (PREWARM && !warmJudge) warmJudge = startJudgeProcess();
   }
 }
 
@@ -194,6 +244,22 @@ const CODEX_JUDGE_RULE = '\n\nAnswer directly from the text above. Do not run co
 const SIDE_TURN_SOURCE = 'subagent';
 
 async function askCodex(prompt: string): Promise<string> {
+  const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'aidev-judge-'));
+  try {
+    return await askCodexJudge({ instructions: JUDGE_PROMPT, prompt: `${prompt}${CODEX_JUDGE_RULE}`, model: JUDGE_CODEX_MODEL, cwd: empty,
+      config: { ...codexSandboxConfig(), web_search: 'disabled' }, timeoutMs: HARD_TIMEOUT_MS, isComplete: (text) => Boolean(firstCompleteJson(text)) });
+  } catch (error) {
+    // the turn itself failed (sign-in, usage limit): the SDK path would fail the same way
+    if (error instanceof CodexJudgeTurnError) { noteCodexTurnError(error); throw error; }
+    console.warn(`[aidev-tools] codex judge app-server failed (${error instanceof Error ? error.message : String(error)}); asking through codex exec`);
+    return askCodexExec(prompt);
+  } finally {
+    fs.rmSync(empty, { recursive: true, force: true });
+  }
+}
+
+/** The SDK path (`codex exec` per verdict): the fallback when the app-server transport fails. */
+async function askCodexExec(prompt: string): Promise<string> {
   const codex = new Codex({ config: { ...codexSandboxConfig(), developer_instructions: JUDGE_PROMPT } as never });
   const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'aidev-judge-'));
   try {
@@ -210,7 +276,7 @@ const inflight = new Map<string, Promise<JudgeResult>>();
 
 export const specialistJudgeService = {
   judge(input: JudgeInput): Promise<JudgeResult> {
-    const key = createHash('sha1').update(JSON.stringify([input.command.trim(), input.project ?? null, input.candidates.map((c) => [c.name, c.description]), input.engines ?? null, input.current ?? null])).digest('hex');
+    const key = createHash('sha1').update(JSON.stringify([input.command.trim(), input.project ?? null, input.candidates.map((c) => [c.name, c.description]), input.engines ?? null, input.current ?? null, input.ask ?? true])).digest('hex');
     const running = inflight.get(key);
     if (running) return running;
     const promise = this.judgeOnce(input).finally(() => inflight.delete(key));
@@ -223,15 +289,17 @@ export const specialistJudgeService = {
     const candidates = input.candidates.filter((c) => c.name && c.name !== 'generalist').slice(0, 60);
     const names = new Set(candidates.map((c) => c.name));
     const current = input.current && names.has(input.current) ? input.current : null;
+    // the catalog first: it is the same for every command of an account, so the prompt's prefix stays the same
     const prompt = [
+      'Existing agents (name: declared domain):',
+      ...candidates.map((c) => `- ${c.name}: ${c.description.replace(/\s+/g, ' ').slice(0, 260)}`),
+      '',
       'Classify the developer command below for routing. Do NOT carry it out or answer it — you have no tools and nobody expects its result. Reply with the JSON object only.',
       '',
       `<command>\n${input.command.slice(0, 2000)}\n</command>`,
       input.project ? `Project: ${input.project.slice(0, 200)}` : null,
-      '',
-      'Existing agents (name: declared domain):',
-      ...candidates.map((c) => `- ${c.name}: ${c.description.replace(/\s+/g, ' ').slice(0, 260)}`),
-      current ? `\nCurrent agent of this conversation: ${current}` : null,
+      current ? `Current agent of this conversation: ${current}` : null,
+      input.ask === false ? 'This command continues a conversation: "question" is null.' : 'This command starts a new conversation.',
     ].filter((line) => line !== null).join('\n');
     // Claude first, Codex when Claude fails — only among the engines the account may use
     const order = (['claude', 'codex'] as const).filter((e) => !input.engines?.length || input.engines.includes(e));

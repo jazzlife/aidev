@@ -29,7 +29,7 @@ router.post('/specialist-judge', asyncHandler(async (req: Request, res: Response
   }
   try {
     const engines = Array.isArray(body.engines) ? (body.engines as unknown[]).filter((e): e is 'claude' | 'codex' => e === 'claude' || e === 'codex') : undefined;
-    res.json(createApiSuccessResponse(await specialistJudgeService.judge({ command, candidates, project: typeof body.project === 'string' ? body.project : null, engines, current: typeof body.current === 'string' ? body.current : null })));
+    res.json(createApiSuccessResponse(await specialistJudgeService.judge({ command, candidates, project: typeof body.project === 'string' ? body.project : null, engines, current: typeof body.current === 'string' ? body.current : null, ask: body.ask !== false })));
   } catch (error) {
     res.status(502).json({ success: false, error: error instanceof Error ? error.message : 'judge failed' });
   }
