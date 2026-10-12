@@ -2,6 +2,7 @@ import spawn from 'cross-spawn';
 
 import type { IProviderAuth } from '@/shared/interfaces.js';
 import type { ProviderAuthStatus } from '@/shared/types.js';
+import { runProviderCliCommand } from '@/shared/utils.js';
 
 type CursorLoginStatus = {
   authenticated: boolean;
@@ -50,6 +51,15 @@ export class CursorProviderAuth implements IProviderAuth {
       method: login.method,
       error: login.authenticated ? undefined : login.error || 'Not logged in',
     };
+  }
+
+  /**
+   * Signs the Cursor CLI out with `cursor-agent logout`; its credentials live where only the CLI knows them.
+   */
+  async logout(): Promise<void> {
+    if (!(await runProviderCliCommand('cursor-agent', ['logout']))) {
+      throw new Error('cursor-agent logout failed');
+    }
   }
 
   /**

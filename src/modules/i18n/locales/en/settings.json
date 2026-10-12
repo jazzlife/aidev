@@ -379,6 +379,13 @@
       "button": "Login",
       "reLoginButton": "Re-login"
     },
+    "logout": {
+      "title": "Sign out",
+      "description": "Remove this {{agent}} login from the server. Sign in again to use it.",
+      "button": "Sign out",
+      "confirm": "Sign out of {{agent}}? Running work may stop, and you will need to sign in again to use it.",
+      "failed": "Sign-out failed: {{error}}"
+    },
     "error": "Error: {{error}}"
   },
   "permissions": {

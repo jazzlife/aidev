@@ -149,6 +149,7 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
     providerAuthStatus,
     checkProviderAuthStatus,
     refreshProviderAuthStatuses,
+    logoutProvider,
   } = useProviderAuthStatus();
 
   const loadSettings = useCallback(async () => {
@@ -375,6 +376,7 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
     setCodexPermissionMode,
     providerAuthStatus,
     openLoginForProvider,
+    logoutProvider,
     showLoginModal,
     setShowLoginModal,
     loginProvider,

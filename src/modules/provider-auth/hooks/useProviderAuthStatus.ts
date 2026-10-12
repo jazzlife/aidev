@@ -1,5 +1,6 @@
 import { useCallback, useState } from 'react';
 
+import { aidevApi, claudeAuth } from '@/modules/aidev-router';
 import { api } from '@/shared/api';
 import type { LLMProvider, ProviderAuthStatus, ProviderAuthStatusMap } from '@/shared/types';
 
@@ -107,6 +108,30 @@ export function useProviderAuthStatus(
     }
   }, [setProviderLoading, setProviderStatus]);
 
+  /** Signs the runtime out of one provider; resolves with its status afterwards, rejects when it failed. */
+  const logoutProvider = useCallback(async (provider: LLMProvider): Promise<ProviderAuthStatus> => {
+    setProviderLoading(provider);
+    try {
+      const response = await api.providers.logout(provider);
+      if (!response.ok) {
+        throw new Error(`HTTP ${response.status}`);
+      }
+      const payload = (await response.json()) as ProviderAuthStatusApiResponse;
+      const status = toProviderAuthStatus(payload.data);
+      setProviderStatus(provider, status);
+      return status;
+    } catch (caughtError) {
+      // the sign-out may have half happened: show what the runtime reports now
+      await checkProviderAuthStatus(provider);
+      throw caughtError;
+    } finally {
+      // the gateway routes by its own cached engine status, and the router bar shows the Claude login: both learn
+      // of the sign-out now (outside the platform these calls fail quietly)
+      void aidevApi.engines(true).catch(() => undefined);
+      if (provider === 'claude') void claudeAuth.refresh();
+    }
+  }, [checkProviderAuthStatus, setProviderLoading, setProviderStatus]);
+
   const refreshProviderAuthStatuses = useCallback(async (providers: LLMProvider[] = CLI_PROVIDERS) => {
     await Promise.all(providers.map((provider) => checkProviderAuthStatus(provider)));
   }, [checkProviderAuthStatus]);
@@ -115,5 +140,6 @@ export function useProviderAuthStatus(
     providerAuthStatus,
     checkProviderAuthStatus,
     refreshProviderAuthStatuses,
+    logoutProvider,
   };
 }

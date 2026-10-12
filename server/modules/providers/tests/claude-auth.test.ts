@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import fs from 'node:fs';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
@@ -204,5 +205,45 @@ test('checkCredentials: ANTHROPIC_API_KEY takes precedence over CLAUDE_CODE_OAUT
         assert.equal(status.method, 'api_key');
       },
     );
+  });
+});
+
+test('logout: removes the platform token, the terminal login and the settings token, keeping other settings', async () => {
+  await withTempHome(async (homeDir) => {
+    const token = `sk-ant-oat01-${'a'.repeat(40)}`;
+    await mkdir(path.join(homeDir, '.cloudcli'), { recursive: true });
+    await writeFile(path.join(homeDir, '.cloudcli', 'aidev-claude-token.json'), JSON.stringify({ token, issuedAt: Date.now() }));
+    await writeCredentialsFile(homeDir, { claudeAiOauth: { accessToken: 'live-token', refreshToken: 'live-refresh' } });
+    await writeSettingsFile(homeDir, { CLAUDE_CODE_OAUTH_TOKEN: token, OTHER_SETTING: 'kept' });
+
+    await withEnv({ CLAUDE_CODE_OAUTH_TOKEN: token }, async () => {
+      const auth = new ClaudeProviderAuth();
+      assert.equal((await checkCredentials(auth)).authenticated, true);
+
+      await auth.logout();
+
+      assert.equal(process.env.CLAUDE_CODE_OAUTH_TOKEN, undefined);
+      assert.ok(!fs.existsSync(path.join(homeDir, '.cloudcli', 'aidev-claude-token.json')));
+      assert.ok(!fs.existsSync(path.join(homeDir, '.claude', '.credentials.json')));
+      const settings = JSON.parse(await readFile(path.join(homeDir, '.claude', 'settings.json'), 'utf8')) as { env: Record<string, string> };
+      assert.deepEqual(settings.env, { OTHER_SETTING: 'kept' });
+      assert.equal((await checkCredentials(auth)).authenticated, false);
+      // signing out twice is harmless
+      await auth.logout();
+    });
+  });
+});
+
+test('logout: an API key in the environment stays, so Claude remains usable through it', async () => {
+  await withTempHome(async (homeDir) => {
+    await writeCredentialsFile(homeDir, { claudeAiOauth: { accessToken: 'live-token', refreshToken: 'live-refresh' } });
+    await withEnv({ ANTHROPIC_API_KEY: 'test-api-key' }, async () => {
+      const auth = new ClaudeProviderAuth();
+      await auth.logout();
+      assert.equal(process.env.ANTHROPIC_API_KEY, 'test-api-key');
+      const status = await checkCredentials(auth);
+      assert.equal(status.authenticated, true);
+      assert.equal(status.method, 'api_key');
+    });
   });
 });

@@ -372,6 +372,9 @@ export const api = {
     capabilities: () => get('/api/providers/capabilities'),
     authStatus: (provider: string) =>
       get(`/api/providers/${encodeURIComponent(provider)}/auth/status`),
+    /** Signs this runtime out of the provider; answers with the auth status afterwards. */
+    logout: (provider: string) =>
+      post(`/api/providers/${encodeURIComponent(provider)}/auth/logout`),
     /** Account usage limits per engine as the runtime last saw them (the drawers' usage panel). */
     usageLimits: () => get('/api/providers/usage-limits'),
 

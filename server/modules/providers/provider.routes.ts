@@ -514,6 +514,15 @@ router.get(
   }),
 );
 
+router.post(
+  '/:provider/auth/logout',
+  asyncHandler(async (req: Request, res: Response) => {
+    const provider = parseProvider(req.params.provider);
+    const status = await providerAuthService.logoutProvider(provider);
+    res.json(createApiSuccessResponse(status));
+  }),
+);
+
 router.get(
   '/:provider/models',
   asyncHandler(async (req: Request, res: Response) => {

@@ -11,6 +11,16 @@ export const providerAuthService = {
   },
 
   /**
+   * Signs this runtime out of a provider and returns the status afterwards (still authenticated when an
+   * administrator-configured API key remains).
+   */
+  async logoutProvider(providerName: string): Promise<ProviderAuthStatus> {
+    const provider = providerRegistry.resolveProvider(providerName);
+    await provider.auth.logout();
+    return provider.auth.getStatus();
+  },
+
+  /**
    * Returns whether a provider runtime appears installed.
    * Falls back to true if status lookup itself fails so callers preserve the
    * original runtime error instead of replacing it with a status-check failure.

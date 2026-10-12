@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -6,7 +6,7 @@ import spawn from 'cross-spawn';
 
 import type { IProviderAuth } from '@/shared/interfaces.js';
 import type { ProviderAuthStatus } from '@/shared/types.js';
-import { readObjectRecord, readOptionalString } from '@/shared/utils.js';
+import { readObjectRecord, readOptionalString, runProviderCliCommand } from '@/shared/utils.js';
 
 type CodexCredentialsStatus = {
   authenticated: boolean;
@@ -43,6 +43,15 @@ export class CodexProviderAuth implements IProviderAuth {
       method: credentials.method,
       error: credentials.authenticated ? undefined : credentials.error || 'Not authenticated',
     };
+  }
+
+  /**
+   * Signs Codex out with its own `codex logout` (it also clears a keyring login); auth.json — the file the
+   * status reads — is removed either way, so a missing or failing CLI still signs out.
+   */
+  async logout(): Promise<void> {
+    await runProviderCliCommand('codex', ['logout']);
+    await rm(path.join(os.homedir(), '.codex', 'auth.json'), { force: true });
   }
 
   /**

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 
+import { api } from '@/shared/api';
 import { aidevApi, claudeAuth, PRIORITY_CHOICES, priorityKey, routingStore, useClaudeAuth, useEnginePriority, useRoutingState, type EnginesResult, type RoutingMode } from '@/modules/aidev-router';
 import { EffortCapControl } from '@m/components/EffortCapControl';
 import { ClaudeLoginSheet } from '@m/components/ClaudeLoginSheet';
@@ -31,6 +32,24 @@ export function SettingsScreen() {
   const [push, setPush] = useState<PushState | null>(null);
   const [pushBusy, setPushBusy] = useState(false);
   const [pushNote, setPushNote] = useState<string | null>(null);
+  // the engine being signed out (its button waits) and why the last sign-out failed
+  const [loggingOut, setLoggingOut] = useState<'claude' | 'codex' | null>(null);
+  const [engineNote, setEngineNote] = useState<string | null>(null);
+  const logout = async (engine: 'claude' | 'codex') => {
+    const name = engine === 'claude' ? 'Claude' : 'Codex';
+    if (!window.confirm(`${name}에서 로그아웃할까요? 실행 중인 작업이 멈출 수 있고, 다시 쓰려면 로그인해야 합니다.`)) return;
+    setLoggingOut(engine); setEngineNote(null);
+    try {
+      const response = await api.providers.logout(engine);
+      if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    } catch (error) {
+      setEngineNote(`${name} 로그아웃 실패: ${error instanceof Error ? error.message : String(error)}`);
+    } finally {
+      setLoggingOut(null);
+      if (engine === 'claude') void claudeAuth.refresh();
+      aidevApi.engines(true).then(setEngines).catch(() => setEngines(null));
+    }
+  };
   useEffect(() => { void pushState().then(setPush).catch(() => setPush('unsupported')); }, []);
   // Opened from a reminder notification (/m/settings?login=claude): go straight to the login sheet.
   useEffect(() => { if (new URLSearchParams(window.location.search).get('login') === 'claude') claudeAuth.openDialog(); }, []);
@@ -77,10 +96,12 @@ export function SettingsScreen() {
                   <span className="flex-1 text-[15px] capitalize">{engine}</span>
                   <span className="text-[12px] text-muted">{!state ? '…' : !state.allowed ? '이 계정에 없음' : state.authenticated ? (engine === 'claude' && auth.daysLeft !== null ? `연결됨 · D-${auth.daysLeft}` : '연결됨') : (state.error || '로그인 필요')}</span>
                   {engine === 'claude' && state?.allowed ? <button type="button" onClick={() => claudeAuth.openDialog()} className="text-[13px] text-accent">{state.authenticated && !auth.expired ? '다시 로그인' : '로그인'}</button> : null}
+                  {state?.allowed && state.authenticated ? <button type="button" disabled={loggingOut !== null} onClick={() => { void logout(engine); }} className="text-[13px] text-muted">{loggingOut === engine ? '로그아웃 중…' : '로그아웃'}</button> : null}
                 </div>
               );
             })}
           </div>
+          {engineNote ? <div className="text-[12px] text-muted mt-2">{engineNote}</div> : null}
         </section>
         <section data-testid="engine-priority">
           <div className="text-[12px] uppercase tracking-wide text-muted mb-2">엔진 우선순위</div>

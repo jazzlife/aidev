@@ -1,4 +1,5 @@
-import { LogIn } from 'lucide-react';
+import { useState } from 'react';
+import { LogIn, LogOut } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 
 import { Badge, Button, LLMProviderLogo } from '@/shared/ui';
@@ -8,6 +9,7 @@ type AccountContentProps = {
   agent: AgentProvider;
   authStatus: ProviderAuthStatus;
   onLogin: () => void;
+  onLogout: () => Promise<unknown>;
 };
 
 type AgentVisualConfig = {
@@ -57,9 +59,19 @@ const agentConfig: Record<AgentProvider, AgentVisualConfig> = {
 };
 
 /** Rendered by AgentCategoryContentSection for the "account" category to show sign-in state for one provider. */
-export default function AccountContent({ agent, authStatus, onLogin }: AccountContentProps) {
+export default function AccountContent({ agent, authStatus, onLogin, onLogout }: AccountContentProps) {
   const { t } = useTranslation('settings');
   const config = agentConfig[agent];
+  // Why the last sign-out failed: the status line only shows the auth state, not what went wrong signing out.
+  const [logoutError, setLogoutError] = useState<string | null>(null);
+
+  const handleLogout = () => {
+    if (!window.confirm(t('agents.logout.confirm', { agent: config.name }))) return;
+    setLogoutError(null);
+    onLogout().catch((error: unknown) => {
+      setLogoutError(t('agents.logout.failed', { error: error instanceof Error ? error.message : String(error) }));
+    });
+  };
 
   return (
     <div className="space-y-6">
@@ -133,6 +145,25 @@ export default function AccountContent({ agent, authStatus, onLogin }: AccountCo
                   {authStatus.authenticated ? t('agents.login.reLoginButton') : t('agents.login.button')}
                 </Button>
               </div>
+            </div>
+          )}
+
+          {/* An API key from the environment is configuration, not a login: there is nothing to sign out of. */}
+          {authStatus.authenticated && authStatus.method !== 'api_key' && (
+            <div className="border-t border-border/50 pt-4">
+              <div className="flex items-center justify-between gap-3">
+                <div>
+                  <div className={`font-medium ${config.textClass}`}>{t('agents.logout.title')}</div>
+                  <div className={`text-sm ${config.subtextClass}`}>
+                    {t('agents.logout.description', { agent: config.name })}
+                  </div>
+                </div>
+                <Button onClick={handleLogout} disabled={authStatus.loading} variant="outline" size="sm">
+                  <LogOut className="mr-2 h-4 w-4" />
+                  {t('agents.logout.button')}
+                </Button>
+              </div>
+              {logoutError && <div className="mt-2 text-sm text-red-600 dark:text-red-400">{logoutError}</div>}
             </div>
           )}
 

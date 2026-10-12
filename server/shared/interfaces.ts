@@ -125,6 +125,13 @@ export interface IProviderAuth {
    * Checks whether the provider is installed and has usable credentials.
    */
   getStatus(): Promise<ProviderAuthStatus>;
+
+  /**
+   * Signs this runtime out of the provider by removing the credentials its login stored. Credentials an
+   * administrator configured through the environment (API keys) are not touched, so the provider may still
+   * report itself authenticated afterwards. Safe to call when already signed out.
+   */
+  logout(): Promise<void>;
 }
 
 // ---------------------------

@@ -1,4 +1,4 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
@@ -51,6 +51,14 @@ export class OpenCodeProviderAuth implements IProviderAuth {
       method: credentials.method,
       error: credentials.authenticated ? undefined : credentials.error || 'Not authenticated',
     };
+  }
+
+  /**
+   * Removes OpenCode's auth store (every provider it signed in to; `opencode auth logout` only asks which one
+   * interactively). Provider API keys in the environment stay.
+   */
+  async logout(): Promise<void> {
+    await rm(path.join(os.homedir(), '.local', 'share', 'opencode', 'auth.json'), { force: true });
   }
 
   /**

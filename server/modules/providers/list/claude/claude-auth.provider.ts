@@ -9,6 +9,7 @@ import type { IProviderAuth } from '@/shared/interfaces.js';
 import type { ProviderAuthStatus } from '@/shared/types.js';
 import { readObjectRecord, readOptionalString } from '@/shared/utils.js';
 import { claudeAuthStore } from '@/modules/providers/services/claude-auth-store.service.js';
+import { aidevToolsService } from '@/modules/aidev-tools/index.js';
 
 type ClaudeCredentialsStatus = {
   authenticated: boolean;
@@ -66,6 +67,14 @@ export class ClaudeProviderAuth implements IProviderAuth {
       error: credentials.authenticated ? undefined : credentials.error || 'Not authenticated',
       ...(credentials.expiresAt ? { expiresAt: credentials.expiresAt } : {}),
     };
+  }
+
+  /**
+   * Removes every stored Claude login and tells the gateway, so it stops sending expiry reminders for it.
+   */
+  async logout(): Promise<void> {
+    claudeAuthStore.clear();
+    void aidevToolsService.reportClaudeAuth({ expires_at: null, failure_at: null });
   }
 
   /**

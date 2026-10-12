@@ -61,6 +61,7 @@ function Settings({ isOpen, onClose, projects = [], initialTab = 'agents' }: Set
     setCodexPermissionMode,
     providerAuthStatus,
     openLoginForProvider,
+    logoutProvider,
     showLoginModal,
     setShowLoginModal,
     loginProvider,
@@ -232,6 +233,7 @@ function Settings({ isOpen, onClose, projects = [], initialTab = 'agents' }: Set
                 <AgentsSettingsTab
                   providerAuthStatus={providerAuthStatus}
                   onProviderLogin={openLoginForProvider}
+                  onProviderLogout={logoutProvider}
                   claudePermissions={claudePermissions}
                   onClaudePermissionsChange={setClaudePermissions}
                   cursorPermissions={cursorPermissions}

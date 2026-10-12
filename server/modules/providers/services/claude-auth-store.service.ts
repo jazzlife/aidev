@@ -75,6 +75,28 @@ export const claudeAuthStore = {
     return { issuedAt, expiresAt: issuedAt + TOKEN_LIFETIME_MS };
   },
 
+  /**
+   * Sign-out: removes every Claude login this runtime holds — the platform token (file, this process's env,
+   * ~/.claude/settings.json env) and a terminal `/login` (~/.claude/.credentials.json) — and forgets a recorded
+   * auth failure. API keys in the environment or settings.json stay; they are configuration, not a login.
+   */
+  clear() {
+    fs.rmSync(tokenFile(), { force: true });
+    fs.rmSync(credentialsFile(), { force: true });
+    delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    try {
+      const settings = JSON.parse(fs.readFileSync(claudeSettingsFile(), 'utf8')) as Record<string, unknown>;
+      const env = settings.env && typeof settings.env === 'object' ? { ...settings.env as Record<string, unknown> } : null;
+      if (env && 'CLAUDE_CODE_OAUTH_TOKEN' in env) {
+        delete env.CLAUDE_CODE_OAUTH_TOKEN;
+        writePrivateJson(claudeSettingsFile(), { ...settings, env });
+      }
+    } catch {
+      // no settings file (or unreadable): nothing stored there
+    }
+    failure = null;
+  },
+
   /** Issue/expiry of the platform-managed token, or null when the login came from elsewhere. */
   info(): { issuedAt: number; expiresAt: number } | null {
     const stored = readStored();

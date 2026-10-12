@@ -16,6 +16,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
+import spawn from 'cross-spawn';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 
 import { parseFrontMatter } from '@/shared/frontmatter.js';
@@ -1292,4 +1293,29 @@ export function findApplicationRoot(startDirectory: string): string {
  */
 export function isModelScopedUsageLimit(type: unknown): boolean {
   return typeof type === 'string' && /^seven_day_.+/.test(type);
+}
+
+// ---------------------------
+
+//----------------- PROVIDER CLI COMMANDS ------------
+/**
+ * Runs a provider CLI subcommand that needs no input (e.g. `codex logout`, `cursor-agent logout`) and
+ * reports whether it exited with 0. Never throws: a missing CLI, a non-zero exit or a run longer than
+ * `timeoutMs` (the process is then killed) all resolve to false, so callers can fall back to removing the
+ * credentials themselves. stdin is closed so a command that unexpectedly prompts cannot hang.
+ */
+export function runProviderCliCommand(command: string, args: string[], timeoutMs = 15_000): Promise<boolean> {
+  return new Promise((resolve) => {
+    let child: ReturnType<typeof spawn>;
+    try {
+      // cross-spawn resolves Windows .cmd shims the way the providers' own CLI checks do
+      child = spawn(command, args, { stdio: 'ignore' });
+    } catch {
+      resolve(false);
+      return;
+    }
+    const timer = setTimeout(() => { child.kill(); resolve(false); }, timeoutMs);
+    child.on('error', () => { clearTimeout(timer); resolve(false); });
+    child.on('close', (code) => { clearTimeout(timer); resolve(code === 0); });
+  });
 }

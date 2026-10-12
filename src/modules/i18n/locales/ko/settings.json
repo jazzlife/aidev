@@ -362,6 +362,13 @@
       "button": "로그인",
       "reLoginButton": "재로그인"
     },
+    "logout": {
+      "title": "로그아웃",
+      "description": "서버에 저장된 {{agent}} 로그인을 지웁니다. 다시 쓰려면 로그인해야 합니다.",
+      "button": "로그아웃",
+      "confirm": "{{agent}}에서 로그아웃할까요? 실행 중인 작업이 멈출 수 있고, 다시 쓰려면 로그인해야 합니다.",
+      "failed": "로그아웃 실패: {{error}}"
+    },
     "error": "오류: {{error}}"
   },
   "permissions": {

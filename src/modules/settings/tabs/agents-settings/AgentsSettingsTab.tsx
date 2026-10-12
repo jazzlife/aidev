@@ -11,6 +11,7 @@ type ProviderAuthStatusByProvider = Record<AgentProvider, ProviderAuthStatus>;
 type AgentsSettingsTabProps = {
   providerAuthStatus: ProviderAuthStatusByProvider;
   onProviderLogin: (provider: AgentProvider) => void;
+  onProviderLogout: (provider: AgentProvider) => Promise<ProviderAuthStatus>;
   claudePermissions: ClaudePermissionsState;
   onClaudePermissionsChange: (value: ClaudePermissionsState) => void;
   cursorPermissions: CursorPermissionsState;
@@ -24,6 +25,7 @@ type AgentsSettingsTabProps = {
 export default function AgentsSettingsTab({
   providerAuthStatus,
   onProviderLogin,
+  onProviderLogout,
   claudePermissions,
   onClaudePermissionsChange,
   cursorPermissions,
@@ -48,21 +50,26 @@ export default function AgentsSettingsTab({
     claude: {
       authStatus: providerAuthStatus.claude,
       onLogin: () => onProviderLogin('claude'),
+      onLogout: () => onProviderLogout('claude'),
     },
     cursor: {
       authStatus: providerAuthStatus.cursor,
       onLogin: () => onProviderLogin('cursor'),
+      onLogout: () => onProviderLogout('cursor'),
     },
     codex: {
       authStatus: providerAuthStatus.codex,
       onLogin: () => onProviderLogin('codex'),
+      onLogout: () => onProviderLogout('codex'),
     },
     opencode: {
       authStatus: providerAuthStatus.opencode,
       onLogin: () => onProviderLogin('opencode'),
+      onLogout: () => onProviderLogout('opencode'),
     },
   }), [
     onProviderLogin,
+    onProviderLogout,
     providerAuthStatus.claude,
     providerAuthStatus.codex,
     providerAuthStatus.cursor,
