@@ -5,7 +5,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/runtime-manager.js",
-    "dev": "tsx src/runtime-manager.ts"
+    "dev": "tsx src/runtime-manager.ts",
+    "test": "npm run build && node test/ship-test.mjs"
   },
   "devDependencies": {
     "@types/jsonwebtoken": "^9.0.10",

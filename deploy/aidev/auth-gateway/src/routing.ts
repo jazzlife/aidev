@@ -147,6 +147,16 @@ export function applyModelFloor(engine: Engine, tier: { model: string | null; ef
   return true;
 }
 
+/**
+ * Whether a successful run teaches its agent the command (aidev-api: a 'run' routing example). Not when the chat simply
+ * continued with its agent (`agent_source` 'session'): follow-ups such as "진행해봐" or a ComfyUI setup step in a chat
+ * that had become security-review's taught the lexical prior those commands as that agent's domain (server
+ * 2026-10-13: ComfyUI commands → remote-display-sync at 1.00). Older decisions without the field still teach.
+ */
+export function runTeachesAgent(answer: string | null | undefined): boolean {
+  try { return (JSON.parse(answer ?? '{}') as { agent_source?: string }).agent_source !== 'session'; } catch { return true; }
+}
+
 /** The agent-architect designs a specialist: design work, so its turn runs at least at D3 (§3.4 D3 = 설계·심층). */
 export const ARCHITECT_MIN_DEPTH = 3;
 
@@ -261,6 +271,42 @@ export async function evaluateRouting(store: Store, laya: LayaClient, userId: nu
 }
 
 /**
+ * The real judge on a labelled set (admin; verify-b.sh): does it place commands at a tier that carries them out
+ * comfortably (`level` inside the row's range — the D4 rows are the strongest-model cases from the server), and does it
+ * score a chat's agent low exactly when the chat should be handed off. The unit tests use a stand-in judge, so only
+ * this says whether the model itself judges as intended.
+ */
+export async function evaluateJudge(store: Store, userId: number, judge: SpecialistJudge, rows: Array<{ text: string; level?: [number, number]; current?: string; handoff?: boolean }>, concurrency = 3) {
+  const specialists = store.agents(userId).filter((a) => a.domain !== 'meta' && a.name !== 'generalist');
+  const names = new Set(specialists.map((a) => a.name));
+  const usable = rows.filter((row) => !row.current || names.has(row.current));
+  const results: Array<{ text: string; level: number | null; expected_level: [number, number] | null; current: string | null; current_fit: number | null; handoff_expected: boolean | null; ok_level: boolean | null; ok_handoff: boolean | null; error?: string }> = [];
+  let next = 0;
+  const worker = async () => {
+    while (next < usable.length) {
+      const row = usable[next++];
+      let verdict: JudgeVerdict | null = null; let error: string | undefined;
+      try { verdict = await judge({ command: row.text, candidates: specialists.map((a) => ({ name: a.name, description: a.description })), current: row.current ?? null }); } catch (e) { error = e instanceof Error ? e.message : String(e); }
+      const level = typeof verdict?.level === 'number' ? verdict.level : null;
+      const currentFit = typeof verdict?.current_fit === 'number' ? verdict.current_fit : null;
+      results.push({ text: row.text, level, expected_level: row.level ?? null, current: row.current ?? null, current_fit: currentFit, handoff_expected: row.handoff ?? null,
+        ok_level: row.level ? level !== null && level >= row.level[0] && level <= row.level[1] : null,
+        ok_handoff: typeof row.handoff === 'boolean' ? currentFit !== null && (currentFit < JUDGE_USE_FIT) === row.handoff : null, ...(error ? { error } : {}) });
+    }
+  };
+  await Promise.all(Array.from({ length: Math.max(1, concurrency) }, worker));
+  const rate = (items: Array<boolean | null>) => { const scored = items.filter((x): x is boolean => x !== null); return scored.length ? Number((scored.filter(Boolean).length / scored.length).toFixed(3)) : null; };
+  const top = results.filter((r) => r.expected_level && r.expected_level[0] >= 4);
+  return {
+    n: results.length, failures: results.filter((r) => r.error).length,
+    level_accuracy: rate(results.map((r) => r.ok_level)),
+    strongest_recall: rate(top.map((r) => r.level === 4)),
+    handoff_accuracy: rate(results.map((r) => r.ok_handoff)),
+    results,
+  };
+}
+
+/**
  * Specialist judge (§3.1): an LLM turn (runtime, Claude haiku / Codex mini) that picks the EXISTING agent closest
  * to the command and scores how well it covers it. Laya and the lexical prior only rank agents against each other,
  * so their top pick "wins" even when nothing fits; the judge scores the closest agent's fit on an absolute scale.
@@ -269,6 +315,7 @@ export async function evaluateRouting(store: Store, laya: LayaClient, userId: nu
  */
 export type JudgeVerdict = { agent: string | null; fit: number; reason: string; new: { name: string; domain: string; description: string; technologies: string[] } | null; /** the judge's wording of the clarifying question (used only when Laya's clarify asks) */ question?: string | null;
   /** inside a chat: how well the chat's current agent carries the command as its next turn (absent: not asked, e.g. a similar-command verdict) */ current_fit?: number | null;
+  /** the model tier (0–4) that carries the command out comfortably (absent: an older cached verdict) — the depth the command runs at */ level?: number | null;
   engine?: string; ms?: number; source?: 'llm' | 'cache' | 'similar' };
 export type SpecialistJudge = (input: { command: string; candidates: Array<{ name: string; description: string }>; project?: string | null; /** the chat's current agent */ current?: string | null }) => Promise<JudgeVerdict | null>;
 const normText = (text: string) => text.toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 500);
@@ -297,7 +344,11 @@ export const ROUTE_INSTRUCTIONS = {
  */
 export const JUDGE_USE_FIT = 0.6;
 /**
- * A chat moves to another specialist only when the judge scores that one at least JUDGE_USE_FIT and this much above
+ * A chat's agent keeps its chat while the judge scores it (`current_fit`) at least JUDGE_USE_FIT for the command. Below
+ * that it does not carry the command, and the chat is handed off to what the judge found: another specialist, the
+ * generalist, or a specialist to create (user decision 2026-10-13: a ComfyUI/Blender setup chat stayed with
+ * security-review for every later command after one "remove the exposed key" turn).
+ * Above it, a chat moves to another specialist only when the judge scores that one at least JUDGE_USE_FIT and this much above
  * the chat's own agent (`current_fit`: how well it carries the command as its next turn — follow-ups, "push it", "test
  * it again" keep it high). Server decisions 2026-10-12: a fixed 0.8 kept a git chat on UI work the judge gave
  * frontend-react 0.7 (#301), while lowering it to 0.6 alone would have moved a "push from now on" to the git agent (#294).
@@ -335,8 +386,9 @@ function dismissedDomain(store: Store, userId: number, p: { name: string; domain
 /** Bumped whenever the runtime judge prompt changes meaning (specialist-judge.service.ts): cached verdicts of an older
  *  prompt are not reused. 2: `question` + "command execution is never a specialist"; 3: "size alone never makes a specialist" (2026-10-01);
  *  4: the closest agent with a graded fit instead of a yes/no "true specialist"; 5: a proposal below 0.6, not 0.4 (2026-10-10);
- *  6: `current_fit` of the chat's current agent (2026-10-13). */
-const JUDGE_VERSION = 6;
+ *  6: `current_fit` of the chat's current agent (2026-10-13);
+ *  7: `level`, the model tier that carries the command out comfortably (2026-10-13). */
+const JUDGE_VERSION = 7;
 /** How long a send waits for the judge (env AIDEV_JUDGE_WAIT_MS). A slower verdict is still cached for the next send. */
 const JUDGE_WAIT_MS = Number(process.env.AIDEV_JUDGE_WAIT_MS ?? 20_000);
 const MAX_PREJUDGE_PER_USER = 3;
@@ -361,8 +413,10 @@ function judgeContext(store: Store, userId: number, text: string, nbTop: { choic
   if (!known && nbTop.choice && nbTop.probability >= 0.9) {
     const candidate = specialists.find((a) => a.name === nbTop.choice);
     const tokens = tokenize(text);
-    const best = candidate ? Math.max(0, ...store.judgedExamples(candidate.id).map((ex) => cosine(tokens, tokenize(ex)))) : 0;
-    if (candidate && best >= SIMILAR_JUDGED) known = { agent: candidate.name, fit: 0.9, reason: `judge confirmed a similar command (${best.toFixed(2)})`, new: null, source: 'similar' };
+    let best = 0; let bestText: string | null = null;
+    for (const example of candidate ? store.judgedExamples(candidate.id) : []) { const score = cosine(tokens, tokenize(example)); if (score > best) { best = score; bestText = example; } }
+    // the similar command's own verdict carries its level, so the shortcut still runs the work at a comfortable tier
+    if (candidate && bestText && best >= SIMILAR_JUDGED) known = { agent: candidate.name, fit: 0.9, reason: `judge confirmed a similar command (${best.toFixed(2)})`, new: null, level: store.judgedLevel(userId, normText(bestText)), source: 'similar' };
   }
   return { specialists, catalogSig, textNorm, key: `${userId}|${catalogSig}|${textNorm}`, known, current: chatAgent };
 }
@@ -385,7 +439,7 @@ function startJudge(store: Store, userId: number, ctx: JudgeContext, text: strin
     .then((v) => (v ? { ...v, source: 'llm' as const } : null))
     .catch(() => null)
     .then((v) => {
-      if (v) store.cacheJudge(userId, ctx.textNorm, ctx.catalogSig, { agent: v.agent, fit: v.fit, reason: v.reason, new: v.new, question: v.question ?? null, current_fit: v.current_fit ?? null, engine: v.engine });
+      if (v) store.cacheJudge(userId, ctx.textNorm, ctx.catalogSig, { agent: v.agent, fit: v.fit, reason: v.reason, new: v.new, question: v.question ?? null, current_fit: v.current_fit ?? null, level: v.level ?? null, engine: v.engine });
       return v;
     })
     .finally(() => judging.delete(ctx.key));
@@ -462,13 +516,14 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   const remoteNbProbs = targets.length ? remotePrior(text) : {};
   let layaProbs: Record<string, number> | null = null;
   // ---- specialist judge: cached verdict → a judge-confirmed similar command → an LLM turn (runs alongside Laya)
-  // inside a chat the judge also scores the chat's agent (a forced agent or a queued design keeps no chat agent)
+  // inside a chat the judge also scores the chat's agent (a forced agent or a queued design keeps no chat agent); with a
+  // forced agent the judge still runs: its level sets the model tier, its agent is not used
   const jctx = judgeContext(store, userId, text, nbTop, input.forceAgent || input.createProposal ? null : chatAgent(store, userId, input.sessionId));
-  let verdict: JudgeVerdict | null = input.forceAgent ? null : jctx.known;
+  let verdict: JudgeVerdict | null = jctx.known;
   const judgeT0 = Date.now();
   let judgeTimedOut = false;
-  const joined = !verdict && !input.forceAgent && judging.has(jctx.key);
-  const judgePromise: Promise<JudgeVerdict | null> = verdict || input.forceAgent || !opts.judge || !jctx.specialists.length
+  const joined = !verdict && judging.has(jctx.key);
+  const judgePromise: Promise<JudgeVerdict | null> = verdict || !opts.judge || !jctx.specialists.length
     ? Promise.resolve(verdict)
     : waitAtMost(startJudge(store, userId, jctx, text, input.projectHint ?? null, opts.judge), opts.judgeWaitMs ?? JUDGE_WAIT_MS, null, () => { judgeTimedOut = true; });
   try {
@@ -501,14 +556,21 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   // ---- agent decision (§0 expertise↔speed) ------------------------------------------------
   // Quality first (§3.4): an in-between depth score rounds up from .35, not .5 — a too-weak model costs
   // a failed run, a slightly stronger one only some usage.
-  const scoredDepth = clampDepth(Math.floor(depthRaw + (risk >= 1.5 ? 1 : 0) + DEPTH_ROUND_UP));
-  if (risk >= 1.5) reason.push(`risk ${risk.toFixed(1)} → depth +1`);
+  const layaDepth = clampDepth(Math.floor(depthRaw + (risk >= 1.5 ? 1 : 0) + DEPTH_ROUND_UP));
   let agentName = agentTop.choice && catalog[agentTop.choice] ? agentTop.choice : 'generalist';
   let decision: 'use' | 'generalist' | 'create' | 'create_background' = 'use';
   // how long the send waited for the judge beyond Laya (0 when the verdict was cached or pre-judged in time)
   const layaDoneAt = Date.now();
   verdict = await judgePromise;
   const judgeWaitMs = Date.now() - layaDoneAt;
+  // The model tier (§3.4, user decision 2026-10-13): the one that carries the work out comfortably, not one that would
+  // barely manage — the judge places the command against each tier's reliable range (specialist-judge.service.ts
+  // `level`). Laya's depth score is the fallback when no verdict carries a level: its expectation stays inside
+  // 0.04–2.60 on the server (475 decisions), so on its own it never reaches D4 and the strongest models never run.
+  const judgedLevel = typeof verdict?.level === 'number' && Number.isFinite(verdict.level) ? clampDepth(verdict.level) : null;
+  const scoredDepth = judgedLevel ?? layaDepth;
+  if (judgedLevel !== null) reason.push(`judge: comfortable at D${judgedLevel} (Laya D${layaDepth})`);
+  else if (risk >= 1.5) reason.push(`risk ${risk.toFixed(1)} → depth +1`);
   if (!verdict && !input.forceAgent && opts.judge && jctx.specialists.length) reason.push(judgeTimedOut ? `specialist judge still running after ${Math.round((Date.now() - judgeT0) / 1000)}s — its verdict is cached for the next send` : 'specialist judge failed');
   let proposal: JudgeVerdict['new'] = null;
   if (input.forceAgent) { /* handled below */ }
@@ -518,8 +580,9 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     if (judged && judged.domain !== 'meta' && (verdict.fit >= JUDGE_USE_FIT || !verdict.new)) {
       agentName = judged.name; decision = 'use';
       reason.push(`specialist judge: ${judged.name} (fit ${verdict.fit.toFixed(2)}${verdict.fit < JUDGE_EXAMPLE_FIT ? ', closest' : ''}, ${verdict.source}${verdict.reason ? `: ${verdict.reason}` : ''})${agentTop.choice !== judged.name ? ` — ranker had ${agentTop.choice} ${agentTop.probability.toFixed(2)}` : ''}`);
-      // a confirmed command becomes an example of that specialist: the lexical prior learns from the judge
-      if (verdict.source === 'llm' && verdict.fit >= JUDGE_EXAMPLE_FIT) store.addExamples(judged.id, [{ text, source: 'judge', taskKind: null }]);
+      // a confirmed command becomes an example of that specialist: the lexical prior learns from the judge — not when it
+      // is the chat's own agent, whose fit a follow-up ("진행해봐") lifts without saying anything about its domain
+      if (verdict.source === 'llm' && verdict.fit >= JUDGE_EXAMPLE_FIT && judged.name !== jctx.current) store.addExamples(judged.id, [{ text, source: 'judge', taskKind: null }]);
     } else if (verdict.agent === 'generalist') {
       agentName = 'generalist'; decision = 'generalist';
       reason.push(`specialist judge: general request → generalist${verdict.reason ? ` (${verdict.reason})` : ''}`);
@@ -554,13 +617,21 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   // correction) used to be routed as fresh turns: a D3 opus conversation continued as a D1/D2 sonnet
   // generalist turn, and the judge sometimes proposed creating a new agent for a one-line reply inside
   // a specialist's conversation (server decisions #637/#639). The chat's last run sets the depth floor
-  // and keeps its agent unless the user forces one, the app re-sends with one, or the judge finds a different
-  // specialist that clearly fits better (2026-10-13: scored against the chat's own agent, SESSION_SWITCH_MARGIN).
-  // A generalist chat may still move to a specialist.
+  // and keeps its agent unless the user forces one, the app re-sends with one, the judge finds the agent does not
+  // carry the command (handoff, below) or finds a different specialist that clearly fits better (2026-10-13: scored
+  // against the chat's own agent, SESSION_SWITCH_MARGIN). A generalist chat may still move to a specialist.
   const prior = input.sessionId && !input.forceAgent && !fromQueue ? store.lastRunForSession(userId, input.sessionId) : undefined;
   const sessionFloor = prior && prior.depth !== null && prior.agent_domain !== 'meta' ? clampDepth(prior.depth) : 0;
   const priorAgent = prior ? chatAgent(store, userId, input.sessionId) : null;
-  if (priorAgent && agentName !== priorAgent) {
+  // The judge's score of the chat's own agent for this command (asked with it as the chat's current agent). Under
+  // JUDGE_USE_FIT that agent does not carry the command and the chat is handed off to what the judge found: a specialist
+  // that fits (at least JUDGE_USE_FIT), a new specialist (designed in the background below — the generalist runs this
+  // turn and the new specialist takes the chat's next one), or else the generalist.
+  const chatFit = priorAgent && verdict && jctx.current === priorAgent && typeof verdict.current_fit === 'number' ? verdict.current_fit : null;
+  if (priorAgent && chatFit !== null && chatFit < JUDGE_USE_FIT) {
+    if (decision === 'use' && agentName !== 'generalist' && !(verdict?.agent === agentName && verdict.fit >= JUDGE_USE_FIT)) { agentName = 'generalist'; decision = 'generalist'; }
+    reason.push(`session agent ${priorAgent} fits this command poorly (${chatFit.toFixed(2)} < ${JUDGE_USE_FIT}) → handoff to ${decision === 'create' ? `a new ${proposal?.name ?? 'specialist'}` : agentName}`);
+  } else if (priorAgent && agentName !== priorAgent) {
     const other = verdict?.agent && verdict.agent === agentName && verdict.agent !== 'generalist' && decision === 'use' ? verdict : null;
     const currentFit = typeof other?.current_fit === 'number' ? other.current_fit : null;
     const judgedOther = Boolean(other && (currentFit !== null
@@ -793,7 +864,8 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   // ---- log --------------------------------------------------------------------------------------
   const decisionId = store.logDecision({ userId, command: text, agent: agentName, probability: agentTop.probability, confidence: agentTop.confidence, needsNew, risk, decision, probabilities, latencyMs: latency ?? undefined, device: device ?? undefined });
   store.db.prepare('UPDATE decision_log SET kind=?, fallback=?, answer=?, state=? WHERE id=?').run('route', fallback ? 1 : 0,
-    JSON.stringify({ agent: agentName, engine, model: tier.model, effort: tier.effort, depth, task_kind: taskKind, remote_action: remoteAction, target: target?.name ?? null, target_source: targetSource, device: targetDevice?.serial ?? null }), JSON.stringify(state).slice(0, 8000), decisionId);
+    JSON.stringify({ agent: agentName, engine, model: tier.model, effort: tier.effort, depth, task_kind: taskKind, remote_action: remoteAction, target: target?.name ?? null, target_source: targetSource, device: targetDevice?.serial ?? null,
+      agent_source: priorAgent && agentName === priorAgent ? 'session' : 'routed', judge_level: judgedLevel, laya_depth: layaDepth }), JSON.stringify(state).slice(0, 8000), decisionId);
   store.recordInjectedLessons(decisionId, lessons.map((l) => ({ id: l.id, trial: l === trial })));
 
   // Creation flow (§3.7): the client sends the same command to the agent-architect meta agent first.

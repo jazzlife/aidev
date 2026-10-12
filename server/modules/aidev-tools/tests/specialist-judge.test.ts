@@ -7,7 +7,7 @@ import { firstCompleteJson, parseJudge } from '@/modules/aidev-tools/specialist-
 const names = new Set(['frontend-react', 'database']);
 
 test('existing specialist, generalist, and a proposal', () => {
-  assert.deepEqual(parseJudge('{"agent":"database","fit":0.9,"reason":"SQL","new":null}', names), { agent: 'database', fit: 0.9, reason: 'SQL', new: null, question: null, current_fit: null });
+  assert.deepEqual(parseJudge('{"agent":"database","fit":0.9,"reason":"SQL","new":null}', names), { agent: 'database', fit: 0.9, reason: 'SQL', new: null, question: null, current_fit: null, level: null });
   assert.equal(parseJudge('```json\n{"agent":"generalist","fit":0.7,"reason":"trivial","new":null}\n```', names)?.agent, 'generalist');
   const created = parseJudge('Sure: {"agent":null,"fit":0,"reason":"no iOS agent","new":{"name":"iOS Swift!","domain":"ios","description":"SwiftUI apps","technologies":["Swift","SwiftUI"]}}', names);
   assert.equal(created?.agent, null);
@@ -47,4 +47,11 @@ test('parseJudge reads the chat agent\'s current_fit only when a chat agent was 
   // missing or out of range
   assert.equal(parseJudge('{"agent":"frontend-react","fit":0.7,"reason":"UI","new":null,"question":null}', names, 'git-workflow')?.current_fit, null);
   assert.equal(parseJudge('{"agent":"frontend-react","fit":0.7,"reason":"UI","new":null,"question":null,"current_fit":3}', names, 'git-workflow')?.current_fit, 1);
+});
+
+test('parseJudge reads the comfortable model tier (level) as a whole 0..4, or null when absent', () => {
+  assert.equal(parseJudge('{"agent":"database","fit":0.9,"reason":"x","new":null,"level":4}', names)?.level, 4);
+  assert.equal(parseJudge('{"agent":"database","fit":0.9,"reason":"x","new":null,"level":2.6}', names)?.level, 3);
+  assert.equal(parseJudge('{"agent":"database","fit":0.9,"reason":"x","new":null,"level":9}', names)?.level, 4);
+  assert.equal(parseJudge('{"agent":"database","fit":0.9,"reason":"x","new":null,"level":"high"}', names)?.level, null);
 });

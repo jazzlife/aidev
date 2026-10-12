@@ -5,7 +5,8 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "node dist/auth-gateway.js",
-    "dev": "tsx src/auth-gateway.ts"
+    "dev": "tsx src/auth-gateway.ts",
+    "test": "npm run build && node test/run-all.mjs"
   },
   "dependencies": {
     "better-sqlite3": "^12.6.2",

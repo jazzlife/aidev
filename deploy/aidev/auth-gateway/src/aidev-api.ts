@@ -20,7 +20,7 @@ import { launchCommand, validateLaunch, type DebugHub } from './debug-hub.js';
 import type { ConsoleHub } from './console-hub.js';
 import { ShipError, type PlatformShip } from './platform-ship.js';
 import { GithubOauthError, type GithubOauth } from './github-oauth.js';
-import { applyModelFloor, ARCHITECT_MIN_DEPTH, CODEX_JUDGE_WAIT_MS, evaluateRouting, prejudge, route, TIER_TABLE, type EngineAvailability, type JudgeVerdict, type RouteInput, type SpecialistJudge } from './routing.js';
+import { applyModelFloor, ARCHITECT_MIN_DEPTH, CODEX_JUDGE_WAIT_MS, evaluateJudge, evaluateRouting, prejudge, route, runTeachesAgent, TIER_TABLE, type EngineAvailability, type JudgeVerdict, type RouteInput, type SpecialistJudge } from './routing.js';
 /** Hard limit of one judge call in the runtime; a send waits less (routing.ts AIDEV_JUDGE_WAIT_MS) and the rest is cached. */
 const JUDGE_TIMEOUT_MS = Number(process.env.AIDEV_JUDGE_TIMEOUT_MS ?? 60_000);
 
@@ -213,9 +213,9 @@ export function createAidevApi(deps: AidevDeps) {
       void curateFailure(session, final).catch((error) => console.warn('[aidev] lesson curation failed:', error instanceof Error ? error.message : error));
     }
     if (outcome === 'success' && final.agent_id && final.decision_id && before.outcome !== 'success') {
-      const decisionRow = store.db.prepare('SELECT command FROM decision_log WHERE id=?').get(final.decision_id) as { command: string } | undefined;
+      const decisionRow = store.db.prepare('SELECT command, answer FROM decision_log WHERE id=?').get(final.decision_id) as { command: string; answer: string | null } | undefined;
       const agent = store.agentById(final.agent_id);
-      if (decisionRow && agent && agent.name !== 'generalist' && agent.domain !== 'meta') store.addExamples(agent.id, [{ text: decisionRow.command, source: 'run', taskKind: final.task_kind }]);   // a confirmed run also confirms its task kind
+      if (decisionRow && agent && runTeachesAgent(decisionRow.answer) && agent.name !== 'generalist' && agent.domain !== 'meta') store.addExamples(agent.id, [{ text: decisionRow.command, source: 'run', taskKind: final.task_kind }]);   // a confirmed run also confirms its task kind
     }
     return next;
   }
@@ -440,6 +440,19 @@ export function createAidevApi(deps: AidevDeps) {
             return json(res, 200, { effort_cap: saved, default: info.account, effective: info.cap }), true;
           } catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid effort'); }
         }
+      }
+      // the real judge on its labelled set: comfortable model tier and chat handoff (verify-b.sh)
+      if (rest === '/route/eval-judge' && m === 'POST') {
+        requireAdmin(session);
+        const b = await readJson(req, 1024 * 1024);
+        let rows = Array.isArray(b.rows) ? b.rows as Array<{ text: string; level?: [number, number]; current?: string; handoff?: boolean }> : [];
+        if (!rows.length) {
+          const file = process.env.AIDEV_JUDGE_EVAL_FILE ?? new URL('../data/judge-eval.jsonl', import.meta.url).pathname;
+          rows = fs.readFileSync(file, 'utf8').split('\n').filter(Boolean).map((line) => JSON.parse(line) as { text: string; level?: [number, number]; current?: string; handoff?: boolean });
+        }
+        const judge = judgeFor(session, await engineAvailability(session));
+        if (!judge) throw new HttpError(409, 'no engine available for the judge');
+        return json(res, 200, await evaluateJudge(store, uid, judge, rows.slice(0, 200))), true;
       }
       if (rest === '/route/eval' && m === 'POST') {
         const b = await readJson(req, 4 * 1024 * 1024);

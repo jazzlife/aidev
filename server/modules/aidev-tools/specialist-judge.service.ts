@@ -16,8 +16,13 @@ import { codexSandboxConfig, noteCodexTurnError } from '@/shared/index.js';
  *                 JUDGE_USE_FIT, 0.6 — 2026-10-10: a new agent only when the current ones fit too poorly)
  *   generalist  — a trivial or domain-less request (a quick question, one shell command, a tiny edit)
  *   new         — the specialist that should exist, proposed only when the closest fit is below 0.6
- *   current_fit — inside a chat, how well the chat's current agent carries the command as its next turn; the gateway
- *                 moves the chat only to an agent that clearly fits better (routing.ts SESSION_SWITCH_MARGIN, 2026-10-13)
+ *   current_fit — inside a chat, how well the chat's current agent carries the command as its next turn; below
+ *                 JUDGE_USE_FIT the gateway hands the chat off to the agent that fits (or a new one), and above it moves
+ *                 the chat only to an agent that clearly fits better (routing.ts SESSION_SWITCH_MARGIN, 2026-10-13)
+ *   level       — the model tier (0–4) that carries the command out comfortably, judged against each tier's reliable
+ *                 range; the gateway runs the command at that tier (routing.ts TIER_TABLE). Laya's depth score is the
+ *                 fallback only: its 0–4 expectation never left 0.04–2.60 on the server (475 decisions), so D4 was
+ *                 unreachable and the strongest models never ran (2026-10-13)
  * It also writes the one question to ask when the command lacks something essential (`question`); the gateway
  * shows it only when Laya's `clarify` says to ask (§3.1), so Laya decides and the model only words it.
  * Claude haiku first, Codex luna when Claude is unavailable or not allowed. Nothing is written into any conversation.
@@ -37,6 +42,8 @@ export type JudgeResult = {
   question: string | null;
   /** how well the chat's current agent (JudgeInput.current) carries the command as its next turn; null without one */
   current_fit: number | null;
+  /** the model tier (0–4) that carries the command out comfortably; null when the answer has none */
+  level: number | null;
   engine: string;
   ms: number;
 };
@@ -57,10 +64,17 @@ Rules:
 - new: ONLY when the closest agent's fit is below 0.6 (or agent is null) and the command has a concrete technology or problem domain (a language, framework, platform, protocol, hardware or tool chain), propose the specialist that SHOULD exist (kebab-case name, domain, one-line description, key technologies). Otherwise null — a close-enough agent is used, not duplicated.
 - Never choose META agents.
 - current_fit: only when a "Current agent of this conversation" is given (otherwise null) — how well THAT agent carries this command as the next turn of its conversation. A follow-up on the ongoing work — continue, retry, fix, rerun or test what was just done, commit/push/tag it, a rule for how to keep working, or a question about it — keeps it at 0.8 or more whatever its domain, even when another agent would be closest for the words alone. For example, with a React agent: "앞으로 수정을 하면 푸시해" (push after every change from now on) → 0.85; "방금 고친 거 테스트 다시 돌려봐" → 0.85; "커밋하고 태그 달아" → 0.8; a question about what it just did or tested ("그 결과가 맞게 나온 거야?") → 0.85. Every agent commits, pushes, tags and opens pull requests for its own work, so git chores and working rules inside a conversation (how to commit, when to push, the message language) are follow-ups too, never a reason to change agent. Work in a different technology or problem domain than that agent's is scored on the fit scale above (with a git agent, "카드 간격을 맞춰줘" in a UI → 0.2).
+- level (0..4): the model tier that carries this command out COMFORTABLY — with capacity to spare, not a model that would barely manage it. What each tier does reliably, and where it starts to fail:
+  0 small fast model (Haiku / Luna): a factual answer, a lookup, one or two ready-made shell commands, a one-line edit. Fails once the work needs a plan or several files.
+  1 mid model, light reasoning (Sonnet / Terra medium): a well-specified change inside one file, a short procedure in known code, explaining code. Shaky once a cause is unknown or several parts must agree.
+  2 mid model, deep reasoning (Sonnet / Terra high): a clearly specified feature or fix across several files of a familiar codebase. Shaky on unknown causes, unfamiliar stacks and design trade-offs.
+  3 strong model (Opus / Sol): debugging an unknown cause, refactoring, design, unfamiliar technology, setting up and wiring one tool chain or environment. Shaky on long autonomous work where early mistakes compound.
+  4 strongest model (Fable / Astra): architecture and migrations; long multi-step autonomous work across several tools, services or machines (install, configure and integrate several tools, build a pipeline, automate end to end without check-ins); research-level or high-stakes work where a mistake is expensive.
+  Choose the lowest tier whose RELIABLE range clearly contains the command. When the command sits at a tier's upper edge, or it is unclear between two tiers, choose the higher one. Destructive or hard-to-undo work (deleting data, rewriting history, production changes) goes one tier up. A short follow-up whose work you cannot see ("진행해", "계속해") is judged from its words alone; the gateway keeps the conversation's tier.
 - question: if information ESSENTIAL to start is missing and cannot be inferred (which file or screen, which project, which target machine, what the expected behavior is), write the ONE most important question to ask, in the command's language, short and concrete. Otherwise null.
 
 Output ONLY this JSON (no prose):
-{"agent": "<existing name>" | "generalist" | null, "fit": <0..1>, "reason": "<short>", "new": null | {"name": "<kebab-case>", "domain": "<domain>", "description": "<one line>", "technologies": ["..."]}, "question": null | "<one short question>", "current_fit": null | <0..1>}`;
+{"agent": "<existing name>" | "generalist" | null, "fit": <0..1>, "reason": "<short>", "new": null | {"name": "<kebab-case>", "domain": "<domain>", "description": "<one line>", "technologies": ["..."]}, "question": null | "<one short question>", "current_fit": null | <0..1>, "level": <0..4>}`;
 
 /** The first balanced `{…}` in `text` once it is complete and parses (strings and escapes respected), else null. */
 export function firstCompleteJson(text: string): Record<string, unknown> | null {
@@ -109,8 +123,9 @@ export function parseJudge(text: string, names: Set<string>, current: string | n
     // only asked for with a current agent; the closest agent being that agent is its fit, whatever the model wrote
     const currentFit = !current ? null : agent === current ? fit
       : typeof raw.current_fit === 'number' && Number.isFinite(raw.current_fit) ? Math.max(0, Math.min(1, raw.current_fit)) : null;
+    const level = typeof raw.level === 'number' && Number.isFinite(raw.level) ? Math.max(0, Math.min(4, Math.round(raw.level))) : null;
     // the proposal is kept next to a low-fit closest agent: the gateway decides by the fit (routing.ts JUDGE_USE_FIT)
-    return { agent, fit, reason: typeof raw.reason === 'string' ? raw.reason.slice(0, 300) : '', new: agent === 'generalist' ? null : proposal, question, current_fit: currentFit };
+    return { agent, fit, reason: typeof raw.reason === 'string' ? raw.reason.slice(0, 300) : '', new: agent === 'generalist' ? null : proposal, question, current_fit: currentFit, level };
   } catch {
     return null;
   }
@@ -222,7 +237,7 @@ export const specialistJudgeService = {
     const parsed = parseJudge(text, names, current);
     if (!parsed) throw new Error(`judge answer not understood: ${text.replace(/\s+/g, ' ').slice(0, 200)}`);
     const result = { ...parsed, engine, ms: Date.now() - t0 };
-    console.log(`[aidev-tools] judge ${result.ms}ms ${engine}: ${input.command.slice(0, 60)} → ${result.agent ?? '-'} fit=${result.fit}${current ? ` (chat ${current} ${result.current_fit ?? '?'})` : ''}${result.new ? ` NEW ${result.new.name}` : ''} (${result.reason.slice(0, 80)})`);
+    console.log(`[aidev-tools] judge ${result.ms}ms ${engine}: ${input.command.slice(0, 60)} → ${result.agent ?? '-'} fit=${result.fit} L${result.level ?? '?'}${current ? ` (chat ${current} ${result.current_fit ?? '?'})` : ''}${result.new ? ` NEW ${result.new.name}` : ''} (${result.reason.slice(0, 80)})`);
     return result;
   },
 };

@@ -12,8 +12,8 @@ import path from 'node:path';
 import { WebSocketServer } from 'ws';
 
 const RUNNER_BIN = process.env.RUNNER_BIN;
-const WORK = fs.realpathSync(process.env.DBG_WORK ?? '/tmp/claude-0/dbgwork');
 if (!RUNNER_BIN) { console.log('SKIP: RUNNER_BIN not set'); process.exit(0); }
+const WORK = fs.realpathSync(process.env.DBG_WORK ?? '/tmp/claude-0/dbgwork');
 const only = (process.env.ONLY ?? '').split(',').filter(Boolean);
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'aidev-dbg-e2e-'));
