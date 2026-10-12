@@ -7,6 +7,7 @@ import type { Thread, ThreadOptions } from '@openai/codex-sdk';
 
 import { codexRuntime } from '@/modules/providers/list/codex/codex-runtime.provider.js';
 import type { ProviderRuntimeContext } from '@/shared/index.js';
+import { codexCheckSandboxMode } from '@/shared/index.js';
 
 for (const resumed of [false, true]) {
   for (const permissionMode of [undefined, 'default', 'unknown', 'acceptEdits', 'bypassPermissions']) {
@@ -50,7 +51,9 @@ for (const resumed of [false, true]) {
       assert.equal(start.mock.callCount(), resumed ? 0 : 1);
       assert.equal(resume.mock.callCount(), resumed ? 1 : 0);
       assert.equal(capturedPrompt, 'hey there');
-      assert.equal(capturedOptions?.sandboxMode, permissionMode === 'bypassPermissions' ? 'danger-full-access' : 'workspace-write');
+      // where Landlock stands in for bubblewrap (the server's containers) workspace-write cannot run, so it is full access
+      const workspaceWrite = codexCheckSandboxMode() === 'read-only' ? 'danger-full-access' : 'workspace-write';
+      assert.equal(capturedOptions?.sandboxMode, permissionMode === 'bypassPermissions' ? 'danger-full-access' : workspaceWrite);
       assert.equal(capturedOptions?.approvalPolicy, permissionMode === 'acceptEdits' || permissionMode === 'bypassPermissions' ? 'never' : 'on-request');
       assert.ok(messages.some((message: any) => message.kind === 'complete' && message.exitCode === 0));
       assert.ok(!messages.some((message: any) => message.kind === 'error'));
