@@ -2,7 +2,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { Codex } from '@openai/codex-sdk';
 
 import { sessionsDb } from '@/modules/database/index.js';
-import { codexSandboxConfig } from '@/shared/index.js';
+import { codexSandboxConfig, noteCodexTurnError } from '@/shared/index.js';
 
 /**
  * Lesson curation for failed runs (IMPLEMENTATION-PLAN §3.8 / E-01): summarises the session's
@@ -101,7 +101,7 @@ async function askCodex(prompt: string, cwd: string): Promise<string> {
   const codex = new Codex({ config: { ...codexSandboxConfig(), developer_instructions: CURATOR_PROMPT } as never });
   // a tool-less side turn (the summary is in the prompt): no web search, low effort — as the judge
   const thread = codex.startThread({ threadSource: SIDE_TURN_SOURCE, workingDirectory: cwd, skipGitRepoCheck: true, sandboxMode: 'read-only', approvalPolicy: 'never', model: CODEX_SIDE_MODEL, modelReasoningEffort: 'low', webSearchMode: 'disabled' });
-  const turn = await thread.run(prompt);
+  const turn = await thread.run(prompt).catch((error: unknown) => { noteCodexTurnError(error); throw error; });
   return turn.finalResponse ?? '';
 }
 

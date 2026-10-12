@@ -2,7 +2,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { Codex } from '@openai/codex-sdk';
 
 import { sessionsDb } from '@/modules/database/index.js';
-import { codexSandboxConfig } from '@/shared/index.js';
+import { codexCheckSandboxMode, codexSandboxConfig, currentCodexAuthFailure, noteCodexTurnError } from '@/shared/index.js';
 
 /**
  * Independent verification of a finished run (2026-10-07, worker ≠ verifier). The worker agent's final
@@ -72,13 +72,25 @@ export function verifierModel(engine: 'claude' | 'codex', input: { workerEngine:
 /**
  * Engines to try for the verifier, best first: the worker's other engine, then the worker's own (a different
  * thread / agent there). Only engines the gateway reported usable are kept, so a limited or signed-out engine
- * never gets the check. Used by `verify` and its test.
+ * never gets the check. This runtime's own knowledge goes on top, since the gateway's view can be a minute old:
+ * Codex whose sign-in stopped working (a lapsed subscription) is dropped, and Codex that was at capacity lately goes
+ * last instead of first (a model at capacity cost run 274 3.5 min before the next engine started). Used by `verify`
+ * and its test.
  */
-export function verifierEngineOrder(workerEngine: 'claude' | 'codex' | null, engines: Array<'claude' | 'codex'>): Array<'claude' | 'codex'> {
+export function verifierEngineOrder(
+  workerEngine: 'claude' | 'codex' | null,
+  engines: Array<'claude' | 'codex'>,
+  codex: { signedOut?: boolean; busy?: boolean } = {},
+): Array<'claude' | 'codex'> {
   const other: 'claude' | 'codex' | null = workerEngine === 'claude' ? 'codex' : workerEngine === 'codex' ? 'claude' : null;
   const preferred: Array<'claude' | 'codex'> = other && workerEngine ? [other, workerEngine] : ['claude', 'codex'];
-  return preferred.filter((engine) => engines.includes(engine));
+  const usable = preferred.filter((engine) => engines.includes(engine) && !(engine === 'codex' && codex.signedOut));
+  return codex.busy ? [...usable.filter((engine) => engine !== 'codex'), ...usable.filter((engine) => engine === 'codex')] : usable;
 }
+
+/** How long a Codex model at capacity sends the verifier to the other engine first. */
+const CODEX_BUSY_MS = 15 * 60_000;
+let codexBusyUntil = 0;
 
 /** The verifier's instructions, with the reviewing agent's own prompt as background — the verification rules come first and win. */
 function verifierSystemPrompt(agent: VerifyInput['verifierAgent']): string {
@@ -203,9 +215,10 @@ const SIDE_TURN_SOURCE = 'subagent';
 
 async function askCodex(prompt: string, cwd: string, model: string, systemPrompt: string, timeoutMs: number): Promise<string> {
   const codex = new Codex({ config: { ...codexSandboxConfig(), developer_instructions: systemPrompt } as never });
-  // reads and runs checks in the project; write access only so build/test caches work — the prompt forbids edits
-  const thread = codex.startThread({ threadSource: SIDE_TURN_SOURCE, workingDirectory: cwd, skipGitRepoCheck: true, sandboxMode: 'workspace-write', approvalPolicy: 'never', model, modelReasoningEffort: 'high', webSearchMode: 'disabled' });
-  const turn = await thread.run(prompt, { signal: AbortSignal.timeout(timeoutMs) });
+  // reads and runs checks in the project; write access (where the host's sandbox allows it) only so build/test caches
+  // work — the prompt forbids edits
+  const thread = codex.startThread({ threadSource: SIDE_TURN_SOURCE, workingDirectory: cwd, skipGitRepoCheck: true, sandboxMode: codexCheckSandboxMode(), approvalPolicy: 'never', model, modelReasoningEffort: 'high', webSearchMode: 'disabled' });
+  const turn = await thread.run(prompt, { signal: AbortSignal.timeout(timeoutMs) }).catch((error: unknown) => { noteCodexTurnError(error); throw error; });
   return turn.finalResponse ?? '';
 }
 
@@ -219,7 +232,7 @@ export const runVerifierService = {
     const history = await sessionsService.fetchHistory(input.sessionId, { limit: 400, offset: 0 });
     const brief = buildVerificationBrief(history.messages as HistoryMessage[], { command: input.command, agent: input.agent, engine: input.engine, model: input.workerModel });
     // the worker's other engine first; on the same engine the check runs as a different agent (verifierAgent)
-    const order = verifierEngineOrder(input.engine, input.engines);
+    const order = verifierEngineOrder(input.engine, input.engines, { signedOut: Boolean(currentCodexAuthFailure()), busy: codexBusyUntil > Date.now() });
     const systemPrompt = verifierSystemPrompt(input.verifierAgent);
     let lastError: unknown = null;
     const deadline = Date.now() + VERIFY_BUDGET_MS;
@@ -237,6 +250,7 @@ export const runVerifierService = {
         return { ...result, briefChars: brief.text.length };
       } catch (error) {
         lastError = error;
+        if (engine === 'codex' && /at capacity/i.test(error instanceof Error ? error.message : String(error))) codexBusyUntil = Date.now() + CODEX_BUSY_MS;
         console.warn(`[aidev-tools] verify run=${input.runId ?? '-'} ${engine} ${model} failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }

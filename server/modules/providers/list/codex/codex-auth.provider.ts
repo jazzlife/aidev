@@ -6,7 +6,7 @@ import spawn from 'cross-spawn';
 
 import type { IProviderAuth } from '@/shared/interfaces.js';
 import type { ProviderAuthStatus } from '@/shared/types.js';
-import { readObjectRecord, readOptionalString, runProviderCliCommand } from '@/shared/utils.js';
+import { clearCodexAuthFailure, currentCodexAuthFailure, readObjectRecord, readOptionalString, runProviderCliCommand } from '@/shared/utils.js';
 
 type CodexCredentialsStatus = {
   authenticated: boolean;
@@ -52,12 +52,20 @@ export class CodexProviderAuth implements IProviderAuth {
   async logout(): Promise<void> {
     await runProviderCliCommand('codex', ['logout']);
     await rm(path.join(os.homedir(), '.codex', 'auth.json'), { force: true });
+    clearCodexAuthFailure();
   }
 
   /**
    * Reads Codex auth.json and checks OAuth tokens or an API key fallback.
    */
   private async checkCredentials(): Promise<CodexCredentialsStatus> {
+    // A real turn was refused for the sign-in itself (a lapsed subscription, a rejected login) since the last sign-in:
+    // auth.json looks fine but no longer works, so report it instead of a stale "connected".
+    const failure = currentCodexAuthFailure();
+    if (failure) {
+      return { authenticated: false, email: null, method: null, error: `Codex sign-in no longer works (${failure.message}). Sign in again.` };
+    }
+
     try {
       const authPath = path.join(os.homedir(), '.codex', 'auth.json');
       const content = await readFile(authPath, 'utf8');

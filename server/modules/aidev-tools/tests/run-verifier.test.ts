@@ -43,6 +43,13 @@ test('verifierEngineOrder prefers the worker\'s other engine and stays inside th
   assert.deepEqual(verifierEngineOrder('claude', ['claude']), ['claude']);
   assert.deepEqual(verifierEngineOrder(null, ['codex']), ['codex']);
   assert.deepEqual(verifierEngineOrder('claude', []), []);
+  // Codex this runtime saw refuse its sign-in (a lapsed subscription) is not tried, even when the gateway still lists it
+  assert.deepEqual(verifierEngineOrder('claude', ['claude', 'codex'], { signedOut: true }), ['claude']);
+  assert.deepEqual(verifierEngineOrder('codex', ['claude', 'codex'], { signedOut: true }), ['claude']);
+  assert.deepEqual(verifierEngineOrder(null, ['codex'], { signedOut: true }), []);
+  // Codex at capacity lately goes last: the check runs on the worker's own engine as another agent first
+  assert.deepEqual(verifierEngineOrder('claude', ['claude', 'codex'], { busy: true }), ['claude', 'codex']);
+  assert.deepEqual(verifierEngineOrder('codex', ['codex'], { busy: true }), ['codex']);
 });
 
 test('buildVerificationBrief covers only the last turn: its files, commands, errors and the final report', () => {

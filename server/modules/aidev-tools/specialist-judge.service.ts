@@ -5,7 +5,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
-import { codexSandboxConfig } from '@/shared/index.js';
+import { codexSandboxConfig, noteCodexTurnError } from '@/shared/index.js';
 
 /**
  * Specialist judge (IMPLEMENTATION-PLAN §3.1 / §3.7): the gateway asks, for every routed command, which existing
@@ -162,7 +162,7 @@ async function askCodex(prompt: string): Promise<string> {
   const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'aidev-judge-'));
   try {
     const thread = codex.startThread({ threadSource: SIDE_TURN_SOURCE, workingDirectory: empty, skipGitRepoCheck: true, sandboxMode: 'read-only', approvalPolicy: 'never', model: CODEX_SIDE_MODEL, modelReasoningEffort: 'low', webSearchMode: 'disabled' });
-    const turn = await thread.run(`${prompt}${CODEX_JUDGE_RULE}`, { signal: AbortSignal.timeout(HARD_TIMEOUT_MS) });
+    const turn = await thread.run(`${prompt}${CODEX_JUDGE_RULE}`, { signal: AbortSignal.timeout(HARD_TIMEOUT_MS) }).catch((error: unknown) => { noteCodexTurnError(error); throw error; });
     return turn.finalResponse ?? '';
   } finally {
     fs.rmSync(empty, { recursive: true, force: true });

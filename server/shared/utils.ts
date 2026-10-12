@@ -69,6 +69,63 @@ export function codexSandboxConfig(): Record<string, unknown> {
   return codexUserNamespacesBlocked ? { features: { use_legacy_landlock: true } } : {};
 }
 
+/**
+ * The sandbox a Codex side turn that runs checks may use on this host. Codex 0.153's Landlock fallback (see
+ * codexSandboxConfig) panics on `workspace-write` — "permission profiles requiring direct runtime enforcement are
+ * incompatible with --use-legacy-landlock", exit 101 — so where Landlock stands in, such a turn runs `read-only`
+ * (it can still read files and run commands that do not write). Used by the run verifier.
+ */
+export function codexCheckSandboxMode(): 'workspace-write' | 'read-only' {
+  return Object.keys(codexSandboxConfig()).length ? 'read-only' : 'workspace-write';
+}
+
+// ---------------------------
+//----------------- CODEX SIGN-IN FAILURES ------------
+const CODEX_AUTH_FAILURE = /upgrade to plus|refresh token was rejected|failed to refresh token|not logged in|401 unauthorized|login is restricted to workspace/i;
+let codexAuthFailure: { at: number; message: string } | null = null;
+
+/**
+ * Whether a Codex turn's error means the sign-in itself no longer works — the subscription lapsed (the account fell
+ * back to a plan without Codex: "You've hit your usage limit. Upgrade to Plus to continue using Codex"), or the
+ * login was rejected (a refresh token refused, signed out, a 401). Unlike a usage limit with a reset time, such a
+ * refusal repeats on every turn until someone signs in again.
+ */
+export function isCodexAuthFailure(message: string): boolean {
+  return CODEX_AUTH_FAILURE.test(message);
+}
+
+/**
+ * Remembers a Codex turn's error when it is a sign-in failure (isCodexAuthFailure), so the Codex auth probe reports
+ * "not signed in" and the gateway stops routing and verifying on Codex. Called with the error of every Codex turn —
+ * the runtime provider and each aidev-tools side turn; other errors are ignored. In memory only, like the Claude one.
+ */
+export function noteCodexTurnError(error: unknown): void {
+  // an Error, or the SDK's plain `{ message }` of a `turn.failed` event
+  const message = typeof (error as { message?: unknown } | null)?.message === 'string' ? (error as { message: string }).message : String(error ?? '');
+  if (isCodexAuthFailure(message)) codexAuthFailure = { at: Date.now(), message: message.slice(0, 300) };
+}
+
+/**
+ * The recorded Codex sign-in failure, or null. A new sign-in clears it: Codex rewrites auth.json (CODEX_HOME or
+ * ~/.codex) when it signs in, so an auth.json newer than the failure means the failure is old. Used by the Codex
+ * auth probe and the run verifier; `clearCodexAuthFailure` resets it on sign-out.
+ */
+export function currentCodexAuthFailure(): { at: number; message: string } | null {
+  if (!codexAuthFailure) return null;
+  try {
+    const authFile = path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'auth.json');
+    if (fs.statSync(authFile).mtimeMs > codexAuthFailure.at) codexAuthFailure = null;
+  } catch {
+    // no auth.json: signed out anyway, the failure stays until a new sign-in
+  }
+  return codexAuthFailure;
+}
+
+/** Forgets a recorded Codex sign-in failure: Codex sign-out (the next sign-in starts clean). */
+export function clearCodexAuthFailure(): void {
+  codexAuthFailure = null;
+}
+
 // ---------------------------
 //----------------- NORMALIZED MESSAGE HELPER INPUT TYPES ------------
 /**

@@ -22,6 +22,7 @@ import {
   normalizeImageDescriptors,
   createCompleteMessage,
   createNormalizedMessage,
+  noteCodexTurnError,
 } from '@/shared/index.js';
 import { notifyRunFailed, notifyRunStopped } from '@/modules/notifications/index.js';
 import { providerUsageLimitsService } from '@/modules/providers/services/provider-usage-limits.service.js';
@@ -480,6 +481,8 @@ async function queryCodex(
       if (event.type === 'turn.failed' && !terminalFailure) {
         terminalFailure = event.error || new Error('Turn failed');
         errorSurfaced = true;
+        // a lapsed subscription or rejected login: Codex reports itself signed out until the next sign-in
+        noteCodexTurnError(terminalFailure);
         if (isCodexUsageLimit(String(terminalFailure.message ?? ''))) {
           blockingUsageLimit = { type: 'unknown', resetsAt: null };
         }
@@ -547,6 +550,7 @@ async function queryCodex(
 
         sendMessage(ws, createNormalizedMessage({ kind: 'error', content: errorContent, sessionId: capturedSessionId || sessionId || null, provider: 'codex' }));
       }
+      noteCodexTurnError(runError);
       // A limit reached this far as the thrown wrapper rather than a `turn.failed`
       // event, so the terminal `complete` still has to name it for the handoff to trigger.
       if (!blockingUsageLimit && isCodexUsageLimit(runError.message)) {
