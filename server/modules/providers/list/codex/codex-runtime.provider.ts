@@ -18,6 +18,7 @@ import { aidevToolsService, composeAgentInstructions, sanitizeAidevOptions } fro
 import {
   appendFilesInputTag,
   buildCodexInputItems,
+  codexCheckSandboxMode,
   codexSandboxConfig,
   normalizeImageDescriptors,
   createCompleteMessage,
@@ -251,6 +252,17 @@ function transformCodexEvent(event: AnyRecord): AnyRecord {
  * @returns {object} - { sandboxMode, approvalPolicy }
  */
 function mapPermissionModeToCodexOptions(permissionMode: string): Pick<ThreadOptions, 'sandboxMode' | 'approvalPolicy'> {
+  const options = permissionModeOptions(permissionMode);
+  // Where Landlock stands in for bubblewrap (the server's runtime containers) Codex cannot run workspace-write at all:
+  // every command panics ("incompatible with --use-legacy-landlock", exit 101). There the user's own runtime container
+  // is the isolation (user decision 2026-10-13), so those turns run without Codex's sandbox; elsewhere nothing changes.
+  if (options.sandboxMode === 'workspace-write' && codexCheckSandboxMode() === 'read-only') {
+    return { ...options, sandboxMode: 'danger-full-access' };
+  }
+  return options;
+}
+
+function permissionModeOptions(permissionMode: string): Pick<ThreadOptions, 'sandboxMode' | 'approvalPolicy'> {
   switch (permissionMode) {
     case 'acceptEdits':
       return {

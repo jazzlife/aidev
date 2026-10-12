@@ -73,7 +73,8 @@ export function codexSandboxConfig(): Record<string, unknown> {
  * The sandbox a Codex side turn that runs checks may use on this host. Codex 0.153's Landlock fallback (see
  * codexSandboxConfig) panics on `workspace-write` — "permission profiles requiring direct runtime enforcement are
  * incompatible with --use-legacy-landlock", exit 101 — so where Landlock stands in, such a turn runs `read-only`
- * (it can still read files and run commands that do not write). Used by the run verifier.
+ * (it can still read files and run commands that do not write). Used by the run verifier, and by the Codex runtime
+ * provider to tell such a host (its workspace-write chats run without Codex's sandbox there).
  */
 export function codexCheckSandboxMode(): 'workspace-write' | 'read-only' {
   return Object.keys(codexSandboxConfig()).length ? 'read-only' : 'workspace-write';
