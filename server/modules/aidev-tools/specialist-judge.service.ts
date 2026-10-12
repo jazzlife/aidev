@@ -5,6 +5,8 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 
+import { codexSandboxConfig } from '@/shared/index.js';
+
 /**
  * Specialist judge (IMPLEMENTATION-PLAN §3.1 / §3.7): the gateway asks, for every routed command, which existing
  * agent is closest to it and how well its declared domain covers the command (`fit`). Laya and the lexical prior
@@ -156,7 +158,7 @@ const CODEX_JUDGE_RULE = '\n\nAnswer directly from the text above. Do not run co
 const SIDE_TURN_SOURCE = 'subagent';
 
 async function askCodex(prompt: string): Promise<string> {
-  const codex = new Codex({ config: { developer_instructions: JUDGE_PROMPT } as never });
+  const codex = new Codex({ config: { ...codexSandboxConfig(), developer_instructions: JUDGE_PROMPT } as never });
   const empty = fs.mkdtempSync(path.join(os.tmpdir(), 'aidev-judge-'));
   try {
     const thread = codex.startThread({ threadSource: SIDE_TURN_SOURCE, workingDirectory: empty, skipGitRepoCheck: true, sandboxMode: 'read-only', approvalPolicy: 'never', model: CODEX_SIDE_MODEL, modelReasoningEffort: 'low', webSearchMode: 'disabled' });

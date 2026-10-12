@@ -2,6 +2,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { Codex } from '@openai/codex-sdk';
 
 import { sessionsDb } from '@/modules/database/index.js';
+import { codexSandboxConfig } from '@/shared/index.js';
 
 /**
  * Lesson curation for failed runs (IMPLEMENTATION-PLAN §3.8 / E-01): summarises the session's
@@ -97,7 +98,7 @@ const CODEX_SIDE_MODEL = 'gpt-5.6-luna';
 const SIDE_TURN_SOURCE = 'subagent';
 
 async function askCodex(prompt: string, cwd: string): Promise<string> {
-  const codex = new Codex({ config: { developer_instructions: CURATOR_PROMPT } as never });
+  const codex = new Codex({ config: { ...codexSandboxConfig(), developer_instructions: CURATOR_PROMPT } as never });
   // a tool-less side turn (the summary is in the prompt): no web search, low effort — as the judge
   const thread = codex.startThread({ threadSource: SIDE_TURN_SOURCE, workingDirectory: cwd, skipGitRepoCheck: true, sandboxMode: 'read-only', approvalPolicy: 'never', model: CODEX_SIDE_MODEL, modelReasoningEffort: 'low', webSearchMode: 'disabled' });
   const turn = await thread.run(prompt);

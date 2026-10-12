@@ -3,6 +3,8 @@ import os from 'node:os';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { Codex } from '@openai/codex-sdk';
 
+import { codexSandboxConfig } from '@/shared/index.js';
+
 /**
  * Knowledge refresh (IMPLEMENTATION-PLAN §3.8, E-04): re-checks one stored knowledge item against its
  * source and current official docs with a headless web-enabled turn (Claude WebSearch/WebFetch, or
@@ -106,7 +108,7 @@ async function askClaude(system: string, prompt: string, model: string | null): 
 const SIDE_TURN_SOURCE = 'subagent';
 
 async function askCodex(system: string, prompt: string, model: string | null): Promise<string> {
-  const codex = new Codex({ config: { developer_instructions: system } as never });
+  const codex = new Codex({ config: { ...codexSandboxConfig(), developer_instructions: system } as never });
   const thread = codex.startThread({ threadSource: SIDE_TURN_SOURCE, workingDirectory: os.homedir(), skipGitRepoCheck: true, sandboxMode: 'read-only', approvalPolicy: 'never', webSearchMode: 'live', ...(model ? { model } : {}) });
   const turn = await thread.run(prompt);
   return turn.finalResponse ?? '';

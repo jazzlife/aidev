@@ -2,6 +2,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { Codex } from '@openai/codex-sdk';
 
 import { sessionsDb } from '@/modules/database/index.js';
+import { codexSandboxConfig } from '@/shared/index.js';
 
 /**
  * Independent verification of a finished run (2026-10-07, worker ≠ verifier). The worker agent's final
@@ -195,7 +196,7 @@ async function askClaude(prompt: string, cwd: string, model: string, systemPromp
 const SIDE_TURN_SOURCE = 'subagent';
 
 async function askCodex(prompt: string, cwd: string, model: string, systemPrompt: string): Promise<string> {
-  const codex = new Codex({ config: { developer_instructions: systemPrompt } as never });
+  const codex = new Codex({ config: { ...codexSandboxConfig(), developer_instructions: systemPrompt } as never });
   // reads and runs checks in the project; write access only so build/test caches work — the prompt forbids edits
   const thread = codex.startThread({ threadSource: SIDE_TURN_SOURCE, workingDirectory: cwd, skipGitRepoCheck: true, sandboxMode: 'workspace-write', approvalPolicy: 'never', model, modelReasoningEffort: 'high', webSearchMode: 'disabled' });
   const turn = await thread.run(prompt);

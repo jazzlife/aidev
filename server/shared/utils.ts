@@ -42,6 +42,33 @@ import type {
 export const IS_PLATFORM = process.env.VITE_IS_PLATFORM === 'true';
 
 // ---------------------------
+//----------------- CODEX SANDBOX UTILITIES ------------
+let codexUserNamespacesBlocked: boolean | null = null;
+
+/**
+ * Config overrides every `new Codex(...)` on this host must carry so its sandbox can run commands.
+ * Codex sandboxes Linux commands with bubblewrap, which needs unprivileged user namespaces; the
+ * server's runtime container has none (the host kernel sets apparmor_restrict_unprivileged_userns=1),
+ * so every sandboxed command — read-only included — failed with "bwrap: No permissions to create a
+ * new namespace". Codex's Landlock sandbox needs no namespaces and enforces the same policy. Used by
+ * the Codex runtime provider and every aidev-tools side turn (verifier, curator, designer, judge,
+ * knowledge check). Empty elsewhere; the procfs probe runs once per process.
+ */
+export function codexSandboxConfig(): Record<string, unknown> {
+  if (codexUserNamespacesBlocked === null) {
+    const read = (file: string) => {
+      try { return fs.readFileSync(file, 'utf8').trim(); } catch { return null; }
+    };
+    codexUserNamespacesBlocked = process.platform === 'linux' && (
+      read('/proc/sys/kernel/apparmor_restrict_unprivileged_userns') === '1'
+      || read('/proc/sys/kernel/unprivileged_userns_clone') === '0'
+      || read('/proc/sys/user/max_user_namespaces') === '0'
+    );
+  }
+  return codexUserNamespacesBlocked ? { features: { use_legacy_landlock: true } } : {};
+}
+
+// ---------------------------
 //----------------- NORMALIZED MESSAGE HELPER INPUT TYPES ------------
 /**
  * Input payload accepted by `createNormalizedMessage`.

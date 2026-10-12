@@ -11,8 +11,6 @@
  * - codexRuntime.abort(sessionId) - Cancel an active session
  */
 
-import { readFileSync } from 'node:fs';
-
 import { Codex } from '@openai/codex-sdk';
 import type { ModelReasoningEffort, Thread, ThreadOptions } from '@openai/codex-sdk';
 
@@ -20,6 +18,7 @@ import { aidevToolsService, composeAgentInstructions, sanitizeAidevOptions } fro
 import {
   appendFilesInputTag,
   buildCodexInputItems,
+  codexSandboxConfig,
   normalizeImageDescriptors,
   createCompleteMessage,
   createNormalizedMessage,
@@ -286,10 +285,7 @@ function mapPermissionModeToCodexOptions(permissionMode: string): Pick<ThreadOpt
  * Nothing is written to the user's config.toml — overrides live for this turn only.
  */
 function buildCodexOptions(rawAidev: unknown): ConstructorParameters<typeof Codex>[0] {
-  const config: Record<string, unknown> = {};
-  if (linuxUserNamespacesBlocked()) {
-    config.features = { use_legacy_landlock: true };
-  }
+  const config: Record<string, unknown> = codexSandboxConfig();
   const mcpServers: Record<string, Record<string, unknown>> = {};
   const aidev = sanitizeAidevOptions(rawAidev);
   const platformMcp = aidevToolsService.getMcpServerConfig(aidev ? { runId: aidev.runId, targetId: aidev.target?.id ?? null, agent: aidev.agent.name } : undefined);
@@ -308,29 +304,6 @@ function buildCodexOptions(rawAidev: unknown): ConstructorParameters<typeof Code
     config.mcp_servers = mcpServers;
   }
   return Object.keys(config).length ? { config: config as never } : undefined;
-}
-
-let userNamespacesBlocked: boolean | null = null;
-
-/**
- * Codex sandboxes Linux commands with bubblewrap, which needs unprivileged user
- * namespaces. The runtime container on the server has none (the host kernel sets
- * apparmor_restrict_unprivileged_userns=1), so every sandboxed command failed with
- * "bwrap: No permissions to create a new namespace". Codex's Landlock sandbox
- * needs no namespaces and enforces the same read/write policy.
- */
-function linuxUserNamespacesBlocked(): boolean {
-  if (userNamespacesBlocked === null) {
-    const read = (file: string) => {
-      try { return readFileSync(file, 'utf8').trim(); } catch { return null; }
-    };
-    userNamespacesBlocked = process.platform === 'linux' && (
-      read('/proc/sys/kernel/apparmor_restrict_unprivileged_userns') === '1'
-      || read('/proc/sys/kernel/unprivileged_userns_clone') === '0'
-      || read('/proc/sys/user/max_user_namespaces') === '0'
-    );
-  }
-  return userNamespacesBlocked;
 }
 
 async function queryCodex(

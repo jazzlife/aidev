@@ -4,6 +4,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { Codex } from '@openai/codex-sdk';
 
 import { sessionsDb } from '@/modules/database/index.js';
+import { codexSandboxConfig } from '@/shared/index.js';
 
 /**
  * Background agent design (2026-10-10): a command in an ongoing chat that needs a specialist the catalog lacks is
@@ -129,7 +130,7 @@ async function askClaude(input: AgentDesignInput, prompt: string, cwd: string): 
 const SIDE_TURN_SOURCE = 'subagent';
 
 async function askCodex(input: AgentDesignInput, prompt: string, cwd: string): Promise<string> {
-  const codex = new Codex({ config: { developer_instructions: input.prompt } as never });
+  const codex = new Codex({ config: { ...codexSandboxConfig(), developer_instructions: input.prompt } as never });
   const thread = codex.startThread({ threadSource: SIDE_TURN_SOURCE, workingDirectory: cwd, skipGitRepoCheck: true, sandboxMode: 'read-only', approvalPolicy: 'never', webSearchMode: 'live', modelReasoningEffort: 'high', ...(input.model ? { model: input.model } : {}) });
   const turn = await thread.run(prompt);
   return turn.finalResponse ?? '';
