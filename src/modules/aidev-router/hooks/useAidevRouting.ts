@@ -17,8 +17,9 @@ export type AidevSendDecoration = {
   /** the send carried a one-shot agent or plan: the app re-sending (agent creation, self-check, escalation, handoff) */
   appResend: boolean;
   /**
-   * Engine priority (2026-10-09): a higher-priority engine is usable again and this chat is not pinned — the host
-   * continues the conversation there (a handoff with this text appended) instead of sending here.
+   * The host continues the conversation on `engine` (a handoff with this text appended) instead of sending here:
+   * a higher-priority engine is usable again for an unpinned chat (engine priority, 2026-10-09), or the user
+   * pinned this chat to the other engine.
    */
   switchBack: { engine: Engine; reason: string } | null;
 };
@@ -169,7 +170,11 @@ export function useAidevRouting() {
         runId = null; // a missing run row only loses learning signal for this turn
       }
       routingStore.patch({ busy: false, last: route, lastText: text, runId, runSessionId: context.sessionId, runFinishedAt: null, runFeedback: null });
-      if (current.mode === 'manual' && !current.overrides.agent && !current.overrides.model) {
+      // Pinned by hand to the other engine (bar chip, or a model from the other engine's list): sessions are
+      // provider-bound, so this chat cannot run there — the send continues in a new session on that engine (handoff).
+      const sessionEngine = context.isNewSession ? null : asEngine(context.provider);
+      const pinnedElsewhere = sessionEngine && !oneShot && overrides.engine && overrides.engine !== sessionEngine ? overrides.engine : null;
+      if (current.mode === 'manual' && !current.overrides.agent && !current.overrides.model && !pinnedElsewhere) {
         // Manual mode: show the plan, but send without it until the user applies it from the bar.
         return null;
       }
@@ -198,7 +203,8 @@ export function useAidevRouting() {
         route,
         runId,
         appResend: Boolean(current.oneShotAgent || oneShot || createProposal),
-        switchBack: route.plan.switch_back && !manualEngine && !context.isNewSession ? route.plan.switch_back : null,
+        switchBack: pinnedElsewhere ? { engine: pinnedElsewhere, reason: `the user pinned this chat to ${pinnedElsewhere}` }
+          : route.plan.switch_back && !manualEngine && !context.isNewSession ? route.plan.switch_back : null,
       };
     } catch (error) {
       routingStore.patch({ busy: false, error: error instanceof Error ? error.message : 'routing failed' });

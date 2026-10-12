@@ -483,9 +483,19 @@ function ChatInterface({
   const pinnedModel = routingState.overrides.model;
   const pinnedEffort = routingState.overrides.effort;
   const lastPlan = routingState.last?.plan;
-  // the router's effort levels are the engine's (the session's last model may accept none, e.g. haiku)
+  const composerEngine = provider === 'codex' ? 'codex' : 'claude';
+  // the router's effort levels are the pinned engine's (the session's last model may accept none, e.g. haiku)
   const { ladder: effortLadder } = useEffortCap();
-  const routedEffortOptions = useMemo(() => (effortLadder?.[provider === 'codex' ? 'codex' : 'claude'] ?? []).map((value) => ({ value })), [effortLadder, provider]);
+  const routedEngine = routingState.overrides.engine ?? composerEngine;
+  const routedEffortOptions = useMemo(() => (effortLadder?.[routedEngine] ?? []).map((value) => ({ value })), [effortLadder, routedEngine]);
+  // A model of the other engine pins the chat there; a chat already bound to this engine is then handed off on its next send.
+  const otherEngine = composerEngine === 'claude' ? 'codex' : 'claude';
+  const otherEngineModelOptions = providerModelCatalog[otherEngine]?.OPTIONS;
+  const otherEngineModels = useMemo(() => (routingOn && (provider === 'claude' || provider === 'codex') && otherEngineModelOptions?.length ? {
+    heading: `${otherEngine === 'codex' ? 'Codex' : 'Claude'} 모델${currentSessionId || selectedSession?.id ? ' · 다음 명령부터 새 채팅으로 인계' : ''}`,
+    options: otherEngineModelOptions,
+    onSelectModel: (model: string) => routingStore.setOverrides({ model, engine: otherEngine }),
+  } : null), [currentSessionId, otherEngine, otherEngineModelOptions, provider, routingOn, selectedSession?.id]);
   const modelRouting = routingOn ? {
     label: pinnedModel || pinnedEffort ? ['고정', pinnedModel, pinnedEffort ? `강도 ${pinnedEffort}` : null].filter(Boolean).join(' · ') : lastPlan?.model ? `자동 · ${lastPlan.model}${lastPlan.effort ? `/${lastPlan.effort}` : ''}` : '자동',
     detail: pinnedModel || pinnedEffort ? '선택한 모델·강도로 고정됨 (라우터 바에서 해제 가능)' : '라우터가 명령마다 작업에 맞는 모델·강도를 고릅니다',
@@ -494,8 +504,8 @@ function ChatInterface({
   } : null;
   const selectComposerModel = useCallback((model: string) => {
     if (routingStore.get().mode === 'off') { void handleSelectComposerModel(model); return; }
-    routingStore.setOverrides({ model, engine: provider === 'codex' ? 'codex' : 'claude' });
-  }, [handleSelectComposerModel, provider]);
+    routingStore.setOverrides({ model, engine: composerEngine });
+  }, [composerEngine, handleSelectComposerModel]);
   const selectComposerEffort = useCallback((effort: string) => {
     if (routingStore.get().mode === 'off') { void handleSelectComposerEffort(effort); return; }
     if (effort === 'default') { const { effort: _effort, ...rest } = routingStore.get().overrides; routingStore.patch({ overrides: rest }); return; }
@@ -622,6 +632,7 @@ function ChatInterface({
           onSelectEffort={selectComposerEffort}
           model={modelRouting ? (pinnedModel ?? '') : currentProviderModel}
           availableModelOptions={currentProviderModelOptions}
+          otherEngineModels={otherEngineModels}
           onSelectModel={selectComposerModel}
           modelRouting={modelRouting}
           modelsLoading={providerModelsLoading}

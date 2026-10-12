@@ -24,6 +24,8 @@ type ComposerModelMenuProps = {
   /** Model catalog for the active provider; empty hides the section. */
   modelOptions: ProviderModelOption[];
   onSelectModel: (model: string) => void;
+  /** While routing: the other engine's models, listed after this engine's; picking one pins the chat to that engine. */
+  otherEngineModels?: ComposerOtherEngineModels | null;
   modelsLoading: boolean;
   /** When the router chooses model/effort per command: its label replaces the provider model, plus a reset to 자동. */
   routing?: ComposerModelRouting | null;
@@ -31,9 +33,12 @@ type ComposerModelMenuProps = {
 
 export type ComposerModelRouting = { label: string; detail: string; pinned: boolean; onReset: () => void };
 
+export type ComposerOtherEngineModels = { heading: string; options: ProviderModelOption[]; onSelectModel: (model: string) => void };
+
 /**
  * Rendered by chat's ChatComposer as the popover for choosing the active
- * provider's model and reasoning effort for the next turn.
+ * provider's model and reasoning effort for the next turn (while routing, also
+ * the other engine's models, which pin the chat to that engine).
  */
 function ComposerModelMenu({
   effort,
@@ -42,6 +47,7 @@ function ComposerModelMenu({
   model,
   modelOptions,
   onSelectModel,
+  otherEngineModels = null,
   modelsLoading,
   routing = null,
 }: ComposerModelMenuProps) {
@@ -67,8 +73,8 @@ function ComposerModelMenu({
   const effortLabel = effort === DEFAULT_EFFORT_VALUE ? defaultEffortLabel : effort;
 
   const selectedModelOption = useMemo(
-    () => modelOptions.find((option) => option.value === model) ?? null,
-    [model, modelOptions],
+    () => modelOptions.find((option) => option.value === model) ?? otherEngineModels?.options.find((option) => option.value === model) ?? null,
+    [model, modelOptions, otherEngineModels],
   );
   const modelLabel = selectedModelOption?.label || model;
 
@@ -178,6 +184,22 @@ function ComposerModelMenu({
                       }}
                     />
                   ))}
+                  {otherEngineModels && (
+                    <>
+                      <ComposerMenuHeading>{otherEngineModels.heading}</ComposerMenuHeading>
+                      {otherEngineModels.options.map((option) => (
+                        <ComposerMenuItem
+                          key={`other-${option.value}`}
+                          label={option.label || option.value}
+                          isSelected={option.value === model}
+                          onSelect={() => {
+                            otherEngineModels.onSelectModel(option.value);
+                            setIsOpen(false);
+                          }}
+                        />
+                      ))}
+                    </>
+                  )}
                 </>
               )}
             </>

@@ -34,7 +34,7 @@ import TokenUsageSummary from '@/modules/chat/composer/TokenUsageSummary';
 import QueuedMessageCard from '@/modules/chat/composer/QueuedMessageCard';
 import { ScheduleMessagePopover } from '@/modules/chat/composer/ScheduleMessagePopover';
 import { ScheduledMessageList } from '@/modules/chat/composer/ScheduledMessageList';
-import ComposerModelMenu, { type ComposerModelRouting } from '@/modules/chat/composer/ComposerModelMenu';
+import ComposerModelMenu, { type ComposerModelRouting, type ComposerOtherEngineModels } from '@/modules/chat/composer/ComposerModelMenu';
 import ComposerPermissionMenu from '@/modules/chat/composer/ComposerPermissionMenu';
 
 type MentionableFile = {
@@ -61,6 +61,8 @@ type ChatComposerProps = {
   onSelectEffort: (effort: string) => void;
   model: string;
   availableModelOptions: ProviderModelOption[];
+  /** While routing: the other engine's models, which pin the chat to that engine. */
+  otherEngineModels?: ComposerOtherEngineModels | null;
   onSelectModel: (model: string) => void;
   /** Nado AI Dev routing: what the router will use, shown instead of the provider default (null = routing off). */
   modelRouting?: ComposerModelRouting | null;
@@ -145,6 +147,7 @@ export default function ChatComposer({
   onSelectEffort,
   model,
   availableModelOptions,
+  otherEngineModels = null,
   onSelectModel,
   modelRouting = null,
   modelsLoading,
@@ -507,6 +510,7 @@ export default function ChatComposer({
               onSelectEffort={onSelectEffort}
               model={model}
               modelOptions={availableModelOptions}
+              otherEngineModels={otherEngineModels}
               onSelectModel={onSelectModel}
               modelsLoading={modelsLoading}
               routing={modelRouting}

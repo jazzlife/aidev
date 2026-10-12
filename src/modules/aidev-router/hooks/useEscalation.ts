@@ -169,9 +169,10 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
   }, [busy, handoff]);
 
   /**
-   * Engine priority (2026-10-09): routing said a higher-priority engine is usable again for a chat that is not
-   * pinned — the request typed now continues in a new session on that engine, with a brief of this chat, instead
-   * of being sent here. Returns false when the move could not be made (the host then sends here).
+   * Routing said this chat continues on another engine — a higher-priority one is usable again for an unpinned chat
+   * (engine priority, 2026-10-09), or the user pinned the chat to the other engine — so the request typed now goes
+   * to a new session on that engine, with a brief of this chat, instead of being sent here. Returns false when the
+   * move could not be made (the host then sends here).
    */
   const switchBack = useCallback(async (args: { sessionId: string; engine: Engine; fromEngine: Engine; text: string; reason: string }): Promise<boolean> => {
     if (busy) return false;
@@ -186,7 +187,7 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
       reason: args.reason,
       plan: { engine: args.engine },
       oneShotAgent: agentName && agentName !== 'agent-architect' ? agentName : null,
-      title: `[${ENGINE_LABEL[args.engine]} 복귀] ${args.text.slice(0, 60)}`,
+      title: `[${ENGINE_LABEL[args.engine]} ${routingStore.get().overrides.engine === args.engine ? '인계' : '복귀'}] ${args.text.slice(0, 60)}`,
     });
     return routingStore.get().pendingHandoff !== null;
   }, [busy, handoff]);
