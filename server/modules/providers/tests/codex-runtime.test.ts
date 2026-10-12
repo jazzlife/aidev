@@ -133,3 +133,30 @@ test('Codex abort waits for the aborted exec to exit, so a turn cutting in can r
   assert.ok(!forwarded.some((event: any) => event.itemId === 'late'));
   assert.ok(!messages.some((message: any) => message.kind === 'error' || message.kind === 'complete'));
 });
+
+test('Codex drops the Landlock deprecation notice instead of showing it as the turn error', async (t) => {
+  const thread = {
+    id: 'native-thread',
+    async runStreamed() {
+      return { events: (async function* () {
+        yield { type: 'thread.started', thread_id: 'native-thread' };
+        yield { type: 'item.completed', item: { id: 'item_0', type: 'error', message: '`[features].use_legacy_landlock` is deprecated and will be removed soon.' } };
+        yield { type: 'item.completed', item: { id: 'item_1', type: 'error', message: 'real problem' } };
+      })() };
+    },
+  } as unknown as Thread;
+
+  t.mock.method(Codex.prototype, 'startThread', () => thread);
+  const forwarded: any[] = [];
+  const context: ProviderRuntimeContext = {
+    resolveProviderSessionId: () => null,
+    resolveResumeModel: async () => 'test-model',
+    getProviderModels: async () => ({ OPTIONS: [], DEFAULT: 'test-model' }),
+    normalizeMessage: (event) => { forwarded.push(event); return []; },
+    isProviderInstalled: async () => true,
+  };
+
+  await codexRuntime.run('hey', { cwd: process.cwd() }, { isWebSocketWriter: true, send: () => {} }, context);
+
+  assert.deepEqual(forwarded.filter((event) => event.itemType === 'error').map((event) => event.message.content), ['real problem']);
+});

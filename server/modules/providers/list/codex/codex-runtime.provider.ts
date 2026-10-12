@@ -290,8 +290,11 @@ function buildCodexOptions(rawAidev: unknown): ConstructorParameters<typeof Code
   const aidev = sanitizeAidevOptions(rawAidev);
   const platformMcp = aidevToolsService.getMcpServerConfig(aidev ? { runId: aidev.runId, targetId: aidev.target?.id ?? null, agent: aidev.agent.name } : undefined);
   if (platformMcp) {
-    // remote_exec may wait for the user's approval and a long build: well past Codex's 60 s tool default
-    mcpServers['aidev-tools'] = { command: platformMcp.command, args: platformMcp.args, env: platformMcp.env, tool_timeout_sec: 2700 };
+    // remote_exec may wait for the user's approval and a long build: well past Codex's 60 s tool default.
+    // The platform's tools are gated server-side (remote_exec: risk + the PC's policy + the approval card), like
+    // Claude's allowedTools `mcp__aidev-tools__*`: under approval_policy never (Accept edits) Codex otherwise
+    // refused every call with "MCP tool call requires approval", and `exec` cannot answer an approval prompt.
+    mcpServers['aidev-tools'] = { command: platformMcp.command, args: platformMcp.args, env: platformMcp.env, tool_timeout_sec: 2700, default_tools_approval_mode: 'approve' };
   }
   if (aidev) {
     config.developer_instructions = composeAgentInstructions(aidev);
@@ -441,6 +444,12 @@ async function queryCodex(
       // without waiting for it to exit, while draining lets the SDK wait on the
       // exit (abort already sent SIGTERM) — see ABORT_SETTLE_TIMEOUT_MS.
       if (abortController.signal.aborted || activeCodexSessions.get(sessionKey() || '')?.status === 'aborted') {
+        continue;
+      }
+
+      // The Landlock switch (codexSandboxConfig) makes Codex report a deprecation notice as an error item on
+      // every turn: it is not the turn's error, so it is neither shown nor allowed to mask a real one.
+      if (event.type === 'item.completed' && event.item?.type === 'error' && String(event.item.message ?? '').includes('use_legacy_landlock')) {
         continue;
       }
 
