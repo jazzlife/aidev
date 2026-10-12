@@ -27,6 +27,16 @@ export function tokenize(text: string): string[] {
   return tokens;
 }
 
+/**
+ * An agent with fewer example documents than this has its evidence shrunk toward a typical agent's score (2026-10-13,
+ * user decision "예문이 적은 에이전트의 확률을 눌러"): a generated agent with a handful of long examples won commands on a
+ * few shared words at 1.00 (ComfyUI setup → remote-display-sync, 16 examples). Measured on the server's examples
+ * (454 routed commands, bench of 126): confident picks of a sparse agent the command was not routed to 88 → 47, bench
+ * 0.794 → 0.786; the cost is that a sparse agent finds its own commands less often by words alone (leave-one-out
+ * 29/40 → 13/40) — the specialist judge, which reads its description, still routes to it.
+ */
+export const SPARSE_AGENT_DOCS = 30;
+
 export class NaiveBayesRouter {
   private counts = new Map<string, Map<string, number>>();
   private totals = new Map<string, number>();
@@ -53,7 +63,12 @@ export class NaiveBayesRouter {
     }
   }
 
-  /** Posterior over agents (Laplace-smoothed, log-space, uniform class prior so small catalogs are not penalised). */
+  /**
+   * Posterior over agents (Laplace-smoothed, log-space, uniform class prior so small catalogs are not penalised). A sparse
+   * agent's log-likelihood is pulled toward the median of the well-exemplified candidates' by docs / SPARSE_AGENT_DOCS:
+   * it wins only on evidence a typical agent would need too. (Shrinking toward the pooled word distribution instead made
+   * a one-example agent a catch-all that beat the specialists on ordinary commands.)
+   */
   predict(text: string, candidates?: string[]): Record<string, number> {
     const tokens = tokenize(text);
     const agents = (candidates ?? this.agents).filter((a) => this.docs.has(a));
@@ -65,6 +80,11 @@ export class NaiveBayesRouter {
       for (const token of tokens) lp += Math.log(((bag.get(token) ?? 0) + 0.5) / (total + 0.5 * v));
       return lp;
     });
+    const typical = agents.map((agent, i) => [this.count(agent), logs[i]] as const).filter(([docs]) => docs >= SPARSE_AGENT_DOCS).map(([, lp]) => lp).sort((a, b) => a - b);
+    if (typical.length) {
+      const reference = typical[Math.floor((typical.length - 1) / 2)];
+      agents.forEach((agent, i) => { const docs = this.count(agent); if (docs < SPARSE_AGENT_DOCS) logs[i] = reference + (docs / SPARSE_AGENT_DOCS) * (logs[i] - reference); });
+    }
     const max = Math.max(...logs);
     const exps = logs.map((lp) => Math.exp(lp - max));
     const z = exps.reduce((a, b) => a + b, 0);
