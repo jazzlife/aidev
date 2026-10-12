@@ -1,9 +1,9 @@
-import React, { memo, useMemo, useState } from 'react';
+import React, { memo, useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkBreaks from 'remark-breaks';
 import remarkGfm from 'remark-gfm';
 import remarkMath from 'remark-math';
-import rehypeKatex from 'rehype-katex';
+import type rehypeKatex from 'rehype-katex';
 import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/prism';
 import { useTranslation } from 'react-i18next';
 
@@ -70,6 +70,31 @@ const childrenToText = (children: React.ReactNode): string => {
 const MATH_DELIMITER = /\$\$|\\\(|\\\[/;
 
 const EMPTY_PLUGINS: never[] = [];
+
+// KaTeX (~600 KB) downloads with the first message that has math, not with the app (its stylesheet stays global).
+type RehypeKatexPlugin = typeof rehypeKatex;
+let loadedRehypeKatex: RehypeKatexPlugin | null = null;
+let rehypeKatexLoad: Promise<RehypeKatexPlugin> | null = null;
+const loadRehypeKatex = () => {
+  rehypeKatexLoad ??= import('rehype-katex')
+    .then((module) => (loadedRehypeKatex = module.default))
+    .catch((error: unknown) => { rehypeKatexLoad = null; throw error; });
+  return rehypeKatexLoad;
+};
+
+/** The KaTeX rehype plugin once it has loaded (null before, or when the text has no math). */
+function useRehypeKatex(enabled: boolean) {
+  // The loaded plugin, so a message with math renders again once KaTeX arrives.
+  const [plugin, setPlugin] = useState<RehypeKatexPlugin | null>(loadedRehypeKatex);
+  useEffect(() => {
+    if (!enabled || plugin) return;
+    let active = true;
+    // a failed download leaves the math as plain text; the next message with math tries again
+    loadRehypeKatex().then((loaded) => { if (active) setPlugin(() => loaded); }, () => undefined);
+    return () => { active = false; };
+  }, [enabled, plugin]);
+  return enabled ? plugin : null;
+}
 
 type CodeBlockProps = {
   node?: any;
@@ -277,7 +302,8 @@ function MarkdownBodyRenderer({ children, breaks = false }: Omit<MarkdownProps, 
     },
     [breaks, hasMath],
   );
-  const rehypePlugins = useMemo(() => (hasMath ? [rehypeKatex] : EMPTY_PLUGINS), [hasMath]);
+  const katexPlugin = useRehypeKatex(hasMath);
+  const rehypePlugins = useMemo(() => (katexPlugin ? [katexPlugin] : EMPTY_PLUGINS), [katexPlugin]);
   const { openFileInEditor, openDirectory } = usePaletteOps();
 
   const components = useMemo(

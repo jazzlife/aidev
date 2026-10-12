@@ -2,7 +2,7 @@ import { useState, useEffect, useRef } from 'react';
 import type { MouseEvent, MutableRefObject } from 'react';
 
 import type { CodeEditorFile } from '@/shared/types';
-import CodeEditor from '@/modules/code-editor/CodeEditor';
+import { LazyCodeEditor as CodeEditor } from '@/modules/code-editor/LazyCodeEditor';
 
 type EditorSidebarProps = {
   editingFile: CodeEditorFile | null;

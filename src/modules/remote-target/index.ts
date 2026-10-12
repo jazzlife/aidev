@@ -2,9 +2,13 @@
  * remote-target — developer PCs connected through aidev-runner (IMPLEMENTATION-PLAN §3.12, stage F).
  * Workbench UI only; the mobile app gets its own sheet.
  */
+import { lazyComponent } from '@/shared/utils';
+
 export { TargetsPanel } from '@/modules/remote-target/TargetsPanel';
 export { requestScreen } from '@/modules/remote-target/utils/screenRequest';
-export { RunOutputPane, requestRunFocus } from '@/modules/remote-target/RunOutputPane';
+export { requestRunFocus } from '@/modules/remote-target/utils/runFocus';
+// The run output pane's terminal (xterm) downloads when the pane is first shown.
+export const RunOutputPane = /* @__PURE__ */ lazyComponent(() => import('@/modules/remote-target/RunOutputPane').then((module) => module.RunOutputPane));
 export { RemoteApprovalCards, ApprovalCard } from '@/modules/remote-target/RemoteApprovalCards';
 export { PreviewPane } from '@/modules/remote-target/PreviewPane';
 export { ScreenPane } from '@/modules/remote-target/ScreenPane';

@@ -1,3 +1,4 @@
+import { createElement, lazy, Suspense, type ComponentType } from 'react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -333,3 +334,21 @@ export const getPageTitle = (
   const displayName = selectedProject?.displayName?.trim();
   return displayName ? `${displayName} - ${DEFAULT_PAGE_TITLE}` : DEFAULT_PAGE_TITLE;
 };
+
+// ---------------------------
+
+//----------------- LAZY COMPONENTS ------------
+
+/**
+ * Wraps a heavy component so its code (and the libraries it pulls in, e.g. CodeMirror or xterm)
+ * downloads the first time it renders instead of with the app's first screen. Renders nothing
+ * while the code loads; props pass through unchanged. Call it once at module level, with a
+ * PURE annotation so an app that never renders the result drops it, and render the result in
+ * place of the eager component.
+ */
+export function lazyComponent<P extends object>(load: () => Promise<ComponentType<P>>): ComponentType<P> {
+  const Loaded = lazy(async () => ({ default: await load() })) as unknown as ComponentType<P>;
+  return function LazyComponent(props: P) {
+    return createElement(Suspense, { fallback: null }, createElement(Loaded, props));
+  };
+}

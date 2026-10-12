@@ -31,7 +31,7 @@ type CodeEditorProps = {
   onPopOut?: (() => void) | null;
 };
 
-/** Rendered by the code-editor module's own EditorSidebar, and re-exported on the module barrel, as the full CodeMirror editor for one open file. */
+/** Loaded on demand by LazyCodeEditor (EditorSidebar here, the workbench editor group via the barrel) as the full CodeMirror editor for one open file. */
 export default function CodeEditor({
   file,
   onClose,

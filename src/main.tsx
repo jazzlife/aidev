@@ -1,20 +1,22 @@
 import React from 'react'
 import ReactDOM from 'react-dom/client'
-import { scan } from 'react-scan'
 
 import App from '@/App'
 import '@/index.css'
 import 'katex/dist/katex.min.css'
 
 // Initialize i18n
-import '@/modules/i18n'
+import { i18nReady } from '@/modules/i18n'
 
 // React Scan is a render-diagnostics overlay, and an expensive one: measured on
 // this app it roughly halves the dev frame rate, adds ~14 MB of heap and injects
 // a few thousand DOM nodes of its own. It is worth all of that while hunting a
 // render bug and worth none of it the rest of the time, so it is opt-in —
-// `localStorage.setItem('react-scan', 'on')` and reload.
-scan({ enabled: import.meta.env.DEV && localStorage.getItem('react-scan') === 'on' })
+// `localStorage.setItem('react-scan', 'on')` and reload. Imported only then, so a
+// production build carries none of it (~600 KB).
+if (import.meta.env.DEV && localStorage.getItem('react-scan') === 'on') {
+  void import('react-scan').then(({ scan }) => scan({ enabled: true }))
+}
 
 // Register service worker for PWA + Web Push support
 if ('serviceWorker' in navigator) {
@@ -36,8 +38,12 @@ document.addEventListener('contextmenu', (event) => {
   if (!(event.target instanceof Element) || !event.target.closest('input, textarea, [contenteditable="true"], .cm-editor, .xterm, .aidev-selectable')) event.preventDefault();
 });
 
-ReactDOM.createRoot(rootElement).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>,
-)
+// The saved language's translations (a download unless it is English) arrive before the first render, so no
+// screen shows English first; a failed download renders in English rather than not at all.
+void i18nReady.catch(() => undefined).then(() => {
+  ReactDOM.createRoot(rootElement).render(
+    <React.StrictMode>
+      <App />
+    </React.StrictMode>,
+  )
+})

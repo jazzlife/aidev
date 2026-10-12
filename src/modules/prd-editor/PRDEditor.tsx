@@ -20,7 +20,7 @@ type PRDEditorProps = {
   onSave?: () => Promise<void> | void;
 };
 
-/** Used by the task-master module to create and edit a project's PRD documents before tasks are generated from them. */
+/** Loaded on demand through the barrel by the task-master module to create and edit a project's PRD documents before tasks are generated from them. */
 export default function PRDEditor({
   file,
   onClose,

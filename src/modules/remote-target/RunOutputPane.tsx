@@ -5,6 +5,7 @@ import { Terminal } from '@xterm/xterm';
 import '@xterm/xterm/css/xterm.css';
 
 import { api, readApiJson } from '@/shared/api';
+import { subscribeRunFocus, takeRunFocus } from '@/modules/remote-target/utils/runFocus';
 
 /**
  * RunOutputPane (IMPLEMENTATION-PLAN §3.12, F-03): run a command on a remote PC and watch it live.
@@ -36,14 +37,6 @@ export function statusText(run: { running: boolean; code: number | null; signal:
 }
 const dot = (run: { running: boolean; code: number | null }) => (run.running ? 'bg-sky-500 animate-pulse' : run.code === 0 ? 'bg-emerald-500' : 'bg-rose-500');
 
-/** "Show this run" requests (approval cards, chat): the pane picks them up when it is (or becomes) mounted. */
-let focusRequest: { remoteRunId: number; targetId: number } | null = null;
-const focusListeners = new Set<() => void>();
-export function requestRunFocus(request: { remoteRunId: number; targetId: number }) {
-  focusRequest = request;
-  for (const fn of focusListeners) fn();
-}
-
 export function RunOutputPane({ isVisible = true, project = null }: { isVisible?: boolean; project?: { path: string; name: string } | null }) {
   const [targets, setTargets] = useState<Target[]>([]);
   const [targetId, setTargetId] = useState<number | null>(null);
@@ -73,16 +66,15 @@ export function RunOutputPane({ isVisible = true, project = null }: { isVisible?
   targetIdRef.current = targetId;
   useEffect(() => {
     const apply = () => {
-      const request = focusRequest;
+      const request = takeRunFocus();
       if (!request) return;
-      focusRequest = null;
       pendingSelect.current = request.remoteRunId;
       if (targetIdRef.current !== request.targetId) { setTargetId(request.targetId); setSelected(null); setCwd(''); }
       else if (streamsRef.current.some((s) => s.remoteRunId === request.remoteRunId)) { pendingSelect.current = null; selectRef.current(request.remoteRunId); }
     };
-    focusListeners.add(apply);
+    const unsubscribe = subscribeRunFocus(apply);
     apply();
-    return () => { focusListeners.delete(apply); };
+    return unsubscribe;
   }, []);
 
   const target = targets.find((t) => t.id === targetId) ?? null;

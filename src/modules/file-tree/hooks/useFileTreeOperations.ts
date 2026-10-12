@@ -1,6 +1,5 @@
 import { useCallback, useState } from 'react';
 import { useTranslation } from 'react-i18next';
-import JSZip from 'jszip';
 
 import { api } from '@/shared/api';
 import type { FileTreeNode,Project } from '@/shared/types';
@@ -280,6 +279,8 @@ export function useFileTreeOperations({
   const downloadFolderAsZip = useCallback(async (folder: FileTreeNode) => {
     if (!selectedProject) return;
 
+    // JSZip downloads only when a folder is first zipped, not with the app.
+    const { default: JSZip } = await import('jszip');
     const zip = new JSZip();
 
     // Recursively get all files in the folder
