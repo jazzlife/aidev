@@ -131,7 +131,7 @@ export function ChatScreen() {
   const statusCheckSentAtRef = useRef(new Map<string, number>());
 
   const sessionId = meta?.id ?? null;
-  usePrejudge(draft, meta?.projectName || project?.displayName || null);
+  usePrejudge(draft, meta?.projectName || project?.displayName || null, sessionId);
   const provider: LLMProvider = meta?.provider ?? readProvider();
   const caps = useCapsMap();
   const permission = usePermissionMode(sessionId, provider, caps);

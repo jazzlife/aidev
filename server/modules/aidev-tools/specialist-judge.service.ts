@@ -16,12 +16,16 @@ import { codexSandboxConfig, noteCodexTurnError } from '@/shared/index.js';
  *                 JUDGE_USE_FIT, 0.6 — 2026-10-10: a new agent only when the current ones fit too poorly)
  *   generalist  — a trivial or domain-less request (a quick question, one shell command, a tiny edit)
  *   new         — the specialist that should exist, proposed only when the closest fit is below 0.6
+ *   current_fit — inside a chat, how well the chat's current agent carries the command as its next turn; the gateway
+ *                 moves the chat only to an agent that clearly fits better (routing.ts SESSION_SWITCH_MARGIN, 2026-10-13)
  * It also writes the one question to ask when the command lacks something essential (`question`); the gateway
  * shows it only when Laya's `clarify` says to ask (§3.1), so Laya decides and the model only words it.
  * Claude haiku first, Codex luna when Claude is unavailable or not allowed. Nothing is written into any conversation.
  */
 export type JudgeCandidate = { name: string; description: string };
 export type JudgeInput = { command: string; candidates: JudgeCandidate[]; project?: string | null;
+  /** the agent the command's chat is with (one of the candidates), when the command continues a chat */
+  current?: string | null;
   /** the engines this account may use (D-05: a Codex-only account never gets a Claude turn); default both */
   engines?: Array<'claude' | 'codex'> };
 export type JudgeResult = {
@@ -31,6 +35,8 @@ export type JudgeResult = {
   new: { name: string; domain: string; description: string; technologies: string[] } | null;
   /** the single clarifying question for this command (its language), or null when nothing essential is missing */
   question: string | null;
+  /** how well the chat's current agent (JudgeInput.current) carries the command as its next turn; null without one */
+  current_fit: number | null;
   engine: string;
   ms: number;
 };
@@ -50,10 +56,11 @@ Rules:
 - "generalist" also for work of any size that has no specific technology or problem domain: reading, searching or summarizing many files or logs (e.g. "이 로그 5만 줄에서 오류 패턴 요약", "src 전체를 읽고 구조를 요약"), general code review or explanation. Size alone never makes a specialist.
 - new: ONLY when the closest agent's fit is below 0.6 (or agent is null) and the command has a concrete technology or problem domain (a language, framework, platform, protocol, hardware or tool chain), propose the specialist that SHOULD exist (kebab-case name, domain, one-line description, key technologies). Otherwise null — a close-enough agent is used, not duplicated.
 - Never choose META agents.
+- current_fit: only when a "Current agent of this conversation" is given (otherwise null) — how well THAT agent carries this command as the next turn of its conversation. A follow-up on the ongoing work — continue, retry, fix, rerun or test what was just done, commit/push/tag it, a rule for how to keep working, or a question about it — keeps it at 0.8 or more whatever its domain, even when another agent would be closest for the words alone. For example, with a React agent: "앞으로 수정을 하면 푸시해" (push after every change from now on) → 0.85; "방금 고친 거 테스트 다시 돌려봐" → 0.85; "커밋하고 태그 달아" → 0.8; a question about what it just did or tested ("그 결과가 맞게 나온 거야?") → 0.85. Every agent commits, pushes, tags and opens pull requests for its own work, so git chores and working rules inside a conversation (how to commit, when to push, the message language) are follow-ups too, never a reason to change agent. Work in a different technology or problem domain than that agent's is scored on the fit scale above (with a git agent, "카드 간격을 맞춰줘" in a UI → 0.2).
 - question: if information ESSENTIAL to start is missing and cannot be inferred (which file or screen, which project, which target machine, what the expected behavior is), write the ONE most important question to ask, in the command's language, short and concrete. Otherwise null.
 
 Output ONLY this JSON (no prose):
-{"agent": "<existing name>" | "generalist" | null, "fit": <0..1>, "reason": "<short>", "new": null | {"name": "<kebab-case>", "domain": "<domain>", "description": "<one line>", "technologies": ["..."]}, "question": null | "<one short question>"}`;
+{"agent": "<existing name>" | "generalist" | null, "fit": <0..1>, "reason": "<short>", "new": null | {"name": "<kebab-case>", "domain": "<domain>", "description": "<one line>", "technologies": ["..."]}, "question": null | "<one short question>", "current_fit": null | <0..1>}`;
 
 /** The first balanced `{…}` in `text` once it is complete and parses (strings and escapes respected), else null. */
 export function firstCompleteJson(text: string): Record<string, unknown> | null {
@@ -80,7 +87,7 @@ export function firstCompleteJson(text: string): Record<string, unknown> | null 
   return null;
 }
 
-export function parseJudge(text: string, names: Set<string>): Omit<JudgeResult, 'engine' | 'ms'> | null {
+export function parseJudge(text: string, names: Set<string>, current: string | null = null): Omit<JudgeResult, 'engine' | 'ms'> | null {
   const fenced = /```(?:json)?\s*([\s\S]*?)```/.exec(text);
   const body = fenced?.[1] ?? /\{[\s\S]*\}/.exec(text)?.[0];
   if (!body) return null;
@@ -99,8 +106,11 @@ export function parseJudge(text: string, names: Set<string>): Omit<JudgeResult, 
         }
       : null;
     const question = typeof raw.question === 'string' && raw.question.trim() ? raw.question.trim().slice(0, 300) : null;
+    // only asked for with a current agent; the closest agent being that agent is its fit, whatever the model wrote
+    const currentFit = !current ? null : agent === current ? fit
+      : typeof raw.current_fit === 'number' && Number.isFinite(raw.current_fit) ? Math.max(0, Math.min(1, raw.current_fit)) : null;
     // the proposal is kept next to a low-fit closest agent: the gateway decides by the fit (routing.ts JUDGE_USE_FIT)
-    return { agent, fit, reason: typeof raw.reason === 'string' ? raw.reason.slice(0, 300) : '', new: agent === 'generalist' ? null : proposal, question };
+    return { agent, fit, reason: typeof raw.reason === 'string' ? raw.reason.slice(0, 300) : '', new: agent === 'generalist' ? null : proposal, question, current_fit: currentFit };
   } catch {
     return null;
   }
@@ -174,7 +184,7 @@ const inflight = new Map<string, Promise<JudgeResult>>();
 
 export const specialistJudgeService = {
   judge(input: JudgeInput): Promise<JudgeResult> {
-    const key = createHash('sha1').update(JSON.stringify([input.command.trim(), input.project ?? null, input.candidates.map((c) => [c.name, c.description]), input.engines ?? null])).digest('hex');
+    const key = createHash('sha1').update(JSON.stringify([input.command.trim(), input.project ?? null, input.candidates.map((c) => [c.name, c.description]), input.engines ?? null, input.current ?? null])).digest('hex');
     const running = inflight.get(key);
     if (running) return running;
     const promise = this.judgeOnce(input).finally(() => inflight.delete(key));
@@ -186,6 +196,7 @@ export const specialistJudgeService = {
     const t0 = Date.now();
     const candidates = input.candidates.filter((c) => c.name && c.name !== 'generalist').slice(0, 60);
     const names = new Set(candidates.map((c) => c.name));
+    const current = input.current && names.has(input.current) ? input.current : null;
     const prompt = [
       'Classify the developer command below for routing. Do NOT carry it out or answer it — you have no tools and nobody expects its result. Reply with the JSON object only.',
       '',
@@ -194,6 +205,7 @@ export const specialistJudgeService = {
       '',
       'Existing agents (name: declared domain):',
       ...candidates.map((c) => `- ${c.name}: ${c.description.replace(/\s+/g, ' ').slice(0, 260)}`),
+      current ? `\nCurrent agent of this conversation: ${current}` : null,
     ].filter((line) => line !== null).join('\n');
     // Claude haiku first (fastest), Codex luna when Claude fails — only among the engines the account may use
     const order = (['claude', 'codex'] as const).filter((e) => !input.engines?.length || input.engines.includes(e));
@@ -207,10 +219,10 @@ export const specialistJudgeService = {
       engine = order[1];
       try { text = await askCodex(prompt); } catch { throw error; }
     }
-    const parsed = parseJudge(text, names);
+    const parsed = parseJudge(text, names, current);
     if (!parsed) throw new Error(`judge answer not understood: ${text.replace(/\s+/g, ' ').slice(0, 200)}`);
     const result = { ...parsed, engine, ms: Date.now() - t0 };
-    console.log(`[aidev-tools] judge ${result.ms}ms ${engine}: ${input.command.slice(0, 60)} → ${result.agent ?? '-'} fit=${result.fit}${result.new ? ` NEW ${result.new.name}` : ''} (${result.reason.slice(0, 80)})`);
+    console.log(`[aidev-tools] judge ${result.ms}ms ${engine}: ${input.command.slice(0, 60)} → ${result.agent ?? '-'} fit=${result.fit}${current ? ` (chat ${current} ${result.current_fit ?? '?'})` : ''}${result.new ? ` NEW ${result.new.name}` : ''} (${result.reason.slice(0, 80)})`);
     return result;
   },
 };

@@ -7,7 +7,7 @@ import { firstCompleteJson, parseJudge } from '@/modules/aidev-tools/specialist-
 const names = new Set(['frontend-react', 'database']);
 
 test('existing specialist, generalist, and a proposal', () => {
-  assert.deepEqual(parseJudge('{"agent":"database","fit":0.9,"reason":"SQL","new":null}', names), { agent: 'database', fit: 0.9, reason: 'SQL', new: null, question: null });
+  assert.deepEqual(parseJudge('{"agent":"database","fit":0.9,"reason":"SQL","new":null}', names), { agent: 'database', fit: 0.9, reason: 'SQL', new: null, question: null, current_fit: null });
   assert.equal(parseJudge('```json\n{"agent":"generalist","fit":0.7,"reason":"trivial","new":null}\n```', names)?.agent, 'generalist');
   const created = parseJudge('Sure: {"agent":null,"fit":0,"reason":"no iOS agent","new":{"name":"iOS Swift!","domain":"ios","description":"SwiftUI apps","technologies":["Swift","SwiftUI"]}}', names);
   assert.equal(created?.agent, null);
@@ -34,4 +34,17 @@ test('the streamed verdict is complete at the first balanced object (the judge s
   assert.deepEqual(firstCompleteJson('```json\n{"agent":"database","fit":0.9,"reason":"a } in \\"text\\"","new":null}\n``` The command asks'), { agent: 'database', fit: 0.9, reason: 'a } in "text"', new: null });
   assert.equal(firstCompleteJson('{"agent":null,"new":{"name":"x","technologies":["a"]}} and {"more":1}')?.agent, null);
   assert.equal(parseJudge('{"agent":"database","fit":0.9,"reason":"x","new":null}\nNote: {see above}', names)?.agent, 'database');
+});
+
+test('parseJudge reads the chat agent\'s current_fit only when a chat agent was given', () => {
+  const names = new Set(['frontend-react', 'git-workflow']);
+  const answer = '{"agent":"frontend-react","fit":0.7,"reason":"UI","new":null,"question":null,"current_fit":0.2}';
+  assert.equal(parseJudge(answer, names, 'git-workflow')?.current_fit, 0.2);
+  // no chat agent: not asked, so not trusted
+  assert.equal(parseJudge(answer, names)?.current_fit, null);
+  // the closest agent is the chat's own: its fit is the chat agent's fit
+  assert.equal(parseJudge('{"agent":"git-workflow","fit":0.9,"reason":"git","new":null,"question":null,"current_fit":0.4}', names, 'git-workflow')?.current_fit, 0.9);
+  // missing or out of range
+  assert.equal(parseJudge('{"agent":"frontend-react","fit":0.7,"reason":"UI","new":null,"question":null}', names, 'git-workflow')?.current_fit, null);
+  assert.equal(parseJudge('{"agent":"frontend-react","fit":0.7,"reason":"UI","new":null,"question":null,"current_fit":3}', names, 'git-workflow')?.current_fit, 1);
 });

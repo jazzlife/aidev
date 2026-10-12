@@ -79,10 +79,35 @@ r = await route(store, laya({ agent: 'generalist', depth: 1, kind: 'explain' }),
 assert.equal(r.agent.name, 'ai-integration', 'follow-up keeps the chat agent'); assert.equal(r.decision, 'use');
 assert.equal(r.scope.depth, 3, 'never below the chat depth'); assert.equal(r.plan.model, 'opus');
 assert.ok(r.plan.reason.some((line) => line.includes('session agent ai-integration kept')));
-// a confident judge naming another specialist may switch
+// a confident judge naming another specialist may switch (a verdict without current_fit: the 0.8 rule)
 const judge = async () => ({ agent: 'frontend-react', fit: 0.9, reason: 'React UI', new: null, question: null, source: 'llm' });
 r = await route(store, laya({ agent: 'frontend-react', depth: 2 }), uid, claudeOnly, { text: 'React 화면 만들어' , sessionId: sid, sessionEngine: 'claude' }, { judge });
 assert.equal(r.agent.name, 'frontend-react');
+
+// ---- the judge scores the chat's own agent too (2026-10-13): move only to a clearly better fit
+const gitSid = 'sess-git';
+store.addRun({ userId: uid, sessionId: gitSid, agentId: store.agent(uid, 'git-workflow').id, engine: 'claude', model: 'opus', effort: 'high', depth: 3 });
+const asked = [];
+const scored = (agent, fit, currentFit) => async (input) => { asked.push(input.current ?? null); return { agent, fit, reason: 'r', new: null, question: null, current_fit: currentFit, source: 'llm' }; };
+// server #301: UI work in a git chat — frontend-react 0.7 vs the git agent 0.2 → moves
+r = await route(store, laya({ agent: 'frontend-react', depth: 2 }), uid, claudeOnly, { text: '카드 간격을 맞춰줘', sessionId: gitSid, sessionEngine: 'claude' }, { judge: scored('frontend-react', 0.7, 0.2) });
+assert.equal(r.agent.name, 'frontend-react', 'a clearly better specialist takes the chat');
+assert.equal(asked.at(-1), 'git-workflow', 'the judge is told the chat agent');
+assert.ok(r.plan.reason.some((line) => line.includes('session agent git-workflow → frontend-react') && line.includes('vs git-workflow 0.20')));
+// server #294: "push from now on" in a frontend chat — git 0.7 but the chat agent carries it (0.85) → kept
+const feSid = 'sess-fe';
+store.addRun({ userId: uid, sessionId: feSid, agentId: store.agent(uid, 'frontend-react').id, engine: 'claude', model: 'opus', effort: 'high', depth: 2 });
+r = await route(store, laya({ agent: 'git-workflow', depth: 1 }), uid, claudeOnly, { text: '앞으로 수정을 하면 푸시해', sessionId: feSid, sessionEngine: 'claude' }, { judge: scored('git-workflow', 0.7, 0.85) });
+assert.equal(r.agent.name, 'frontend-react', 'a follow-up instruction keeps the chat agent');
+assert.ok(r.plan.reason.some((line) => line.includes('session agent frontend-react kept') && line.includes('vs frontend-react 0.85')));
+// better, but not by the margin → kept; above the margin but below the use line → kept
+r = await route(store, laya({ agent: 'database', depth: 2 }), uid, claudeOnly, { text: '쿼리 인덱스도 봐줘', sessionId: feSid, sessionEngine: 'claude' }, { judge: scored('database', 0.65, 0.5) });
+assert.equal(r.agent.name, 'frontend-react');
+r = await route(store, laya({ agent: 'database', depth: 2 }), uid, claudeOnly, { text: '스키마 문서 위치 알려줘', sessionId: feSid, sessionEngine: 'claude' }, { judge: scored('database', 0.55, 0.1) });
+assert.equal(r.agent.name, 'frontend-react');
+// a new chat has no chat agent to score: the judge is not told one
+await route(store, laya({ agent: 'database', depth: 2 }), uid, claudeOnly, { text: '새 채팅에서 인덱스 설계' }, { judge: scored('database', 0.9, null) });
+assert.equal(asked.at(-1), null);
 // the judge proposing a brand-new agent inside the chat does not start creation
 const creator = async () => ({ agent: null, fit: 0, reason: 'none', new: { name: 'game-loop-player', domain: 'games', description: 'x', technologies: ['d3d'] }, question: null, source: 'llm' });
 r = await route(store, laya({ agent: 'generalist', depth: 2, needsNew: 0.9 }), uid, claudeOnly, { text: '너 게임루프가 뭔지 모르는구나?', sessionId: sid, sessionEngine: 'claude' }, { judge: creator });

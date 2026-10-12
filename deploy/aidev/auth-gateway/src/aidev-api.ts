@@ -372,7 +372,7 @@ export function createAidevApi(deps: AidevDeps) {
       if (rest === '/route/prejudge' && m === 'POST') {
         const b = await readJson(req);
         const engines = await engineAvailability(session);
-        return json(res, 202, prejudge(store, uid, { text: str(b.text, 'text', 32000), projectHint: optStr(b.projectHint, 400) }, judgeFor(session, engines))), true;
+        return json(res, 202, prejudge(store, uid, { text: str(b.text, 'text', 32000), projectHint: optStr(b.projectHint, 400), sessionId: optStr(b.sessionId, 200) ?? null }, judgeFor(session, engines))), true;
       }
       if (rest === '/route' && m === 'POST') {
         const b = await readJson(req);

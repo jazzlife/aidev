@@ -322,7 +322,7 @@ export type ClaudeLoginStatus = { token: { issuedAt: number; expiresAt: number }
 export const aidevApi = {
   route: (input: RouteRequest) => post('/api/aidev/route', input).then((response) => readJson<RouteResult>(response)),
   /** typing-time pre-judge: starts the specialist judge for a draft; never waits for the verdict */
-  prejudge: (input: { text: string; projectHint?: string | null }) => post('/api/aidev/route/prejudge', input).then((response) => readJson<{ status: 'started' | 'running' | 'cached' | 'similar' | 'skipped'; reason?: string; agent?: string | null }>(response)),
+  prejudge: (input: { text: string; projectHint?: string | null; sessionId?: string | null }) => post('/api/aidev/route/prejudge', input).then((response) => readJson<{ status: 'started' | 'running' | 'cached' | 'similar' | 'skipped'; reason?: string; agent?: string | null }>(response)),
   decide: (kind: string, state: Record<string, unknown>, options?: Record<string, string>) =>
     post(`/api/aidev/decide/${encodeURIComponent(kind)}`, { state, options }).then((response) => readJson<DecideResult>(response)),
   overrideDecision: (id: number, patch: { final_agent?: string; final_engine?: Engine; final_model?: string; final_target?: string; final_answer?: unknown }) =>
