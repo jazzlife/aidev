@@ -307,7 +307,7 @@ export async function evaluateJudge(store: Store, userId: number, judge: Special
 }
 
 /**
- * Specialist judge (§3.1): an LLM turn (runtime, Claude haiku / Codex mini) that picks the EXISTING agent closest
+ * Specialist judge (§3.1): an LLM turn (runtime, Claude sonnet / Codex luna) that picks the EXISTING agent closest
  * to the command and scores how well it covers it. Laya and the lexical prior only rank agents against each other,
  * so their top pick "wins" even when nothing fits; the judge scores the closest agent's fit on an absolute scale.
  * It is used down to JUDGE_USE_FIT; a trivial/domain-less command goes to the generalist; below that a new
@@ -387,8 +387,8 @@ function dismissedDomain(store: Store, userId: number, p: { name: string; domain
  *  prompt are not reused. 2: `question` + "command execution is never a specialist"; 3: "size alone never makes a specialist" (2026-10-01);
  *  4: the closest agent with a graded fit instead of a yes/no "true specialist"; 5: a proposal below 0.6, not 0.4 (2026-10-10);
  *  6: `current_fit` of the chat's current agent (2026-10-13);
- *  7: `level`, the model tier that carries the command out comfortably (2026-10-13). */
-const JUDGE_VERSION = 7;
+ *  7: `level`, the model tier that carries the command out comfortably (2026-10-13); 8: sonnet, tier anchors, current_fit required. */
+const JUDGE_VERSION = 8;
 /** How long a send waits for the judge (env AIDEV_JUDGE_WAIT_MS). A slower verdict is still cached for the next send. */
 const JUDGE_WAIT_MS = Number(process.env.AIDEV_JUDGE_WAIT_MS ?? 20_000);
 const MAX_PREJUDGE_PER_USER = 3;

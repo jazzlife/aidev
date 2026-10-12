@@ -25,7 +25,7 @@ import { codexSandboxConfig, noteCodexTurnError } from '@/shared/index.js';
  *                 unreachable and the strongest models never ran (2026-10-13)
  * It also writes the one question to ask when the command lacks something essential (`question`); the gateway
  * shows it only when Laya's `clarify` says to ask (§3.1), so Laya decides and the model only words it.
- * Claude haiku first, Codex luna when Claude is unavailable or not allowed. Nothing is written into any conversation.
+ * Claude sonnet first (JUDGE_CLAUDE_MODEL), Codex luna when Claude is unavailable or not allowed. Nothing is written into any conversation.
  */
 export type JudgeCandidate = { name: string; description: string };
 export type JudgeInput = { command: string; candidates: JudgeCandidate[]; project?: string | null;
@@ -63,18 +63,18 @@ Rules:
 - "generalist" also for work of any size that has no specific technology or problem domain: reading, searching or summarizing many files or logs (e.g. "이 로그 5만 줄에서 오류 패턴 요약", "src 전체를 읽고 구조를 요약"), general code review or explanation. Size alone never makes a specialist.
 - new: ONLY when the closest agent's fit is below 0.6 (or agent is null) and the command has a concrete technology or problem domain (a language, framework, platform, protocol, hardware or tool chain), propose the specialist that SHOULD exist (kebab-case name, domain, one-line description, key technologies). Otherwise null — a close-enough agent is used, not duplicated.
 - Never choose META agents.
-- current_fit: only when a "Current agent of this conversation" is given (otherwise null) — how well THAT agent carries this command as the next turn of its conversation. A follow-up on the ongoing work — continue, retry, fix, rerun or test what was just done, commit/push/tag it, a rule for how to keep working, or a question about it — keeps it at 0.8 or more whatever its domain, even when another agent would be closest for the words alone. For example, with a React agent: "앞으로 수정을 하면 푸시해" (push after every change from now on) → 0.85; "방금 고친 거 테스트 다시 돌려봐" → 0.85; "커밋하고 태그 달아" → 0.8; a question about what it just did or tested ("그 결과가 맞게 나온 거야?") → 0.85. Every agent commits, pushes, tags and opens pull requests for its own work, so git chores and working rules inside a conversation (how to commit, when to push, the message language) are follow-ups too, never a reason to change agent. Work in a different technology or problem domain than that agent's is scored on the fit scale above (with a git agent, "카드 간격을 맞춰줘" in a UI → 0.2).
+- current_fit: REQUIRED (a number) whenever a "Current agent of this conversation" is given, also when you propose a new agent or pick the generalist; null only without one — how well THAT agent carries this command as the next turn of its conversation. A follow-up on the ongoing work — continue, retry, fix, rerun or test what was just done, commit/push/tag it, a rule for how to keep working, or a question about it — keeps it at 0.8 or more whatever its domain, even when another agent would be closest for the words alone. For example, with a React agent: "앞으로 수정을 하면 푸시해" (push after every change from now on) → 0.85; "방금 고친 거 테스트 다시 돌려봐" → 0.85; "커밋하고 태그 달아" → 0.8; a question about what it just did or tested ("그 결과가 맞게 나온 거야?") → 0.85. Every agent commits, pushes, tags and opens pull requests for its own work, so git chores and working rules inside a conversation (how to commit, when to push, the message language) are follow-ups too, never a reason to change agent. Work in a different technology or problem domain than that agent's is scored on the fit scale above (with a git agent, "카드 간격을 맞춰줘" in a UI → 0.2).
 - level (0..4): the model tier that carries this command out COMFORTABLY — with capacity to spare, not a model that would barely manage it. What each tier does reliably, and where it starts to fail:
   0 small fast model (Haiku / Luna): a factual answer, a lookup, one or two ready-made shell commands, a one-line edit. Fails once the work needs a plan or several files.
   1 mid model, light reasoning (Sonnet / Terra medium): a well-specified change inside one file, a short procedure in known code, explaining code. Shaky once a cause is unknown or several parts must agree.
   2 mid model, deep reasoning (Sonnet / Terra high): a clearly specified feature or fix across several files of a familiar codebase. Shaky on unknown causes, unfamiliar stacks and design trade-offs.
-  3 strong model (Opus / Sol): debugging an unknown cause, refactoring, design, unfamiliar technology, setting up and wiring one tool chain or environment. Shaky on long autonomous work where early mistakes compound.
+  3 strong model (Opus / Sol): debugging an unknown or intermittent cause (a CI-only test failure, a leak after hours of uptime), refactoring a cross-cutting concern (swapping the state library, changing how errors are handled everywhere), design, unfamiliar technology, packaging or porting software to other platforms, setting up and wiring one tool chain or environment. Shaky on long autonomous work where early mistakes compound.
   4 strongest model (Fable / Astra): architecture and migrations; long multi-step autonomous work across several tools, services or machines (install, configure and integrate several tools, build a pipeline, automate end to end without check-ins); research-level or high-stakes work where a mistake is expensive.
-  Choose the lowest tier whose RELIABLE range clearly contains the command. When the command sits at a tier's upper edge, or it is unclear between two tiers, choose the higher one. Destructive or hard-to-undo work (deleting data, rewriting history, production changes) goes one tier up. A short follow-up whose work you cannot see ("진행해", "계속해") is judged from its words alone; the gateway keeps the conversation's tier.
+  Choose the lowest tier whose RELIABLE range clearly contains the command. When the command sits at a tier's upper edge, or it is unclear between two tiers, choose the higher one — a tier that would only barely manage is too low. Anything that names a cause to be found, or a change of approach across a codebase, is never below 3. Destructive or hard-to-undo work (deleting data, rewriting history, production changes) goes one tier up. A short follow-up whose work you cannot see ("진행해", "계속해") is judged from its words alone; the gateway keeps the conversation's tier.
 - question: if information ESSENTIAL to start is missing and cannot be inferred (which file or screen, which project, which target machine, what the expected behavior is), write the ONE most important question to ask, in the command's language, short and concrete. Otherwise null.
 
 Output ONLY this JSON (no prose):
-{"agent": "<existing name>" | "generalist" | null, "fit": <0..1>, "reason": "<short>", "new": null | {"name": "<kebab-case>", "domain": "<domain>", "description": "<one line>", "technologies": ["..."]}, "question": null | "<one short question>", "current_fit": null | <0..1>, "level": <0..4>}`;
+{"agent": "<existing name>" | "generalist" | null, "fit": <0..1>, "reason": "<short>", "new": null | {"name": "<kebab-case>", "domain": "<domain>", "description": "<one line>", "technologies": ["..."]}, "question": null | "<one short question>", "current_fit": <0..1 when a current agent is given, else null>, "level": <0..4>}`;
 
 /** The first balanced `{…}` in `text` once it is complete and parses (strings and escapes respected), else null. */
 export function firstCompleteJson(text: string): Record<string, unknown> | null {
@@ -138,6 +138,13 @@ export function parseJudge(text: string, names: Set<string>, current: string | n
  * 18/18 accuracy (the decision is a lookup against declared domains, not a reasoning task).
  */
 const HARD_TIMEOUT_MS = 45_000;
+/**
+ * The Claude model of the judge turn (env AIDEV_JUDGE_MODEL). Sonnet since the judge also sets the model tier and the
+ * chat handoff (2026-10-13): on the labelled set (auth-gateway data/judge-eval.jsonl, three runs each) haiku placed
+ * 0.79–0.93 of the commands at their tier and once kept a git agent on UI work (0.82) and nearly handed off "진행해봐"
+ * (0.2); sonnet got every row in every run, at 3.7 s on average (max 6.8 s) against haiku's ~3 s.
+ */
+const JUDGE_CLAUDE_MODEL = process.env.AIDEV_JUDGE_MODEL || 'sonnet';
 
 async function askClaude(prompt: string): Promise<string> {
   let output = '';
@@ -147,7 +154,7 @@ async function askClaude(prompt: string): Promise<string> {
     const stream = query({
       prompt,
       options: {
-        cwd: os.homedir(), maxTurns: 1, model: 'haiku', allowedTools: [], tools: [], permissionMode: 'bypassPermissions', systemPrompt: JUDGE_PROMPT,
+        cwd: os.homedir(), maxTurns: 1, model: JUDGE_CLAUDE_MODEL, allowedTools: [], tools: [], permissionMode: 'bypassPermissions', systemPrompt: JUDGE_PROMPT,
         settingSources: [], persistSession: false, thinking: { type: 'disabled' }, includePartialMessages: true, abortController,
       },
     });
@@ -222,7 +229,7 @@ export const specialistJudgeService = {
       ...candidates.map((c) => `- ${c.name}: ${c.description.replace(/\s+/g, ' ').slice(0, 260)}`),
       current ? `\nCurrent agent of this conversation: ${current}` : null,
     ].filter((line) => line !== null).join('\n');
-    // Claude haiku first (fastest), Codex luna when Claude fails — only among the engines the account may use
+    // Claude first, Codex luna when Claude fails — only among the engines the account may use
     const order = (['claude', 'codex'] as const).filter((e) => !input.engines?.length || input.engines.includes(e));
     if (!order.length) throw new Error('no engine available for the judge');
     let engine: string = order[0];
