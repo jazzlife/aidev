@@ -84,8 +84,7 @@ function Drawer({ onClose }: { onClose: () => void }) {
             {others > 0 ? <button type="button" className="w-full px-2 py-1 text-left text-[13px] text-accent" onClick={() => open('/')}>다른 대화 {others}개 실행 중 ›</button> : null}
           </div>
 
-          {section('계정 한도')}
-          <div className="px-1"><UsageLimitPanel compact /></div>
+          <UsageLimitPanel compact frame={(panel) => <>{section('계정 한도')}<div className="px-1">{panel}</div></>} />
 
           {section('원격 PC')}
           <button type="button" className={row(pathname.startsWith('/screen'))} onClick={() => open('/screen')}><Monitor size={18} className="text-muted" /> 원격 제어</button>

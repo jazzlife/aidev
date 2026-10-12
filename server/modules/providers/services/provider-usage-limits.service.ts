@@ -28,8 +28,14 @@ const CODEX_USAGE_CACHE_MS = 60_000;
 const CODEX_USAGE_TIMEOUT_MS = 8_000;
 const codexAuthFile = () => path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'auth.json');
 
+/** The engines the drawers show; only the signed-in ones are reported (2026-10-13). */
+const USAGE_ENGINES: LLMProvider[] = ['claude', 'codex'];
+const SIGNED_IN_CACHE_MS = 60_000;
+
 let store: Store | null = null;
 let codexFetchedAt = 0;
+let signedIn: Set<LLMProvider> | null = null;
+let signedInAt = 0;
 
 function load(): Store {
   if (store) return store;
@@ -178,21 +184,53 @@ export const providerUsageLimitsService = {
   },
 
   /**
-   * The providers route: the picture per engine, with Codex's read afresh from the ChatGPT account
-   * at most once a minute. A failed read keeps the last picture (its observedAt says how old it is).
+   * The providers route: the picture per signed-in engine only (an engine signed in but not yet seen
+   * comes back empty), with Codex's read afresh from the ChatGPT account at most once a minute. A
+   * failed read keeps the last picture (its observedAt says how old it is). An engine found signed
+   * out loses its stored picture, so a later sign-in — perhaps another account — starts blank.
+   * `isSignedIn` answers null when it cannot tell; the engine then keeps its last standing.
    */
-  async snapshotLive(now = Date.now()): Promise<Partial<Record<LLMProvider, ProviderUsageLimitsSnapshot>>> {
-    if (now - codexFetchedAt >= CODEX_USAGE_CACHE_MS) {
+  async snapshotLive(isSignedIn: (provider: LLMProvider) => Promise<boolean | null>, now = Date.now()): Promise<Partial<Record<LLMProvider, ProviderUsageLimitsSnapshot>>> {
+    if (!signedIn || now - signedInAt >= SIGNED_IN_CACHE_MS) {
+      const previous = signedIn;
+      const next = new Set<LLMProvider>();
+      for (const provider of USAGE_ENGINES) {
+        const state = await isSignedIn(provider).catch(() => null);
+        if (state === true || (state === null && previous?.has(provider))) next.add(provider);
+        if (state === false && load()[provider]) {
+          delete load()[provider];
+          save();
+        }
+      }
+      signedIn = next;
+      signedInAt = now;
+    }
+    if (signedIn.has('codex') && now - codexFetchedAt >= CODEX_USAGE_CACHE_MS) {
       codexFetchedAt = now;
       await refreshCodexUsage(now).catch(() => undefined);
     }
-    return providerUsageLimitsService.snapshot(now);
+    const all = providerUsageLimitsService.snapshot(now);
+    const out: Partial<Record<LLMProvider, ProviderUsageLimitsSnapshot>> = {};
+    for (const provider of signedIn) out[provider] = all[provider] ?? { provider, observedAt: 0, windows: [], blockedUntil: null };
+    return out;
   },
 
-  /** Tests: forget everything (memory, file and the Codex read cache). */
+  /** A sign-out (the providers route): drop the engine and its picture, and ask about the sign-ins afresh. */
+  forget(provider: LLMProvider) {
+    signedIn?.delete(provider);
+    signedInAt = 0;
+    codexFetchedAt = 0;
+    if (!load()[provider]) return;
+    delete load()[provider];
+    save();
+  },
+
+  /** Tests: forget everything (memory, file, the Codex read cache and the sign-ins). */
   reset() {
     store = {};
     codexFetchedAt = 0;
+    signedIn = null;
+    signedInAt = 0;
     try { fs.unlinkSync(file()); } catch { /* none */ }
   },
 };

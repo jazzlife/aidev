@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react';
+
 import { formatTimeLeft, useUsageLimits, type UsageLimitView } from '@/modules/aidev-router/hooks/useUsageLimits';
 
 const ENGINE_LABEL: Record<string, string> = { claude: 'Claude', codex: 'Codex' };
@@ -50,18 +52,20 @@ function EngineUsage({ view, compact, now }: { view: UsageLimitView; compact: bo
 
 /**
  * Used by the mobile drawer (compact), the workbench sessions panel (desktop docked, tablet drawer) and
- * the legacy sidebar footer: each connected engine's account usage — the five-hour / weekly windows
+ * the legacy sidebar footer: each signed-in engine's account usage — the five-hour / weekly windows
  * with how much of each is used and when they reset, or that the engine is refusing until a time.
  * Claude's comes from its turn events (so before the first turn it says so), Codex's from the account.
+ * A signed-out engine is left out; with none signed in (or before the first answer) nothing is drawn,
+ * not even the caller's frame — `frame` wraps the panel in the caller's divider and heading.
  */
-export function UsageLimitPanel({ compact = false }: { compact?: boolean }) {
+export function UsageLimitPanel({ compact = false, frame = (panel) => panel }: { compact?: boolean; frame?: (panel: ReactNode) => ReactNode }) {
   const { views, loaded } = useUsageLimits();
-  const palette = compact ? MOBILE : WORKBENCH;
+  if (!loaded || !views.length) return null;
   // one clock per render: the reset times are relative to it
   const now = Date.now();
-  return (
+  return frame(
     <div data-testid="usage-limit-panel" className={compact ? 'divide-y divide-line rounded-xl border border-line bg-bg' : 'px-1 py-1'}>
-      {!loaded ? <div className={`${compact ? 'px-3 py-2 text-[12px]' : 'px-2.5 py-1 text-[11px]'} ${palette.muted}`}>불러오는 중…</div> : views.map((view) => <EngineUsage key={view.engine} view={view} compact={compact} now={now} />)}
-    </div>
+      {views.map((view) => <EngineUsage key={view.engine} view={view} compact={compact} now={now} />)}
+    </div>,
   );
 }

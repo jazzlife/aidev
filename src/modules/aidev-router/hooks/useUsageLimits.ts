@@ -40,8 +40,9 @@ export function usageLimitView(engine: Engine, snapshot: ProviderUsageLimitsSnap
 }
 
 /**
- * Used by UsageLimitPanel (the drawers of both apps): each engine's account usage as the runtime last
- * saw it, refreshed while the panel is open.
+ * Used by UsageLimitPanel (the drawers of both apps): each signed-in engine's account usage as the
+ * runtime last saw it, refreshed while the panel is open. The runtime reports signed-in engines only,
+ * so a signed-out engine has no view and with none signed in the list is empty.
  */
 export function useUsageLimits(enabled = true): { views: UsageLimitView[]; loaded: boolean } {
   // the runtime's last picture per engine; null until the first answer
@@ -61,5 +62,5 @@ export function useUsageLimits(enabled = true): { views: UsageLimitView[]; loade
     const timer = window.setInterval(() => { if (document.visibilityState !== 'hidden') poll(); }, POLL_MS);
     return () => { alive = false; window.clearInterval(timer); };
   }, [enabled]);
-  return { views: (['claude', 'codex'] as Engine[]).map((engine) => usageLimitView(engine, snapshots?.[engine])), loaded: snapshots !== null };
+  return { views: (['claude', 'codex'] as Engine[]).filter((engine) => snapshots?.[engine]).map((engine) => usageLimitView(engine, snapshots?.[engine])), loaded: snapshots !== null };
 }

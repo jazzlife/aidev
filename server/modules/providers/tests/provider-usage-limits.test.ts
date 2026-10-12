@@ -68,6 +68,8 @@ test('Codex only shows refusals: a block with no reset holds five hours, a compl
   service.reset();
 });
 
+const codexOnly = async (provider: string) => provider === 'codex';
+
 test('Codex: the drawer read asks the ChatGPT account for its windows, at most once a minute', async () => {
   service.reset();
   const codexHome = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-home-'));
@@ -84,27 +86,53 @@ test('Codex: the drawer read asks the ChatGPT account for its windows, at most o
   }) as typeof fetch;
   try {
     const now = 1791500000000;
-    let codex = (await service.snapshotLive(now)).codex!;
+    let codex = (await service.snapshotLive(codexOnly, now)).codex!;
     assert.equal(codex.blockedUntil, null);
     assert.deepEqual(codex.windows, [
       { type: 'five_hour', utilization: 0.42, resetsAt: now + 3600_000, blocked: false },
       { type: 'seven_day', utilization: 0.11, resetsAt: 1791951976000, blocked: false },
     ]);
     // within the minute the account is not asked again
-    await service.snapshotLive(now + 30_000);
+    await service.snapshotLive(codexOnly, now + 30_000);
     assert.equal(calls, 1);
     // a full window blocks until it resets
     payload = { rate_limit: { allowed: false, limit_reached: true, primary_window: { used_percent: 100, limit_window_seconds: 18000, reset_at: 1791503600 }, secondary_window: null } };
-    codex = (await service.snapshotLive(now + 61_000)).codex!;
+    codex = (await service.snapshotLive(codexOnly, now + 61_000)).codex!;
     assert.equal(calls, 2);
     assert.equal(codex.blockedUntil, 1791503600000);
     assert.deepEqual(codex.windows, [{ type: 'five_hour', utilization: 1, resetsAt: 1791503600000, blocked: true }]);
     // the account cannot be read: the last picture stays
     globalThis.fetch = (async () => new Response('nope', { status: 401 })) as typeof fetch;
-    assert.equal((await service.snapshotLive(now + 122_000)).codex!.blockedUntil, 1791503600000);
+    assert.equal((await service.snapshotLive(codexOnly, now + 122_000)).codex!.blockedUntil, 1791503600000);
   } finally {
     globalThis.fetch = previousFetch;
     if (previousHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = previousHome;
+    service.reset();
+  }
+});
+
+test('only signed-in engines are reported; a signed-out one loses its picture, a new sign-in starts blank', async () => {
+  service.reset();
+  const previousFetch = globalThis.fetch;
+  globalThis.fetch = (async () => new Response('nope', { status: 401 })) as typeof fetch;
+  try {
+    const now = 1791500000000;
+    service.recordClaude({ status: 'allowed', rateLimitType: 'five_hour', utilization: 0.4, resetsAt: 1791503600 });
+    service.recordBlock('codex', { type: 'five_hour', resetsAt: 1791503600000 });
+    // nothing signed in: nothing to show, and the stored pictures are gone
+    assert.deepEqual(await service.snapshotLive(async () => false, now), {});
+    assert.deepEqual(service.snapshot(now), {});
+    // the answer is kept a minute; a sign-out drops it at once
+    service.forget('codex');
+    // Claude signed in but no turn yet: an empty picture; Codex signed out: absent
+    const signedIn = await service.snapshotLive(async (provider) => provider === 'claude', now + 1000);
+    assert.deepEqual(signedIn, { claude: { provider: 'claude', observedAt: 0, windows: [], blockedUntil: null } });
+    // a status check that fails keeps the last standing
+    service.forget('codex');
+    const unsure = await service.snapshotLive(async () => { throw new Error('cli gone'); }, now + 2000);
+    assert.deepEqual(Object.keys(unsure), ['claude']);
+  } finally {
+    globalThis.fetch = previousFetch;
     service.reset();
   }
 });

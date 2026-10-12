@@ -107,11 +107,15 @@ export default function SidebarFooter({
       )}
 
       {/* Connected accounts' usage limits (2026-10-09): five-hour / weekly windows, or a refusal until when */}
-      <div className="nav-divider" />
-      <div className="px-2 pt-1">
-        <div className="px-2.5 pb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground/70">계정 한도</div>
-        <UsageLimitPanel />
-      </div>
+      <UsageLimitPanel frame={(panel) => (
+        <>
+          <div className="nav-divider" />
+          <div className="px-2 pt-1">
+            <div className="px-2.5 pb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground/70">계정 한도</div>
+            {panel}
+          </div>
+        </>
+      )} />
 
       {/* Community + Settings */}
       <div className="nav-divider" />
