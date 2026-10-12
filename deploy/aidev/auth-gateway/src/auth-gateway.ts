@@ -202,13 +202,31 @@ const githubOauth = createGithubOauth({
     return fetch(`${runtime.target}${path}`, { ...init, headers: { ...(init?.headers as Record<string, string> | undefined), authorization: `Bearer ${runtime.token}` }, signal: AbortSignal.timeout(20_000) });
   },
 });
+/**
+ * fetch (undici) gives up on a response whose headers take longer than 300 s — whatever the abort signal allows —
+ * with a bare "fetch failed". The runtime answers a verification (up to 12 min) or an agent design (up to 10 min)
+ * only once it is done, so those calls go through node:http, bounded by their own timeout alone.
+ */
+function runtimeRequest(url: string, init: RequestInit, timeoutMs: number): Promise<Response> {
+  if (timeoutMs < 290_000) return fetch(url, { ...init, signal: AbortSignal.timeout(timeoutMs) });
+  return new Promise((resolve, reject) => {
+    const request = http.request(url, { method: init.method ?? 'GET', headers: init.headers as Record<string, string>, signal: AbortSignal.timeout(timeoutMs) }, (response) => {
+      const chunks: Buffer[] = [];
+      response.on('data', (chunk: Buffer) => chunks.push(chunk));
+      response.on('end', () => resolve(new Response(chunks.length ? Buffer.concat(chunks) : null, { status: response.statusCode ?? 502 })));
+      response.on('error', reject);
+    });
+    request.on('error', reject);
+    request.end(typeof init.body === 'string' ? init.body : undefined);
+  });
+}
 const aidev = createAidevApi({
   runners, gate, preview, debug, console: consoles, publicOrigin: origin, ui: createUiControl(), ship, githubOauth,
   isOnline: (userId) => (openChats.get(userId) ?? 0) > 0,
   store, laya, json, push,
   async runtimeFetch(session, path, init, timeoutMs = 10_000) {
     const runtime = await ready(session.user.runtime);
-    return fetch(`${runtime.target}${path}`, { ...init, headers: { ...(init?.headers as Record<string, string> | undefined), authorization: `Bearer ${runtime.token}` }, signal: AbortSignal.timeout(timeoutMs) });
+    return runtimeRequest(`${runtime.target}${path}`, { ...init, headers: { ...(init?.headers as Record<string, string> | undefined), authorization: `Bearer ${runtime.token}` } }, timeoutMs);
   },
 });
 aidev.knowledgeRefresher.startSchedule();

@@ -163,14 +163,20 @@ export function parseVerification(text: string): Omit<Verification, 'engine' | '
   }
 }
 
-/** Reading a repository and re-running its checks: minutes, not the judge's seconds. */
-const HARD_TIMEOUT_MS = 10 * 60_000;
+/**
+ * Reading a repository and re-running its checks: minutes, not the judge's seconds. One budget for the whole check,
+ * shared by the engines tried in turn, so the answer reaches the gateway inside its 12 min wait (a Codex model at
+ * capacity alone spent 3.5 min retrying before the Claude fallback started — run 274).
+ */
+const VERIFY_BUDGET_MS = 11 * 60_000;
+/** Too little left to read anything: the next engine is not started. */
+const MIN_ENGINE_MS = 60_000;
 const VERIFIER_TOOLS = ['Read', 'Glob', 'Grep', 'Bash'];
 
-async function askClaude(prompt: string, cwd: string, model: string, systemPrompt: string): Promise<string> {
+async function askClaude(prompt: string, cwd: string, model: string, systemPrompt: string, timeoutMs: number): Promise<string> {
   let output = '';
   const abortController = new AbortController();
-  const timer = setTimeout(() => abortController.abort(), HARD_TIMEOUT_MS);
+  const timer = setTimeout(() => abortController.abort(), timeoutMs);
   try {
     const stream = query({
       prompt,
@@ -195,11 +201,11 @@ async function askClaude(prompt: string, cwd: string, model: string, systemPromp
  *  session indexer skips them (see lesson-curator.service.ts). */
 const SIDE_TURN_SOURCE = 'subagent';
 
-async function askCodex(prompt: string, cwd: string, model: string, systemPrompt: string): Promise<string> {
+async function askCodex(prompt: string, cwd: string, model: string, systemPrompt: string, timeoutMs: number): Promise<string> {
   const codex = new Codex({ config: { ...codexSandboxConfig(), developer_instructions: systemPrompt } as never });
   // reads and runs checks in the project; write access only so build/test caches work — the prompt forbids edits
   const thread = codex.startThread({ threadSource: SIDE_TURN_SOURCE, workingDirectory: cwd, skipGitRepoCheck: true, sandboxMode: 'workspace-write', approvalPolicy: 'never', model, modelReasoningEffort: 'high', webSearchMode: 'disabled' });
-  const turn = await thread.run(prompt);
+  const turn = await thread.run(prompt, { signal: AbortSignal.timeout(timeoutMs) });
   return turn.finalResponse ?? '';
 }
 
@@ -216,10 +222,13 @@ export const runVerifierService = {
     const order = verifierEngineOrder(input.engine, input.engines);
     const systemPrompt = verifierSystemPrompt(input.verifierAgent);
     let lastError: unknown = null;
+    const deadline = Date.now() + VERIFY_BUDGET_MS;
     for (const engine of order) {
+      const remaining = deadline - Date.now();
+      if (remaining < MIN_ENGINE_MS) break;
       const model = verifierModel(engine, { workerEngine: input.engine, workerModel: input.workerModel, floor: input.modelFloor[engine] });
       try {
-        const text = engine === 'claude' ? await askClaude(brief.text, cwd, model, systemPrompt) : await askCodex(brief.text, cwd, model, systemPrompt);
+        const text = engine === 'claude' ? await askClaude(brief.text, cwd, model, systemPrompt, remaining) : await askCodex(brief.text, cwd, model, systemPrompt, remaining);
         const parsed = parseVerification(text);
         const result: Verification = parsed
           ? { ...parsed, engine, model }
