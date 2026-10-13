@@ -19,7 +19,7 @@ import '../../load-env.js';
  *   remote_devices / remote_device_shot — phones, TVs, simulators attached to a target and their screen (F-10)
  *   remote_debug_start / _step / _eval / _breakpoints / _stop — debug a program on a target over DAP (F-09, F-09b: 14 adapters)
  *   remote_console_start / _send / _read / _stop — drive any command-line debugger or REPL on a target (F-09c)
- *   remote_agent / remote_agent_result — delegate a task to an agent CLI on the target (Claude Code, Codex, Gemini CLI) (F-09d)
+ *   remote_agent / remote_agent_result — delegate a task to an agent CLI on the target (Claude Code, Codex, Gemini CLI, OpenCode) (F-09d)
  *   platform_ship / platform_ship_status — administrators: ship NadoVibe itself from the AI-PC (test, deploy, verify, push) (OPS-02)
  * The turn context (chat run id, routed target, agent) comes from this process's env and is sent
  * with every call, so remote results count toward the run's outcome.
@@ -389,7 +389,7 @@ const tools: ToolDefinition[] = [
   {
     name: 'remote_agent',
     description: [
-      'Delegate a task to an AI coding agent CLI installed on one of the user\'s machines (Claude Code, Codex CLI or Gemini CLI, under the user\'s own login there).',
+      'Delegate a task to an AI coding agent CLI installed on one of the user\'s machines (Claude Code, Codex CLI, Gemini CLI or OpenCode, under the user\'s own login there).',
       'Use it when the work needs what only that machine has and your own remote tools are not enough: its IDE toolchain (Xcode, Visual Studio + .NET Framework, Android Studio), device/simulator/emulator/board debugging, GUI-only debuggers, a VPN or local services — or when a long local investigation (build → run → debug → fix → re-run) is faster done there.',
       'mode "full" (default) lets it run commands and edit files in cwd (always asks the user first); "readonly" only reads and analyses. The task should say what to find/fix, where, and how to verify.',
       'Waits up to waitSec (default 900) and returns its report (result), the steps it took, and sessionId — pass resume: sessionId to continue the same conversation. Still running → remote_agent_result{remoteRunId}.',
@@ -400,7 +400,7 @@ const tools: ToolDefinition[] = [
       properties: {
         target: { type: 'string', description: 'Target name or id (optional when routed or only one is online).' },
         task: { type: 'string', description: 'What the local agent should do, with context (files, symptoms, how to verify).' },
-        agent: { type: 'string', enum: ['auto', 'claude', 'codex', 'gemini'], description: 'Which CLI (default auto: the first installed of claude, codex, gemini).' },
+        agent: { type: 'string', enum: ['auto', 'claude', 'codex', 'gemini', 'opencode'], description: 'Which CLI (default auto: the first installed of claude, codex, gemini, opencode).' },
         mode: { type: 'string', enum: ['full', 'readonly'], description: 'full (run/edit, asks the user) or readonly (analysis only).' },
         cwd: { type: 'string', description: 'Project folder on the target (inside its allowed folders).' },
         resume: { type: 'string', description: 'sessionId from an earlier remote_agent result to continue that session.' },
@@ -418,7 +418,7 @@ const tools: ToolDefinition[] = [
       type: 'object',
       properties: {
         remoteRunId: { type: 'number' },
-        agent: { type: 'string', enum: ['claude', 'codex', 'gemini'] },
+        agent: { type: 'string', enum: ['claude', 'codex', 'gemini', 'opencode'] },
         waitSec: { type: 'number', description: '0-1800, default 600.' },
       },
       required: ['remoteRunId'],

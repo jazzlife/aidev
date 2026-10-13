@@ -64,3 +64,23 @@ test('local agent: parses Codex exec --json (commands, file changes, transient e
   const gerr = parseLocalAgentOutput('{\n  "session_id": "a44b",\n  "error": { "type": "Error", "message": "Please set an Auth method", "code": 41 }\n}\n', 'gemini');
   assert.equal(gerr.isError, true); assert.match(gerr.error ?? '', /Auth/);
 });
+
+test('OpenCode as the local agent: the command line, and its JSON events read into the report', () => {
+  assert.equal(pickLocalAgent('auto', { opencode: '1.19.0' }), 'opencode');
+  assert.equal(pickLocalAgent('opencode', { claude: '2.1.0' }), 'opencode', 'asked for by name: the caller checks it is installed');
+  assert.equal(localAgentCommand('opencode', 'full'), 'opencode run --format json --auto');
+  assert.equal(localAgentCommand('opencode', 'readonly', { model: 'opencode-go/glm-5.3', resume: 'ses_abc123' }), 'opencode run --format json --agent plan --model opencode-go/glm-5.3 --session ses_abc123');
+  const out = [
+    { type: 'step_start', sessionID: 'ses_abc123', part: {} },
+    { type: 'tool_use', sessionID: 'ses_abc123', part: { tool: 'bash', state: { status: 'completed', input: { command: 'npm test' }, output: 'ok' } } },
+    { type: 'tool_use', sessionID: 'ses_abc123', part: { tool: 'edit', state: { status: 'completed', input: { filePath: 'src/a.ts' } } } },
+    { type: 'text', sessionID: 'ses_abc123', part: { text: '원인은 null 체크 누락, 고쳤고 테스트 통과' } },
+    { type: 'step_finish', sessionID: 'ses_abc123', part: { reason: 'stop' } },
+  ].map((e) => JSON.stringify(e)).join('\n');
+  const report = parseLocalAgentOutput(out);
+  assert.deepEqual([report.agent, report.sessionId, report.result, report.isError], ['opencode', 'ses_abc123', '원인은 null 체크 누락, 고쳤고 테스트 통과', false]);
+  assert.deepEqual(report.steps, ['bash: npm test', 'edit: src/a.ts']);
+  // an OpenCode error event is OpenCode's, not Codex's
+  const failed = parseLocalAgentOutput(JSON.stringify({ type: 'error', sessionID: 'ses_x1', error: { name: 'APIError', data: { message: 'You have no credits remaining', statusCode: 429 } } }));
+  assert.deepEqual([failed.agent, failed.isError, failed.error], ['opencode', true, 'You have no credits remaining']);
+});

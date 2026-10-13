@@ -673,7 +673,7 @@ export const aidevToolsService = {
   },
 
   /**
-   * remote_agent (F-09d): the task goes to an agent CLI on the target (Claude Code / Codex / Gemini CLI) —
+   * remote_agent (F-09d): the task goes to an agent CLI on the target (Claude Code / Codex / Gemini CLI / OpenCode) —
    * for work that needs that PC's own IDE, SDKs, debuggers, simulators or attached devices.
    */
   async remoteAgent(input: { target?: string | number; task: string; agent?: string; mode?: LocalAgentMode; cwd?: string; resume?: string; model?: string; waitSec?: number; background?: boolean }, turn: RemoteTurn = {}) {

@@ -31,10 +31,11 @@ const TOOLS: &[(&str, &str, &[&str])] = &[
     ("claude", "claude", &["--version"]),
     ("codex", "codex", &["--version"]),
     ("gemini", "gemini", &["--version"]),
+    ("opencode", "opencode", &["--version"]),
 ];
 /// npm-installed commands are .cmd shims on Windows: run them through cmd.exe.
 #[cfg(windows)]
-const NPM_SHIMS: &[&str] = &["npm", "claude", "codex", "gemini"];
+const NPM_SHIMS: &[&str] = &["npm", "claude", "codex", "gemini", "opencode"];
 
 async fn first_line(cmd: &str, args: &[&str]) -> Option<String> {
     let mut c = Command::new(cmd);

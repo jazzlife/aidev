@@ -477,7 +477,7 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
 - [~] 401·403·모델 없음 형태 확인. 429(한도) 문구는 실제 발생 시 — G0-06 **한도·인증 오류 형태**
   - 잘못된 키(401)와 한도 초과(429, 재현 가능하면) 때 error 이벤트와 stderr 형태를 확인하고, 감지 정규식 초안을 만든다.
   - Go 요금제의 한도 창(5시간·주간 등)과 재설정 시각을 얻는 방법이 있는지 조사한다.
-- [~] `-f`는 메시지 뒤에 둬야 함 확인. 모델이 이미지를 보는지는 유료 모델로 — G0-07 **이미지 첨부**: `-f/--file`로 이미지를 넘기면 모델이 보는지 확인한다. 지금은 경로 태그만 붙인다(`opencode-runtime.provider.js:275-287`).
+- [x] 확인(2026-10-13, 이미지 입력을 받는 무료 모델 `mimo-v2.6-flash-free`·`space-bunny-free`: `-f`를 메시지 뒤에 두면 모델이 이미지를 봄("Red"). 이미지 입력이 없는 모델에 `-f`를 주면 BadRequest) — G0-07 **이미지 첨부**: `-f/--file`로 이미지를 넘기면 모델이 보는지 확인한다. 지금은 경로 태그만 붙인다(`opencode-runtime.provider.js:275-287`).
 - [x] §2.8에 기록 — G0-08 결과를 §2.7·§3.3에 반영하고, 설계 변경이 생기면 이 문서를 먼저 고친다.
 - [ ] G0-09 **지능 점수 출처 확인** (Artificial Analysis)
   - 무료 API 키를 발급한다(사용자가 직접 발급·설치, 원칙 10).
@@ -558,12 +558,12 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
   - 테스트: `codex-usage-limit.test.ts`처럼 `opencode-usage-limit.test.ts`를 새로 만든다.
   - 완료 조건: OpenCode가 한도에 걸리면 프런트 E-03 인계 흐름(다음 공급자로)이 동작한다.
 - [~] 구현·로컬검증(401·자격 문구 → `noteOpenCodeRunError` → auth status가 "sign-in rejected", 새 로그인(auth.json 갱신)·로그아웃 시 해제), 서버 확인 대기 — G2-06 **인증 실패**: 401이나 로그인 만료를 감지하면 `OpenCodeProviderAuth.getStatus`(`opencode-auth.provider.ts:42-54`)가 미인증을 돌려준다(Codex `currentCodexAuthFailure` 방식). 그러면 게이트웨이 가용성에서 빠진다.
-- [ ] G2-07 **stderr 처리**: 지금은 stderr의 모든 덩어리를 error 프레임으로 보낸다(`:310-325`). 경고와 로그는 거르고 실제 오류만 보낸다(Codex Landlock 경고 숨김과 같은 방식).
-- [~] 구현·로컬검증(런타임은 마지막 `step_finish`의 `part.tokens`를 컨텍스트로(없으면 DB). REST·기록 경로 통일은 남음), 서버 확인 대기 — G2-08 **토큰 사용량**을 통일한다.
+- [x] 변경 불필요로 확인(2026-10-13 실측: 정상 실행·도구 오류·없는 모델·없는 공급자 모두 stderr 0바이트, 오류는 stdout의 `error` 이벤트로 옴) — G2-07 **stderr 처리**: 지금은 stderr의 모든 덩어리를 error 프레임으로 보낸다(`:310-325`). 경고와 로그는 거르고 실제 오류만 보낸다(Codex Landlock 경고 숨김과 같은 방식).
+- [~] 구현·로컬검증(런타임은 마지막 `step_finish`의 `part.tokens`, 대화를 다시 열 때(REST)와 런타임의 DB 대체 경로는 `message` 표의 최신 assistant 행 tokens — 같은 공식 `openCodeContextTokens`. 실측: 두 단계 턴 63,153·63,189인데 세션 누계는 126,342로 두 배였음), 서버 확인 대기 — G2-08 **토큰 사용량**을 통일한다.
   - 런타임 `readOpenCodeTokenUsage`(`:66-124`), REST(`provider-token-usage.service.ts:279-338`, `:396-406`), 기록(`opencode-sessions.provider.ts:156-199`)의 세 경로를 message.data 합산 기준으로 맞춘다.
   - `total`(모델 컨텍스트)을 추가한다. 테스트 `provider-token-usage.service.test.ts`
 - [~] 구현·로컬검증(SIGTERM 후 종료까지 대기(10초 뒤 SIGKILL)), 서버 확인 대기 — G2-09 **중단**: SIGTERM 뒤 close까지 기다린다(Codex `ABORT_SETTLE_TIMEOUT_MS` 10초와 같음, `opencode-runtime.provider.js:405-417`). 끼어들기 직후 같은 세션 재개 경합을 막기 위해서다.
-- [ ] G2-10 **이미지**: G0-07이 되면 `-f`로 첨부한다. 안 되면 경로 태그를 유지하고 사유를 기록한다.
+- [x] 경로 태그 유지로 결정(2026-10-13 실측: `<images_input>` 경로 목록만으로 이미지 모델은 `read` 도구로 읽어 답하고("Red"), 이미지 입력이 없는 모델도 다른 도구로 처리함. `-f`는 이미지 입력이 없는 모델에서 BadRequest라 쓰지 않음) — G2-10 **이미지**: G0-07이 되면 `-f`로 첨부한다. 안 되면 경로 태그를 유지하고 사유를 기록한다.
 - [~] 구현·로컬검증(`bash`, `filePath`), 서버 확인 대기 — G2-11 **브리프 도구 이름**: `handoff.service.ts:9-10`, `run-verifier.service.ts:101-102`의 `FILE_TOOLS/COMMAND_TOOLS`에 opencode 이름(`bash`, `edit`, `write`, `read`…)과 입력 키 `filePath`를 추가한다. 테스트 `handoff.test.ts`
 - [x] 서버 확인(2026-10-13, `667c7e025e16`: jazzlife 런타임에서 OpenCode 검증 턴 17초·정제 턴 53초 실행, 끝난 뒤 OpenCode 세션 목록에 새 세션 0개·`aidev-side` 0개, 강제 삭제한 채팅도 OpenCode 저장소에서 삭제) — 구현 내용: `opencode-side-turn.client.ts askOpenCodeSideTurn`: `opencode run --format json`을 메시지는 stdin으로(인자 길이 한계 회피), 제목 `aidev-side: <용도>`, 읽기 턴은 `--agent plan`, 검증 턴은 `--auto`, 끝나면 `opencode session delete`. 동기화기는 그 제목의 세션을 건너뜀. 임시 폴더 대신 제목+삭제 방식(검증은 프로젝트 폴더에서 돌아야 함). 무료 모델로 실측: 읽기·검증 턴 통과, 세션 남지 않음. **plan agent의 안내문이 답을 오염시키는 것 발견 → 메시지 앞에 실행 환경 안내를 넣어 해결(무의미한 실패 → `{"none":true}`, 실제 실패 → 관련 교훈)**. 권한을 직접 제한한 custom agent는 무료 등급에서 403 — G2-12 **부가 턴 실행기** `askOpenCode` (§3.3)
   - 임시 폴더(`/tmp/aidev-side-<id>`), `--format json`, 결과 텍스트 추출, 타임아웃, read-only(plan 권한)를 지원한다.
@@ -577,7 +577,7 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
   - 판정(`specialist-judge.service.ts`)은 제외한다(§9 Q4).
   - 테스트: `run-verifier.test.ts:26-41`, `lesson-curator.test.ts`, `agent-designer.test.ts`, `knowledge-check.test.ts`
 - [~] 구현·로컬검증(`effort_cap.<engine>`·`model_floor.<engine>`에 opencode, 설명 갱신), 서버 확인 대기 — G2-14 설정 키: `app-control.service.ts:68-70`, `:106-119`의 `effort_cap.*`·`model_floor.*`·`engine_priority`에 opencode를 넣는다. MCP 설명(`aidev-tools-mcp.ts:135`)도 고친다. 테스트 `app-control.test.ts:21`
-- [ ] G2-15 (선택) `remote_agent`에 opencode를 추가한다: `local-agent.ts:10`, `:25-45`, `:77-159`, MCP enum `aidev-tools-mcp.ts:403`, `:421`, `aidev-tools-mcp.routes.ts:232`
+- [~] 구현·로컬검증(`local-agent.ts`에 opencode: `opencode run --format json --auto|--agent plan [--model] [--session]`, 작업은 stdin, JSON 이벤트 파싱. MCP enum·라우트. 러너 `caps.rs`가 `opencode`를 감지하도록 추가했으나 **러너 새 릴리스(runner-v 태그)가 나가야 PC에서 인식됨**), 서버 확인 대기 — G2-15 (선택) `remote_agent`에 opencode를 추가한다: `local-agent.ts:10`, `:25-45`, `:77-159`, MCP enum `aidev-tools-mcp.ts:403`, `:421`, `aidev-tools-mcp.routes.ts:232`
 - [ ] G2-16 **서버 확인** (opencode 채팅에서)
   - 전문 agent 지시문이 적용된다(런타임 로그 `[OpenCode] aidev routing`).
   - `remote_exec`가 실제로 원격 PC에서 실행된다.
@@ -753,6 +753,11 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
   - 검증 우선순위대로 검증 엔진이 정해진다(`runs.verification.engine`).
 
 ### G6. 검증·배포·문서 (매 릴리스)
+**2026-10-13~14 추가 (릴리스 `acda399a3b65` ~ )**:
+- OpenCode의 모델별 강도·대화 가능 여부를 `opencode models --verbose`에서 읽음(API 키로 연결한 `openai/…` 모델에 강도가 없던 문제, 임베딩·이미지·음성 모델이 목록에 섞이던 문제). 서버 확인: `openai/gpt-5.6-sol` none~max, 80 → 73개.
+- **OpenCode 로그인 패널**: 터미널 로그인은 첫 줄 "OpenCode (recommended)"가 종량제(Zen)이고 Go는 "go"를 검색해야 나와서 사용자가 막힘 → 공급자(OpenCode Go 먼저)와 API 키를 넣는 패널(작업대 로그인 모달, 모바일 시트), 런타임이 `auth.json`에 CLI와 같은 형식으로 저장(`/api/aidev-tools/opencode-login`). 계정 로그인은 「터미널로 로그인」.
+- **Claude 로그인 타임아웃**: 코드를 넣은 뒤 CLI가 90초 동안 아무것도 내지 않던 문제. 가짜 코드로는 재현되지 않았고(길이·시점·중복 입력 모두 1초 안에 거절), 코드 뒤 0.4초 쉬고 Enter를 따로 보내도록(무응답이면 한 번 더) 바꾼 뒤 첫 시도에 성공(두 번째 Enter 없이). 원인은 "코드와 Enter가 붙어 들어가 제출로 처리되지 않음"으로 추정 — 확정은 아님. 실패 시 CLI 화면·코드 길이·엔터 후 반응을 로그에 남김.
+- 서비스워커가 실패한 요청에 `undefined`를 돌려주던 콘솔 오류 수정.
 **서버 확인 기록 (2026-10-13, `667c7e025e16`, jazzlife)**: 계정 설정을 바꾸지 않고 확인함. Claude·Codex 정책은 등급표 그대로(하한 opus / gpt-5.6-sol, 강도 상한 high), 라우팅 결과 종전과 같음(`claude opus/high`). 정책 응답에 OpenCode(허용 안 됨, 모델 92개). OpenCode 무료 모델(`opencode/nemotron-3-ultra-free`)로 작업 채팅 → OpenCode 검증 pass 17초 → OpenCode 교훈 정제 53초, 판정은 409, 세션 정리 확인. verify-b 24 PASS / 1 FAIL(기존). **남은 서버 확인**: OpenCode를 허용한 계정에서의 실제 라우팅(작업 순서·한도 인계·복귀)과 화면 — jazzlife의 OpenCode가 잔액 0인 OpenAI 키뿐이라 허용을 켜지 않음(G4-13·G5-15), 설계·지식 점검의 OpenCode 실행, AA 키(G0-09).
 **서버 확인 기록 (2026-10-13, 릴리스 `d41a7f575824`, jazzlife)**: 게이트웨이를 거친 실제 OpenCode 채팅 4종(응답 `SERVER-OK`·토큰 18,779 / aidev-tools 도구 호출 / 전문 agent 지시문 + read 도구 / 이어가기) 통과, 정책 API 통과(설정 불변), `verify-b` 22 PASS · 1 FAIL(분류기 정확도 0.714 — 이번 작업 전부터 같은 수치). 화면은 같은 커밋의 로컬 플랫폼에서 확인(Cursor 없음, OpenCode 탭은 Account·MCP, 「모델·강도 범위」는 Claude·Codex). **확인 못 한 것**: 범위 분할 모드의 실제 명령(운영 계정은 모두 등급표 모드), 사용량 한도 인계·로그인 거절(실제 발생 없음), 작업 순서에 따른 교훈 정제 후보, 운영 화면 직접 조회. **발견**: ① 강제 삭제한 OpenCode 세션이 OpenCode 자체 DB에 남아 있으면 동기화가 다시 목록에 올림(검증 중 1건 재등장 → `opencode session delete`까지 해야 사라짐) — G2 잔여로 수정 ② 다른 두 계정의 런타임은 아직 옛 이미지(opencode 없음) ③ jazzlife의 Codex는 "not configured" ④ OpenCode 로그인은 `openai`(API 키)이고 Go는 아직 아님.
 - [x] 서버 확인(2026-10-13, `667c7e025e16`: ship 관문 통과 `SHIP_RESULT ok`) — 구현 내용: typecheck·lint·server 572(1 skip)·client 645·build·게이트웨이 30 통과(2026-10-13) — G6-01 로컬 관문(ship.sh와 같음): `npm run typecheck`, `npm run lint`, `npm test`(server), `npm run test:client`, `npm run build`, 게이트웨이와 runtime-manager `npm test`

@@ -229,7 +229,7 @@ router.post('/tools/:toolName', async (req, res) => {
       case 'remote_agent_result': {
         const id = Number(input.remoteRunId);
         if (!Number.isInteger(id) || id <= 0) throw new Error('remoteRunId (from remote_agent) is required.');
-        const agent = input.agent === 'claude' || input.agent === 'codex' || input.agent === 'gemini' ? input.agent : undefined;
+        const agent = input.agent === 'claude' || input.agent === 'codex' || input.agent === 'gemini' || input.agent === 'opencode' ? input.agent : undefined;
         result = await aidevToolsService.remoteAgentResult(id, typeof input.waitSec === 'number' ? input.waitSec : 600, agent);
         break;
       }

@@ -1,13 +1,13 @@
 /**
- * remote_agent (F-09d): hand a task to an agent CLI installed on the user's PC — Claude Code, Codex or Gemini
- * CLI — when the job needs what only that PC has (its IDE/SDK/debuggers, a simulator, emulator, attached
+ * remote_agent (F-09d): hand a task to an agent CLI installed on the user's PC — Claude Code, Codex, Gemini CLI
+ * or OpenCode — when the job needs what only that PC has (its IDE/SDK/debuggers, a simulator, emulator, attached
  * device or board, a VPN) and the platform's own tools (remote_exec / remote_debug_* / remote_console_*) are
  * not enough. The CLI runs headless in the target folder under the user's own login on that PC, through the
  * runner's exec stream (the task goes in on stdin, so no shell quoting on any OS) and the approval gate: a
  * full-permission run is always asked. Its JSON event stream is parsed into the result, the steps it took
  * and the session id to continue it.
  */
-export const LOCAL_AGENTS = ['claude', 'codex', 'gemini'] as const;
+export const LOCAL_AGENTS = ['claude', 'codex', 'gemini', 'opencode'] as const;
 export type LocalAgent = (typeof LOCAL_AGENTS)[number];
 export type LocalAgentMode = 'full' | 'readonly';
 
@@ -39,6 +39,10 @@ export function localAgentCommand(agent: LocalAgent, mode: LocalAgentMode, opts:
       if (opts.resume) throw new Error('gemini: 이전 세션 이어가기(resume)는 지원하지 않습니다 — 새 작업으로 보내세요');
       // -p = headless, appended to the task on stdin; --skip-trust: an untrusted folder would drop yolo back to default
       return `gemini -p "Do the task described above." --output-format json --skip-trust --approval-mode ${mode === 'full' ? 'yolo' : 'plan'}${model}`;
+    case 'opencode':
+      // the message is read from stdin (measured on opencode 1.19.0); `--auto` approves every permission, the
+      // built-in plan agent refuses edits and writing commands
+      return `opencode run --format json ${mode === 'full' ? '--auto' : '--agent plan'}${model}${opts.resume ? ` --session ${opts.resume}` : ''}`;
     default:
       throw new Error(`unknown agent ${String(agent)}`);
   }
@@ -69,11 +73,11 @@ export type LocalAgentReport = {
 
 const clip = (s: string, n: number) => (s.length > n ? `${s.slice(0, n)}…` : s);
 function stepOf(name: string, input: Record<string, unknown>) {
-  const detail = input.command ?? input.file_path ?? input.path ?? input.pattern ?? input.url ?? input.description ?? '';
+  const detail = input.command ?? input.file_path ?? input.filePath ?? input.path ?? input.pattern ?? input.url ?? input.description ?? '';
   return clip(`${name}${detail ? `: ${String(detail).replace(/\s+/g, ' ')}` : ''}`, 200);
 }
 
-/** Parses the agent CLI's output (claude stream-json / codex exec --json / gemini json; partial tails allowed). */
+/** Parses the agent CLI's output (claude stream-json / codex exec --json / gemini json / opencode run --format json; partial tails allowed). */
 export function parseLocalAgentOutput(text: string, hint?: LocalAgent): LocalAgentReport {
   const r: LocalAgentReport = { agent: hint ?? 'unknown', sessionId: null, result: null, isError: false, error: null, steps: [], turns: null, costUsd: null, durationMs: null };
   const events: Array<Record<string, unknown>> = [];
@@ -104,6 +108,19 @@ export function parseLocalAgentOutput(text: string, hint?: LocalAgent): LocalAge
         if (typeof e.num_turns === 'number') r.turns = e.num_turns;
         if (typeof e.total_cost_usd === 'number') r.costUsd = e.total_cost_usd;
         if (typeof e.duration_ms === 'number') r.durationMs = e.duration_ms;
+      }
+      continue;
+    }
+    // OpenCode run --format json: {type, sessionID, part} per line (its `error` events must not be read as Codex's)
+    if (typeof e.sessionID === 'string') {
+      r.agent = 'opencode';
+      r.sessionId = e.sessionID;
+      const part = (e.part ?? {}) as Record<string, unknown>;
+      if (type === 'text' && typeof part.text === 'string' && part.text.trim()) lastText = part.text;
+      else if (type === 'tool_use') r.steps.push(stepOf(String(part.tool ?? 'tool'), (((part.state ?? {}) as Record<string, unknown>).input ?? {}) as Record<string, unknown>));
+      else if (type === 'error') {
+        const error = (e.error ?? {}) as { name?: string; data?: { message?: string } };
+        r.isError = true; r.error = String(error.data?.message ?? error.name ?? 'error');
       }
       continue;
     }

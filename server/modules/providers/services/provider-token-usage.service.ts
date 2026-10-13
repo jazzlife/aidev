@@ -7,7 +7,7 @@ import Database from 'better-sqlite3';
 
 import { sessionsDb } from '@/modules/database/index.js';
 import type { AnyRecord } from '@/shared/types.js';
-import { AppError, getOpenCodeDatabasePath } from '@/shared/utils.js';
+import { AppError, getOpenCodeDatabasePath, readOpenCodeLastStepTokens } from '@/shared/utils.js';
 
 type SessionRow = NonNullable<ReturnType<typeof sessionsDb.getSessionById>>;
 
@@ -279,6 +279,13 @@ function claudeEntriesHaveUsage(entries: AnyRecord[]): boolean {
 function readOpenCodeTokenUsage(databasePath: string, providerSessionId: string): TokenUsageResult {
   const database = new Database(databasePath, { readonly: true, fileMustExist: true });
   try {
+    // The conversation's newest step is its context now — the same figure a live run reports. The session's running
+    // totals below add every step up (two steps of one turn read as twice the context) and stay as the fallback.
+    const lastStep = readOpenCodeLastStepTokens(database, providerSessionId);
+    if (lastStep) {
+      return lastStep;
+    }
+
     const columns = database.prepare('PRAGMA table_info(session)').all() as Array<{ name: string }>;
     const columnNames = new Set(columns.map((column) => column.name));
     const requiredColumns = [

@@ -16,6 +16,7 @@ import path from 'node:path';
 import readline from 'node:readline';
 import { fileURLToPath } from 'node:url';
 
+import type { Database as SqliteDatabase } from 'better-sqlite3';
 import spawn from 'cross-spawn';
 import type { NextFunction, Request, RequestHandler, Response } from 'express';
 
@@ -1005,6 +1006,56 @@ export function readJsonRecord(value: unknown): AnyRecord | null {
   } catch {
     return null;
   }
+}
+
+// ---------------------------
+//----------------- OPENCODE TOKEN USAGE ------------
+/**
+ * The size of an OpenCode conversation as one step's `tokens` say it (measured on opencode 1.19.0, the same object in
+ * a `step_finish` event's `part.tokens` and in an assistant row of the `message` table): what the model read in that
+ * step (input + cache read + cache write) and what it wrote (output + reasoning). The newest step is the context now;
+ * OpenCode's `session` totals add every step up and overstate it — two steps of one turn read as twice the context.
+ * null when the object carries no tokens. Used by the OpenCode runtime (live runs) and the token-usage service (a
+ * conversation opened later).
+ */
+export function openCodeContextTokens(tokens: unknown): { used: number; inputTokens: number; outputTokens: number; breakdown: { input: number; output: number } } | null {
+  const record = tokens && typeof tokens === 'object' ? tokens as Record<string, unknown> : null;
+  if (!record) return null;
+  const cache = record.cache && typeof record.cache === 'object' ? record.cache as Record<string, unknown> : {};
+  const count = (value: unknown) => (typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0);
+  const inputTokens = count(record.input) + count(cache.read) + count(cache.write);
+  const outputTokens = count(record.output) + count(record.reasoning);
+  const used = inputTokens + outputTokens;
+  return used > 0 ? { used, inputTokens, outputTokens, breakdown: { input: inputTokens, output: outputTokens } } : null;
+}
+
+/**
+ * The context an OpenCode conversation stands at, read from its store: the newest assistant row of the `message`
+ * table that carries tokens (each step of a turn is one such row). null when the table or such a row is missing — an
+ * older OpenCode database, or a conversation that has not answered yet — and the caller falls back to the session
+ * totals. `database` is an open handle on opencode.db. Used by the OpenCode runtime's
+ * end-of-run fallback and the token-usage service.
+ */
+export function readOpenCodeLastStepTokens(
+  database: SqliteDatabase,
+  providerSessionId: string,
+): ReturnType<typeof openCodeContextTokens> {
+  let rows: unknown[] = [];
+  try {
+    rows = database.prepare('SELECT data FROM message WHERE session_id = ? ORDER BY time_created DESC LIMIT 30').all(providerSessionId);
+  } catch {
+    return null;   // no such table in this OpenCode version
+  }
+  for (const row of rows) {
+    try {
+      const data = JSON.parse(String((row as { data?: unknown }).data ?? '')) as { role?: unknown; tokens?: unknown };
+      const context = data.role === 'assistant' ? openCodeContextTokens(data.tokens) : null;
+      if (context) return context;
+    } catch {
+      // a row this reader does not understand: the next one
+    }
+  }
+  return null;
 }
 
 // ---------------------------

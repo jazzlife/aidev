@@ -153,11 +153,32 @@ test('OpenCode token usage resolves its provider-native id from the session row'
       getOpenCodeDatabasePath: () => databasePath,
     });
 
+    // no message table (an older OpenCode database): the session's running totals
     assert.deepEqual(await service.getSessionTokenUsage('app-session'), {
       used: 29,
       inputTokens: 17,
       outputTokens: 7,
       breakdown: { input: 17, output: 7 },
+    });
+
+    // opencode 1.19.0: each step is an assistant row with its own tokens — the newest one is the context now, not the
+    // totals (measured: a two-step turn of 63,153 and 63,189 tokens had session totals of 126,342)
+    const withMessages = new Database(databasePath);
+    try {
+      withMessages.exec('CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL, data TEXT NOT NULL)');
+      const insert = withMessages.prepare('INSERT INTO message (id, session_id, time_created, time_updated, data) VALUES (?, ?, ?, ?, ?)');
+      insert.run('m1', 'provider-session', 1, 1, JSON.stringify({ role: 'user' }));
+      insert.run('m2', 'provider-session', 2, 2, JSON.stringify({ role: 'assistant', finish: 'tool-calls', tokens: { total: 63153, input: 63095, output: 24, reasoning: 34, cache: { write: 0, read: 0 } } }));
+      insert.run('m3', 'provider-session', 3, 3, JSON.stringify({ role: 'assistant', finish: 'stop', tokens: { total: 63189, input: 7011, output: 2, reasoning: 16, cache: { write: 0, read: 56160 } } }));
+      insert.run('m4', 'another-session', 4, 4, JSON.stringify({ role: 'assistant', tokens: { input: 1, output: 1 } }));
+    } finally {
+      withMessages.close();
+    }
+    assert.deepEqual(await service.getSessionTokenUsage('app-session'), {
+      used: 63189,
+      inputTokens: 63171,
+      outputTokens: 18,
+      breakdown: { input: 63171, output: 18 },
     });
   } finally {
     await rm(tempDirectory, { recursive: true, force: true });

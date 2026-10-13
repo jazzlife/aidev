@@ -31,6 +31,7 @@ export { useClaudeLoginFlow } from '@/modules/aidev-router/hooks/useClaudeLoginF
 export type { ClaudeLoginStage } from '@/modules/aidev-router/hooks/useClaudeLoginFlow';
 export { ClaudeLoginPanel, ClaudeLoginDialog } from '@/modules/aidev-router/ClaudeLoginPanel';
 export { OpenCodeLoginPanel } from '@/modules/aidev-router/OpenCodeLoginPanel';
+export { useOpenCodeLogin, OPENCODE_KEY_PROVIDERS, OPENCODE_OTHER_PROVIDER, openCodeProviderLabel } from '@/modules/aidev-router/hooks/useOpenCodeLogin';
 // E-03: follow-up for a failed run (retry / stronger model / engine handoff).
 export { useEscalation } from '@/modules/aidev-router/hooks/useEscalation';
 export { EscalationCard } from '@/modules/aidev-router/EscalationCard';

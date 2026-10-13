@@ -335,6 +335,8 @@ test('parseOpenCodeCliModels reads `opencode models --verbose` (opencode 1.19.0)
     block({ id: 'text-embedding-3-small', name: 'text-embedding-3-small', capabilities: { toolcall: false, output: { text: false } }, variants: {} }),
     'openai/gpt-image-2',
     block({ id: 'gpt-image-2', name: 'gpt-image-2', capabilities: { toolcall: true, output: { text: false, image: true } }, variants: {} }),
+    'openai/gpt-realtime-2.1',
+    block({ id: 'gpt-realtime-2.1', name: 'gpt-realtime-2.1', capabilities: { toolcall: true, output: { text: true, audio: true } }, variants: { low: {} } }),
     'opencode/space-bunny-free',
     '{ not json',
     '',
@@ -343,6 +345,7 @@ test('parseOpenCodeCliModels reads `opencode models --verbose` (opencode 1.19.0)
     { id: 'openai/gpt-5.6-sol', name: 'GPT-5.6 Sol', efforts: ['none', 'low', 'high'], runsAgentTurns: true },
     { id: 'openai/text-embedding-3-small', name: 'text-embedding-3-small', efforts: [], runsAgentTurns: false },
     { id: 'openai/gpt-image-2', name: 'gpt-image-2', efforts: [], runsAgentTurns: false },
+    { id: 'openai/gpt-realtime-2.1', name: 'gpt-realtime-2.1', efforts: ['low'], runsAgentTurns: false },
     { id: 'opencode/space-bunny-free', name: null, efforts: [], runsAgentTurns: true },
   ]);
   // the plain listing (ids only) still reads: an older CLI without --verbose detail

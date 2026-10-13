@@ -11,7 +11,7 @@ import {
 import { buildOpenCodeAidevConfig } from '@/modules/aidev-tools/index.js';
 import { notifyRunFailed, notifyRunStopped } from '@/modules/notifications/index.js';
 import { providerUsageLimitsService } from '@/modules/providers/services/provider-usage-limits.service.js';
-import { createCompleteMessage, createNormalizedMessage, describeOpenCodeError, flattenPromptForWindowsShell, getOpenCodeDatabasePath, noteOpenCodeRunError, stripAnsiSequences } from '@/shared/utils.js';
+import { createCompleteMessage, createNormalizedMessage, describeOpenCodeError, flattenPromptForWindowsShell, getOpenCodeDatabasePath, noteOpenCodeRunError, openCodeContextTokens, readOpenCodeLastStepTokens, stripAnsiSequences } from '@/shared/utils.js';
 
 // cross-spawn resolves .cmd shims/PATHEXT on Windows and delegates to
 // child_process.spawn everywhere else.
@@ -71,18 +71,7 @@ function readOpenCodeSessionId(event) {
  * session table's running totals, which add every step up and overstate the context. Exported for tests only.
  */
 export function readOpenCodeStepTokens(event) {
-  const tokens = event?.type === 'step_finish' ? event?.part?.tokens : null;
-  if (!tokens || typeof tokens !== 'object') {
-    return null;
-  }
-  const cache = tokens.cache && typeof tokens.cache === 'object' ? tokens.cache : {};
-  const inputTokens = Number(tokens.input || 0) + Number(cache.read || 0) + Number(cache.write || 0);
-  const outputTokens = Number(tokens.output || 0) + Number(tokens.reasoning || 0);
-  const used = inputTokens + outputTokens;
-  if (used <= 0) {
-    return null;
-  }
-  return { used, inputTokens, outputTokens, breakdown: { input: inputTokens, output: outputTokens } };
+  return event?.type === 'step_finish' ? openCodeContextTokens(event?.part?.tokens) : null;
 }
 
 function readOpenCodeTokenUsage(sessionId) {
@@ -94,6 +83,11 @@ function readOpenCodeTokenUsage(sessionId) {
   let db = null;
   try {
     db = new Database(dbPath, { readonly: true, fileMustExist: true });
+    // the newest step the conversation recorded; the session's running totals only when there is none
+    const lastStep = readOpenCodeLastStepTokens(db, sessionId);
+    if (lastStep) {
+      return lastStep;
+    }
     const columns = db.prepare('PRAGMA table_info(session)').all();
     const columnNames = new Set(columns.map((column) => column.name));
     const requiredColumns = ['tokens_input', 'tokens_output', 'tokens_reasoning', 'tokens_cache_read', 'tokens_cache_write'];

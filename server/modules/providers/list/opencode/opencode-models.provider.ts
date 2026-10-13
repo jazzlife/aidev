@@ -437,6 +437,12 @@ const parseOpenCodeSessionModelValue = (rawModel: unknown): string | null => {
 export type OpenCodeCliModel = { id: string; name: string | null; efforts: string[]; runsAgentTurns: boolean };
 
 /**
+ * Model families that answer no agent turn even where OpenCode's metadata says they take tools and write text
+ * (`openai/gpt-realtime-2.1` does): speech, transcription, embeddings, moderation.
+ */
+const NON_CHAT_MODEL_ID = /(^|[-/.])(realtime|audio|tts|whisper|transcribe|embedding|moderation)([-/.]|$)/i;
+
+/**
  * Reads `opencode models --verbose`: an id line at column 0, then that model's JSON (indented, so its lines never look
  * like an id). A model whose JSON cannot be read is kept by its id alone — the list still decides what can run.
  * Exported for the test.
@@ -459,7 +465,7 @@ export const parseOpenCodeCliModels = (output: string): OpenCodeCliModel[] => {
       id,
       name: readOptionalString(detail?.name) ?? null,
       efforts: Object.keys(readObjectRecord(detail?.variants) ?? {}),
-      runsAgentTurns: capabilities?.toolcall !== false && output_?.text !== false,
+      runsAgentTurns: capabilities?.toolcall !== false && output_?.text !== false && !NON_CHAT_MODEL_ID.test(id),
     });
   }
   return models;
