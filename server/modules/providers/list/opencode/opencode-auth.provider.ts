@@ -6,7 +6,7 @@ import spawn from 'cross-spawn';
 
 import type { IProviderAuth } from '@/shared/interfaces.js';
 import type { ProviderAuthStatus } from '@/shared/types.js';
-import { readObjectRecord, readOptionalString } from '@/shared/utils.js';
+import { clearOpenCodeAuthFailure, currentOpenCodeAuthFailure, readObjectRecord, readOptionalString } from '@/shared/utils.js';
 
 type OpenCodeCredentialsStatus = {
   authenticated: boolean;
@@ -42,6 +42,12 @@ export class OpenCodeProviderAuth implements IProviderAuth {
   async getStatus(): Promise<ProviderAuthStatus> {
     const installed = this.checkInstalled();
     const credentials = await this.checkCredentials();
+    // a run the provider refused for the sign-in itself (a rejected key, an expired login): the stored credentials are
+    // there but do not work, so the provider is not usable until a new sign-in rewrites the auth store
+    const failure = credentials.authenticated ? currentOpenCodeAuthFailure() : null;
+    if (failure) {
+      return { installed, provider: 'opencode', authenticated: false, email: credentials.email, method: credentials.method, error: `sign-in rejected: ${failure.message}` };
+    }
 
     return {
       installed,
@@ -59,6 +65,7 @@ export class OpenCodeProviderAuth implements IProviderAuth {
    */
   async logout(): Promise<void> {
     await rm(path.join(os.homedir(), '.local', 'share', 'opencode', 'auth.json'), { force: true });
+    clearOpenCodeAuthFailure();
   }
 
   /**

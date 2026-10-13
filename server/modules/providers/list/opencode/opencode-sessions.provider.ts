@@ -7,6 +7,7 @@ import type { IProviderSessions } from '@/shared/interfaces.js';
 import type { AnyRecord, FetchHistoryOptions, FetchHistoryResult, NormalizedMessage } from '@/shared/types.js';
 import {
   createNormalizedMessage,
+  describeOpenCodeError,
   generateMessageId,
   getOpenCodeDatabasePath,
   normalizeProviderTimestamp,
@@ -201,6 +202,11 @@ const aggregateOpenCodeSessionTokenUsage = (
 export class OpenCodeSessionsProvider implements IProviderSessions {
   /**
    * Normalizes live `opencode run --format json` events into frontend messages.
+   *
+   * The CLI wraps each event's payload in `part` (measured on 1.19.0: `{type, timestamp, sessionID, part}` with the
+   * text in `part.text`, a tool call in `part.tool` / `part.callID` / `part.state.{status, input, output | error}`),
+   * and reports a failure as a top-level `error` object. Older builds sent the same fields flat on the event, so
+   * each field is read from `part` first and from the event itself otherwise.
    */
   normalizeMessage(rawMessage: unknown, sessionId: string | null): NormalizedMessage[] {
     const raw = readObjectRecord(rawMessage);
@@ -208,10 +214,14 @@ export class OpenCodeSessionsProvider implements IProviderSessions {
       return [];
     }
 
+    const part = readObjectRecord(raw.part);
+    const source = part ?? raw;
     const type = readOptionalString(raw.type) ?? readOptionalString(raw.event);
     const eventSessionId = readOptionalString(raw.sessionID) ?? readOptionalString(raw.sessionId) ?? sessionId;
     const timestamp = normalizeProviderTimestamp(raw.time ?? raw.timestamp);
-    const baseId = readOptionalString(raw.id)
+    const baseId = readOptionalString(part?.id)
+      ?? readOptionalString(raw.id)
+      ?? readOptionalString(part?.messageID)
       ?? readOptionalString(raw.messageID)
       ?? generateMessageId('opencode');
 
@@ -222,7 +232,7 @@ export class OpenCodeSessionsProvider implements IProviderSessions {
         return [];
       }
 
-      const content = extractText(raw.text ?? raw.delta ?? raw.message);
+      const content = extractText(source.text ?? source.delta ?? source.message);
       if (!content.trim()) {
         return [];
       }
@@ -238,7 +248,7 @@ export class OpenCodeSessionsProvider implements IProviderSessions {
     }
 
     if (type === 'reasoning') {
-      const content = extractText(raw.text ?? raw.delta ?? raw.message);
+      const content = extractText(source.text ?? source.delta ?? source.message);
       if (!content.trim()) {
         return [];
       }
@@ -254,8 +264,10 @@ export class OpenCodeSessionsProvider implements IProviderSessions {
     }
 
     if (type === 'tool_use') {
-      const toolName = readOptionalString(raw.tool) ?? readOptionalString(raw.name) ?? 'Tool';
-      const toolId = readOptionalString(raw.callID) ?? readOptionalString(raw.toolCallId) ?? baseId;
+      // a finished call carries its result in `state`; a failed one has status 'error' and the reason in `state.error`
+      const state = readObjectRecord(source.state);
+      const toolName = readOptionalString(source.tool) ?? readOptionalString(source.name) ?? 'Tool';
+      const toolId = readOptionalString(source.callID) ?? readOptionalString(source.toolCallId) ?? baseId;
       const toolMessage = createNormalizedMessage({
         id: baseId,
         sessionId: eventSessionId,
@@ -263,14 +275,16 @@ export class OpenCodeSessionsProvider implements IProviderSessions {
         provider: PROVIDER,
         kind: 'tool_use',
         toolName,
-        toolInput: raw.input ?? raw.arguments ?? {},
+        toolInput: state?.input ?? source.input ?? source.arguments ?? {},
         toolId,
       });
 
-      if (raw.output !== undefined || raw.error !== undefined) {
+      const output = state?.output ?? source.output;
+      const failure = state?.error ?? source.error;
+      if (output !== undefined || failure !== undefined) {
         toolMessage.toolResult = {
-          content: formatToolContent(raw.output ?? raw.error),
-          isError: raw.error !== undefined,
+          content: formatToolContent(output ?? failure),
+          isError: failure !== undefined || readOptionalString(state?.status) === 'error',
         };
       }
 
@@ -284,7 +298,7 @@ export class OpenCodeSessionsProvider implements IProviderSessions {
         timestamp,
         provider: PROVIDER,
         kind: 'error',
-        content: readOptionalString(raw.error) ?? readOptionalString(raw.message) ?? 'Unknown OpenCode error',
+        content: describeOpenCodeError(raw.error ?? raw.message).message,
       })];
     }
 

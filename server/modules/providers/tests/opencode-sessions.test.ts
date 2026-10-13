@@ -417,6 +417,26 @@ test('OpenCode sessions provider normalizes quoted live text and skips user echo
   assert.deepEqual(userEcho, []);
 });
 
+test('OpenCode sessions provider normalizes the part-wrapped events of opencode 1.19 and its error shapes', () => {
+  const provider = new OpenCodeSessionsProvider();
+  const sessionID = 'ses_1';
+  const text = provider.normalizeMessage({ type: 'text', timestamp: 1791870916951, sessionID, part: { id: 'prt_3', messageID: 'msg_1', sessionID, type: 'text', text: 'OK' } }, null);
+  assert.deepEqual([text[0]?.kind, text[0]?.content, text[0]?.sessionId, text[0]?.id], ['stream_delta', 'OK', sessionID, 'prt_3']);
+  const tool = provider.normalizeMessage({ type: 'tool_use', timestamp: 1, sessionID, part: { type: 'tool', tool: 'aidev-tools_remote_exec', callID: 'call_9', state: { status: 'completed', input: { cmd: 'npm test' }, output: 'ok' }, id: 'prt_5' } }, null);
+  assert.deepEqual([tool[0]?.kind, tool[0]?.toolName, tool[0]?.toolId, tool[0]?.toolInput, tool[0]?.toolResult], ['tool_use', 'aidev-tools_remote_exec', 'call_9', { cmd: 'npm test' }, { content: 'ok', isError: false }]);
+  // a failed call: status error with the reason in state.error (the 60 s MCP timeout looked like this)
+  const failed = provider.normalizeMessage({ type: 'tool_use', timestamp: 1, sessionID, part: { type: 'tool', tool: 'aidev-tools_remote_exec', callID: 'call_10', state: { status: 'error', input: {}, error: 'MCP error -32001: Request timed out' } } }, null);
+  assert.deepEqual(failed[0]?.toolResult, { content: 'MCP error -32001: Request timed out', isError: true });
+  assert.equal(provider.normalizeMessage({ type: 'step_finish', timestamp: 1, sessionID, part: { id: 'prt_6', reason: 'stop', type: 'step-finish', tokens: { total: 10 } } }, null)[0]?.kind, 'stream_end');
+  assert.deepEqual(provider.normalizeMessage({ type: 'step_start', timestamp: 1, sessionID, part: { id: 'prt_0', type: 'step-start' } }, null), []);
+  // errors: an API error with its status, an unknown one, and the bare tag
+  const error = (value: unknown) => provider.normalizeMessage({ type: 'error', timestamp: 1, sessionID, error: value }, null)[0];
+  assert.equal(error({ name: 'APIError', data: { message: 'Upstream request failed: Invalid credential', statusCode: 401 } })?.content, 'Upstream request failed: Invalid credential (HTTP 401)');
+  assert.equal(error({ name: 'UnknownError', data: { message: 'Unexpected server error. Check server logs for details.', ref: 'err_1' } })?.content, 'Unexpected server error. Check server logs for details.');
+  assert.equal(error({ _tag: 'BadRequest' })?.content, 'BadRequest');
+  assert.equal(error('plain text')?.kind, 'error');
+});
+
 test('OpenCode sessions provider reads sqlite history and token usage', { concurrency: false }, async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'opencode-session-history-'));
   const workspacePath = path.join(tempRoot, 'workspace');

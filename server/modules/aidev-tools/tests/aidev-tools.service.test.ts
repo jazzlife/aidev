@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { composeAgentInstructions, sanitizeAidevOptions } from '@/modules/aidev-tools/aidev-tools.service.js';
+import { buildOpenCodeAidevConfig, composeAgentInstructions, sanitizeAidevOptions } from '@/modules/aidev-tools/aidev-tools.service.js';
 
 const validTurn = {
   runId: 12,
@@ -69,4 +69,25 @@ test('composeAgentInstructions includes prompt, lessons, knowledge, target and t
   assert.match(text, /원격 실행 대상[\s\S]*mac-studio[\s\S]*요청된 원격 작업: test/);
   assert.match(text, /대상 기기: adb serial `R3CN11`[\s\S]*adb -s R3CN11/);
   assert.match(text, /aidev_decide/);
+});
+
+test('buildOpenCodeAidevConfig: the routed agent as an OpenCode agent, its MCP servers in OpenCode\'s shape', () => {
+  const { config, agent } = buildOpenCodeAidevConfig({ ...validTurn, engine: 'opencode' });
+  assert.equal(agent, 'aidev-frontend-react');
+  const entry = (config?.agent as Record<string, Record<string, unknown>>)['aidev-frontend-react'];
+  assert.deepEqual([entry.mode, entry.steps], ['primary', 20]);
+  assert.match(String(entry.prompt), /You are a React 19 expert/);
+  assert.match(String(entry.prompt), /check pass tags/, 'lessons ride in the prompt');
+  const mcp = config?.mcp as Record<string, Record<string, unknown>>;
+  assert.deepEqual(mcp['my-docs'], { type: 'local', command: ['npx', 'docs-mcp'], environment: { API_KEY: 'x' }, enabled: true });
+  assert.deepEqual(mcp['remote-docs'], { type: 'remote', url: 'https://example.com/mcp', enabled: true });
+  // outside the platform (AIDEV_RUNTIME unset in tests) the aidev-tools server is not added
+  assert.equal(mcp['aidev-tools'], undefined);
+  // plan mode keeps OpenCode's plan agent: no custom agent, the agent's MCP servers still come
+  const plan = buildOpenCodeAidevConfig({ ...validTurn, engine: 'opencode' }, { planMode: true });
+  assert.equal(plan.agent, null); assert.equal(plan.config?.agent, undefined); assert.ok((plan.config?.mcp as Record<string, unknown>)['my-docs']);
+  // nothing routed and no platform: nothing to inject
+  assert.deepEqual(buildOpenCodeAidevConfig(undefined), { config: null, agent: null });
+  // the engine survives sanitising now
+  assert.equal(sanitizeAidevOptions({ ...validTurn, engine: 'opencode' })?.engine, 'opencode');
 });

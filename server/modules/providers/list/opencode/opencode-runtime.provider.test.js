@@ -6,9 +6,16 @@ import test from 'node:test';
 
 import {
   opencodeRuntime,
+  readOpenCodeStepTokens,
   resolveOpenCodePermissionOptions,
 } from './opencode-runtime.provider.js';
 import { OpenCodeSessionsProvider } from './opencode-sessions.provider.js';
+
+// The runtime records usage-limit refusals and reads OpenCode's session database under the home directory: every
+// case in this file runs against a throwaway one, so nothing lands in (or is read from) the developer's own home.
+const testHome = await mkdtemp(path.join(os.tmpdir(), 'opencode-runtime-home-'));
+os.homedir = () => testHome;
+test.after(() => rm(testHome, { recursive: true, force: true }));
 
 const sessionsProvider = new OpenCodeSessionsProvider();
 const runtimeContext = {
@@ -30,13 +37,24 @@ if (capturePath) {
   require('node:fs').writeFileSync(capturePath, JSON.stringify({
     args: process.argv.slice(2),
     permissionEnv: process.env.OPENCODE_PERMISSION ?? null,
+    configContent: process.env.OPENCODE_CONFIG_CONTENT ?? null,
   }));
 }
 
-const events = [
-  { type: 'text', sessionID: 'open-live-1', text: 'assistant response' },
-  { type: 'step_finish', sessionID: 'open-live-1' },
+// the event shapes of opencode 1.19.0 (\`run --format json\`): the payload is wrapped in \`part\`, a failure is a
+// top-level \`error\` object and the process exits 1
+const sessionID = 'open-live-1';
+const events = process.env.OPENCODE_FAKE_SCENARIO === 'limit' ? [
+  { type: 'error', timestamp: 1, sessionID, error: { name: 'APIError', data: { message: 'You have reached your usage limit for this window.', statusCode: 429, isRetryable: false } } },
+] : process.env.OPENCODE_FAKE_SCENARIO === 'bad-key' ? [
+  { type: 'error', timestamp: 1, sessionID, error: { name: 'APIError', data: { message: 'Upstream request failed: Invalid credential', statusCode: 401, isRetryable: false } } },
+] : [
+  { type: 'step_start', timestamp: 1, sessionID, part: { id: 'prt_1', messageID: 'msg_1', sessionID, type: 'step-start' } },
+  { type: 'tool_use', timestamp: 2, sessionID, part: { type: 'tool', tool: 'read', callID: 'call_1', state: { status: 'completed', input: { filePath: '/work/a.txt' }, output: 'file body' }, id: 'prt_2', sessionID, messageID: 'msg_1' } },
+  { type: 'text', timestamp: 3, sessionID, part: { id: 'prt_3', messageID: 'msg_1', sessionID, type: 'text', text: 'assistant response' } },
+  { type: 'step_finish', timestamp: 4, sessionID, part: { id: 'prt_4', reason: 'stop', messageID: 'msg_1', sessionID, type: 'step-finish', tokens: { total: 7785, input: 103, output: 2, reasoning: 5, cache: { write: 0, read: 7680 } }, cost: 0 } },
 ];
+if (process.env.OPENCODE_FAKE_SCENARIO) process.exitCode = 1;
 
 for (const event of events) {
   console.log(JSON.stringify(event));
@@ -101,6 +119,11 @@ test('spawnOpenCode emits session_created before normalized live messages for ne
     assert.equal(streamEnd?.sessionId, 'open-live-1');
     assert.equal(complete?.sessionId, 'open-live-1');
     assert.equal(messages.some((message) => message.kind === 'error'), false);
+    // a tool call arrives with its input and result (\`part.state\`), and the last step's tokens are the context
+    const tool = messages.find((message) => message.kind === 'tool_use');
+    assert.deepEqual([tool?.toolName, tool?.toolId, tool?.toolInput, tool?.toolResult], ['read', 'call_1', { filePath: '/work/a.txt' }, { content: 'file body', isError: false }]);
+    assert.equal(messages.find((message) => message.text === 'token_budget')?.tokenBudget.used, 7790);
+    assert.equal(complete?.usageLimit, undefined);
 
     const capture = JSON.parse(await readFile(argsCapturePath, 'utf8'));
     const launchedArgs = capture.args;
@@ -258,4 +281,77 @@ test('spawnOpenCode passes permission mode flags and env to the CLI', async () =
 
     await rm(tempRoot, { recursive: true, force: true });
   }
+});
+
+test('readOpenCodeStepTokens reads a step_finish event\'s tokens as the context in use', () => {
+  const event = { type: 'step_finish', part: { tokens: { total: 7785, input: 103, output: 2, reasoning: 5, cache: { write: 10, read: 7680 } } } };
+  assert.deepEqual(readOpenCodeStepTokens(event), { used: 7800, inputTokens: 7793, outputTokens: 7, breakdown: { input: 7793, output: 7 } });
+  assert.equal(readOpenCodeStepTokens({ type: 'text', part: { text: 'x' } }), null);
+  assert.equal(readOpenCodeStepTokens({ type: 'step_finish', part: {} }), null);
+});
+
+/** Runs the fake CLI once with the given options and environment; returns what the client saw and how it was launched. */
+async function runFakeOpenCode(options, env = {}) {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'opencode-cli-aidev-'));
+  const capturePath = path.join(tempRoot, 'capture.json');
+  const pathKey = findEnvKey('PATH');
+  const saved = { [pathKey]: process.env[pathKey], OPENCODE_ARGS_CAPTURE: process.env.OPENCODE_ARGS_CAPTURE, OPENCODE_FAKE_SCENARIO: process.env.OPENCODE_FAKE_SCENARIO };
+  const messages = [];
+  const writer = { userId: null, sessionId: null, send(message) { messages.push(message); }, setSessionId(id) { this.sessionId = id; } };
+  try {
+    await createFakeOpenCodeExecutable(tempRoot);
+    process.env[pathKey] = `${tempRoot}${path.delimiter}${saved[pathKey] || ''}`;
+    process.env.OPENCODE_ARGS_CAPTURE = capturePath;
+    Object.assign(process.env, env);
+    const error = await opencodeRuntime.run('Hi', { cwd: tempRoot, ...options }, writer, runtimeContext).then(() => null, (failure) => failure);
+    return { messages, error, capture: JSON.parse(await readFile(capturePath, 'utf8')) };
+  } finally {
+    for (const [key, value] of Object.entries(saved)) { if (value === undefined) delete process.env[key]; else process.env[key] = value; }
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+}
+
+const aidev = { runId: 12, agent: { name: 'frontend-react', version: 3, description: 'React specialist', prompt: 'You are the React specialist of this platform.', maxTurns: 30 }, lessons: ['Run the type check before reporting.'], engine: 'opencode' };
+
+test('a routed OpenCode run selects the specialist as an agent and carries its instructions in OPENCODE_CONFIG_CONTENT', { skip: process.platform === 'win32' }, async () => {
+  const { capture, error } = await runFakeOpenCode({ aidev, permissionMode: 'acceptEdits' });
+  assert.equal(error, null);
+  assert.equal(capture.args[capture.args.indexOf('--agent') + 1], 'aidev-frontend-react');
+  const config = JSON.parse(capture.configContent);
+  const agent = config.agent['aidev-frontend-react'];
+  assert.equal(agent.mode, 'primary'); assert.equal(agent.steps, 30);
+  assert.match(agent.prompt, /You are the React specialist of this platform\./);
+  assert.match(agent.prompt, /Run the type check before reporting\./, 'lessons are part of the instructions');
+  // acceptEdits still rides in its own variable, next to the aidev config
+  assert.equal(capture.permissionEnv, JSON.stringify({ edit: 'allow' }));
+});
+
+test('plan mode keeps OpenCode\'s read-only plan agent: the specialist is not selected', { skip: process.platform === 'win32' }, async () => {
+  const { capture } = await runFakeOpenCode({ aidev, permissionMode: 'plan' });
+  assert.deepEqual(capture.args.filter((arg, index) => capture.args[index - 1] === '--agent'), ['plan']);
+  assert.equal(capture.configContent, null, 'no platform runtime here and no agent: nothing to inject');
+});
+
+test('an unrouted run is launched as before', { skip: process.platform === 'win32' }, async () => {
+  const { capture } = await runFakeOpenCode({});
+  assert.equal(capture.args.includes('--agent'), false);
+  assert.equal(capture.configContent, null);
+});
+
+test('a usage-limit refusal ends the run with usageLimit on its complete, for the apps to hand the work on', { skip: process.platform === 'win32' }, async () => {
+  const { messages, error } = await runFakeOpenCode({}, { OPENCODE_FAKE_SCENARIO: 'limit' });
+  assert.ok(error, 'the run rejects');
+  const complete = messages.find((message) => message.kind === 'complete');
+  assert.deepEqual([complete.exitCode, complete.usageLimit], [1, { type: 'unknown', resetsAt: null }]);
+  assert.match(messages.find((message) => message.kind === 'error').content, /usage limit.*HTTP 429/);
+});
+
+test('a rejected key is an ordinary failure for the run and marks the sign-in as not working', { skip: process.platform === 'win32' }, async () => {
+  const { messages } = await runFakeOpenCode({}, { OPENCODE_FAKE_SCENARIO: 'bad-key' });
+  const complete = messages.find((message) => message.kind === 'complete');
+  assert.equal(complete.usageLimit, undefined);
+  assert.match(messages.find((message) => message.kind === 'error').content, /Invalid credential \(HTTP 401\)/);
+  const { currentOpenCodeAuthFailure, clearOpenCodeAuthFailure } = await import('@/shared/utils.js');
+  assert.match(currentOpenCodeAuthFailure()?.message ?? '', /Invalid credential/);
+  clearOpenCodeAuthFailure();
 });

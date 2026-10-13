@@ -117,7 +117,8 @@ function verifierSystemPrompt(agent: VerifyInput['verifierAgent']): string {
 }
 
 const FILE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'apply_patch', 'edit', 'write']);
-const COMMAND_TOOLS = new Set(['Bash', 'shell', 'exec_command', 'local_shell']);
+// Claude (Bash), Codex (shell, exec_command, local_shell) and OpenCode (bash; its file tools take `filePath`)
+const COMMAND_TOOLS = new Set(['Bash', 'shell', 'exec_command', 'local_shell', 'bash']);
 
 function clip(value: unknown, max: number): string {
   const text = typeof value === 'string' ? value : JSON.stringify(value ?? '');
@@ -148,7 +149,7 @@ export function buildVerificationBrief(messages: HistoryMessage[], input: { comm
     if (message.kind === 'text' && message.role === 'assistant' && message.content) reports.push(message.content);
     else if (message.kind === 'tool_use' && message.toolName) {
       const args = inputOf(message.toolInput);
-      if (FILE_TOOLS.has(message.toolName) && typeof (args.file_path ?? args.path) === 'string') files.add(String(args.file_path ?? args.path));
+      if (FILE_TOOLS.has(message.toolName) && typeof (args.file_path ?? args.filePath ?? args.path) === 'string') files.add(String(args.file_path ?? args.filePath ?? args.path));
       if (COMMAND_TOOLS.has(message.toolName) && (typeof args.command === 'string' || Array.isArray(args.command))) commands.push(clip(Array.isArray(args.command) ? args.command.join(' ') : args.command, 200));
     } else if ((message.kind === 'tool_result' && message.toolResult?.isError) || message.kind === 'error') {
       errors.push(clip(message.kind === 'error' ? (message.content ?? message.text) : message.toolResult?.content, 300));

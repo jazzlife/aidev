@@ -290,6 +290,19 @@ export type ProviderUsageLimit = {
   resetsAt: number | null;
 };
 
+/**
+ * An `opencode run --format json` error event, read into what the runtime acts on (measured on opencode 1.19.0:
+ * `{name:"APIError", data:{message, statusCode, …}}`, `{name:"UnknownError", data:{message, ref}}`, `{_tag:"BadRequest"}`).
+ * `kind` says whether the provider refused on a usage limit (hand the work on, come back at the reset), the sign-in
+ * stopped working (the provider is unusable until a new sign-in), or anything else.
+ */
+export type OpenCodeRunError = {
+  /** One line for the chat: the provider's message, with the HTTP status when it came with one. */
+  message: string;
+  statusCode: number | null;
+  kind: 'usage_limit' | 'auth' | 'other';
+};
+
 export type NormalizedMessage = {
   id: string;
   /**

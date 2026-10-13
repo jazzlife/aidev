@@ -536,10 +536,11 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
   - 옛 cursor 세션이 열린다.
 
 ### G2. OpenCode 런타임 동등화 (릴리스 ②)
-- [ ] G2-01 **이벤트 정규화**: `opencode-sessions.provider.ts:205-302`를 G0-03 형식(`part` 기반) 기준으로 고친다.
+로컬 e2e(2026-10-13, 로컬 플랫폼 + 실제 opencode 1.19.0 + 무료 모델 `opencode/big-pickle`, 웹소켓 `chat.send`): ① 일반 채팅(응답·토큰) ② 주입된 aidev-tools의 `nadovibe_settings` 호출(`aidev-tools_nadovibe_settings`, 게이트웨이 실제 응답) ③ 전문 agent 지시문 적용 + 기본 도구(read) + 실패한 도구 호출의 오류 표시 ④ `--session`으로 이어가기 — 모두 통과. 런타임 로그 `[OpenCode] aidev routing: agent=aidev-frontend-react mcp=aidev-tools …`.
+- [~] 구현·로컬검증(`part` 기반으로 읽고 예전 평평한 형태도 유지, 오류는 `describeOpenCodeError`), 서버 확인 대기 — G2-01 **이벤트 정규화**: `opencode-sessions.provider.ts:205-302`를 G0-03 형식(`part` 기반) 기준으로 고친다.
   - text, reasoning, tool(입력·출력·상태), step, error(`{name, data:{message, statusCode}}`)를 모두 처리한다. 지금은 error가 "Unknown OpenCode error"로 표시된다.
   - 픽스처 교체: `opencode-runtime.provider.test.js:36-39`, `server/modules/providers/tests/opencode-sessions.test.ts:221-505`
-- [ ] G2-02 **aidev 어댑터** `buildOpenCodeAidevConfig(options.aidev)`(§2.7)
+- [~] 구현·로컬검증(`buildOpenCodeAidevConfig`(aidev-tools MCP 45분 타임아웃·agent MCP·`aidev-<name>` agent·`steps`) → `OPENCODE_CONFIG_CONTENT`·`--agent`. plan 모드는 OpenCode의 plan agent 유지(전문 agent 지시문 미적용), 도구 제한은 미적용 — 둘 다 유료 로그인 후 확인), 서버 확인 대기 — G2-02 **aidev 어댑터** `buildOpenCodeAidevConfig(options.aidev)`(§2.7)
   - `opencode-runtime.provider.js:250-298`의 args와 env에 `--agent`, `OPENCODE_CONFIG_CONTENT`를 넣는다.
   - aidev-tools MCP는 aidev가 null이어도 주입한다(`aidevToolsService.getMcpServerConfig`, `aidev-tools.service.ts:375-389`).
   - agent 전용 mcpServers를 병합한다(url은 remote, command는 local).
@@ -549,20 +550,20 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
   - plan 모드와 aidev agent가 함께 오면 permission deny로 표현한다.
   - 로그는 `[OpenCode] aidev routing: agent=… run=…`(Claude `:267`, Codex `:317`와 같은 형식).
 - [ ] G2-03 도구 이름 변환 함수(Claude→OpenCode)를 `aidev-tools.service.ts`에 두고 `index.ts`로 export한다(backend 표준 확인).
-- [ ] G2-04 `sanitizeAidevOptions` 엔진 화이트리스트(`aidev-tools.service.ts:323`)와 `AidevTurnOptions.engine`(`:257`)에 opencode를 추가한다. 테스트 `aidev-tools/tests/aidev-tools.service.test.ts:21-62`
-- [ ] G2-05 **사용량 한도**: 감지 규칙(G0-06)을 넣는다.
+- [~] 구현·로컬검증(엔진 화이트리스트에 opencode), 서버 확인 대기 — G2-04 `sanitizeAidevOptions` 엔진 화이트리스트(`aidev-tools.service.ts:323`)와 `AidevTurnOptions.engine`(`:257`)에 opencode를 추가한다. 테스트 `aidev-tools/tests/aidev-tools.service.test.ts:21-62`
+- [~] 구현·로컬검증(오류 이벤트가 한도(429·문구)면 complete에 `usageLimit{type:unknown}`, `recordBlock`/`recordClear`, `USAGE_ENGINES`에 opencode. 실제 한도 문구는 발생 시 보강), 서버 확인 대기 — G2-05 **사용량 한도**: 감지 규칙(G0-06)을 넣는다.
   - error 이벤트와 stderr에서 감지하면 `recordBlock('opencode')`, 성공 턴이면 `recordClear`, complete에 `usageLimit`을 싣는다(`opencode-runtime.provider.js:353`, `:396`).
   - `USAGE_ENGINES`에 opencode를 넣는다(`provider-usage-limits.service.ts:32`).
   - 테스트: `codex-usage-limit.test.ts`처럼 `opencode-usage-limit.test.ts`를 새로 만든다.
   - 완료 조건: OpenCode가 한도에 걸리면 프런트 E-03 인계 흐름(다음 공급자로)이 동작한다.
-- [ ] G2-06 **인증 실패**: 401이나 로그인 만료를 감지하면 `OpenCodeProviderAuth.getStatus`(`opencode-auth.provider.ts:42-54`)가 미인증을 돌려준다(Codex `currentCodexAuthFailure` 방식). 그러면 게이트웨이 가용성에서 빠진다.
+- [~] 구현·로컬검증(401·자격 문구 → `noteOpenCodeRunError` → auth status가 "sign-in rejected", 새 로그인(auth.json 갱신)·로그아웃 시 해제), 서버 확인 대기 — G2-06 **인증 실패**: 401이나 로그인 만료를 감지하면 `OpenCodeProviderAuth.getStatus`(`opencode-auth.provider.ts:42-54`)가 미인증을 돌려준다(Codex `currentCodexAuthFailure` 방식). 그러면 게이트웨이 가용성에서 빠진다.
 - [ ] G2-07 **stderr 처리**: 지금은 stderr의 모든 덩어리를 error 프레임으로 보낸다(`:310-325`). 경고와 로그는 거르고 실제 오류만 보낸다(Codex Landlock 경고 숨김과 같은 방식).
-- [ ] G2-08 **토큰 사용량**을 통일한다.
+- [~] 구현·로컬검증(런타임은 마지막 `step_finish`의 `part.tokens`를 컨텍스트로(없으면 DB). REST·기록 경로 통일은 남음), 서버 확인 대기 — G2-08 **토큰 사용량**을 통일한다.
   - 런타임 `readOpenCodeTokenUsage`(`:66-124`), REST(`provider-token-usage.service.ts:279-338`, `:396-406`), 기록(`opencode-sessions.provider.ts:156-199`)의 세 경로를 message.data 합산 기준으로 맞춘다.
   - `total`(모델 컨텍스트)을 추가한다. 테스트 `provider-token-usage.service.test.ts`
-- [ ] G2-09 **중단**: SIGTERM 뒤 close까지 기다린다(Codex `ABORT_SETTLE_TIMEOUT_MS` 10초와 같음, `opencode-runtime.provider.js:405-417`). 끼어들기 직후 같은 세션 재개 경합을 막기 위해서다.
+- [~] 구현·로컬검증(SIGTERM 후 종료까지 대기(10초 뒤 SIGKILL)), 서버 확인 대기 — G2-09 **중단**: SIGTERM 뒤 close까지 기다린다(Codex `ABORT_SETTLE_TIMEOUT_MS` 10초와 같음, `opencode-runtime.provider.js:405-417`). 끼어들기 직후 같은 세션 재개 경합을 막기 위해서다.
 - [ ] G2-10 **이미지**: G0-07이 되면 `-f`로 첨부한다. 안 되면 경로 태그를 유지하고 사유를 기록한다.
-- [ ] G2-11 **브리프 도구 이름**: `handoff.service.ts:9-10`, `run-verifier.service.ts:101-102`의 `FILE_TOOLS/COMMAND_TOOLS`에 opencode 이름(`bash`, `edit`, `write`, `read`…)과 입력 키 `filePath`를 추가한다. 테스트 `handoff.test.ts`
+- [~] 구현·로컬검증(`bash`, `filePath`), 서버 확인 대기 — G2-11 **브리프 도구 이름**: `handoff.service.ts:9-10`, `run-verifier.service.ts:101-102`의 `FILE_TOOLS/COMMAND_TOOLS`에 opencode 이름(`bash`, `edit`, `write`, `read`…)과 입력 키 `filePath`를 추가한다. 테스트 `handoff.test.ts`
 - [ ] G2-12 **부가 턴 실행기** `askOpenCode` (§3.3)
   - 임시 폴더(`/tmp/aidev-side-<id>`), `--format json`, 결과 텍스트 추출, 타임아웃, read-only(plan 권한)를 지원한다.
   - 세션 동기화기(`opencode-session-synchronizer.provider.ts:93-94`)가 임시 폴더 세션을 제외하게 한다.

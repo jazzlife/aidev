@@ -8,8 +8,10 @@ import {
   appendImagesInputTag,
   normalizeAttachmentDescriptors
 } from '@/shared/image-attachments.js';
+import { buildOpenCodeAidevConfig } from '@/modules/aidev-tools/index.js';
 import { notifyRunFailed, notifyRunStopped } from '@/modules/notifications/index.js';
-import { createCompleteMessage, createNormalizedMessage, flattenPromptForWindowsShell, getOpenCodeDatabasePath, stripAnsiSequences } from '@/shared/utils.js';
+import { providerUsageLimitsService } from '@/modules/providers/services/provider-usage-limits.service.js';
+import { createCompleteMessage, createNormalizedMessage, describeOpenCodeError, flattenPromptForWindowsShell, getOpenCodeDatabasePath, noteOpenCodeRunError, stripAnsiSequences } from '@/shared/utils.js';
 
 // cross-spawn resolves .cmd shims/PATHEXT on Windows and delegates to
 // child_process.spawn everywhere else.
@@ -61,6 +63,26 @@ function readOpenCodeSessionId(event) {
   }
 
   return event.sessionID || event.sessionId || null;
+}
+
+/**
+ * The context the run ended on, from its last `step_finish` event (`part.tokens`, measured on opencode 1.19.0): what
+ * the model read (input + cache) and wrote in that step — the size of the conversation now. Preferred over the
+ * session table's running totals, which add every step up and overstate the context. Exported for tests only.
+ */
+export function readOpenCodeStepTokens(event) {
+  const tokens = event?.type === 'step_finish' ? event?.part?.tokens : null;
+  if (!tokens || typeof tokens !== 'object') {
+    return null;
+  }
+  const cache = tokens.cache && typeof tokens.cache === 'object' ? tokens.cache : {};
+  const inputTokens = Number(tokens.input || 0) + Number(cache.read || 0) + Number(cache.write || 0);
+  const outputTokens = Number(tokens.output || 0) + Number(tokens.reasoning || 0);
+  const used = inputTokens + outputTokens;
+  if (used <= 0) {
+    return null;
+  }
+  return { used, inputTokens, outputTokens, breakdown: { input: inputTokens, output: outputTokens } };
 }
 
 function readOpenCodeTokenUsage(sessionId) {
@@ -151,6 +173,9 @@ async function spawnOpenCode(command, options = {}, ws, context) {
     // Unified lifecycle contract: exactly one terminal `complete` per run
     // (close and error handlers can both fire for spawn failures).
     let completeSent = false;
+    // the run's own account of how it ended: a usage-limit refusal (handed on by the apps) and the last step's tokens
+    let usageLimited = false;
+    let stepTokens = null;
 
     const notifyTerminalState = ({ code = null, error = null } = {}) => {
       if (terminalNotificationSent) {
@@ -231,6 +256,13 @@ async function spawnOpenCode(command, options = {}, ws, context) {
 
       try {
         registerSession(readOpenCodeSessionId(response));
+        if (response.type === 'error') {
+          // a refusal on a usage limit ends the run for the apps to hand on; a rejected sign-in marks OpenCode signed out
+          const failure = describeOpenCodeError(response.error ?? response.message);
+          noteOpenCodeRunError(failure);
+          if (failure.kind === 'usage_limit') usageLimited = true;
+        }
+        stepTokens = readOpenCodeStepTokens(response) ?? stepTokens;
         const normalized = context.normalizeMessage(response, capturedSessionId || sessionId || null);
         for (const msg of normalized) {
           ws.send(msg);
@@ -272,6 +304,15 @@ async function spawnOpenCode(command, options = {}, ws, context) {
       }
       const permissionOptions = resolveOpenCodePermissionOptions(permissionMode);
       args.push(...permissionOptions.args);
+      // Nado AI Dev: the platform's tools and the routed specialist for this run (plan mode keeps OpenCode's plan agent)
+      const aidev = buildOpenCodeAidevConfig(options.aidev, { planMode: permissionMode === 'plan' });
+      if (aidev.agent) {
+        args.push('--agent', aidev.agent);
+      }
+      const aidevEnv = aidev.config ? { OPENCODE_CONFIG_CONTENT: JSON.stringify(aidev.config) } : {};
+      if (aidev.config) {
+        console.log(`[OpenCode] aidev routing: agent=${aidev.agent ?? '-'} mcp=${Object.keys(aidev.config.mcp ?? {}).join(',') || '-'} model=${resolvedModel ?? '-'} run=${options.aidev?.runId ?? '-'}`);
+      }
       const hasAttachments =
         normalizeAttachmentDescriptors(images).length > 0
         || normalizeAttachmentDescriptors(files).length > 0;
@@ -290,7 +331,7 @@ async function spawnOpenCode(command, options = {}, ws, context) {
       opencodeProcess = spawnFunction('opencode', args, {
         cwd: workingDir,
         stdio: ['pipe', 'pipe', 'pipe'],
-        env: { ...process.env, ...permissionOptions.env },
+        env: { ...process.env, ...permissionOptions.env, ...aidevEnv },
       });
 
       activeOpenCodeProcesses.set(processKey, opencodeProcess);
@@ -334,8 +375,8 @@ async function spawnOpenCode(command, options = {}, ws, context) {
           stdoutLineBuffer = '';
         }
 
-        // OpenCode's own database is keyed by the provider-native id.
-        const tokenBudget = readOpenCodeTokenUsage(capturedSessionId);
+        // the last step's own token count; the session table (keyed by the provider-native id) when no step reported one
+        const tokenBudget = stepTokens ?? readOpenCodeTokenUsage(capturedSessionId);
         if (tokenBudget) {
           ws.send(createNormalizedMessage({
             kind: 'status',
@@ -350,7 +391,11 @@ async function spawnOpenCode(command, options = {}, ws, context) {
         // already sent the aborted complete on this run's behalf).
         if (!completeSent && !opencodeProcess.aborted) {
           completeSent = true;
-          ws.send(createCompleteMessage({ provider: 'opencode', sessionId: finalSessionId, exitCode: code }));
+          // the drawers' usage picture: a refusal is remembered, a run that went through lifts it. OpenCode reports no
+          // reset time, so the window is 'unknown' (the gateway holds it for five hours)
+          const usageLimit = usageLimited ? { type: 'unknown', resetsAt: null } : null;
+          if (usageLimit) providerUsageLimitsService.recordBlock('opencode', usageLimit); else if (code === 0) providerUsageLimitsService.recordClear('opencode');
+          ws.send(createCompleteMessage({ provider: 'opencode', sessionId: finalSessionId, exitCode: code, usageLimit }));
         }
 
         if (code === 0) {
@@ -402,7 +447,14 @@ async function spawnOpenCode(command, options = {}, ws, context) {
   });
 }
 
-function abortOpenCodeSession(sessionId) {
+/** How long an aborted run may take to exit before it is killed outright (as Codex's ABORT_SETTLE_TIMEOUT_MS). */
+const ABORT_SETTLE_TIMEOUT_MS = 10_000;
+
+/**
+ * Stops the session's run and waits until its process is gone: a send that interrupts a run resumes the same OpenCode
+ * session right after, and a CLI still writing that session would race it. SIGKILL after ten seconds.
+ */
+async function abortOpenCodeSession(sessionId) {
   const process = activeOpenCodeProcesses.get(sessionId);
   if (!process) {
     return false;
@@ -411,8 +463,14 @@ function abortOpenCodeSession(sessionId) {
   // The abort handler sends the terminal complete (aborted: true); flag the
   // process so its close handler does not emit a second one.
   process.aborted = true;
-  process.kill('SIGTERM');
   activeOpenCodeProcesses.delete(sessionId);
+  if (process.exitCode === null && process.signalCode === null) {
+    await new Promise((resolve) => {
+      const timer = setTimeout(() => { try { process.kill('SIGKILL'); } catch { /* already gone */ } resolve(); }, ABORT_SETTLE_TIMEOUT_MS);
+      process.once('close', () => { clearTimeout(timer); resolve(); });
+      process.kill('SIGTERM');
+    });
+  }
   return true;
 }
 

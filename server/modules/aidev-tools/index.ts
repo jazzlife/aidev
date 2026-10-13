@@ -4,7 +4,7 @@
  */
 
 // aidevToolsService: used by the Claude/Codex runtime providers (MCP server config) and the MCP bridge routes.
-export { aidevToolsService, sanitizeAidevOptions, composeAgentInstructions } from './aidev-tools.service.js';
+export { aidevToolsService, sanitizeAidevOptions, composeAgentInstructions, buildOpenCodeAidevConfig } from './aidev-tools.service.js';
 export type { AidevTurnOptions } from './aidev-tools.service.js';
 // aidevToolsMcpRoutes: mounted by server/index.ts at /api/aidev-tools-mcp (local token protected).
 export { default as aidevToolsMcpRoutes } from './aidev-tools-mcp.routes.js';

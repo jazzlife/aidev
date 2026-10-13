@@ -95,8 +95,12 @@ async function ensure(name: string) {
   let current = await lookup('containers', containerName(name));
   if (current) {
     owned(current, name, true);
+    // a rebuilt tools image keeps its name (:latest): compare what the container was made from with what the name
+    // points at now, or a stopped runtime keeps starting on the old tools (2026-10-13: OpenCode was not picked up)
+    // (a failed lookup never blocks a start: the name comparison still applies)
+    const built = await docker('GET', `/images/${encodeURIComponent(image)}/json`, undefined, [200, 404]).catch(() => null);
     const stale = !current.Mounts.some((m: any) => m.Type === 'volume' && m.Name === appVolume && m.Destination === '/srv/app')
-      || current.Config?.Image !== image;
+      || current.Config?.Image !== image || Boolean(built?.Id && current.Image !== built.Id);
     if (stale && !current.State.Running) { await docker('DELETE', `/containers/${containerName(name)}?force=true&v=false`); current = null; }
   }
   if (!current) {

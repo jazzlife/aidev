@@ -254,7 +254,7 @@ export type AidevTurnOptions = {
   };
   lessons: string[];
   knowledgeDigest: string | null;
-  engine: 'claude' | 'codex' | null;
+  engine: 'claude' | 'codex' | 'opencode' | null;
   model: string | null;
   effort: string | null;
   target: { id: number; name: string; platform: string | null; tags: string[]; capabilities: unknown } | null;
@@ -320,7 +320,7 @@ export function sanitizeAidevOptions(raw: unknown): AidevTurnOptions | null {
     },
     lessons: (strings(value.lessons, 20) ?? []).map((lesson) => lesson.slice(0, 2000)),
     knowledgeDigest: clip(value.knowledgeDigest, 32000),
-    engine: value.engine === 'claude' || value.engine === 'codex' ? value.engine : null,
+    engine: value.engine === 'claude' || value.engine === 'codex' || value.engine === 'opencode' ? value.engine : null,
     model: clip(value.model, 80) && MODEL_RE.test(String(value.model)) ? String(value.model) : null,
     effort: clip(value.effort, 20),
     target: target && typeof target.id === 'number' && typeof target.name === 'string'
@@ -357,6 +357,47 @@ export function composeAgentInstructions(aidev: AidevTurnOptions): string {
   parts.push('## 판단 도구\n여러 후보(수정안·파일·접근법·위험도) 중 골라야 하면 추측 대신 `aidev_decide` 도구(kind agent.pick / agent.score / agent.yesno)로 판정한다.');
   parts.push('## 사용자 PC에서 실행\n사용자가 자기 PC·Mac·원격 머신에서 실행·빌드·테스트·확인을 요청하면 이 작업공간의 셸이 아니라 `remote_targets`로 대상을 확인하고 `remote_exec`로 실행한다(허용 폴더 안에서, 결과의 종료 코드·출력을 근거로 판단). 이 작업공간의 프로젝트를 대상에서 돌려야 하면 먼저 `remote_sync`로 복사하고(돌려준 `dest`를 cwd로), 여기서 파일을 고친 뒤에는 다시 `remote_sync` 후 실행한다. 의존성은 복사되지 않으므로 대상에서 설치(npm ci 등)한다. 테스트가 실패하면 원인을 고치고 다시 실행해 통과를 확인한다. 개발 서버처럼 계속 도는 명령은 `background:true` 후 `remote_logs`로 확인하고, 끝나면 `remote_stop`. 웹 앱을 사용자에게 보여줘야 하면 `remote_preview{port}`를 먼저 호출해 `base`를 받고, 개발 서버를 그 base로 실행(Vite: `npm run dev -- --base <base> --port <port>`)한 뒤 `remote_preview`를 다시 호출하면 작업대 미리보기 패널에 열린다(HMR 포함). 돌려준 url을 사용자에게 알려준다. 실행 중 오류·잘못된 값의 원인을 찾을 때는 로그로 추측하기보다 `remote_debug_start`(언어·런타임에 맞는 어댑터: Node js-debug, Python debugpy, C/C++/Rust codelldb·gdb, Apple lldb-dap, .NET netcoredbg·.NET Framework clrdbg, Mono/Unity mono, Go delve, Java/Kotlin jvm, Dart/Flutter, MCU probe-rs·gdb+OpenOCD, attach(pid·주소)로 실행 중인 것·Android JDWP 포함 — 디버그 빌드 먼저)로 의심 줄에 중단점을 두고 멈춘 곳의 locals·`remote_debug_eval`로 값을 확인하며 `remote_debug_step`으로 진행하고, 끝나면 `remote_debug_stop`(사용자도 같은 세션을 디버그 창에서 본다). 맞는 어댑터가 없거나 디버거 고유 명령이 필요하면 `remote_console_start`로 그 PC의 CLI 디버거(gdb·lldb·cdb+SOS·jdb·pdb·dlv·adb shell·openocd 등)를 열어 `remote_console_send`로 한 줄씩 조작하고 `remote_console_stop`으로 끝낸다. 그 PC의 IDE·SDK·시뮬레이터/기기·GUI 디버거가 꼭 필요하거나 그 PC에서 긴 조사(빌드→실행→디버그→수정→재실행)가 필요하면 `remote_agent`로 그 PC에 설치된 agent CLI(Claude Code·Codex·Gemini)에 작업을 맡기고, 돌려준 보고는 직접 재확인한다(`resume`으로 이어서 지시). 데스크탑 앱·에뮬레이터 창처럼 화면을 직접 봐야 확인할 수 있는 것은 `remote_windows`로 창을 찾고 `remote_screenshot{window|query}`로 그 창을 보고 판단하고, 눌러 보거나 입력해야 하면 `remote_input{window, actions}`(스크린샷 픽셀 좌표 + imageWidth/imageHeight)로 클릭·입력한 뒤 다시 `remote_screenshot`으로 결과를 확인한다(그 PC에서 화면 캡처·원격 제어를 허용한 경우). 그 PC에 연결된 휴대폰·TV·시뮬레이터(adb·sdb·iOS 시뮬레이터)의 화면은 `remote_devices`로 기기를 확인하고 `remote_device_shot{serial}`로 본다. 기기 조작은 그 PC에서 `remote_exec`로 adb를 쓴다(SDK 폴더의 adb도 PATH에 있음, 여러 대면 `-s <serial>`): 설치 `adb install -r`, 실행 `adb shell am start -n …`, 로그 `adb logcat -d -t 500`, 입력 `adb shell input tap|swipe|text`, 기기의 파일은 `adb pull` 후 `remote_pull`. Windows PC는 `remote_exec{shell:"powershell"}`로 WinRM처럼 관리·감시한다(서비스·프로세스·이벤트 로그·CIM·레지스트리·성능 카운터, 명령은 .ps1처럼 그대로 씀); 대상의 `admin.elevated`가 true면 관리자 권한으로 실행되고, Linux·macOS는 `admin.sudo`가 "nopasswd"일 때만 sudo가 입력 없이 된다. 큰 로그·빌드 결과·덤프 같은 파일은 출력으로 찍지 말고 `remote_pull{path}`로 이 작업공간에 가져와 분석한다. 사용자에게 보여 줘야 할 것은 NadoVibe 앱을 직접 조작한다: PC에서 프로그램을 띄웠으면 `nadovibe_show{view:"screen", window:"full" 또는 창 id, note:"확인할 점"}`으로 사용자의 화면에 원격 화면(제어 포함)을 열고, 미리보기·디버거·PC 연결·설정·프로젝트도 `nadovibe_show`로 연다(viewers 0이면 사용자가 앱을 보고 있지 않다). 화면·제어가 꺼져 있거나 정책·기본 PC·추론 강도 상한·라우팅 모드를 바꿔야 하면 `nadovibe_settings`로 바로 바꾸고(get으로 현재 값 확인), 무엇을 바꿨는지 대화에 알린다. 파일 삭제·sudo·설치·강제 push 같은 명령은 사용자 승인이 필요하므로 꼭 필요할 때만 쓰고, 거부되면 같은 명령을 반복하지 않는다.');
   return parts.join('\n\n');
+}
+
+/**
+ * How long OpenCode waits for one call of the platform's tools (ms). Its default is 60 s ("MCP error -32001: Request
+ * timed out"); remote_exec may wait for the user's approval and a long build — the same 45 min as Codex's tool_timeout_sec.
+ */
+const OPENCODE_PLATFORM_MCP_TIMEOUT_MS = 2_700_000;
+
+/**
+ * The aidev side of an OpenCode run (PROVIDER-ENGINE-PLAN §2.7; measured on opencode 1.19.0, §2.8): the config the run
+ * gets through the OPENCODE_CONFIG_CONTENT environment variable (merged over the user's own opencode.json for this run
+ * only) and the agent to select with `--agent`. What Claude gets as `systemPrompt.append` + `mcpServers` and Codex as
+ * `developer_instructions` + `mcp_servers`:
+ *   - the platform's aidev-tools MCP server, whenever this runtime is part of the platform (even without a routed
+ *     agent) — OpenCode exposes its tools as `aidev-tools_<tool>` and calls them without an approval;
+ *   - with a routed agent: its own MCP servers, and an agent `aidev-<name>` whose prompt is the composed instructions
+ *     (OpenCode adds it to its own system prompt; the built-in tools stay) with `steps` from the agent's maxTurns.
+ * In plan mode the run keeps OpenCode's read-only `plan` agent, so the routed agent's prompt is not applied there (its
+ * MCP servers are): whether a custom agent can be made read-only is not verified yet. The agent's tool list is not
+ * applied either (same reason) — it runs with OpenCode's tools. Used by the OpenCode runtime provider.
+ */
+export function buildOpenCodeAidevConfig(rawAidev: unknown, opts: { planMode?: boolean } = {}): { config: Record<string, unknown> | null; agent: string | null } {
+  const aidev = sanitizeAidevOptions(rawAidev);
+  const mcp: Record<string, Record<string, unknown>> = {};
+  const platformMcp = aidevToolsService.getMcpServerConfig(aidev ? { runId: aidev.runId, targetId: aidev.target?.id ?? null, agent: aidev.agent.name } : undefined);
+  if (platformMcp) {
+    mcp['aidev-tools'] = { type: 'local', command: [platformMcp.command, ...platformMcp.args], environment: platformMcp.env, enabled: true, timeout: OPENCODE_PLATFORM_MCP_TIMEOUT_MS };
+  }
+  let agent: string | null = null;
+  const agents: Record<string, Record<string, unknown>> = {};
+  if (aidev) {
+    for (const [name, spec] of Object.entries(aidev.agent.mcpServers ?? {})) {
+      mcp[name] = 'url' in spec ? { type: 'remote', url: spec.url, enabled: true } : { type: 'local', command: [spec.command, ...(spec.args ?? [])], ...(spec.env ? { environment: spec.env } : {}), enabled: true };
+    }
+    if (!opts.planMode) {
+      agent = `aidev-${aidev.agent.name}`;
+      agents[agent] = { mode: 'primary', description: aidev.agent.description || `Specialist agent ${aidev.agent.name}`, prompt: composeAgentInstructions(aidev), ...(aidev.agent.maxTurns ? { steps: aidev.agent.maxTurns } : {}) };
+    }
+  }
+  const config = { ...(Object.keys(mcp).length ? { mcp } : {}), ...(Object.keys(agents).length ? { agent: agents } : {}) };
+  return { config: Object.keys(config).length ? config : null, agent };
 }
 
 export const aidevToolsService = {

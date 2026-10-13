@@ -29,7 +29,7 @@ const CODEX_USAGE_TIMEOUT_MS = 8_000;
 const codexAuthFile = () => path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'auth.json');
 
 /** The engines the drawers show; only the signed-in ones are reported (2026-10-13). */
-const USAGE_ENGINES: LLMProvider[] = ['claude', 'codex'];
+const USAGE_ENGINES: LLMProvider[] = ['claude', 'codex', 'opencode'];
 const SIGNED_IN_CACHE_MS = 60_000;
 
 let store: Store | null = null;

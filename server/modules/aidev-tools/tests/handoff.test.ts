@@ -28,3 +28,15 @@ test('buildHandoffBrief works on an empty transcript', () => {
   assert.match(brief.text, /원래 요청: \(알 수 없음\)/);
   assert.match(brief.text, /수정한 파일: 없음/);
 });
+
+test('buildHandoffBrief reads an OpenCode session\'s tools (bash, edit/write with filePath)', () => {
+  const brief = buildHandoffBrief([
+    { kind: 'text', role: 'user', content: '로그인 폼 고쳐줘' },
+    { kind: 'tool_use', toolName: 'edit', toolInput: { filePath: 'src/Login.tsx', oldString: 'a', newString: 'b' } },
+    { kind: 'tool_use', toolName: 'write', toolInput: { filePath: 'src/login.css', content: '...' } },
+    { kind: 'tool_use', toolName: 'bash', toolInput: { command: 'npm run typecheck' } },
+    { kind: 'text', role: 'assistant', content: '고쳤습니다.' },
+  ], { fromEngine: 'opencode', toEngine: 'claude', reason: 'opencode 사용량 한도' });
+  assert.deepEqual(brief.files, ['src/Login.tsx', 'src/login.css']);
+  assert.match(brief.text, /- npm run typecheck/);
+});

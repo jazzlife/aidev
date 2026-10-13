@@ -28,6 +28,7 @@ import type {
   ProviderCurrentActiveModel,
   ProviderModelsDefinition,
   ProviderSkillSource,
+  OpenCodeRunError,
   ProviderUsageLimit,
   SubagentActivity,
   WorkspacePathValidationResult,
@@ -1004,6 +1005,60 @@ export function readJsonRecord(value: unknown): AnyRecord | null {
   } catch {
     return null;
   }
+}
+
+// ---------------------------
+//----------------- OPENCODE RUN ERRORS ------------
+const OPENCODE_USAGE_LIMIT = /usage limit|rate limit|too many requests|quota|limit (?:reached|exceeded)|exceeded (?:your|the) (?:\w+ )?limit|out of credits|insufficient (?:balance|credit)/i;
+const OPENCODE_AUTH_FAILURE = /invalid credential|invalid api key|unauthori[sz]ed|not authenticated|authentication (?:failed|required)|login required|token (?:expired|is invalid)/i;
+let openCodeAuthFailure: { at: number; message: string } | null = null;
+
+/**
+ * Reads the `error` of an OpenCode `error` event (or a plain message) into an OpenCodeRunError. A 429 or a limit /
+ * quota message is a usage limit; a 401 or a credential message is a sign-in failure; the rest is 'other' — the free
+ * tier's 403 ("can only be used from within OpenCode") and "Unexpected server error" (an unknown model) among them.
+ * Used by the OpenCode sessions provider (the chat's error line) and the OpenCode runtime (limit hand-off, sign-in state).
+ */
+export function describeOpenCodeError(error: unknown): OpenCodeRunError {
+  const record = error && typeof error === 'object' ? error as Record<string, unknown> : null;
+  const data = record?.data && typeof record.data === 'object' ? record.data as Record<string, unknown> : null;
+  const text = typeof error === 'string' ? error
+    : typeof data?.message === 'string' ? data.message
+      : typeof record?.message === 'string' ? record.message
+        : typeof record?.name === 'string' ? record.name
+          : typeof record?._tag === 'string' ? record._tag
+            : 'Unknown OpenCode error';
+  const statusCode = typeof data?.statusCode === 'number' ? data.statusCode : typeof record?.statusCode === 'number' ? record.statusCode : null;
+  const kind: OpenCodeRunError['kind'] = statusCode === 429 || OPENCODE_USAGE_LIMIT.test(text) ? 'usage_limit'
+    : statusCode === 401 || OPENCODE_AUTH_FAILURE.test(text) ? 'auth' : 'other';
+  return { message: `${text.slice(0, 600)}${statusCode ? ` (HTTP ${statusCode})` : ''}`, statusCode, kind };
+}
+
+/**
+ * Remembers an OpenCode run's sign-in failure, so the OpenCode auth probe reports "not signed in" and the gateway stops
+ * routing to it. Called by the OpenCode runtime with every error event; other kinds are ignored. In memory only.
+ */
+export function noteOpenCodeRunError(error: OpenCodeRunError): void {
+  if (error.kind === 'auth') openCodeAuthFailure = { at: Date.now(), message: error.message.slice(0, 300) };
+}
+
+/**
+ * The recorded OpenCode sign-in failure, or null. A new sign-in clears it: `opencode auth login` rewrites auth.json,
+ * so an auth store newer than the failure means the failure is old. Used by the OpenCode auth probe.
+ */
+export function currentOpenCodeAuthFailure(): { at: number; message: string } | null {
+  if (!openCodeAuthFailure) return null;
+  try {
+    if (fs.statSync(path.join(os.homedir(), '.local', 'share', 'opencode', 'auth.json')).mtimeMs > openCodeAuthFailure.at) openCodeAuthFailure = null;
+  } catch {
+    // no auth store: signed out anyway, the failure stays until a new sign-in
+  }
+  return openCodeAuthFailure;
+}
+
+/** Forgets a recorded OpenCode sign-in failure: OpenCode sign-out (the next sign-in starts clean). */
+export function clearOpenCodeAuthFailure(): void {
+  openCodeAuthFailure = null;
 }
 
 // ---------------------------
