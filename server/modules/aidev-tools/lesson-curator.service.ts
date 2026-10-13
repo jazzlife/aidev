@@ -18,6 +18,11 @@ export type CurateInput = {
   engine: 'claude' | 'codex' | null;
   /** the engines this account may use (D-05); the fallback stays inside them. Default both. */
   engines?: Array<'claude' | 'codex'>;
+  /**
+   * The gateway's order once the account set a work order or a provider policy (PROVIDER-ENGINE-PLAN §2.5): tried in
+   * this order; a null model is the engine's light side-turn model. Absent = the session's engine first (curatorOrder).
+   */
+  candidates?: Array<{ engine: 'claude' | 'codex'; model: string | null }> | null;
   command: string | null;
   signals: Record<string, unknown>;
 };
@@ -74,11 +79,14 @@ export function parseLesson(text: string): LessonCandidate | null {
   }
 }
 
-async function askClaude(prompt: string, cwd: string): Promise<string> {
+/** Light Claude model for side turns (the D0 tier). */
+const CLAUDE_SIDE_MODEL = 'haiku';
+
+async function askClaude(prompt: string, cwd: string, model: string): Promise<string> {
   let output = '';
   const stream = query({
     prompt,
-    options: { cwd, maxTurns: 1, model: 'haiku', allowedTools: [], tools: [], permissionMode: 'bypassPermissions', systemPrompt: CURATOR_PROMPT, settingSources: [],
+    options: { cwd, maxTurns: 1, model, allowedTools: [], tools: [], permissionMode: 'bypassPermissions', systemPrompt: CURATOR_PROMPT, settingSources: [],
       // an internal one-shot call: no transcript, so it never shows up as a conversation in the user's project
       persistSession: false },
   });
@@ -97,12 +105,26 @@ const CODEX_SIDE_MODEL = 'gpt-5.6-luna';
  *  session indexer skips them (they appeared as "aidev-judge-…" chats with JSON titles — 2026-10-01). */
 const SIDE_TURN_SOURCE = 'subagent';
 
-async function askCodex(prompt: string, cwd: string): Promise<string> {
+async function askCodex(prompt: string, cwd: string, model: string): Promise<string> {
   const codex = new Codex({ config: { ...codexSandboxConfig(), developer_instructions: CURATOR_PROMPT } as never });
   // a tool-less side turn (the summary is in the prompt): no web search, low effort — as the judge
-  const thread = codex.startThread({ threadSource: SIDE_TURN_SOURCE, workingDirectory: cwd, skipGitRepoCheck: true, sandboxMode: 'read-only', approvalPolicy: 'never', model: CODEX_SIDE_MODEL, modelReasoningEffort: 'low', webSearchMode: 'disabled' });
+  const thread = codex.startThread({ threadSource: SIDE_TURN_SOURCE, workingDirectory: cwd, skipGitRepoCheck: true, sandboxMode: 'read-only', approvalPolicy: 'never', model, modelReasoningEffort: 'low', webSearchMode: 'disabled' });
   const turn = await thread.run(prompt).catch((error: unknown) => { noteCodexTurnError(error); throw error; });
   return turn.finalResponse ?? '';
+}
+
+/**
+ * The engines the curator tries, in order, with their models: the gateway's candidates when it sent them, else the
+ * session's engine first (Codex when that ran the session or Claude is not among the account's engines) and the other
+ * one as the fallback when the account may use it. Used by `curate` and its test.
+ */
+export function curatorOrder(input: Pick<CurateInput, 'engine' | 'engines' | 'candidates'>): Array<{ engine: 'claude' | 'codex'; model: string }> {
+  const light = (engine: 'claude' | 'codex') => (engine === 'claude' ? CLAUDE_SIDE_MODEL : CODEX_SIDE_MODEL);
+  if (input.candidates) return input.candidates.map((c) => ({ engine: c.engine, model: c.model ?? light(c.engine) }));
+  const preferCodex = input.engine === 'codex' || Boolean(input.engines?.length && !input.engines.includes('claude'));
+  const first: 'claude' | 'codex' = preferCodex ? 'codex' : 'claude';
+  const other: 'claude' | 'codex' = preferCodex ? 'claude' : 'codex';
+  return [first, ...(!input.engines?.length || input.engines.includes(other) ? [other] : [])].map((engine) => ({ engine, model: light(engine) }));
 }
 
 export const lessonCuratorService = {
@@ -112,18 +134,20 @@ export const lessonCuratorService = {
     const cwd = session?.project_path || process.cwd();
     const summary = await buildSummary(input);
     const prompt = `다음 실패한 실행을 분석해 규칙 후보를 만들어라.\n\n${summary}`;
-    const preferCodex = input.engine === 'codex' || Boolean(input.engines?.length && !input.engines.includes('claude'));
+    const order = curatorOrder(input);
+    if (!order.length) throw new Error('no engine available for the curator');
     let text = '';
-    let engine = preferCodex ? 'codex' : 'claude';
-    try {
-      text = preferCodex ? await askCodex(prompt, cwd) : await askClaude(prompt, cwd);
-    } catch (error) {
-      // the session's engine is unavailable for a side turn: try the other one, if the account may use it
-      engine = preferCodex ? 'claude' : 'codex';
-      if (input.engines?.length && !input.engines.includes(engine as 'claude' | 'codex')) throw error;
-      try { text = preferCodex ? await askClaude(prompt, cwd) : await askCodex(prompt, cwd); }
-      catch { throw error; }
+    let engine: string = order[0].engine;
+    let firstError: unknown = null;
+    // an engine unavailable for a side turn: the next one in the order takes it; the first failure is the one reported
+    for (const candidate of order) {
+      try {
+        text = candidate.engine === 'claude' ? await askClaude(prompt, cwd, candidate.model) : await askCodex(prompt, cwd, candidate.model);
+        engine = candidate.engine; firstError = null;
+        break;
+      } catch (error) { firstError ??= error; }
     }
+    if (firstError) throw firstError;
     const candidate = parseLesson(text);
     console.log(`[aidev-tools] curate run=${input.runId ?? '-'} agent=${input.agent ?? '-'} engine=${engine} summary=${summary.length}ch → ${candidate ? `${candidate.trigger} → ${candidate.rule}` : `none (${clip(text.replace(/\s+/g, ' '), 240)})`}`);
     return { candidate, summaryChars: summary.length, engine };

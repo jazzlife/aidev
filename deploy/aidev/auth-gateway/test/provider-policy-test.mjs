@@ -146,9 +146,10 @@ console.log('PASS escalation: Q1 and the range');
 
 // ---- verifier candidates: the verification order, each provider's pick at max(depth, 3) ---------------------------------
 const session = { user: { id: uid, username: 'alice', runtime: 'u' + 'a'.repeat(24) }, sid: 's1' };
-let verifyBody = null;
+let verifyBody = null; let curateBody = null;
 const runtimeFetch = async (_s, p, init = {}) => {
   if (p.startsWith('/api/providers/')) return Response.json({ data: { authenticated: true } });
+  if (p === '/api/aidev-tools/curate') { curateBody = JSON.parse(init.body); return Response.json({ data: { candidate: null } }); }
   if (p === '/api/aidev-tools/verify') { verifyBody = JSON.parse(init.body); return Response.json({ data: { verdict: 'pass', summary: 'ok', checked: [], issues: [], engine: 'codex', model: 'x' } }); }
   return Response.json({}, { status: 404 });
 };
@@ -164,7 +165,11 @@ assert.equal(res.status, 200); assert.deepEqual(res.body.verify_priority, ['clau
 const worker = store.addRun({ userId: uid, sessionId: 'v1', agentId: store.agent(uid, 'frontend-react').id, engine: 'claude', model: 'opus', effort: 'low', depth: 2, taskKind: 'implement' });
 await call('PATCH', `/api/aidev/runs/${worker}/outcome`, { exit_code: 0 }); await settle();
 assert.deepEqual(verifyBody.candidates, [{ engine: 'claude', model: 'opus', effort: 'medium' }, { engine: 'codex', model: null, effort: null }], 'order as set; claude D3 pick, codex the runtime\'s model');
-console.log('PASS verifier candidates');
+// a failed run's lesson curation follows the work order too (claude > codex), each at D0 of its policy
+const failedRun = store.addRun({ userId: uid, sessionId: 'v2', agentId: store.agent(uid, 'frontend-react').id, engine: 'codex', model: 'gpt-5.6-terra', effort: 'medium', depth: 1, taskKind: 'implement' });
+await call('PATCH', `/api/aidev/runs/${failedRun}/outcome`, { exit_code: 1 }); await settle();
+assert.deepEqual(curateBody.candidates, [{ engine: 'claude', model: 'sonnet' }, { engine: 'codex', model: null }], 'work order; claude D0 of sonnet..opus, codex the runtime\'s light model');
+console.log('PASS verifier and curator candidates');
 
 // ---- settings API: one provider's range in one request, preview from the same split -----------------------------------
 res = await call('PUT', '/api/aidev/settings/provider-policy', { engine: 'codex', ladder: ['gpt-5.6-terra', 'gpt-5.6-sol'], floor: 'gpt-5.6-terra', ceiling: 'gpt-5.6-sol', effort_floor: 'medium', effort_cap: 'high' });

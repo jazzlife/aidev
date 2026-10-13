@@ -64,7 +64,7 @@ export type RouteResult = {
   alternatives: Array<{ name: string; probability: number; description: string }>;
   needs_new: number;
   plan: { engine: Engine | null; engine_locked: boolean; /** the chat is pinned to its engine by hand (2026-10-09) */ engine_pinned?: boolean; /** a higher-priority engine is usable again: the app should continue this chat there */ switch_back?: { engine: Engine; reason: string } | null; engine_error?: string | null; model: string | null; effort: string | null; target: RouteTarget; device?: RouteDevice; reason: string[];
-    /** where the provider policy's split landed (2026-10-13; null = the tier table picked) */ step?: PolicyStepView | null };
+    /** where the provider policy's split landed (2026-10-13; null = the tier table picked) */ step?: { index: number; total: number; mode: 'score' | 'steps'; q2: boolean; target: number | null; score: number | null } | null };
   /** Laya's target.select / device.select, logged as their own decisions (an override is recorded on them). */
   target_decision?: { decision_id: number; answer: unknown; confidence: number; fallback: boolean } | null;
   device_decision?: { decision_id: number; answer: unknown; confidence: number; fallback: boolean } | null;

@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Monitor, Sparkles, Star } from 'lucide-react';
 
-import { useRoutingState, routingStore, aidevApi, claudeAuth, useClaudeAuth, useTargetChoice, type Engine } from '@/modules/aidev-router';
+import { useRoutingState, routingStore, aidevApi, claudeAuth, policyNote, useClaudeAuth, useTargetChoice, type Engine } from '@/modules/aidev-router';
 import { ClaudeLoginSheet } from '@m/components/ClaudeLoginSheet';
 import { BottomSheet } from '@m/components/BottomSheet';
 import { ChatEffortCapControl } from '@m/components/EffortCapControl';
@@ -84,6 +84,7 @@ export function RouterChip({ sessionId = null }: { sessionId?: string | null }) 
                 </button>
               ) : null}
               <div className="text-[12px] text-muted mt-2">{last.plan.model ? `${last.plan.model} / ${last.plan.effort ?? "-"}` : "모델 미정 (사용 가능한 엔진 없음)"}{last.plan.engine_locked ? ' · 세션은 엔진에 묶여 있고, 우선순위가 더 높은 엔진이 쓸 수 있게 되면 다음 메시지부터 그쪽으로 이어갑니다' : ''}</div>
+              {policyNote(last) ? <div className="text-[12px] mt-1" data-testid="router-policy-note">{policyNote(last)}</div> : null}
               <ul className="text-[11px] text-muted mt-1 list-disc pl-4">{last.plan.reason.map((reason) => <li key={reason}>{reason}</li>)}</ul>
             </div>
             {tv ? (

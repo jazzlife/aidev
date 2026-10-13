@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from 'react';
 
-import { aidevApi, type Engine, type ProviderPolicyPatch, type ProviderPolicyView, type ScoreIndex } from '@/modules/aidev-router/api';
+import { aidevApi, type Engine, type ProviderPolicyPatch, type ProviderPolicyView, type RouteResult, type ScoreIndex } from '@/modules/aidev-router/api';
 
 /**
  * Provider policy (2026-10-13, docs/aidev/PROVIDER-ENGINE-PLAN.md): the work order (kept until a usage limit), the
@@ -49,6 +49,22 @@ export function moveInOrder(order: Engine[], engine: Engine, delta: -1 | 1): Eng
   const next = [...order];
   [next[index], next[target]] = [next[target], next[index]];
   return next;
+}
+
+/**
+ * Why the last route ran where it did, in one line for the router bar and the mobile routing sheet: a provider passed
+ * over on a usage limit ("Claude 한도 → Codex") and where the provider policy's split landed ("범위 5/8", "상한·최대").
+ * null when neither applies (the tier table picked on the first provider).
+ */
+export function policyNote(route: Pick<RouteResult, 'plan' | 'engines'>, now = Date.now()): string | null {
+  const name = (engine: string) => engine.charAt(0).toUpperCase() + engine.slice(1);
+  const parts: string[] = [];
+  const picked = route.plan.engine;
+  const limited = (Object.keys(route.engines) as Engine[]).filter((engine) => engine !== picked && (route.engines[engine]?.limited_until ?? 0) > now);
+  if (picked && limited.length && !route.plan.engine_locked) parts.push(`${limited.map(name).join('·')} 한도 → ${name(picked)}`);
+  const step = route.plan.step;
+  if (step) parts.push(`범위 ${step.index + 1}/${step.total}${step.q2 ? ' · 상한·최대' : step.mode === 'score' && step.score !== null ? ` · 점수 ${step.score}` : ''}`);
+  return parts.length ? parts.join(' · ') : null;
 }
 
 /** A step of the preview as one line ("opus · medium", "상한·최대" when Q2 applied). */

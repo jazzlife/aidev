@@ -64,6 +64,11 @@ router.post('/curate', asyncHandler(async (req: Request, res: Response) => {
     agent: typeof body.agent === 'string' ? body.agent : null,
     engine: body.engine === 'codex' ? 'codex' : body.engine === 'claude' ? 'claude' : null,
     engines: Array.isArray(body.engines) ? (body.engines as unknown[]).filter((e): e is 'claude' | 'codex' => e === 'claude' || e === 'codex') : undefined,
+    // the gateway's order (work priority / provider policy); absent = the session's engine first
+    candidates: Array.isArray(body.candidates) ? (body.candidates as unknown[]).flatMap((entry) => {
+      const c = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
+      return c.engine === 'claude' || c.engine === 'codex' ? [{ engine: c.engine, model: typeof c.model === 'string' ? c.model.slice(0, 100) : null }] : [];
+    }) : null,
     command: typeof body.command === 'string' ? body.command : null,
     signals: body.signals && typeof body.signals === 'object' ? body.signals as Record<string, unknown> : {},
   });

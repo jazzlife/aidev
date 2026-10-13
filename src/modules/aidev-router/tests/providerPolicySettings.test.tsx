@@ -32,13 +32,22 @@ vi.mock('@/shared/api', () => ({
 }));
 
 const { ProviderPolicyCard, ProviderPolicySettings } = await import('@/modules/aidev-router/ProviderPolicySettings');
-const { moveInOrder, stepLabel } = await import('@/modules/aidev-router/hooks/useProviderPolicy');
+const { moveInOrder, policyNote, stepLabel } = await import('@/modules/aidev-router/hooks/useProviderPolicy');
 
 test('moveInOrder and stepLabel', () => {
   assert.deepEqual(moveInOrder(['claude', 'codex'], 'codex', -1), ['codex', 'claude']);
   assert.deepEqual(moveInOrder(['claude', 'codex'], 'claude', -1), ['claude', 'codex'], 'already first');
   assert.equal(stepLabel({ model: 'opus', effort: 'xhigh', q2: true }), 'opus · xhigh (상한·최대)');
   assert.equal(stepLabel(null), '—');
+});
+
+test('policyNote: a provider passed over on a usage limit and where the split landed', () => {
+  const engines = { claude: { allowed: true, authenticated: true, limited_until: 2000, score: null, notes: [] }, codex: { allowed: true, authenticated: true, score: 0.5, notes: [] } };
+  const plan = { engine: 'codex' as const, engine_locked: false, model: 'gpt-5.6-sol', effort: 'medium', target: null, reason: [] };
+  assert.equal(policyNote({ plan: { ...plan, step: { index: 4, total: 8, mode: 'steps', q2: false, target: null, score: null } }, engines }, 1000), 'Claude 한도 → Codex · 범위 5/8');
+  assert.equal(policyNote({ plan: { ...plan, step: { index: 7, total: 8, mode: 'steps', q2: true, target: null, score: null } }, engines }, 3000), '범위 8/8 · 상한·최대', 'the limit is over');
+  assert.equal(policyNote({ plan: { ...plan, step: { index: 2, total: 8, mode: 'score', q2: false, target: 48, score: 48.5 } }, engines }, 3000), '범위 3/8 · 점수 48.5');
+  assert.equal(policyNote({ plan, engines }, 3000), null, 'the tier table on the first provider: nothing to say');
 });
 
 test('the policy section sends the work order and credits the score source; it holds no provider ranges', async () => {

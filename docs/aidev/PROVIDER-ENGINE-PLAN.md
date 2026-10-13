@@ -424,11 +424,11 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
 - [~] GP-03 라우팅 `routing.ts`: 사다리가 있는 공급자는 `splitTier`로 고름(tier_policy 미적용, agent 모델은 범위 안·더 강할 때만), 응답 `plan.step`, 결정 기록에 `step`·공급자별 평가. 엔진 목록 리터럴 제거(점수·usable·응답 `engines`·동점 처리). 채팅에 묶인 엔진이 한도면 다음 공급자로 `switch_back`(고정 채팅 제외). = G1-08·G5-03·G5-13, G3-03 일부
 - [~] GP-04 `escalation.ts`: 작업 순서가 있으면 공급자 전환은 한도·로그인 만료일 때만(Q1), 범위 최상단 실패는 `ask_user`; 분할 모드의 `escalate_tier`는 같은 공급자의 다음 칸; `NextAction.from_engine`; 다음 공급자 = 순서상 다음 usable(한도 제외). = G3-06·G5-08
 - [~] GP-05 검증 후보를 게이트웨이가 계산(`aidev-api.ts verifyCandidates`, 검증 순서 또는 사다리가 있을 때만 — 없으면 지금처럼 런타임이 정함), 런타임 `run-verifier.service.ts verifierCandidates`가 순서대로 시도(모델·강도 적용, Codex 로그아웃·과부하 규칙 유지). = G5-06
-- [~] GP-06 부가 턴: agent 설계(작업 순서만, `splitTier(3)`), 지식 점검(작업 순서, `splitTier(1)`, 한도 제외). 교훈 정제(curate)는 아직 런타임의 엔진 선택 그대로 — G5-07 나머지
+- [~] GP-06 부가 턴: agent 설계(작업 순서만, `splitTier(3)`), 지식 점검(작업 순서, `splitTier(1)`, 한도 제외). 교훈 정제(curate)도 작업 순서가 있으면 게이트웨이가 후보(`candidates`, 한도 제외, 정책의 D0 모델)를 보내고 런타임 `curatorOrder`가 순서대로 시도
 - [~] GP-07 점수 동기화 `model-scores.ts`(하루 1회, 키 없으면 아무 일 없음, 한 번에 기록, admin 값 보존, 실패 시 유지), 게이트웨이 시작 시 예약. API `GET/PUT /model-scores`·`POST /model-scores/sync`(관리자). = G5-02a. **남은 것: AA 키 설치와 우리 조합의 매핑(G0-09)** — 그 전까지는 칸 수 분할
 - [~] GP-08 API `GET/PUT /settings/provider-policy`, `PUT /settings/verify-priority`, `PUT /settings/score-index`, `GET /engines`의 `policy`; 입력 파싱의 `{claude, codex}` 하드코딩 제거. CLI `manage-users model-ceiling|effort-floor|model-ladder|verify-priority|score-index|aa-key|model-scores|model-score`, agent 도구 `nadovibe_settings`의 `model_ceiling.<e>`·`effort_floor.<e>`·`model_ladder.<e>`·`verify_priority`·`score_index`. = G5-09
 - [~] GP-09 작업대 설정 → Agents: 상단 `ProviderPolicySettings`에는 공급자 전체에 걸친 것만(작업·검증 순서, 점수 지수와 출처), 각 공급자의 범위는 아래 공급자별 설정의 「모델·강도 범위」 탭 `ProviderPolicyCard`(사다리·모델 하한/상한·강도 하한/상한·D0~D4 미리보기·조합별 점수 — 2026-10-13 사용자 요청 "모델 상한 하한 설정은 하단 프로바이더별 설정 안으로"). 탭은 정책이 있는 공급자(`isPolicyProvider`: claude·codex, OpenCode는 G3에서)에만. 이전의 `EnginePriorityDefaults`·`EffortCapDefaults`·`useEnginePriority`는 대체·삭제. 모바일 설정 `ProviderPolicySection`(같은 훅), 계정 단위 `EffortCapControl` 대체(채팅 단위는 유지). = G5-10·G5-11
-- [ ] GP-10 라우터 바에 선택 사유 한 줄(G5-12) — 지금은 `plan.reason`에만 있음
+- [~] GP-10 라우터 바·모바일 라우팅 시트에 선택 사유 한 줄(`policyNote`: "Claude 한도 → Codex · 범위 5/8 · 상한·최대") = G5-12
 - 검증(로컬, 2026-10-13): 게이트웨이 테스트 30개(새 `provider-policy-test.mjs`: 예시 1·2 표, Q1·Q2, 범위 검사, 라우팅·에스컬레이션·검증 후보·설정 API·AA 동기화), 서버 555(실패 0), 클라이언트 638(새 `providerPolicySettings.test.tsx`), typecheck·lint 오류 0. 로컬 플랫폼에서 작업대·모바일 설정 화면을 열어 하한 sonnet·상한 opus → D0~D4가 예시 2와 같게 표시·라우팅됨을 확인.
 
 ### G0. 사전 검증 (서버 런타임과 같은 환경에서 실측, 코드 변경 없음)
@@ -499,7 +499,7 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
   - `specialist-judge.service.ts:305` `!input.engines?.length`이면 전부 → 빈 배열은 "엔진 없음" 오류로 처리한다.
   - `lesson-curator.service.ts:115`, `:123`도 같다.
   - `:116`(design), `:144`(knowledge)의 `engine === 'codex' ? 'codex' : 'claude'`: G2에서 opencode를 지원하기 전까지 opencode면 400을 낸다.
-- [ ] G1-08 **기존 버그**: 채팅에 묶인 엔진이 사용량 한도에 걸려도 그 엔진이 선택된다(`routing.ts:750`). limited면 `switch_back`처럼 다음 usable 엔진을 제안한다(사유 기록).
+- [~] 구현·로컬검증(GP-03에서 구현(고정 채팅 제외), 로컬검증), 서버 확인 대기 — G1-08 **기존 버그**: 채팅에 묶인 엔진이 사용량 한도에 걸려도 그 엔진이 선택된다(`routing.ts:750`). limited면 `switch_back`처럼 다음 usable 엔진을 제안한다(사유 기록).
 - [ ] G1-09 **임시 우회**: G3 전까지 라우터가 opencode 채팅을 가로채지 않게 한다.
   - `src/modules/aidev-router/hooks/useAidevRouting.ts:118` `beforeSend`에서 `!asEngine(context.provider)`이면 `null`을 반환한다.
   - 지금은 새 채팅에서 opencode를 골라도 `useChatComposerState.ts:856-857`이 계획 엔진(claude·codex)으로 세션을 만든다. 기존 opencode 채팅의 run도 claude·codex 엔진으로 기록된다.
@@ -574,7 +574,7 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
 - [ ] G3-02 `TIER_TABLE`(`routing.ts:104-110`)에 opencode 열을 추가한다(G5에서 카탈로그로 대체될 임시 표).
   - 초기 모델은 G0-02 목록을 보고 사용자가 정한다(§9 Q3). 기본안: 측정 전에는 D0~D2만 같은 모델로, D3·D4는 Go 목록에서 가장 강한 모델로 둔다.
   - `modelRank`(`:169-175`)의 alias는 claude 전용이다. opencode는 `provider/model` 전체 id로 비교한다.
-- [ ] G3-03 **리터럴 제거** (전부 `ENGINES` 순회로)
+- [ ] G3-03 **리터럴 제거** (전부 `ENGINES` 순회로) — GP에서 끝낸 곳: `routing.ts` 점수·usable·동점·응답, `aidev-api.ts` 가용성·usableEngines·설계 순서·입력 파싱, `store-aidev.ts` 폴백·effortCap·engineWeights·engineRuns, `tier-policy.ts`, `engine-weights.ts`, `knowledge-refresh.ts`. 남은 곳: `aidev-api.ts:456`(eval-judge 동시성), `notify.ts`, `remote-gate.ts`, `manage-users.ts` 문구, TIER_TABLE·사다리의 opencode 열
   - `routing.ts:726`, `:727`, `:740`, `:933`(응답 `engines`)
   - `aidev-api.ts:118`(as 캐스트, opencode가 들어오면 **TypeError**), `:142`(usableEngines), `:315`(설계 순서 폴백), `:382-383`, `:422`, `:436`, `:607`, `:613`(입력 파싱), `:456`(eval-judge 동시성)
   - `store-aidev.ts:276`(accountEngines 폴백), `:289`(effortCap 조립), `:440`(engineWeights 기본), `:445`(오류 문구), `:465`(`engine IN ('claude','codex')` → opencode run이 학습에서 빠짐)
@@ -584,9 +584,9 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
   - `remote-gate.ts:75`(위험 패턴에 opencode와 그 권한 우회 플래그 `--auto` 등을 추가)
   - `manage-users.ts:17`(usage 문구)
 - [ ] G3-04 `engine_weights` 시드(`store-aidev.ts:205-211`)를 엔진별 `INSERT OR IGNORE`로 바꾼다. 기존 DB에 opencode 행 0.5가 생기게 한다.
-- [ ] G3-05 `engine-weights.ts:28`, `:36-42`의 속도 보너스를 2엔진 쌍(`const [a, b]`)에서 N엔진으로 바꾼다. 규칙: 성공률이 최고값 ±5% 안에 있는 엔진 중 가장 빠른 엔진이 나머지보다 20% 이상 빠르면 보너스.
+- [~] 구현·로컬검증(GP에서 구현, 로컬검증), 서버 확인 대기 — G3-05 `engine-weights.ts:28`, `:36-42`의 속도 보너스를 2엔진 쌍(`const [a, b]`)에서 N엔진으로 바꾼다. 규칙: 성공률이 최고값 ±5% 안에 있는 엔진 중 가장 빠른 엔진이 나머지보다 20% 이상 빠르면 보너스.
   - 학습 가중치는 작업 우선순위를 정하지 않은 계정(점수 모드, §9 Q11)에서만 공급자 선택에 쓰인다. 우선순위를 정한 계정에서는 통계로만 남는다.
-- [ ] G3-06 `escalation.ts` 이분법을 제거한다.
+- [~] 구현·로컬검증(GP-04에서 구현, 로컬검증), 서버 확인 대기 — G3-06 `escalation.ts` 이분법을 제거한다.
   - `:45` `run.engine`을 `ENGINES`로 검증한다. 지금은 opencode run이 claude로 바뀐다.
   - `:46-47` `other`를 "우선순위상 다음 usable 공급자(limited 제외)"로 바꾼다.
   - **Q1 적용**(작업 우선순위를 정한 계정): `switch_engine`은 사용량 한도와 로그인 만료일 때만 제안한다. 지금의 "D4에서 effort를 상한까지 올렸는데도 실패하면 다른 엔진으로"(`:66-72`, `:98`)는 `ask_user`로 바꾼다(§2.6).
@@ -658,14 +658,14 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
   - 라우터 바와 모바일 칩에 OpenCode가 표시된다.
 
 ### G5. 공급자 정책 (릴리스 ④ 게이트웨이·런타임 → ⑤ UI)
-- [ ] G5-01 데이터 모델(§3.1): `engine_models`, `model_scores`, `accounts.model_ceiling/effort_floor/model_ladder/verify_priority`. §9 Q6 결정에 따라 `session_settings` 컬럼과 정리 DELETE 조건도 고친다.
+- [~] 구현·로컬검증(GP-02 — 단 `engine_models` 표는 아직 없음: 카탈로그는 코드 상수 `MODEL_CATALOG`(claude·codex), OpenCode 모델 동기화가 필요한 G3에서 표로 옮김), 서버 확인 대기 — G5-01 데이터 모델(§3.1): `engine_models`, `model_scores`, `accounts.model_ceiling/effort_floor/model_ladder/verify_priority`. §9 Q6 결정에 따라 `session_settings` 컬럼과 정리 DELETE 조건도 고친다.
 - [ ] G5-02 **카탈로그**
   - 시드: `TIER_TABLE`의 claude·codex 모델과 level.
   - 강도 단계는 런타임 모델 카탈로그(`/api/providers/<engine>/models`의 `effort.values`)에서 읽는다(claude haiku는 없음 → 한 칸).
   - opencode: 런타임 카탈로그를 `source='runtime'`, `level=NULL`로 동기화한다(G3-09 캐시를 쓴다).
   - 관리자 API `PUT /engine-models`, `manage-users engine-model`
   - level 측정 방법: `judge-eval.jsonl` 등급별 사례를 해당 모델로 실행하고 성공률로 판단한다. 수동 평가로 대신할 수 있다. 측정 결과를 기록한다.
-- [ ] G5-02a **지능 점수 동기화** (게이트웨이 새 모듈 `model-scores.ts`, 접근은 `store` 경유)
+- [~] 구현·로컬검증(GP-07), 서버 확인 대기 — G5-02a **지능 점수 동기화** (게이트웨이 새 모듈 `model-scores.ts`, 접근은 `store` 경유)
   - 하루 1회와 관리자 요청 시 AA 무료 API를 호출한다. 키는 `app_kv aa.api_key`이며 로그와 응답에 노출하지 않는다.
   - `model_scores`의 `aa_slug`로 매칭해 Coding·Intelligence·Agentic 세 지수의 `source='aa'` 점수를 함께 갱신한다(`index_name`별 행). 관리자 점수(`source='admin'`)는 덮어쓰지 않는다.
   - 지수 버전이 바뀌면 모든 AA 점수를 새 버전으로 한꺼번에 바꾼다. 일부만 바뀐 상태로는 분할에 쓰지 않는다.
@@ -673,35 +673,35 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
   - 실패(네트워크, 키 없음)하면 마지막 값을 유지한다. 점수가 전혀 없으면 칸 수 분할로 대신한다(§2.3).
   - 매핑 시드: G0-09 초안. `PUT /model-scores`로 관리자가 고친다.
   - 테스트: 버전 교체, 관리자 값 보존, 보간과 추정, 실패 시 유지, 키 비노출.
-- [ ] G5-02b **강도 하한**
+- [~] 구현·로컬검증(GP-02), 서버 확인 대기 — G5-02b **강도 하한**
   - `accounts.effort_floor`, `PUT /settings/effort-floor`, 공통 강도 순서 상수(`none < minimal < low < medium < high < xhigh < max < ultra`)를 `store-aidev.ts`의 `EFFORT_LADDER` 옆에 둔다.
   - 하한이 상한보다 위면 400. 모델에 범위 안 강도가 없으면 범위에 가장 가까운 강도 한 칸으로 한다(§2.3).
   - 채팅별 강도 하한은 두지 않는다(§9 Q6).
-- [ ] G5-03 **공급자 선택** `pickProvider(order)`(§2.2, `routing.ts`)
+- [~] 구현·로컬검증(GP-03 (`routing.ts` 기존 우선순위 경로 + 한도 시 switch_back)), 서버 확인 대기 — G5-03 **공급자 선택** `pickProvider(order)`(§2.2, `routing.ts`)
   - 작업 우선순위를 정한 계정: 순서대로 고르고, **한도**(그리고 실행 불가 — 미허용·로그인 안 됨, §9 Q12)일 때만 다음으로 넘긴다. 실행 불가로 건너뛴 것은 사용자에게 알리지 않고 결정 기록에만 남긴다.
   - 정하지 않은 계정: 지금의 점수 방식(§9 Q11).
   - 채팅 엔진: 한도이면 `switch_back` 제안(G1-08), 더 높은 순위가 한도에서 풀리면 복귀 제안(기존).
   - 수동 고정(pinned)과 `preferEngine`은 예외로 그대로 둔다.
-- [ ] G5-04 **모델·강도 선택** `pickStep(e, d)`(§2.3)
+- [~] 구현·로컬검증(GP-01·GP-03 (`pickStep`, `splitTier`)), 서버 확인 대기 — G5-04 **모델·강도 선택** `pickStep(e, d)`(§2.3)
   - `steps(e)` = 사다리[모델 하한..상한] × 모델별 강도[강도 하한..상한].
   - `d > level(모델 상한)`이면 **Q2: 상한 모델·최대 강도**.
   - 아니면 **점수 분할**: 점수 오름차순에서 `lo + d/4 × (hi − lo)` 이상인 첫 조합. 점수가 빠진 칸이 있으면 칸 수 분할 `steps[round(d/4 × (n-1))]`로 대신하고 사유를 기록한다.
   - 모델 하한·상한과 강도 하한을 하나도 정하지 않은 공급자는 지금 규칙(`TIER_TABLE` → tier_policy → agent.model → `applyModelFloor` → `applyEffortCap`)을 그대로 쓴다.
   - 분할 모드에서는 tier_policy를 쓰지 않는다. agent.model은 범위 안이고 고른 조합보다 점수가 높거나 같을 때만 적용한다.
   - 응답 `plan.step = {index, total, q2, mode: 'score'|'steps'|'tier', target, score}`, 사유 기록("D3 > 상한 sonnet(2) → 상한·최대", "D2 목표 48 → opus·medium 52(AA)").
-- [ ] G5-05 **미리보기**: `GET /engines`의 `preview`(공급자마다 D0~D4 → `pickStep` 결과). 설정 UI가 이 값만 표시한다(계산 중복 금지).
-- [ ] G5-06 **검증 후보를 게이트웨이로 옮긴다**(§2.4)
+- [~] 구현·로컬검증(GP-08 (`GET /engines`의 `policy.providers.*.preview`)), 서버 확인 대기 — G5-05 **미리보기**: `GET /engines`의 `preview`(공급자마다 D0~D4 → `pickStep` 결과). 설정 UI가 이 값만 표시한다(계산 중복 금지).
+- [~] 구현·로컬검증(GP-05), 서버 확인 대기 — G5-06 **검증 후보를 게이트웨이로 옮긴다**(§2.4)
   - `aidev-api.ts:223-284`가 `candidates`를 계산해 런타임 `/verify`에 넘긴다.
   - 검증 우선순위를 정했으면 그 순서를 그대로 따른다(Q1). 정하지 않았으면 지금처럼 작업자와 다른 공급자를 우선한다.
   - 난이도는 `max(d, 3)`이다. 작업자와 같은 공급자면 작업자 조합의 점수 이상으로 한다.
   - 런타임 `run-verifier.service.ts:56-89`는 후보를 순서대로 시도하도록 바꾸고(실행 오류·과부하·한도일 때만 다음), LADDER 중복을 제거한다.
   - 한 릴리스 동안은 `candidates`가 없으면 기존 방식으로 동작하게 한다(하위 호환).
   - 테스트 `run-verifier.test.ts`
-- [ ] G5-07 **부가 턴**(§2.5): design `pickStep(e, 3)`, curate `pickStep(e, 0)`, knowledge `pickStep(e, 1)`. 공급자는 모두 `pickProvider(work_priority)`로 고른다. 판정은 제외한다(§9 Q4).
-- [ ] G5-08 **escalation**(§2.6)
+- [~] 구현·로컬검증(GP-06 (설계·지식 점검·교훈 정제 모두 작업 순서)), 서버 확인 대기 — G5-07 **부가 턴**(§2.5): design `pickStep(e, 3)`, curate `pickStep(e, 0)`, knowledge `pickStep(e, 1)`. 공급자는 모두 `pickProvider(work_priority)`로 고른다. 판정은 제외한다(§9 Q4).
+- [~] 구현·로컬검증(GP-04), 서버 확인 대기 — G5-08 **escalation**(§2.6)
   - `escalate_tier`는 같은 공급자에서 `pickStep(e, d+1)`로 고른다. 이미 상한·최대이면 `ask_user`로 간다.
   - `switch_engine`은 한도와 실행 불가일 때만 `pickProvider`로 다음 공급자를 고른다.
-- [ ] G5-09 **API**(§3.2): `GET /engines` 확장(`models`, `model_ceiling`, `model_ladder`, `verify_priority`, `preview`), `PUT /settings/model-ceiling|model-ladder|verify-priority`.
+- [~] 구현·로컬검증(GP-08 (범위는 `PUT /settings/provider-policy` 하나로 한꺼번에)), 서버 확인 대기 — G5-09 **API**(§3.2): `GET /engines` 확장(`models`, `model_ceiling`, `model_ladder`, `verify_priority`, `preview`), `PUT /settings/model-ceiling|model-ladder|verify-priority`.
   - `PUT /settings/engine-priority`의 의미가 "작업 우선순위"로 바뀐다. 빈 배열은 400.
   - 검증 규칙
     - 하한이 상한보다 위이면 400
@@ -709,14 +709,14 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
     - 사다리는 카탈로그 모델만
     - 순서 목록은 `ENGINES`만
   - `manage-users` 명령과 `nadovibe_settings` 키를 추가한다(`app-control.service.ts`).
-- [ ] G5-10 **작업대 설정 UI**(§3.4)
+- [~] 구현·로컬검증(GP-09 (범위 카드는 공급자별 「모델·강도 범위」 탭)), 서버 확인 대기 — G5-10 **작업대 설정 UI**(§3.4)
   - Agents 탭 "라우팅" 영역: 점수 지수 선택(기본 Coding), 작업 우선순위, 검증 우선순위, 공급자 카드 3개(사다리·하한·상한·강도 상한·D0~D4 미리보기).
   - 훅은 `src/modules/aidev-router/hooks/`에(`useProviderPolicy` 등), 컴포넌트는 `aidev-router`에서 barrel로 export한다(표준: 소비 모듈과 이유를 주석으로).
   - 저장하면 `aidevApi`의 PUT을 호출하고, 응답의 `preview`로 미리보기를 갱신한다. 실패하면 되돌린다.
-- [ ] G5-11 **모바일 설정 UI**: `SettingsScreen.tsx` 엔진 우선순위 아래에 같은 항목을 시트로 둔다(미리보기 포함).
-- [ ] G5-12 **라우터 바 표시**: 선택 사유를 한 줄로 보여준다. 예: "작업 1순위 OpenCode 한도(14:00) → Claude · D3 → opus·medium (8칸 중 5)", "D4 > 상한 sonnet → sonnet·xhigh(상한·최대)". 모바일 RouterChip 상세에도 표시한다.
-- [ ] G5-13 `decision_log.answer`에 공급자 평가(선택, 한도로 건너뜀, 실행 불가로 건너뜀)와 `step`(index/total/q2)을 기록한다(E-07/E-08 학습 자료).
-- [ ] G5-14 **테스트(관문)**
+- [~] 구현·로컬검증(GP-09), 서버 확인 대기 — G5-11 **모바일 설정 UI**: `SettingsScreen.tsx` 엔진 우선순위 아래에 같은 항목을 시트로 둔다(미리보기 포함).
+- [~] 구현·로컬검증(GP-10), 서버 확인 대기 — G5-12 **라우터 바 표시**: 선택 사유를 한 줄로 보여준다. 예: "작업 1순위 OpenCode 한도(14:00) → Claude · D3 → opus·medium (8칸 중 5)", "D4 > 상한 sonnet → sonnet·xhigh(상한·최대)". 모바일 RouterChip 상세에도 표시한다.
+- [~] 구현·로컬검증(GP-03), 서버 확인 대기 — G5-13 `decision_log.answer`에 공급자 평가(선택, 한도로 건너뜀, 실행 불가로 건너뜀)와 `step`(index/total/q2)을 기록한다(E-07/E-08 학습 자료).
+- [~] 구현·로컬검증(GP — `provider-policy-test.mjs`·`providerPolicySettings.test.tsx`·런타임 verifier/curator 테스트. OpenCode 관련 단언은 G3에서 추가), 서버 확인 대기 — G5-14 **테스트(관문)**
   - **동등성**: 정책이 빈 계정에서 depth 0~4 × claude/codex의 엔진·모델·effort가 지금 `TIER_TABLE`, 하한, 강도 상한 결과와 같다(기존 테스트 전부 통과 + 표 기반 테스트 신설).
   - **점수 분할**: §2.3 예시 1(가상 점수)을 그대로 단언한다. 같은 점수의 순서, 약한 모델의 높은 강도가 끼어드는 경우, 강도 하한·상한이 칸을 줄이는 경우, 점수 빈칸이 있으면 칸 수 분할로 대신하는 경우를 확인한다.
   - **칸 수 분할**: §2.3 예시 2 표 4행을 그대로 단언한다. 강도가 없는 모델(haiku), opencode 모델별 강도(GLM low·high·max)도 확인한다.

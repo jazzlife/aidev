@@ -56,7 +56,7 @@ export { VerificationCard } from '@/modules/aidev-router/VerificationCard';
 export type { RunVerification } from '@/modules/aidev-router/api';
 // 2026-10-13 provider policy: work/verification order, score index and each provider's range (workbench settings +
 // mobile settings).
-export { useProviderPolicy, moveInOrder, stepLabel, SCORE_INDEX_LABEL, isPolicyProvider } from '@/modules/aidev-router/hooks/useProviderPolicy';
+export { useProviderPolicy, moveInOrder, stepLabel, policyNote, SCORE_INDEX_LABEL, isPolicyProvider } from '@/modules/aidev-router/hooks/useProviderPolicy';
 export { ProviderPolicySettings, ProviderPolicyCard } from '@/modules/aidev-router/ProviderPolicySettings';
 export type { ProviderPolicyView, ProviderPolicyEntry, ProviderPolicyPatch, PolicyStepView, ScoreIndex } from '@/modules/aidev-router/api';
 // F-08: the PC a chat's remote work goes to (router bar chip + mobile router sheet).

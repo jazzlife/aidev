@@ -226,8 +226,12 @@ export function createAidevApi(deps: AidevDeps) {
     if (!agent || agent.domain === 'meta' || !run.session_id) return;
     const decisionRow = run.decision_id ? store.db.prepare('SELECT command FROM decision_log WHERE id=?').get(run.decision_id) as { command: string } | undefined : undefined;
     const signals = { exit_code: run.exit_code, tool_errors: run.tool_errors, user_feedback: run.user_feedback, reverted: run.reverted, test_result: run.test_result };
-    const engines = usableEngines(await engineAvailability(session));
-    const response = await deps.runtimeFetch(session, '/api/aidev-tools/curate', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ session_id: run.session_id, run_id: run.id, agent: agent.name, engine: run.engine, engines, command: decisionRow?.command ?? null, signals }) }, CURATE_TIMEOUT_MS);   // a headless model turn: well beyond the 10 s status-probe budget
+    const availability = await engineAvailability(session);
+    const engines = usableEngines(availability);
+    // with a work order the curator follows it (Q1; a provider on a usage limit is passed over), each at D0 of its policy
+    const priority = store.enginePriority(session.user.id);
+    const candidates = priority.length ? priority.filter((e) => engines.includes(e) && !availability[e].limited_until).map((engine) => ({ engine, model: splitTier(store, session.user.id, engine, 0, run.session_id)?.model ?? null })) : null;
+    const response = await deps.runtimeFetch(session, '/api/aidev-tools/curate', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ session_id: run.session_id, run_id: run.id, agent: agent.name, engine: run.engine, engines, ...(candidates ? { candidates } : {}), command: decisionRow?.command ?? null, signals }) }, CURATE_TIMEOUT_MS);   // a headless model turn: well beyond the 10 s status-probe budget
     const body = await response.json() as { data?: { candidate?: { trigger: string; rule: string; engine: string | null; generalizable: boolean } | null } };
     const candidate = body.data?.candidate;
     if (!candidate) return;

@@ -11,6 +11,7 @@ import { useChatModelFloor } from '@/modules/aidev-router/hooks/useChatModelFloo
 import { MODEL_LABEL } from '@/modules/aidev-router/hooks/useModelFloor';
 import { ClaudeLoginDialog } from '@/modules/aidev-router/ClaudeLoginPanel';
 import { useTargetChoice } from '@/modules/aidev-router/hooks/useTargetChoice';
+import { policyNote } from '@/modules/aidev-router/hooks/useProviderPolicy';
 
 const DEPTH_LABEL = ['즉답', '한 파일', '기능', '심층', '설계'];
 const MODES: Array<{ value: RoutingMode; label: string }> = [{ value: 'auto', label: '자동' }, { value: 'manual', label: '확인 후' }, { value: 'off', label: '끄기' }];
@@ -120,6 +121,7 @@ export function AidevRouterBar({ sessionId = null }: { sessionId?: string | null
               </div>
             ) : null}
           </span>
+          {policyNote(last) ? <span className={chip} data-testid="router-policy-note" title={last.plan.reason.join('\n')}>{policyNote(last)}</span> : null}
           {tv ? (
             <span className="relative">
               <button type="button" data-testid="router-target-chip" className={`${chip} ${tv.name ? 'text-foreground' : ''}`} onClick={(event) => { event.stopPropagation(); setOpen(open === 'target' ? null : 'target', event); }}

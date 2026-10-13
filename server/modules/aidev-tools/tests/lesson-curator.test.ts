@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { parseLesson } from '@/modules/aidev-tools/lesson-curator.service.js';
+import { curatorOrder, parseLesson } from '@/modules/aidev-tools/lesson-curator.service.js';
 
 const lesson = { trigger: '테스트 없이 훅을 추가할 때', rule: '기존 컴포넌트의 렌더 계약을 먼저 읽고 최소 변경으로 끝낸다.', engine: null, generalizable: true };
 
@@ -20,4 +20,16 @@ test('parseLesson returns null for none / malformed output', () => {
   assert.equal(parseLesson('<aidev-lesson>{"none":true}</aidev-lesson>'), null);
   assert.equal(parseLesson('no lesson here'), null);
   assert.equal(parseLesson('```json\n{"trigger": 1}\n```'), null);
+});
+
+test('curatorOrder: the gateway\'s candidates as sent, else the session\'s engine first inside the account\'s engines', () => {
+  // no candidates: the session's engine first, the other one as the fallback
+  assert.deepEqual(curatorOrder({ engine: 'claude', engines: ['claude', 'codex'] }), [{ engine: 'claude', model: 'haiku' }, { engine: 'codex', model: 'gpt-5.6-luna' }]);
+  assert.deepEqual(curatorOrder({ engine: 'codex', engines: ['claude', 'codex'] }).map((c) => c.engine), ['codex', 'claude']);
+  // a Codex-only account never gets Claude (D-05)
+  assert.deepEqual(curatorOrder({ engine: 'claude', engines: ['codex'] }).map((c) => c.engine), ['codex']);
+  // the work order from the gateway: kept as sent, with the policy's model when it carries one
+  assert.deepEqual(curatorOrder({ engine: 'claude', engines: ['claude', 'codex'], candidates: [{ engine: 'codex', model: 'gpt-5.6-terra' }, { engine: 'claude', model: null }] }),
+    [{ engine: 'codex', model: 'gpt-5.6-terra' }, { engine: 'claude', model: 'haiku' }]);
+  assert.deepEqual(curatorOrder({ engine: 'claude', candidates: [] }), [], 'every provider of the order on a usage limit: none');
 });
