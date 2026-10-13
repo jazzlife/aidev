@@ -2,9 +2,11 @@ import { useCallback, useState } from 'react';
 
 import { aidevApi, claudeAuth } from '@/modules/aidev-router';
 import { api } from '@/shared/api';
+import { AIDEV_ENGINES } from '@/shared/constants';
 import type { LLMProvider, ProviderAuthStatus, ProviderAuthStatusMap } from '@/shared/types';
 
-const CLI_PROVIDERS: LLMProvider[] = ['claude', 'cursor', 'codex', 'opencode'];
+// the providers whose sign-in is probed by default (Cursor is hidden: no probe unless asked for by name)
+const CLI_PROVIDERS: LLMProvider[] = [...AIDEV_ENGINES];
 
 const createInitialProviderAuthStatusMap = (loading = true): ProviderAuthStatusMap => ({
   claude: { authenticated: false, email: null, method: null, error: null, loading },

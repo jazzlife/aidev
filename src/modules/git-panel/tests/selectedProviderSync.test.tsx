@@ -46,10 +46,10 @@ test('a switch made in this tab reaches the panel', () => {
   const { result } = renderHook(() => useSelectedProvider());
 
   act(() => {
-    writeSelectedProvider('cursor');
+    writeSelectedProvider('opencode');
   });
 
-  assert.equal(result.current, 'cursor');
+  assert.equal(result.current, 'opencode');
 });
 
 test('a switch made elsewhere reaches the panel', () => {
@@ -87,7 +87,7 @@ test('the panel releases its subscription when it unmounts', () => {
   const stopCounting = subscribeToUserPreferences(countLive);
 
   const { unmount } = renderHook(() => useSelectedProvider());
-  writeUserPreference('selectedProvider', 'cursor');
+  writeUserPreference('selectedProvider', 'codex');
   const withPanelMounted = liveSubscribers;
 
   unmount();

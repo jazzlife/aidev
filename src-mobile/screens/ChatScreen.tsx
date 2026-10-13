@@ -47,6 +47,8 @@ const PROVIDER_KEY = 'm.provider';
 const createQueuedId = () => `q-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 /** The session's command queue (shared with the workbench); a turn queued by an older client gets its place as id. */
 const readQueue = (sessionId: string | null): StoredQueuedMessage[] => (sessionId ? readQueuedMessages(sessionId).map((turn, index) => ({ ...turn, id: turn.id ?? `queued-${index}` })) : []);
+const PROVIDERS: LLMProvider[] = ['claude', 'cursor', 'codex', 'opencode'];
+/** The provider a new chat starts on: the last routed engine (routing only stores Claude or Codex here). */
 const readProvider = (): LLMProvider => { try { const value = localStorage.getItem(PROVIDER_KEY); return value === 'codex' ? 'codex' : 'claude'; } catch { return 'claude'; } };
 
 /**
@@ -149,7 +151,8 @@ export function ChatScreen() {
       if (cancelled) return;
       const data = payload.data;
       if (!response.ok || !data) { setLoadError('세션을 찾을 수 없습니다'); return; }
-      const resolvedProvider: LLMProvider = data.provider === 'codex' ? 'codex' : 'claude';
+      // the session's own provider: an OpenCode (or old Cursor) chat was opened as Claude before, and its sends went to the wrong runtime
+      const resolvedProvider: LLMProvider = PROVIDERS.includes(data.provider as LLMProvider) ? data.provider as LLMProvider : 'claude';
       setMeta({ id: routeSessionId, provider: resolvedProvider, projectId: data.project?.projectId || '', projectPath: data.project?.fullPath || data.project?.path || '', projectName: data.project?.displayName || '', title: data.summary || '' });
     }).catch(() => { if (!cancelled) setLoadError('세션을 불러오지 못했습니다'); });
     return () => { cancelled = true; };

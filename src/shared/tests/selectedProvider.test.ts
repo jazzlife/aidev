@@ -44,10 +44,13 @@ test('a write publishes a same-tab change, which the storage event does not', ()
     changes += 1;
   });
 
-  writeSelectedProvider('cursor');
+  writeSelectedProvider('codex');
 
   unsubscribe();
   assert.equal(changes, 1);
+  // Cursor is hidden (2026-10-13): it is neither remembered as the choice nor read back as one
+  writeSelectedProvider('cursor');
+  assert.equal(readSelectedProvider(), 'codex', 'opening an old Cursor session does not change the choice');
 });
 
 test('a change to an unrelated preference does not read as a provider switch', () => {

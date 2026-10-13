@@ -1,8 +1,9 @@
-import { readFile } from 'node:fs/promises';
+import { readFile, stat } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 
 import Database from 'better-sqlite3';
+import spawn from 'cross-spawn';
 
 import { sessionsDb } from '@/modules/database/index.js';
 import type { IProviderModels } from '@/shared/interfaces.js';
@@ -428,9 +429,67 @@ const parseOpenCodeSessionModelValue = (rawModel: unknown): string | null => {
   return modelId;
 };
 
+/**
+ * The models the installed CLI can run, as `opencode models` lists them (`<providerID>/<modelID>` per line) — what the
+ * user's sign-ins and config actually reach, free models included. null when the CLI is missing, slow or fails, so the
+ * caller keeps the curated catalog. Cached per auth store (a new sign-in changes its mtime) for ten minutes: the CLI
+ * is a large binary and the picker asks often.
+ */
+let cliModelsCache: { key: string; at: number; ids: string[] | null } | null = null;
+const CLI_MODELS_TTL_MS = 10 * 60_000;
+const readOpenCodeCliModelIds = async (): Promise<string[] | null> => {
+  const authPath = path.join(os.homedir(), '.local', 'share', 'opencode', 'auth.json');
+  const key = await stat(authPath).then((info) => `${authPath}:${info.mtimeMs}`).catch(() => `${authPath}:none`);
+  if (cliModelsCache && cliModelsCache.key === key && Date.now() - cliModelsCache.at < CLI_MODELS_TTL_MS) return cliModelsCache.ids;
+  const ids = await new Promise<string[] | null>((resolve) => {
+    let output = '';
+    try {
+      const child = spawn('opencode', ['models'], { stdio: ['ignore', 'pipe', 'ignore'], timeout: 20_000 });
+      child.stdout?.on('data', (chunk) => { output += String(chunk); });
+      child.on('error', () => resolve(null));
+      child.on('close', (code) => {
+        const lines = output.split('\n').map((line) => line.trim()).filter((line) => /^[\w.-]+\/\S+$/.test(line));
+        resolve(code === 0 && lines.length ? lines : null);
+      });
+    } catch {
+      resolve(null);
+    }
+  });
+  cliModelsCache = { key, at: Date.now(), ids };
+  return ids;
+};
+
+/**
+ * The picker's list when the CLI told us what it can run: exactly those models, in the CLI's order within the curated
+ * order — a curated entry keeps its label and effort levels, a model the catalog does not know yet (a new free model,
+ * a provider the user configured) appears under its id. Curated models the CLI does not list are left out: the CLI
+ * would refuse them ("Model … is not valid"). Exported for the test.
+ */
+export const mergeOpenCodeCliModels = (
+  definition: ProviderModelsDefinition,
+  cliModelIds: string[],
+): ProviderModelsDefinition => {
+  const listed = new Set(cliModelIds);
+  const curated = definition.OPTIONS.filter((option) => listed.has(option.value));
+  const known = new Set(curated.map((option) => option.value));
+  const extra = cliModelIds.filter((id) => !known.has(id)).map((id) => ({ value: id, label: id.slice(id.indexOf('/') + 1), description: id.split('/')[0] }));
+  const options = [...curated, ...extra];
+  if (options.length === 0) {
+    return definition;
+  }
+  return { ...definition, OPTIONS: options, DEFAULT: options.some((option) => option.value === definition.DEFAULT) ? definition.DEFAULT : options[0].value };
+};
+
 /** Provider registry model adapter for OpenCode predefined models and session metadata. */
 export class OpenCodeProviderModels implements IProviderModels {
+  /** `readCliModelIds` is replaced in tests, which must not depend on the CLI the machine happens to have. */
+  constructor(private readonly readCliModelIds: () => Promise<string[] | null> = readOpenCodeCliModelIds) {}
+
   async getSupportedModels(): Promise<ProviderModelsDefinition> {
+    const cliModelIds = await this.readCliModelIds();
+    if (cliModelIds) {
+      return mergeOpenCodeCliModels(OPENCODE_PREDEFINED_MODELS, cliModelIds);
+    }
     return filterOpenCodeModelsByProvider(
       OPENCODE_PREDEFINED_MODELS,
       await readConnectedOpenCodeProviderIds(),

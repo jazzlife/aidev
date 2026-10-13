@@ -2,7 +2,8 @@ import { createElement, lazy, Suspense, type ComponentType } from 'react';
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
-import type { Project, ProjectSession, ProviderUsageLimit } from '@/shared/types';
+import { AIDEV_ENGINES } from '@/shared/constants';
+import type { AidevEngine, Project, ProjectSession, ProviderUsageLimit } from '@/shared/types';
 
 //----------------- DEPLOYMENT MODE ------------
 
@@ -22,6 +23,18 @@ export const IS_PLATFORM = import.meta.env?.VITE_IS_PLATFORM === 'true';
  */
 export function cn(...inputs: ClassValue[]) {
   return twMerge(clsx(inputs));
+}
+
+// ---------------------------
+
+//----------------- OFFERED PROVIDERS ------------
+
+/**
+ * Whether a provider id (from storage, a session row, a route plan) is one the platform offers — Claude, Codex or
+ * OpenCode, not Cursor. Use it before treating such a value as a pickable provider.
+ */
+export function isAidevEngine(value: unknown): value is AidevEngine {
+  return (AIDEV_ENGINES as readonly unknown[]).includes(value);
 }
 
 // ---------------------------

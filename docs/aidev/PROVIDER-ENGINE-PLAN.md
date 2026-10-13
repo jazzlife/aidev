@@ -285,6 +285,24 @@ Claude의 `applyAidevRouting`(`claude-runtime.provider.js:230-268`), Codex의 `b
 
   MCP 도구는 항상 허용한다.
 
+### 2.8 G0 실측 결과 (2026-10-13, 서버의 `node:22-bookworm-slim` 일회용 컨테이너, opencode-ai **1.19.0**, 무료 모델 `opencode/big-pickle`)
+실측 스크립트와 출력은 작업 폴더 `.context/g0/`(저장소 밖)에 있다. 아래가 G2 설계의 근거다.
+
+| 항목 | 결과 |
+|---|---|
+| 설치 | `npm i -g opencode-ai@1.17.13`·`@1.19.0` 모두 성공(서버 CPU avx2, x86_64). 실행 옵션은 두 버전이 같다. **1.19.0으로 고정**(§9 Q7) |
+| 자동 업데이트 끄기 | 환경변수 `OPENCODE_DISABLE_AUTOUPDATE` 존재 |
+| 표준입력 | `opencode run`은 표준입력을 메시지로 읽는다 → 반드시 stdin을 닫는다(런타임은 이미 `stdin.end()`) |
+| 이벤트 형식 | 한 줄에 `{type, timestamp, sessionID, part}`. `type`은 `step_start`·`text`·`tool_use`·`step_finish`·`error`. 텍스트는 `part.text`, 도구는 `part.tool`·`part.callID`·`part.state.{status, input, output \| error, metadata, time}`, 단계 종료는 `part.reason`·`part.tokens{total,input,output,reasoning,cache{read,write}}`·`part.cost`. **지금 정규화 코드는 평평한 형태만 읽는다 → G2-01 필수** |
+| 오류 형식 | 맨 위 `error`: `{name:"APIError", data:{message, statusCode, isRetryable, responseHeaders, responseBody}}`(잘못된 키 401, 무료 등급 거절 403), `{name:"UnknownError", data:{message, ref}}`(없는 모델·로그인 안 된 유료 모델), `{_tag:"BadRequest"}`(이름·메시지 없음). 종료 코드 1, stderr는 비어 있음 |
+| 로그인 없이 | 무료 모델 11개가 `opencode models`에 나오고 실행된다. 유료 모델은 로그인 전에는 목록에 없다. 코드의 무료 모델 목록은 실제와 달랐다(11개 중 1개만 일치) → 설치된 CLI의 목록을 기준으로 삼도록 변경(G1-11) |
+| agent 지시문 주입 | `OPENCODE_CONFIG_CONTENT='{"agent":{"<name>":{"mode":"primary","prompt":"…"}}}'` + `--agent <name>` → 지시문 적용, 기본 도구(read 등) 유지, 작업 폴더·플랫폼 같은 기본 환경 정보도 유지(덧붙는 방식) |
+| MCP 주입 | 같은 환경변수의 `mcp.<server> = {type:"local", command:[…], environment:{…}, enabled:true}` → 도구가 **`<server>_<tool>`**(`aidev-tools_echo_token`)로 노출. `--auto` 없이도, `--agent plan`에서도 호출됨. MCP 프로세스의 cwd = `--dir`, `environment`가 전달됨 |
+| MCP 호출 타임아웃 | 기본 60초("MCP error -32001: Request timed out"). 서버 설정에 `"timeout": 2700000`을 주면 150초 호출이 끝까지 성공 → aidev-tools에는 45분을 준다 |
+| 최대 단계 | `agent.<name>.steps`(1.19; 예전 이름 `maxSteps`) 동작 — 한도에 닿으면 모델에 중단 지시가 들어간다 |
+| 세션 재개 | `--session <id>`로 이전 대화를 이어 간다 |
+| **미확정(유료 로그인 후 재확인)** | ① 도구 제한(`agent.tools`·`agent.permission`): 무료 등급이 403("free tier can only be used from within OpenCode")으로 거절해 판단 불가 ② 이미지 첨부 `-f`: 메시지를 `-f` 앞에 둬야 함(뒤에 두면 메시지를 파일로 읽음), 무료 모델은 BadRequest ③ 사용량 한도(429) 오류의 실제 문구 ④ OpenCode Go 모델 목록 |
+
 ---
 
 ## 3. 명세
@@ -432,34 +450,34 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
 - 검증(로컬, 2026-10-13): 게이트웨이 테스트 30개(새 `provider-policy-test.mjs`: 예시 1·2 표, Q1·Q2, 범위 검사, 라우팅·에스컬레이션·검증 후보·설정 API·AA 동기화), 서버 555(실패 0), 클라이언트 638(새 `providerPolicySettings.test.tsx`), typecheck·lint 오류 0. 로컬 플랫폼에서 작업대·모바일 설정 화면을 열어 하한 sonnet·상한 opus → D0~D4가 예시 2와 같게 표시·라우팅됨을 확인.
 
 ### G0. 사전 검증 (서버 런타임과 같은 환경에서 실측, 코드 변경 없음)
-- [ ] G0-01 **버전 고정**
+- [x] 확인(1.19.0 고정, `OPENCODE_DISABLE_AUTOUPDATE`) — §2.8 — G0-01 **버전 고정**
   - `node:22-bookworm-slim`에서 `npm i -g opencode-ai@<v>`를 설치하고 `opencode --version`을 확인한다.
   - 후보: 코드가 검증한 **1.17.13**(`opencode-runtime.provider.js:24`)과 최신(1.19.0, 2026-10-13).
   - postinstall이 서버 CPU에 맞는 바이너리(avx2 / baseline)를 고르는지 확인한다.
   - 자동 업데이트를 끄는 환경변수 이름(`OPENCODE_DISABLE_AUTOUPDATE` 등)도 확인한다.
   - 결과: §9 Q7 확정.
-- [ ] G0-02 **OpenCode Go 로그인 실측**
+- [~] 무료 모델·로그인 없는 상태까지 확인. Go 로그인과 Go 모델 목록은 사용자 로그인 뒤 — G0-02 **OpenCode Go 로그인 실측**
   - 런타임 컨테이너 셸에서 `opencode auth login`을 실행해 Go를 고르면 `~/.local/share/opencode/auth.json`에 `opencode-go` 키가 생기는지 확인한다.
   - 작업대 설정 → Agents → OpenCode 로그인(`ProviderLoginModal.tsx:62-63`, 셸 `opencode auth login`)이 컨테이너 터미널에서 끝까지 되는지 확인한다.
   - `opencode models opencode-go` 출력을 저장하고 카탈로그(`opencode-models.provider.ts:84-260`)와 대조한다. 모델 id 불일치는 G1-11에서 고친다.
-- [ ] G0-03 **`run --format json` 이벤트 형식**
+- [x] 확인 — §2.8 — G0-03 **`run --format json` 이벤트 형식**
   - text, reasoning, tool_use, step_start/finish, error 샘플을 저장한다.
   - 로컬 1.0.223은 `{type, timestamp, sessionID, part}`로 감싼 형태이고, `normalizeMessage`(`opencode-sessions.provider.ts:205-302`)는 평평한 형태만 읽는다. 대상 버전에서 어느 쪽인지 확인한다.
   - 샘플은 `server/modules/providers/list/opencode/` 테스트 픽스처로 쓴다.
-- [ ] G0-04 **실행별 설정 주입**
+- [x] 확인(지시문은 덧붙는 방식, plan과 함께 쓰는 법은 G2-02에서) — §2.8 — G0-04 **실행별 설정 주입**
   - `OPENCODE_CONFIG_CONTENT`의 `agent.<name>.prompt`가 기본 시스템 프롬프트를 대체하는지 덧붙이는지 확인한다.
   - `--agent <name>`과 결합되는지, `--agent plan`과 함께 쓸 수 있는지 확인한다.
   - `instructions` 대안의 동작도 확인한다.
-- [ ] G0-05 **MCP 주입**
+- [x] 확인(도구 이름 `<server>_<tool>`, 승인 불필요, timeout 설정, cwd) — §2.8 — G0-05 **MCP 주입**
   - local MCP 도구가 노출되는 이름(`<server>_<tool>` 형식 등)을 확인한다.
   - 승인 없이 호출되는지(권한 키) 확인한다.
   - 호출 타임아웃: remote_exec가 45분 대기(`aidev-tools-mcp.ts:63-64`) 가능한지 확인한다.
   - MCP 자식 프로세스의 cwd가 `--dir`인지 확인한다(`remote_sync` 기본 원본, `aidev-tools-mcp.ts:59-60`).
-- [ ] G0-06 **한도·인증 오류 형태**
+- [~] 401·403·모델 없음 형태 확인. 429(한도) 문구는 실제 발생 시 — G0-06 **한도·인증 오류 형태**
   - 잘못된 키(401)와 한도 초과(429, 재현 가능하면) 때 error 이벤트와 stderr 형태를 확인하고, 감지 정규식 초안을 만든다.
   - Go 요금제의 한도 창(5시간·주간 등)과 재설정 시각을 얻는 방법이 있는지 조사한다.
-- [ ] G0-07 **이미지 첨부**: `-f/--file`로 이미지를 넘기면 모델이 보는지 확인한다. 지금은 경로 태그만 붙인다(`opencode-runtime.provider.js:275-287`).
-- [ ] G0-08 결과를 §2.7·§3.3에 반영하고, 설계 변경이 생기면 이 문서를 먼저 고친다.
+- [~] `-f`는 메시지 뒤에 둬야 함 확인. 모델이 이미지를 보는지는 유료 모델로 — G0-07 **이미지 첨부**: `-f/--file`로 이미지를 넘기면 모델이 보는지 확인한다. 지금은 경로 태그만 붙인다(`opencode-runtime.provider.js:275-287`).
+- [x] §2.8에 기록 — G0-08 결과를 §2.7·§3.3에 반영하고, 설계 변경이 생기면 이 문서를 먼저 고친다.
 - [ ] G0-09 **지능 점수 출처 확인** (Artificial Analysis)
   - 무료 API 키를 발급한다(사용자가 직접 발급·설치, 원칙 10).
   - `GET /api/v2/language/models/free` 응답 필드를 확인한다: 지수 값, 지수 버전, 항목 slug, 강도 변형 표기.
@@ -468,17 +486,17 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
   - 결과: §9 Q13~Q15 확정, 빈칸이 많으면 추정 규칙(Q14)을 보강한다.
 
 ### G1. 기반 (릴리스 ① + 런타임 이미지 재빌드)
-- [ ] G1-01 런타임 이미지에 opencode를 설치한다. `deploy/aidev/runtime/Dockerfile`
+- [~] 구현·로컬검증(`Dockerfile`에 `OPENCODE_VERSION`·전역 설치·`OPENCODE_DISABLE_AUTOUPDATE=1`), 서버 확인 대기 — G1-01 런타임 이미지에 opencode를 설치한다. `deploy/aidev/runtime/Dockerfile`
   - `ARG OPENCODE_VERSION`, `test -n` 검사를 추가한다.
   - `npm install -g @anthropic-ai/claude-code@… opencode-ai@${OPENCODE_VERSION}`로 설치한다(global이라 postinstall이 실행됨).
   - 자동 업데이트 끄기 환경변수를 `ENV`에 넣는다(G0-01).
   - 상단 주석 "Rebuild only when a tool version changes"에 OpenCode를 추가한다.
-- [ ] G1-02 빌드 인자를 넘긴다.
+- [~] 구현·로컬검증(`runtime-image.sh` build-arg, `.env.example` `OPENCODE_VERSION=1.19.0`), 서버 확인 대기 — G1-02 빌드 인자를 넘긴다.
   - `deploy/aidev/release/runtime-image.sh:16-20`에 `--build-arg OPENCODE_VERSION="${OPENCODE_VERSION:?}"`
   - `deploy/aidev/.env.example`에 `OPENCODE_VERSION=<G0-01>`
   - 서버 `~/aidev/deploy/.env`에도 같은 값을 넣는다(배포 시 G6-03).
-- [ ] G1-03 공통 엔진 정의(§3.4): `src/shared/types.ts` `AidevEngine`, `src/shared/constants.ts` `AIDEV_ENGINES`·`ENGINE_LABELS`, `src/shared/utils.ts` `isAidevEngine`. 각 정의에 주석과 그룹 헤더를 단다(표준).
-- [ ] G1-04 **Cursor 숨김** (사용자에게 보이는 목록만, 타입·라벨 매핑은 유지)
+- [~] 구현·로컬검증(`AidevEngine`·`AIDEV_ENGINES`·`ENGINE_LABELS`·`isAidevEngine`), 서버 확인 대기 — G1-03 공통 엔진 정의(§3.4): `src/shared/types.ts` `AidevEngine`, `src/shared/constants.ts` `AIDEV_ENGINES`·`ENGINE_LABELS`, `src/shared/utils.ts` `isAidevEngine`. 각 정의에 주석과 그룹 헤더를 단다(표준).
+- [~] 구현·로컬검증(목록 6곳 + 저장값 읽기·쓰기(Cursor는 기억하지 않음), 테스트 3개 갱신), 서버 확인 대기 — G1-04 **Cursor 숨김** (사용자에게 보이는 목록만, 타입·라벨 매핑은 유지)
   - `src/modules/chat/transcript/ProviderSelectionEmptyState.tsx:29-34` `PROVIDER_META`를 `AIDEV_ENGINES`로 필터
   - `src/modules/chat/modals/ModelLibraryPanel.tsx:22-27` `PROVIDERS` 필터
   - `src/modules/settings/tabs/agents-settings/AgentsSettingsTab.tsx:45-47` `visibleAgents` → `AIDEV_ENGINES`
@@ -488,29 +506,29 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
   - 옛 cursor 세션을 열 때 `writeSelectedProvider('cursor')`(`useChatProviderState.ts:433-440`)를 쓰지 않게 하고, 다른 reader(`git-panel useSelectedProvider.ts:12`)의 동작을 확인한다.
   - 테스트 갱신: `src/modules/chat/tests/chatProviderModels.test.ts:139-145`, `src/modules/git-panel/tests/selectedProviderSync.test.tsx:49-52`, `:90`
   - 완료 조건: 설정 Agents의 provider 칩, 빈 채팅 모델 선택기, 모델 라이브러리, 온보딩에 Cursor가 없다. 옛 cursor 세션은 사이드바와 대화에서 그대로 열린다.
-- [ ] G1-05 OpenCode 설정의 빈 권한 화면을 고친다.
+- [~] 구현·로컬검증(빈 화면이던 OpenCode의 권한 탭을 숨김(Account·MCP만). 권한 설정 UI 자체는 G4에서 엔진 UI와 함께), 서버 확인 대기 — G1-05 OpenCode 설정의 빈 권한 화면을 고친다.
   - Agents → OpenCode → 권한 카테고리가 빈 화면이다(`AgentCategoryContentSection.tsx:44-90`, `PermissionsContent.tsx:604`).
   - 새 채팅 기본 권한 모드(`opencodePermissions.defaultPermissionMode`, `src/shared/userSettings.ts:166-173`가 이미 읽음)를 고르는 내용을 넣는다.
-- [ ] G1-06 **기존 버그**: opencode 세션을 claude로 바꾸는 곳 3곳
+- [~] 구현·로컬검증(`ChatInterface`는 라우팅 대상(claude·codex)일 때만 라우터의 모델 고정을 쓰고, 모바일은 세션의 provider를 그대로 씀), 서버 확인 대기 — G1-06 **기존 버그**: opencode 세션을 claude로 바꾸는 곳 3곳
   - `src/modules/chat/ChatInterface.tsx:486` `composerEngine = provider === 'codex' ? 'codex' : 'claude'`: opencode 채팅에서 모델을 고르면 `engine:'claude'`로 고정된다(`:507`). → `isAidevEngine(provider) ? provider : 'claude'`
   - `src-mobile/screens/ChatScreen.tsx:50` `readProvider`, `:152` `resolvedProvider`: opencode와 cursor 세션이 모바일에서 claude로 취급된다. → 세션 provider를 그대로 쓴다.
-- [ ] G1-07 **기존 버그**: 허용 엔진 필터가 빈 배열이 되면 전체 허용으로 바뀐다(D-05 위반)
+- [~] 구현·로컬검증(런타임 라우트 `sideEngines`: 목록이 왔는데 쓸 엔진이 없으면 409(판정·교훈), 설계·지식 점검은 모르는 엔진이면 400), 서버 확인 대기 — G1-07 **기존 버그**: 허용 엔진 필터가 빈 배열이 되면 전체 허용으로 바뀐다(D-05 위반)
   - `server/modules/aidev-tools/aidev-tools.routes.ts:31`(judge), `:66`(curate), `:89`(verify 기본 `['claude','codex']`)
   - `specialist-judge.service.ts:305` `!input.engines?.length`이면 전부 → 빈 배열은 "엔진 없음" 오류로 처리한다.
   - `lesson-curator.service.ts:115`, `:123`도 같다.
   - `:116`(design), `:144`(knowledge)의 `engine === 'codex' ? 'codex' : 'claude'`: G2에서 opencode를 지원하기 전까지 opencode면 400을 낸다.
 - [~] 구현·로컬검증(GP-03에서 구현(고정 채팅 제외), 로컬검증), 서버 확인 대기 — G1-08 **기존 버그**: 채팅에 묶인 엔진이 사용량 한도에 걸려도 그 엔진이 선택된다(`routing.ts:750`). limited면 `switch_back`처럼 다음 usable 엔진을 제안한다(사유 기록).
-- [ ] G1-09 **임시 우회**: G3 전까지 라우터가 opencode 채팅을 가로채지 않게 한다.
+- [~] 구현·로컬검증(`useAidevRouting.beforeSend`가 엔진이 아닌 provider면 null), 서버 확인 대기 — G1-09 **임시 우회**: G3 전까지 라우터가 opencode 채팅을 가로채지 않게 한다.
   - `src/modules/aidev-router/hooks/useAidevRouting.ts:118` `beforeSend`에서 `!asEngine(context.provider)`이면 `null`을 반환한다.
   - 지금은 새 채팅에서 opencode를 골라도 `useChatComposerState.ts:856-857`이 계획 엔진(claude·codex)으로 세션을 만든다. 기존 opencode 채팅의 run도 claude·codex 엔진으로 기록된다.
   - 모바일도 같은 훅을 쓰는지 확인한다.
   - G4-02에서 제거한다.
 - [ ] G1-10 Gemini 경로: OpenCode Zen 로그인이면 코드 변경이 없다(`opencode/gemini-*`가 카탈로그에 있음). Google API 키를 쓰기로 하면(§9 Q8) G1-11에서 `google/…` 모델을 추가한다.
-- [ ] G1-11 OpenCode 카탈로그 정정(`opencode-models.provider.ts`)
+- [~] 구현·로컬검증(목록 정정 대신 **설치된 CLI의 `opencode models`를 기준**으로(10분 캐시, 로그인 변경 시 갱신): 카탈로그 항목은 이름·강도만 제공, 모르는 모델은 id로 표시, CLI가 없으면 기존 방식. Google 키 등 사용자가 연결한 공급자의 모델도 이것으로 보임), 서버 확인 대기 — G1-11 OpenCode 카탈로그 정정(`opencode-models.provider.ts`)
   - G0-02 실측 목록과 다른 Go 모델 id를 고친다.
   - (Q8 결정 시) `google/<id>` 항목을 추가하고, `OPENCODE_ENV_PROVIDER_IDS`(`:299-303`)에 `GOOGLE_GENERATIVE_AI_API_KEY: 'google'`을 추가한다.
   - 테스트 `server/modules/providers/tests/opencode-models.test.ts`
-- [ ] G1-12 원칙 4(upstream 수정 최소화)의 허용 지점에 이번 단계에서 고치는 upstream 파일을 추가한다(§9 Q10). IMPLEMENTATION-PLAN §0을 갱신한다.
+- [x] IMPLEMENTATION-PLAN §0 원칙 4에 반영 — G1-12 원칙 4(upstream 수정 최소화)의 허용 지점에 이번 단계에서 고치는 upstream 파일을 추가한다(§9 Q10). IMPLEMENTATION-PLAN §0을 갱신한다.
 - [ ] G1-13 **서버 확인**
   - 이미지를 재빌드하고 런타임을 재생성한 뒤 `docker exec <runtime> opencode --version`을 확인한다.
   - 설정에 Cursor가 없다.
@@ -806,7 +824,7 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
 - **Q4 판정(judge) 공급자** → 기본값: Claude sonnet → Codex terra 유지. opencode 전용 계정은 판정 없이 generalist가 된다(지금 "판정 없음" 경로). 이 경우 품질이 떨어지는지 G6에서 확인한다.
 - **Q5 기존 계정의 opencode 허용** → 기본값: 관리자가 `manage-users engines USER claude,codex,opencode`로 명시한다. `accounts.engines` DEFAULT는 그대로 둔다.
 - **Q6 채팅별 상한·모델 우선순위** → 기본값: 계정 단위만 둔다. 채팅별은 기존 하한·effort 상한만 유지.
-- **Q7 OpenCode 버전** → G0-01에서 정한다. 후보는 1.17.13(코드 검증 기준)과 최신.
+- **Q7 OpenCode 버전 — 확정**: **1.19.0**(2026-10-13 서버 실측, §2.8). 올릴 때는 §2.8의 실측을 다시 한다.
 - **Q8 Gemini 경로** → 기본값: OpenCode Zen(코드 변경 없음). Google API 키를 쓰려면 G1-11. Antigravity OAuth는 금지.
 - **Q9 설정 UI 위치** → 기본값: 작업대 설정 → Agents 탭 상단 "라우팅" 영역. 대안: 별도 "라우팅" 탭.
 - **Q11 정하지 않은 항목의 동작** → 기본값: **지금 동작 그대로**. (구현) 분할 모드는 모델 사다리를 저장한 공급자에만 적용된다(§2.1).

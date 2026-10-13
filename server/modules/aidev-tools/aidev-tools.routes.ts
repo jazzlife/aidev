@@ -16,6 +16,21 @@ import { agentDesignerService } from '@/modules/aidev-tools/agent-designer.servi
  */
 const router = express.Router();
 
+type SideEngine = 'claude' | 'codex';
+const isSideEngine = (value: unknown): value is SideEngine => value === 'claude' || value === 'codex';
+/**
+ * The engines a side turn may run on, as the gateway sent them (the account's usable engines, D-05). Absent = an older
+ * gateway: every engine. Present but with none this runtime can run a side turn on (an OpenCode-only account until
+ * OpenCode runs side turns) = `none`: the route refuses instead of treating the empty list as "every engine", which
+ * used to run the turn on Claude for an account that may not use it. Exported for this router's test.
+ */
+export function sideEngines(value: unknown): { engines: SideEngine[] | undefined; none: boolean } {
+  if (!Array.isArray(value)) return { engines: undefined, none: false };
+  const engines = (value as unknown[]).filter(isSideEngine);
+  return { engines, none: engines.length === 0 };
+}
+const NO_SIDE_ENGINE = 'none of the account\'s engines can run this side turn in the runtime';
+
 /** Gateway → runtime: is one of the existing agents a true specialist for this command? (routing) */
 router.post('/specialist-judge', asyncHandler(async (req: Request, res: Response) => {
   const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
@@ -28,7 +43,8 @@ router.post('/specialist-judge', asyncHandler(async (req: Request, res: Response
     return;
   }
   try {
-    const engines = Array.isArray(body.engines) ? (body.engines as unknown[]).filter((e): e is 'claude' | 'codex' => e === 'claude' || e === 'codex') : undefined;
+    const { engines, none } = sideEngines(body.engines);
+    if (none) { res.status(409).json({ success: false, error: NO_SIDE_ENGINE }); return; }
     res.json(createApiSuccessResponse(await specialistJudgeService.judge({ command, candidates, project: typeof body.project === 'string' ? body.project : null, engines, current: typeof body.current === 'string' ? body.current : null, ask: body.ask !== false })));
   } catch (error) {
     res.status(502).json({ success: false, error: error instanceof Error ? error.message : 'judge failed' });
@@ -58,16 +74,18 @@ router.post('/curate', asyncHandler(async (req: Request, res: Response) => {
     res.status(400).json({ success: false, error: 'session_id is required.' });
     return;
   }
+  const curateEngines = sideEngines(body.engines);
+  if (curateEngines.none) { res.status(409).json({ success: false, error: NO_SIDE_ENGINE }); return; }
   const result = await lessonCuratorService.curate({
     sessionId,
     runId: typeof body.run_id === 'number' ? body.run_id : null,
     agent: typeof body.agent === 'string' ? body.agent : null,
     engine: body.engine === 'codex' ? 'codex' : body.engine === 'claude' ? 'claude' : null,
-    engines: Array.isArray(body.engines) ? (body.engines as unknown[]).filter((e): e is 'claude' | 'codex' => e === 'claude' || e === 'codex') : undefined,
+    engines: curateEngines.engines,
     // the gateway's order (work priority / provider policy); absent = the session's engine first
     candidates: Array.isArray(body.candidates) ? (body.candidates as unknown[]).flatMap((entry) => {
       const c = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
-      return c.engine === 'claude' || c.engine === 'codex' ? [{ engine: c.engine, model: typeof c.model === 'string' ? c.model.slice(0, 100) : null }] : [];
+      return isSideEngine(c.engine) ? [{ engine: c.engine, model: typeof c.model === 'string' ? c.model.slice(0, 100) : null }] : [];
     }) : null,
     command: typeof body.command === 'string' ? body.command : null,
     signals: body.signals && typeof body.signals === 'object' ? body.signals as Record<string, unknown> : {},
@@ -91,7 +109,7 @@ router.post('/verify', asyncHandler(async (req: Request, res: Response) => {
     agent: typeof body.agent === 'string' ? body.agent : null,
     engine: body.engine === 'codex' ? 'codex' : body.engine === 'claude' ? 'claude' : null,
     workerModel: typeof body.worker_model === 'string' ? body.worker_model : null,
-    engines: Array.isArray(body.engines) ? (body.engines as unknown[]).filter((e): e is 'claude' | 'codex' => e === 'claude' || e === 'codex') : ['claude', 'codex'],
+    engines: sideEngines(body.engines).engines ?? ['claude', 'codex'],
     command: typeof body.command === 'string' ? body.command : null,
     depth: typeof body.depth === 'number' ? body.depth : null,
     modelFloor: { ...(typeof floor.claude === 'string' ? { claude: floor.claude } : {}), ...(typeof floor.codex === 'string' ? { codex: floor.codex } : {}) },
@@ -99,7 +117,7 @@ router.post('/verify', asyncHandler(async (req: Request, res: Response) => {
     // the gateway's verifier order (verification priority / provider policy); absent = this runtime's own order
     candidates: Array.isArray(body.candidates) ? (body.candidates as unknown[]).flatMap((entry) => {
       const c = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
-      if (c.engine !== 'claude' && c.engine !== 'codex') return [];
+      if (!isSideEngine(c.engine)) return [];
       return [{ engine: c.engine, model: typeof c.model === 'string' ? c.model.slice(0, 100) : null, effort: typeof c.effort === 'string' ? c.effort.slice(0, 20) : null }];
     }) : null,
   });
@@ -120,6 +138,8 @@ router.post('/design-agent', asyncHandler(async (req: Request, res: Response) =>
     ? { name: raw.name, domain: raw.domain, description: typeof raw.description === 'string' ? raw.description : '', technologies: Array.isArray(raw.technologies) ? (raw.technologies as unknown[]).map(String) : [] }
     : null;
   const maxTurns = typeof body.max_turns === 'number' && body.max_turns > 0 ? Math.min(body.max_turns, 40) : 20;
+  // an engine this runtime cannot design on is refused, not quietly swapped for Claude
+  if (body.engine !== undefined && !isSideEngine(body.engine)) { res.status(400).json({ success: false, error: `engine ${String(body.engine)} cannot run this side turn` }); return; }
   try {
     res.json(createApiSuccessResponse(await agentDesignerService.design({
       command, proposal, catalog: text(body.catalog, 20000) ?? '', prompt, maxTurns,
@@ -152,6 +172,7 @@ router.post('/knowledge-check', asyncHandler(async (req: Request, res: Response)
     res.status(400).json({ success: false, error: 'title and body are required.' });
     return;
   }
+  if (body.engine !== undefined && !isSideEngine(body.engine)) { res.status(400).json({ success: false, error: `engine ${String(body.engine)} cannot run this side turn` }); return; }
   const engine = body.engine === 'codex' ? 'codex' : 'claude';
   res.json(createApiSuccessResponse(await knowledgeCheckService.check({ title, body: content, sourceUrl: text(body.source_url, 2000), sourceDate: text(body.source_date, 40), agent: text(body.agent, 100), engine, model: text(body.model, 100), prompt: text(body.prompt, 20000) })));
 }));

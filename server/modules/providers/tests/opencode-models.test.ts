@@ -8,6 +8,7 @@ import Database from 'better-sqlite3';
 
 import { closeConnection, initializeDatabase } from '@/modules/database/index.js';
 import {
+  mergeOpenCodeCliModels,
   OpenCodeProviderModels,
   OPENCODE_PREDEFINED_MODELS,
 } from '@/modules/providers/list/opencode/opencode-models.provider.js';
@@ -34,7 +35,8 @@ const withOpenCodeHome = async (
 
   try {
     await setUp(homeDir);
-    await runTest(new OpenCodeProviderModels());
+    // no CLI in these cases: the curated catalog narrowed by the fixture's providers
+    await runTest(new OpenCodeProviderModels(async () => null));
   } finally {
     (os as any).homedir = originalHomedir;
     for (const [key, value] of originalEnv) {
@@ -296,4 +298,20 @@ test('OpenCode composes the provider prefix into session model ids', async () =>
     }
     await rm(tempSessionsDirectory, { recursive: true, force: true });
   }
+});
+
+test('the CLI\'s own model list decides the picker: curated entries keep their labels, unknown ones appear by id', async () => {
+  const cli = ['opencode/big-pickle', 'opencode/space-bunny-free', 'opencode-go/glm-5.3', 'google/gemini-3-pro'];
+  const merged = mergeOpenCodeCliModels(OPENCODE_PREDEFINED_MODELS, cli);
+  assert.deepEqual(merged.OPTIONS.map((option) => option.value).sort(), [...cli].sort());
+  assert.equal(merged.OPTIONS.find((option) => option.value === 'opencode/big-pickle')?.label, 'Big Pickle');
+  assert.deepEqual(merged.OPTIONS.find((option) => option.value === 'opencode-go/glm-5.3')?.effort?.values.map((v) => v.value), ['low', 'high', 'max'], 'effort levels come from the catalog');
+  assert.deepEqual(merged.OPTIONS.find((option) => option.value === 'google/gemini-3-pro'), { value: 'google/gemini-3-pro', label: 'gemini-3-pro', description: 'google' });
+  // the catalog's default is not something this install can run: the first listed model takes its place
+  assert.equal(merged.DEFAULT, merged.OPTIONS[0].value);
+  // through the adapter
+  const adapter = new OpenCodeProviderModels(async () => cli);
+  assert.equal((await adapter.getSupportedModels()).OPTIONS.length, 4);
+  // nothing listed (a broken CLI answer): the catalog stays
+  assert.equal(mergeOpenCodeCliModels(OPENCODE_PREDEFINED_MODELS, []), OPENCODE_PREDEFINED_MODELS);
 });

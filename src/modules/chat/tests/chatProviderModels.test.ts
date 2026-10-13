@@ -136,15 +136,15 @@ test('setting the same model twice keeps the record identity stable', async () =
 test('the active provider’s model is what currentProviderModel reports', async () => {
   // The provider selection is a stored preference; the per-provider model is
   // still a plain localStorage key.
-  writeUserPreference('selectedProvider', 'cursor');
-  localStorage.setItem('cursor-model', 'cursor-active');
+  writeUserPreference('selectedProvider', 'opencode');
+  localStorage.setItem('opencode-model', 'opencode-active');
 
   const { result } = await renderProviderState();
 
   await waitFor(() => {
-    assert.equal(result.current.provider, 'cursor');
+    assert.equal(result.current.provider, 'opencode');
   });
-  assert.equal(result.current.currentProviderModel, 'cursor-active');
+  assert.equal(result.current.currentProviderModel, 'opencode-active');
 });
 
 test('a session opened by id starts in the Settings permission default, not a mode left from another chat', async () => {

@@ -1,4 +1,5 @@
 import type { LLMProvider } from '@/shared/types';
+import { isAidevEngine } from '@/shared/utils';
 import { readUserPreference, writeUserPreference } from '@/shared/userSettings';
 
 /**
@@ -16,15 +17,16 @@ import { readUserPreference, writeUserPreference } from '@/shared/userSettings';
  * choice both reaches every reader at once and follows the user between devices.
  */
 
-const PROVIDERS: LLMProvider[] = ['claude', 'cursor', 'codex', 'opencode'];
-
 const DEFAULT_PROVIDER: LLMProvider = 'claude';
 
+/** The stored choice when it is a provider the platform offers; a stored Cursor (hidden 2026-10-13) reads as the default. */
 export function readSelectedProvider(): LLMProvider {
   const stored = readUserPreference<string | null>('selectedProvider', null);
-  return PROVIDERS.includes(stored as LLMProvider) ? (stored as LLMProvider) : DEFAULT_PROVIDER;
+  return isAidevEngine(stored) ? stored : DEFAULT_PROVIDER;
 }
 
+/** Remembers the choice; opening an old Cursor session does not make Cursor the choice for new chats. */
 export function writeSelectedProvider(provider: LLMProvider): void {
+  if (!isAidevEngine(provider)) return;
   writeUserPreference('selectedProvider', provider);
 }

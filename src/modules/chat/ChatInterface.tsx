@@ -27,7 +27,7 @@ import {
 } from '@/shared/context/SessionProtectionContext';
 import ChatMessagesPane from '@/modules/chat/transcript/ChatMessagesPane';
 import ChatComposer from '@/modules/chat/composer/ChatComposer';
-import { AgentCreateCard, AidevRouterBar, ClarifyPrompt, COMPOSE_EVENT, announceRunComplete, changedFilesSince, EscalationCard, routingStore, useAgentCreation, useAidevRouting, useEffortCap, useEscalation, useReturnFromHandoff, useRoutingState, ReturnCard, VerificationCard } from '@/modules/aidev-router';
+import { AgentCreateCard, AidevRouterBar, isPolicyProvider, ClarifyPrompt, COMPOSE_EVENT, announceRunComplete, changedFilesSince, EscalationCard, routingStore, useAgentCreation, useAidevRouting, useEffortCap, useEscalation, useReturnFromHandoff, useRoutingState, ReturnCard, VerificationCard } from '@/modules/aidev-router';
 import CommandResultModal from '@/modules/chat/modals/CommandResultModal';
 
 type ChatInterfaceProps = {
@@ -479,7 +479,8 @@ function ChatInterface({
   // shows that (last plan, or "자동") instead of the provider default it would ignore; picking a model or
   // effort there pins it for the router (engine = this composer's provider) until reset to 자동.
   const routingState = useRoutingState();
-  const routingOn = routingState.mode !== 'off';
+  // routing covers Claude and Codex chats; an OpenCode (or old Cursor) chat keeps its own model picker until it is an engine (G3)
+  const routingOn = routingState.mode !== 'off' && isPolicyProvider(provider);
   const pinnedModel = routingState.overrides.model;
   const pinnedEffort = routingState.overrides.effort;
   const lastPlan = routingState.last?.plan;
@@ -503,14 +504,14 @@ function ChatInterface({
     onReset: () => { const { model: _model, effort: _effort, ...rest } = routingStore.get().overrides; routingStore.patch({ overrides: rest }); },
   } : null;
   const selectComposerModel = useCallback((model: string) => {
-    if (routingStore.get().mode === 'off') { void handleSelectComposerModel(model); return; }
+    if (!routingOn) { void handleSelectComposerModel(model); return; }
     routingStore.setOverrides({ model, engine: composerEngine });
-  }, [composerEngine, handleSelectComposerModel]);
+  }, [composerEngine, handleSelectComposerModel, routingOn]);
   const selectComposerEffort = useCallback((effort: string) => {
-    if (routingStore.get().mode === 'off') { void handleSelectComposerEffort(effort); return; }
+    if (!routingOn) { void handleSelectComposerEffort(effort); return; }
     if (effort === 'default') { const { effort: _effort, ...rest } = routingStore.get().overrides; routingStore.patch({ overrides: rest }); return; }
     routingStore.setOverrides({ effort });
-  }, [handleSelectComposerEffort]);
+  }, [handleSelectComposerEffort, routingOn]);
 
   // Mirrors ChatComposer's own visibility check so the message pane can
   // reserve enough bottom space to keep the floating status tab from

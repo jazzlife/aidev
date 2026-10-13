@@ -120,6 +120,12 @@ export function useAidevRouting() {
     if (current.mode === 'off' || !text.trim()) {
       return null;
     }
+    // Routing picks between its engines only. A chat on another provider (OpenCode until it is an engine — stage G3; an
+    // old Cursor session) is sent as it is: routed, a new OpenCode chat became a Claude or Codex session, and an existing
+    // one logged its runs under an engine that never ran them.
+    if (!asEngine(context.provider)) {
+      return null;
+    }
     // a new send supersedes any follow-up or verdict still shown for the previous run
     routingStore.patch({ busy: true, error: null, escalation: null, verification: null });
     try {

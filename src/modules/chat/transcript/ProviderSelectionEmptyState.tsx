@@ -3,6 +3,7 @@ import { ChevronDown, Plus } from "lucide-react";
 import { Trans, useTranslation } from "react-i18next";
 
 import type {
+  AidevEngine,
   ProjectSession,
   LLMProvider,
   ProviderModelActions,
@@ -24,14 +25,12 @@ import {
 } from "@/shared/ui";
 import ModelGroupList, { type ModelGroup } from "@/modules/chat/composer/ModelGroupList";
 import ModelLibraryPanel from "@/modules/chat/modals/ModelLibraryPanel";
+import { AIDEV_ENGINES } from '@/shared/constants';
 import { writeSelectedProvider } from '@/shared/selectedProvider';
 
-const PROVIDER_META: { id: LLMProvider; name: string }[] = [
-  { id: "claude", name: "Anthropic" },
-  { id: "codex", name: "OpenAI" },
-  { id: "cursor", name: "Cursor" },
-  { id: "opencode", name: "OpenCode" },
-];
+// the providers a new chat can pick (AIDEV_ENGINES: Cursor is hidden)
+const PROVIDER_NAMES: Record<AidevEngine, string> = { claude: "Anthropic", codex: "OpenAI", opencode: "OpenCode" };
+const PROVIDER_META: { id: LLMProvider; name: string }[] = AIDEV_ENGINES.map((id) => ({ id, name: PROVIDER_NAMES[id] }));
 
 const MOD_KEY =
   typeof navigator !== "undefined" && /Mac|iPhone|iPad/.test(navigator.platform) ? "⌘" : "Ctrl";

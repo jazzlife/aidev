@@ -5,6 +5,7 @@ import AgentCategoryContentSection from '@/modules/settings/tabs/agents-settings
 import AgentCategoryTabsSection from '@/modules/settings/tabs/agents-settings/sections/AgentCategoryTabsSection';
 import AgentSelectorSection from '@/modules/settings/tabs/agents-settings/sections/AgentSelectorSection';
 import { isPolicyProvider, ProviderPolicySettings } from '@/modules/aidev-router';
+import { AIDEV_ENGINES } from '@/shared/constants';
 
 type ProviderAuthStatusByProvider = Record<AgentProvider, ProviderAuthStatus>;
 
@@ -38,14 +39,14 @@ export default function AgentsSettingsTab({
   const [selectedCategory, setSelectedCategory] = useState<AgentCategory>('account');
   const visibleCategories = useMemo<AgentCategory[]>(() => (
     selectedAgent === 'opencode'
-      ? ['account', 'permissions', 'mcp']
+      // no permissions tab yet: OpenCode has no panel there (it showed an empty page); it comes with the engine UI (G4)
+      ? ['account', 'mcp']
       // providers routing picks between also get their model/effort range (provider policy)
       : ['account', 'permissions', 'mcp', 'skills', ...(isPolicyProvider(selectedAgent) ? ['routing' as const] : [])]
   ), [selectedAgent]);
 
-  const visibleAgents = useMemo<AgentProvider[]>(() => {
-    return ['claude', 'cursor', 'codex', 'opencode'];
-  }, []);
+  // the providers the platform offers (Cursor is hidden; its settings stay reachable only through old sessions)
+  const visibleAgents = useMemo<AgentProvider[]>(() => [...AIDEV_ENGINES], []);
 
   const agentContextById = useMemo<AgentContextByProvider>(() => ({
     claude: {

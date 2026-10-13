@@ -7,6 +7,12 @@ import type { NavigateFunction } from 'react-router-dom';
 /** Identifies which coding-agent CLI backs a session, project selection or model list. */
 export type LLMProvider = 'claude' | 'cursor' | 'codex' | 'opencode';
 
+/**
+ * A provider the platform offers and routes to. Cursor is not one (2026-10-13): it stays in `LLMProvider` only so
+ * sessions made with it earlier still open and render. Use this for every list the user picks a provider from.
+ */
+export type AidevEngine = Exclude<LLMProvider, 'cursor'>;
+
 /** One selectable model in a provider's model menu, including its optional reasoning-effort choices. */
 export type ProviderModelOption = {
   value: string;

@@ -1,5 +1,6 @@
 import { useTranslation } from 'react-i18next';
 
+import { isAidevEngine } from '@/shared/utils';
 import type { LLMProvider, ProviderAuthStatusMap } from '@/shared/types';
 import AgentConnectionCard from '@/modules/onboarding/AgentConnectionCard';
 
@@ -55,7 +56,8 @@ export default function AgentConnectionsStep({
       </div>
 
       <div className="-mr-1 max-h-[38vh] space-y-2 overflow-y-auto pr-1">
-        {providerCards.map((providerCard) => (
+        {/* only the providers the platform offers (Cursor is hidden) */}
+        {providerCards.filter((providerCard) => isAidevEngine(providerCard.provider)).map((providerCard) => (
           <AgentConnectionCard
             key={providerCard.provider}
             provider={providerCard.provider}

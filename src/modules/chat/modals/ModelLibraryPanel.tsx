@@ -11,6 +11,7 @@ import {
   X,
 } from 'lucide-react';
 
+import { AIDEV_ENGINES, ENGINE_LABELS } from '@/shared/constants';
 import { Badge, Button, Input, LLMProviderLogo } from '@/shared/ui';
 import type {
   LLMProvider,
@@ -19,12 +20,8 @@ import type {
   ProviderModelsDefinition,
 } from '@/shared/types';
 
-const PROVIDERS: Array<{ id: LLMProvider; label: string }> = [
-  { id: 'claude', label: 'Claude' },
-  { id: 'codex', label: 'Codex' },
-  { id: 'cursor', label: 'Cursor' },
-  { id: 'opencode', label: 'OpenCode' },
-];
+// the providers offered as tabs (AIDEV_ENGINES: Cursor is hidden)
+const PROVIDERS: Array<{ id: LLMProvider; label: string }> = AIDEV_ENGINES.map((id) => ({ id, label: ENGINE_LABELS[id] }));
 
 type ModelLibraryPanelProps = {
   initialProvider: LLMProvider;

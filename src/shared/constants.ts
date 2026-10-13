@@ -11,7 +11,7 @@ import {
 } from 'lucide-react';
 import type { ComponentType } from 'react';
 
-import type { FileStatusCode, LLMProvider, McpProvider, McpScope, McpTransport, SettingsMainTab } from '@/shared/types';
+import type { AidevEngine, FileStatusCode, LLMProvider, McpProvider, McpScope, McpTransport, SettingsMainTab } from '@/shared/types';
 import type { UserPreferenceKey } from '@/shared/userSettings';
 
 /** The four buckets the git changes view sorts working-tree files into. */
@@ -109,6 +109,20 @@ export const FILE_STATUS_GROUPS: GitStatusGroupEntry[] = [
   { key: 'deleted', status: 'D' },
   { key: 'untracked', status: 'U' },
 ];
+
+// ---------------------------
+
+//----------------- OFFERED PROVIDERS ------------
+
+/**
+ * The providers the user can pick, sign in to and configure, in display order — every picker, the settings tabs and
+ * the onboarding cards list these. Cursor is left out (hidden 2026-10-13); its old sessions still render through the
+ * `LLMProvider` label maps.
+ */
+export const AIDEV_ENGINES: readonly AidevEngine[] = ['claude', 'codex', 'opencode'];
+
+/** Display name of each offered provider (chips, notes, hand-off cards). */
+export const ENGINE_LABELS: Record<AidevEngine, string> = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' };
 
 // ---------------------------
 
