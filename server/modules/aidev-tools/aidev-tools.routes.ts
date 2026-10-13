@@ -10,6 +10,7 @@ import { runVerifierService } from '@/modules/aidev-tools/run-verifier.service.j
 import { remoteSync } from '@/modules/aidev-tools/remote-sync.service.js';
 import { specialistJudgeService } from '@/modules/aidev-tools/specialist-judge.service.js';
 import { agentDesignerService } from '@/modules/aidev-tools/agent-designer.service.js';
+import { openCodeLoginService } from '@/modules/aidev-tools/opencode-login.service.js';
 
 /**
  * Gateway → runtime calls made on behalf of the user (mounted at /api/aidev-tools behind
@@ -215,6 +216,26 @@ router.post('/claude-login/cancel', asyncHandler(async (req: Request, res: Respo
   const loginId = readBody(req).login_id;
   if (typeof loginId === 'string') claudeLoginService.cancel(loginId);
   res.json(createApiSuccessResponse({ ok: true }));
+}));
+
+// ---- in-app OpenCode login with an API key (workbench) -------------------------------------------
+router.get('/opencode-login', asyncHandler(async (_req: Request, res: Response) => {
+  res.json(createApiSuccessResponse({ providers: openCodeLoginService.providers() }));
+}));
+
+router.post('/opencode-login', asyncHandler(async (req: Request, res: Response) => {
+  const body = readBody(req);
+  const provider = typeof body.provider === 'string' ? body.provider : '';
+  const key = typeof body.key === 'string' ? body.key : '';
+  if (!provider || !key) {
+    res.status(400).json({ success: false, error: 'provider and key are required.' });
+    return;
+  }
+  try {
+    res.json(createApiSuccessResponse(openCodeLoginService.saveApiKey(provider, key)));
+  } catch (error) {
+    res.status(400).json({ success: false, error: error instanceof Error ? error.message : String(error) });
+  }
 }));
 
 export default router;

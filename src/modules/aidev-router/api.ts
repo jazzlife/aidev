@@ -369,6 +369,10 @@ export const aidevApi = {
   claudeLoginStart: () => post('/api/aidev-tools/claude-login/start', {}).then((response) => readRuntimeData<{ loginId: string; url: string }>(response)),
   claudeLoginCode: (loginId: string, code: string) => post('/api/aidev-tools/claude-login/code', { login_id: loginId, code }).then((response) => readRuntimeData<{ issuedAt: number; expiresAt: number }>(response)),
   claudeLoginCancel: (loginId: string) => post('/api/aidev-tools/claude-login/cancel', { login_id: loginId }).then(() => undefined),
+  /** The providers OpenCode holds a credential for in this runtime (ids only). */
+  openCodeLoginProviders: () => authenticatedFetch('/api/aidev-tools/opencode-login').then((response) => readRuntimeData<{ providers: string[] }>(response)),
+  /** Stores an API key as one OpenCode provider's sign-in; the key goes to the user's runtime and is never read back. */
+  openCodeLoginKey: (provider: string, key: string) => post('/api/aidev-tools/opencode-login', { provider, key }).then((response) => readRuntimeData<{ provider: string; providers: string[] }>(response)),
   agents: () => authenticatedFetch('/api/aidev/agents').then((response) => readJson<{ agents: CatalogAgent[] }>(response)),
   agent: (id: number) => authenticatedFetch(`/api/aidev/agents/${id}`).then((response) => readJson<AgentDetail>(response)),
   createAgent: (input: Record<string, unknown>) => post('/api/aidev/agents', input).then((response) => readJson<{ agent: CatalogAgent }>(response)),

@@ -1,8 +1,9 @@
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { X } from 'lucide-react';
 
 import { StandaloneShell } from '@/modules/standalone-shell';
-import { ClaudeLoginPanel } from '@/modules/aidev-router';
+import { ClaudeLoginPanel, OpenCodeLoginPanel } from '@/modules/aidev-router';
 import { IS_PLATFORM } from '@/shared/utils';
 import type { LLMProvider } from '@/shared/types';
 
@@ -70,7 +71,7 @@ const getProviderTitle = (provider: LLMProvider) => {
   if (provider === 'claude') return 'Claude 로그인';
   if (provider === 'cursor') return 'Cursor CLI Login';
   if (provider === 'codex') return 'Codex CLI Login';
-  if (provider === 'opencode') return 'OpenCode CLI Login';
+  if (provider === 'opencode') return 'OpenCode 로그인';
   return 'Claude CLI Login';
 };
 
@@ -84,12 +85,17 @@ export default function ProviderLoginModal({
   isAuthenticated = false,
 }: ProviderLoginModalProps) {
   const { t } = useTranslation();
+  // OpenCode: the API-key panel first; its terminal login only when the user asks for it (an account sign-in)
+  const [openCodeTerminal, setOpenCodeTerminal] = useState(false);
   if (!isOpen) {
     return null;
   }
 
   const command = getProviderCommand({ provider, customCommand, isAuthenticated });
   const title = getProviderTitle(provider);
+
+  // closing returns OpenCode to its API-key panel for the next time the modal opens
+  const close = () => { setOpenCodeTerminal(false); onClose(); };
 
   const handleComplete = (exitCode: number) => {
     onComplete?.(exitCode);
@@ -105,7 +111,7 @@ export default function ProviderLoginModal({
         <div className="flex items-center justify-between border-b border-gray-200 p-4 dark:border-gray-700">
           <h3 className="text-lg font-semibold text-gray-900 dark:text-white">{title}</h3>
           <button
-            onClick={onClose}
+            onClick={close}
             className="text-gray-400 transition-colors hover:text-gray-600 dark:hover:text-gray-300"
             aria-label={t('common:misc.closeLoginModal')}
           >
@@ -116,7 +122,10 @@ export default function ProviderLoginModal({
         {/* Nado AI Dev: Claude signs in through the in-app subscription login (1-year token stored by
             the runtime) instead of `claude /login` in a terminal, whose refresh-based login expires. */}
         {provider === 'claude' && !customCommand ? (
-          <div className="flex-1 overflow-auto p-4"><ClaudeLoginPanel onClose={onClose} onDone={() => handleComplete(0)} /></div>
+          <div className="flex-1 overflow-auto p-4"><ClaudeLoginPanel onClose={close} onDone={() => handleComplete(0)} /></div>
+        ) : provider === 'opencode' && !customCommand && !openCodeTerminal ? (
+          // Nado AI Dev: OpenCode signs in with a provider's API key; the terminal list hides OpenCode Go behind a search
+          <div className="flex-1 overflow-auto p-4"><OpenCodeLoginPanel onClose={close} onDone={() => handleComplete(0)} onUseTerminal={() => setOpenCodeTerminal(true)} /></div>
         ) : (
           <div className="flex-1 overflow-hidden">
             <StandaloneShell project={DEFAULT_PROJECT_FOR_EMPTY_SHELL} command={command} onComplete={handleComplete} minimal={true} />
