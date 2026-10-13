@@ -74,6 +74,8 @@ export class ClaudeProviderAuth implements IProviderAuth {
    */
   async logout(): Promise<void> {
     claudeAuthStore.clear();
+    // a sign-out right after a sign-in looks like "the login did not take" from outside: leave a trace of it
+    console.log('[Claude] signed out: stored logins removed');
     void aidevToolsService.reportClaudeAuth({ expires_at: null, failure_at: null });
   }
 

@@ -61,6 +61,7 @@ export const claudeLoginService = {
   /** Starts `claude setup-token` and returns the sign-in URL the user must open. */
   async start(): Promise<{ loginId: string; url: string }> {
     stop(active);
+    console.log('[aidev-tools] Claude login started');
     const cli = resolveClaudeCodeExecutablePath(process.env.CLAUDE_CLI_PATH) ?? 'claude';
     const env = { ...process.env, TERM: 'xterm-256color', BROWSER: 'true' } as Record<string, string>;
     // the login being replaced must not decide how the new one runs
@@ -100,6 +101,16 @@ export const claudeLoginService = {
       console.log(`[aidev-tools] Claude subscription token stored (expires ${new Date(saved.expiresAt).toISOString().slice(0, 10)})`);
       void aidevToolsService.reportClaudeAuth({ expires_at: saved.expiresAt });
       return saved;
+    } catch (error) {
+      // What the CLI showed after the code, so a login that did not go through can be told apart afterwards (a refused
+      // code, a prompt this flow does not answer, no answer at all). The typed code is masked by the CLI itself; a
+      // token or a sign-in address never reaches the log.
+      const shown = login.output.slice(from).replace(/sk-ant-[A-Za-z0-9_-]+/g, '(token)').replace(/https:\/\/\S+/g, '(url)').replace(/\s+/g, ' ').trim().slice(-300);
+      const reason = error instanceof Error ? error.message : String(error);
+      console.warn(`[aidev-tools] Claude login did not complete: ${reason}${shown ? ` — CLI: ${shown}` : ' — the CLI printed nothing after the code'}`);
+      // "시간 초과" alone says nothing to the user: add what the CLI was showing
+      if (reason === '시간 초과') throw new Error(`로그인 CLI가 ${TOKEN_WAIT_MS / 1000}초 안에 토큰을 내지 않았습니다${shown ? ` (CLI 화면: ${shown.slice(-160)})` : ''}. 로그인 페이지를 새로 열어 다시 시도해 주세요.`);
+      throw error;
     } finally {
       stop(login);
     }
