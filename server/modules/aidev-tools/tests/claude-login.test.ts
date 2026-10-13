@@ -48,6 +48,19 @@ test('a good code stores the 1-year token privately, in process env and in ~/.cl
   assert.equal(claudeAuthStore.info()?.expiresAt, saved.expiresAt);
 });
 
+test('a refused code that carries another sign-in page\'s state says where the code came from', async () => {
+  const started = await claudeLoginService.start();
+  await assert.rejects(claudeLoginService.submitCode(started.loginId, 'good-code#state-of-an-earlier-page'), /지금 로그인 시도의 것이 아닙니다.*Invalid code/s);
+  assert.equal(claudeAuthStore.info()?.expiresAt !== undefined, true, 'the earlier login stays as it was');
+});
+
+test('one code per attempt: a second request while the first is being checked is refused', async () => {
+  const started = await claudeLoginService.start();
+  const first = claudeLoginService.submitCode(started.loginId, 'good-code#abc');
+  await assert.rejects(claudeLoginService.submitCode(started.loginId, 'good-code#abc'), /이미 인증 코드를 확인하는 중/);
+  assert.ok((await first).expiresAt > Date.now());
+});
+
 test('startup loads the stored token; non-tokens are refused', () => {
   delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
   claudeAuthStore.loadIntoEnv();

@@ -25,6 +25,12 @@ self.addEventListener('fetch', event => {
     return;
   }
 
+  // Other origins (an analytics script the CDN adds, fonts) and non-GET requests are left to the browser: a blocked
+  // or failed one used to end in `respondWith(undefined)` here ("Failed to convert value to 'Response'").
+  if (event.request.method !== 'GET' || new URL(url).origin !== self.location.origin) {
+    return;
+  }
+
   // Navigation requests (HTML) — always go to network, no caching
   if (event.request.mode === 'navigate') {
     event.respondWith(
@@ -58,7 +64,8 @@ self.addEventListener('fetch', event => {
 
   // Everything else — network-first
   event.respondWith(
-    fetch(event.request).catch(() => caches.match(event.request))
+    // nothing cached for a failed request: a network error, as without the worker
+    fetch(event.request).catch(() => caches.match(event.request).then(cached => cached || Response.error()))
   );
 });
 

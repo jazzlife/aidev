@@ -17,6 +17,8 @@ export function useClaudeLoginFlow() {
   const [error, setError] = useState<string | null>(null);
   const [expiresAt, setExpiresAt] = useState<number | null>(null);
   const loginIdRef = useRef<string | null>(null);
+  // a code being checked: Enter and the button (or a double click) must not send it twice
+  const submittingRef = useRef(false);
 
   const start = useCallback(async () => {
     setStage('starting'); setError(null); setUrl(null);
@@ -33,7 +35,8 @@ export function useClaudeLoginFlow() {
 
   const submit = useCallback(async (code: string) => {
     const loginId = loginIdRef.current;
-    if (!loginId || !code.trim()) return;
+    if (!loginId || !code.trim() || submittingRef.current) return;
+    submittingRef.current = true;
     setStage('submitting'); setError(null);
     try {
       const saved = await aidevApi.claudeLoginCode(loginId, code.trim());
@@ -46,6 +49,8 @@ export function useClaudeLoginFlow() {
       loginIdRef.current = null;
       setError(err instanceof Error ? err.message : String(err));
       setStage('error');
+    } finally {
+      submittingRef.current = false;
     }
   }, []);
 
