@@ -28,7 +28,7 @@
 ### 확정된 결정
 - 결정 모델: **Laya multilingual** (jev 대체). 서버 iGPU(Radeon 890M, `HSA_OVERRIDE_GFX_VERSION=11.5.0`)에서 `/route` ≈150ms.
 - **DB: 게이트웨이 SQLite(`/data/auth.db`, better-sqlite3, WAL) 유지.** 쓰기 주체는 게이트웨이 프로세스 하나뿐이고 런타임·러너는 API로만 기록한다. 접근은 `store.ts` 한 곳으로 제한(라우트에 SQL 금지). 전환 조건(게이트웨이 복제 / 다중 호스트 / 수십만 벡터 검색 / 외부 직접 조회)이 생기면 `store.ts`+마이그레이션만 바꿔 Postgres(+pgvector)로. 전문·벡터 검색은 그때까지 FTS5 + sqlite-vec. 백업: `sqlite3 /data/auth.db ".backup /data/backup/auth-<date>.db"` (서버 cron, 일 1회, 7일 보관).
-- 실행 엔진: **Claude Code, Codex.** 계정별 가용 엔진 상이(Codex 전용 / 둘 다).
+- 실행 엔진: **Claude Code, Codex.** 계정별 가용 엔진 상이(Codex 전용 / 둘 다). → 2026-10-13 사용자 결정: **OpenCode를 같은 수준의 세 번째 엔진으로 추가, Cursor는 설정에서 숨김**, 이후 공급자별 가중치·모델 상한/하한·모델 우선순위·작업/검증 우선순위로 유동 선택 — 단계 G, 상세 `docs/aidev/PROVIDER-ENGINE-PLAN.md`.
 - 두 엔진 모두 가능할 때 **대량 데이터 분석·읽기 → Codex 가중치 상향.** 그 외 중립, 실행 기록으로 학습.
 - 전문 agent = 엔진 중립 정의(프롬프트 + 지식 팩 SKILL.md + 도구 MCP + 교훈). 엔진별 어댑터로 변환.
 - 깊이 D0~D4 → 엔진별 모델/effort 표(§3.4). 위험도 높으면 한 단계 상향. 사용자 지정 최우선.
@@ -58,6 +58,7 @@
 | F 원격 PC | 5 / 9 / 0 | F-02~F-05·F-11 서버 확인(F-11 재확인 `6b99680f`), 러너 0.11.0, agent 전체 권한(`full`), OS별 빌드·설치 스크립트 | F-12 e2e, Windows·macOS 실기(디버거·스크립트), F-08 다중 PC 대상 선택 |
 | D 생성 | 1 / 5 / 0 | 판정→생성→재전송 로컬 e2e 확인 | 구현 완료(D-04 대기열·제안, D-05 Codex 전용). 검증: D-06 |
 | E 축적·학습 | 1 / 6 / 2 | E-01 서버 확인, 교훈 게이트·escalate/handoff·지식 갱신·tier_policy·engine_weights 구현 | E-07 측정·저장 완료(연결은 Laya 전용 결정의 정답 데이터가 쌓인 뒤). 데이터 대기: E-08 fine-tune(정답 ≥300건, 현재 route 정답 71건). 검증: E-09 |
+| G 공급자 확장·정책 라우팅 | 0 / 9 / 1 | GP(정책 구조, Claude·Codex 먼저) 구현·로컬검증: 작업 순서 엄수(한도만 넘김), 모델·강도 하한~상한 분할(AA Coding Index, 없으면 칸 수), 상한 미달 → 상한·최대, 검증 순서, 설정 UI(작업대·모바일) | GP 서버 확인·AA 키와 매핑(G0-09), GP-10 라우터 바 사유 → G0 OpenCode 실측 → G1~G4 |
 
 진행 방식(§4): 구현 + 기본 검증 후 다음 단계로 넘어가고, 실사용 검증은 전체 구현 후 최종 테스트에서 한꺼번에 한다. 저장소 `main` 최신: `530df00f`.
 
@@ -525,6 +526,11 @@ RunFeedback.tsx     assistant 메시지 하단 👍/👎 + "테스트 통과/실
   - fallback 비율(2026-10-01): decision_log 297건 중 5건 1.7% (<5% 충족) — 5건은 모두 9/29 판정 실험의 agent.pick(Laya 확신 0.30~0.35 → 설계대로 결정적 fallback). 남음: 같은 실패 2회 유도 → 교훈 주입 회피(👎·실패 유도가 필요해 최종 실사용에서)
 
 **E 완료 기준**: E-09 확인, 벤치마크 보정 전후 비교표.
+
+### G. 공급자 확장·정책 라우팅 (목표: OpenCode가 Claude·Codex와 같은 수준으로 돌고, 공급자·모델을 사용자 정책에 따라 유동 선택)
+상세 계획·체크리스트(G0-01 …): **`docs/aidev/PROVIDER-ENGINE-PLAN.md`** — 항목 상태는 그 문서에서 관리하고 여기 §1 표의 G행만 함께 고친다.
+
+**G 완료 기준**: G5-15 서버 확인(정책 없는 계정의 라우팅 결과 동등 + 상한·우선순위·검증 순서 동작).
 
 ### OPS. 운영
 - [~] OPS-02 서버 자체 배포(2026-10-04 사용자 결정: 모든 것이 ai-turtle 서버에서 스스로, 승인 없음, GitHub 유지, Mac은 비상용): `deploy/aidev/release/ship.sh`, runtime-manager `/v1/ship`(작업 컨테이너), 게이트웨이 `/api/aidev/platform/ship`(관리자)·결과 푸시, MCP `platform_ship`/`platform_ship_status`
