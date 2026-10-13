@@ -132,7 +132,7 @@ const tools: ToolDefinition[] = [
     description: [
       'Read or change the user\'s NadoVibe settings directly (the user allowed changes without asking; tell them what you changed).',
       'action "get": the PCs (online, execution policy, default PC, screen/control allowed), effort ceilings, engines, and the keys you can set.',
-      'action "set" {key, value, target?}: pc.policy (full|auto|ask|deny), pc.default (true|false), pc.screen / pc.control (allow screen capture / remote control on that PC — use before showing or controlling its screen when it is off), effort_cap.claude / effort_cap.codex, routing_mode (auto|manual|off).',
+      'action "set" {key, value, target?}: pc.policy (full|auto|ask|deny), pc.default (true|false), pc.screen / pc.control (allow screen capture / remote control on that PC — use before showing or controlling its screen when it is off), effort_cap.claude / effort_cap.codex / effort_cap.opencode, routing_mode (auto|manual|off).',
     ].join(' '),
     inputSchema: {
       type: 'object',

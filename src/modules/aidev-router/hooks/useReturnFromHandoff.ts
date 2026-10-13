@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { aidevApi, type Engine } from '@/modules/aidev-router/api';
 import { routingStore } from '@/modules/aidev-router/store';
+import { ENGINE_LABELS } from '@/shared/constants';
 
 /**
  * Where a handoff session came from (2026-10-09). A usage limit moves the work to a new session on the
@@ -12,7 +13,6 @@ import { routingStore } from '@/modules/aidev-router/store';
 export type HandoffOrigin = { fromSessionId: string; fromEngine: Engine; toEngine: Engine; reason: string | null; at: number };
 
 const KEY = 'aidev.handoffOrigins';
-const ENGINE_LABEL: Record<Engine, string> = { claude: 'Claude', codex: 'Codex' };
 /** How often the handoff session asks whether the engine it left is back (the gateway's auth cache is 60 s). */
 const POLL_MS = 60_000;
 
@@ -102,11 +102,11 @@ export function useReturnFromHandoff(sessionId: string | null, openSession: (ses
     if (!origin || !sessionId || busy) return;
     setBusy(true); setError(null);
     try {
-      const brief = await aidevApi.handoffBrief(sessionId, { from_engine: origin.toEngine, to_engine: origin.fromEngine, reason: `${ENGINE_LABEL[origin.fromEngine]} 사용량 한도가 풀려 돌아왔습니다` });
+      const brief = await aidevApi.handoffBrief(sessionId, { from_engine: origin.toEngine, to_engine: origin.fromEngine, reason: `${ENGINE_LABELS[origin.fromEngine]} 사용량 한도가 풀려 돌아왔습니다` });
       const agentName = routingStore.get().last?.agent.name ?? null;
       routingStore.patch({ pendingHandoff: { sessionId: origin.fromSessionId, text: brief.text }, oneShotPlan: { engine: origin.fromEngine }, oneShotAgent: agentName && agentName !== 'agent-architect' ? agentName : null, escalation: null });
       forget(sessionId);
-      openSession(origin.fromSessionId, origin.fromEngine, `[${ENGINE_LABEL[origin.fromEngine]} 복귀]`);
+      openSession(origin.fromSessionId, origin.fromEngine, `[${ENGINE_LABELS[origin.fromEngine]} 복귀]`);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : '돌아가지 못했습니다');
     } finally {
@@ -119,7 +119,7 @@ export function useReturnFromHandoff(sessionId: string | null, openSession: (ses
   const wasLimit = Boolean(origin?.reason && /usage_limit|한도/.test(origin.reason));
   return {
     engine: offer && origin ? origin.fromEngine : null,
-    label: offer && origin ? `${ENGINE_LABEL[origin.fromEngine]}${wasLimit ? ' 한도가 풀렸습니다' : '를 다시 쓸 수 있습니다'} — ${ENGINE_LABEL[origin.fromEngine]}로 돌아가기` : null,
+    label: offer && origin ? `${ENGINE_LABELS[origin.fromEngine]}${wasLimit ? ' 한도가 풀렸습니다' : '를 다시 쓸 수 있습니다'} — ${ENGINE_LABELS[origin.fromEngine]}로 돌아가기` : null,
     limitedUntil: origin && dismissed !== sessionId ? state.limitedUntil : null,
     busy, error, returnNow,
     dismiss: () => { setDismissed(sessionId); if (sessionId) forget(sessionId); },

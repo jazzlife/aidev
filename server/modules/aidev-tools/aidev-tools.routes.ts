@@ -1,6 +1,7 @@
 import express, { type Request, type Response } from 'express';
 
 import { asyncHandler, createApiSuccessResponse } from '@/shared/utils.js';
+import type { AidevSideEngine } from '@/shared/index.js';
 import { lessonCuratorService } from '@/modules/aidev-tools/lesson-curator.service.js';
 import { claudeLoginService } from '@/modules/aidev-tools/claude-login.service.js';
 import { handoffService } from '@/modules/aidev-tools/handoff.service.js';
@@ -16,17 +17,20 @@ import { agentDesignerService } from '@/modules/aidev-tools/agent-designer.servi
  */
 const router = express.Router();
 
-type SideEngine = 'claude' | 'codex';
-const isSideEngine = (value: unknown): value is SideEngine => value === 'claude' || value === 'codex';
+const SIDE_ENGINES: readonly AidevSideEngine[] = ['claude', 'codex', 'opencode'];
+/** The specialist judge answers in seconds on a long-lived Claude/Codex turn; OpenCode has no such transport (§9 Q4). */
+const JUDGE_ENGINES = ['claude', 'codex'] as const;
+const isSideEngine = (value: unknown): value is AidevSideEngine => SIDE_ENGINES.includes(value as AidevSideEngine);
 /**
- * The engines a side turn may run on, as the gateway sent them (the account's usable engines, D-05). Absent = an older
- * gateway: every engine. Present but with none this runtime can run a side turn on (an OpenCode-only account until
- * OpenCode runs side turns) = `none`: the route refuses instead of treating the empty list as "every engine", which
- * used to run the turn on Claude for an account that may not use it. Exported for this router's test.
+ * The engines a side turn may run on, as the gateway sent them (the account's usable engines, D-05), kept to the ones
+ * this kind of turn runs on (`supported`: every side engine, or the judge's two). Absent = an older gateway: the turn's
+ * own default. Present but with none of them (an OpenCode-only account asking for the judge) = `none`: the route
+ * refuses instead of treating the empty list as "every engine", which used to run the turn on Claude for an account
+ * that may not use it. Exported for this router's test.
  */
-export function sideEngines(value: unknown): { engines: SideEngine[] | undefined; none: boolean } {
+export function sideEngines<E extends AidevSideEngine = AidevSideEngine>(value: unknown, supported: readonly E[] = SIDE_ENGINES as readonly E[]): { engines: E[] | undefined; none: boolean } {
   if (!Array.isArray(value)) return { engines: undefined, none: false };
-  const engines = (value as unknown[]).filter(isSideEngine);
+  const engines = (value as unknown[]).filter((engine): engine is E => supported.includes(engine as E));
   return { engines, none: engines.length === 0 };
 }
 const NO_SIDE_ENGINE = 'none of the account\'s engines can run this side turn in the runtime';
@@ -43,7 +47,7 @@ router.post('/specialist-judge', asyncHandler(async (req: Request, res: Response
     return;
   }
   try {
-    const { engines, none } = sideEngines(body.engines);
+    const { engines, none } = sideEngines(body.engines, JUDGE_ENGINES);
     if (none) { res.status(409).json({ success: false, error: NO_SIDE_ENGINE }); return; }
     res.json(createApiSuccessResponse(await specialistJudgeService.judge({ command, candidates, project: typeof body.project === 'string' ? body.project : null, engines, current: typeof body.current === 'string' ? body.current : null, ask: body.ask !== false })));
   } catch (error) {
@@ -80,7 +84,7 @@ router.post('/curate', asyncHandler(async (req: Request, res: Response) => {
     sessionId,
     runId: typeof body.run_id === 'number' ? body.run_id : null,
     agent: typeof body.agent === 'string' ? body.agent : null,
-    engine: body.engine === 'codex' ? 'codex' : body.engine === 'claude' ? 'claude' : null,
+    engine: isSideEngine(body.engine) ? body.engine : null,
     engines: curateEngines.engines,
     // the gateway's order (work priority / provider policy); absent = the session's engine first
     candidates: Array.isArray(body.candidates) ? (body.candidates as unknown[]).flatMap((entry) => {
@@ -107,7 +111,7 @@ router.post('/verify', asyncHandler(async (req: Request, res: Response) => {
     sessionId,
     runId: typeof body.run_id === 'number' ? body.run_id : null,
     agent: typeof body.agent === 'string' ? body.agent : null,
-    engine: body.engine === 'codex' ? 'codex' : body.engine === 'claude' ? 'claude' : null,
+    engine: isSideEngine(body.engine) ? body.engine : null,
     workerModel: typeof body.worker_model === 'string' ? body.worker_model : null,
     engines: sideEngines(body.engines).engines ?? ['claude', 'codex'],
     command: typeof body.command === 'string' ? body.command : null,
@@ -144,7 +148,7 @@ router.post('/design-agent', asyncHandler(async (req: Request, res: Response) =>
     res.json(createApiSuccessResponse(await agentDesignerService.design({
       command, proposal, catalog: text(body.catalog, 20000) ?? '', prompt, maxTurns,
       tools: Array.isArray(body.tools) ? (body.tools as unknown[]).map(String) : ['WebSearch', 'WebFetch', 'Read', 'Glob', 'Grep'],
-      engine: body.engine === 'codex' ? 'codex' : 'claude', model: text(body.model, 100), sessionId: text(body.session_id, 200),
+      engine: isSideEngine(body.engine) ? body.engine : 'claude', model: text(body.model, 100), sessionId: text(body.session_id, 200),
     })));
   } catch (error) {
     res.status(502).json({ success: false, error: error instanceof Error ? error.message : 'design failed' });
@@ -173,7 +177,7 @@ router.post('/knowledge-check', asyncHandler(async (req: Request, res: Response)
     return;
   }
   if (body.engine !== undefined && !isSideEngine(body.engine)) { res.status(400).json({ success: false, error: `engine ${String(body.engine)} cannot run this side turn` }); return; }
-  const engine = body.engine === 'codex' ? 'codex' : 'claude';
+  const engine = isSideEngine(body.engine) ? body.engine : 'claude';
   res.json(createApiSuccessResponse(await knowledgeCheckService.check({ title, body: content, sourceUrl: text(body.source_url, 2000), sourceDate: text(body.source_date, 40), agent: text(body.agent, 100), engine, model: text(body.model, 100), prompt: text(body.prompt, 20000) })));
 }));
 

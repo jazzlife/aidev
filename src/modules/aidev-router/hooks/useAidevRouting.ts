@@ -2,6 +2,7 @@ import { useCallback } from 'react';
 
 import { aidevApi, type Engine, type RouteResult, type RunView } from '@/modules/aidev-router/api';
 import { routingStore, useRoutingState } from '@/modules/aidev-router/store';
+import { isAidevEngine } from '@/shared/utils';
 
 /**
  * What the composer attaches to `chat.send options` after routing (IMPLEMENTATION-PLAN §3.5).
@@ -35,7 +36,6 @@ export type BeforeSendContext = {
   userPinnedModel: boolean;
 };
 
-const ENGINES: Engine[] = ['claude', 'codex'];
 
 /**
  * Used by the workbench composer and the mobile chat (C-05/C-09): whether a routed send should wait for one line of
@@ -45,7 +45,7 @@ const ENGINES: Engine[] = ['claude', 'codex'];
 export function shouldAskClarify(decoration: AidevSendDecoration | null): decoration is AidevSendDecoration {
   return Boolean(decoration && decoration.route.scope.ask_clarify && decoration.route.decision !== 'create' && !decoration.appResend);
 }
-const asEngine = (value: string): Engine | null => (ENGINES.includes(value as Engine) ? value as Engine : null);
+const asEngine = (value: string): Engine | null => (isAidevEngine(value) ? value : null);
 
 /** How long a verification is followed (a verifier reads the repository and re-runs checks) and how often it is asked for. */
 const VERIFY_POLL_MS = 5_000;
@@ -120,9 +120,7 @@ export function useAidevRouting() {
     if (current.mode === 'off' || !text.trim()) {
       return null;
     }
-    // Routing picks between its engines only. A chat on another provider (OpenCode until it is an engine — stage G3; an
-    // old Cursor session) is sent as it is: routed, a new OpenCode chat became a Claude or Codex session, and an existing
-    // one logged its runs under an engine that never ran them.
+    // Routing picks between its engines only. A chat on another provider (an old Cursor session) is sent as it is.
     if (!asEngine(context.provider)) {
       return null;
     }
@@ -154,6 +152,14 @@ export function useAidevRouting() {
         effortCap: current.chatCap.sessionId === (context.isNewSession ? null : context.sessionId ?? null) ? current.chatCap.cap : null,
         modelFloor: current.chatFloor.sessionId === (context.isNewSession ? null : context.sessionId ?? null) ? current.chatFloor.floor : null,
       });
+      // The composer's provider is an engine this account does not route to (OpenCode where no administrator enabled
+      // it): sent as it is. Routed, a new chat the user started on OpenCode became a Claude or Codex session, and an
+      // existing one logged its runs under an engine that never ran them.
+      const composerEngine = asEngine(context.provider);
+      if (composerEngine && route.engines[composerEngine]?.allowed === false) {
+        routingStore.patch({ busy: false });
+        return null;
+      }
       let runId: number | null = null;
       try {
         const run = await aidevApi.createRun({

@@ -3,8 +3,10 @@ import os from 'node:os';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { Codex } from '@openai/codex-sdk';
 
+import { askOpenCodeSideTurn } from '@/modules/aidev-tools/opencode-side-turn.client.js';
 import { sessionsDb } from '@/modules/database/index.js';
 import { codexSandboxConfig, noteCodexTurnError } from '@/shared/index.js';
+import type { AidevSideEngine } from '@/shared/index.js';
 
 /**
  * Background agent design (2026-10-10): a command in an ongoing chat that needs a specialist the catalog lacks is
@@ -23,7 +25,7 @@ export type AgentDesignInput = {
   prompt: string;
   tools: string[];
   maxTurns: number;
-  engine: 'claude' | 'codex';
+  engine: AidevSideEngine;
   model: string | null;
   /** the chat the command came from: the architect may read that project to fit the agent to its stack */
   sessionId: string | null;
@@ -142,7 +144,9 @@ export const agentDesignerService = {
     const session = input.sessionId ? sessionsDb.getSessionById(input.sessionId) : null;
     const cwd = session?.project_path || os.homedir();
     const prompt = buildDesignRequest(input);
-    const text = input.engine === 'codex' ? await askCodex(input, prompt, cwd) : await askClaude(input, prompt, cwd);
+    // OpenCode designs under its plan agent: project reads and web fetches, no edits
+    const text = input.engine === 'opencode' ? await askOpenCodeSideTurn({ label: 'design', instructions: input.prompt, prompt, cwd, model: input.model, effort: null, access: 'read', timeoutMs: HARD_TIMEOUT_MS })
+      : input.engine === 'codex' ? await askCodex(input, prompt, cwd) : await askClaude(input, prompt, cwd);
     const draft = parseAgentDraft(text);
     // no block: the architect found the catalog sufficient (its step 1) or ran out of turns — the gateway logs the note
     const note = draft ? null : text.replace(/\s+/g, ' ').trim().slice(0, 300) || '(빈 응답)';

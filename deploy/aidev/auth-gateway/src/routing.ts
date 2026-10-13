@@ -1,5 +1,5 @@
 import type { openStore } from './store.js';
-import { EFFORT_LADDER, ENGINES, routingHint, type Engine } from './store-aidev.js';
+import { EFFORT_LADDER, ENGINES, MODEL_LADDER, routingHint, type Engine } from './store-aidev.js';
 import { pickStep, policySteps, type StepPick } from './provider-policy.js';
 import { budgetState, topChoice, type LayaClient, type Question } from './laya.js';
 import { DEPTH_LEVELS, REMOTE_ACTIONS, RISK_LEVELS, TASK_KIND_CRITERIA, decide } from './laya-questions.js';
@@ -102,13 +102,19 @@ export type RouteInput = { text: string; sessionId?: string | null; sessionEngin
 // Each engine's ladder ends on its strongest model: Codex gpt-6-astra, Claude 'best' (= Fable when the
 // subscription has it, else the latest Opus — resolved by the Claude CLI). 'opusplan' is not used at
 // the top: it plans with Opus but executes with Sonnet, i.e. weaker than D3 on the hardest tasks.
-export const TIER_TABLE: Record<number, Record<Engine, { model: string; effort: string }>> = {
+// OpenCode has no column: its models differ per account, so it always runs on its provider policy (store.providerPolicy).
+export const TIER_TABLE: Record<number, Partial<Record<Engine, { model: string; effort: string }>>> = {
   0: { claude: { model: 'haiku', effort: 'low' }, codex: { model: 'gpt-5.6-luna', effort: 'low' } },
   1: { claude: { model: 'sonnet', effort: 'medium' }, codex: { model: 'gpt-5.6-terra', effort: 'medium' } },
   2: { claude: { model: 'sonnet', effort: 'high' }, codex: { model: 'gpt-5.6-terra', effort: 'high' } },
   3: { claude: { model: 'opus', effort: 'high' }, codex: { model: 'gpt-5.6-sol', effort: 'high' } },
   4: { claude: { model: 'best', effort: 'xhigh' }, codex: { model: 'gpt-6-astra', effort: 'xhigh' } },
 };
+/** The table's model and effort for a depth; nulls for an engine without a column (its policy's split decides). */
+export function tierOf(engine: Engine, depth: number): { model: string | null; effort: string | null } {
+  const tier = TIER_TABLE[Math.max(0, Math.min(4, Math.round(depth)))][engine];
+  return tier ? { ...tier } : { model: null, effort: null };
+}
 const LESSON_TOPK = [0, 3, 5, Infinity, Infinity];
 const PROMPT_BUDGET_CHARS = [2000 * 4, 4000 * 4, 8000 * 4, Infinity, Infinity];
 const KNOWLEDGE_DIGEST_CHARS = [0, 0, 2000 * 4, 8000 * 4, 8000 * 4];
@@ -144,7 +150,7 @@ export function applyModelFloor(engine: Engine, tier: { model: string | null; ef
   const level = modelRank(engine, floor);
   if (modelRank(engine, tier.model) >= level) return false;
   tier.model = floor;
-  tier.effort = strongerEffort(engine, tier.effort, TIER_TABLE[level][engine].effort);
+  tier.effort = strongerEffort(engine, tier.effort, tierOf(engine, level).effort);
   return true;
 }
 
@@ -166,7 +172,7 @@ export function runTeachesAgent(answer: string | null | undefined): boolean {
 export function splitTier(store: Store, userId: number, engine: Engine, depth: number, sessionId?: string | null, inline?: { modelFloor?: Partial<Record<Engine, string>> | null; effortCap?: Partial<Record<Engine, string>> | null }): StepPick | null {
   const policy = store.providerPolicy(userId, engine, sessionId, inline);
   if (!policy.ladder) return null;
-  return pickStep(engine, depth, policy, store.stepScores(engine, store.scoreIndex(userId)).scores);
+  return pickStep(depth, policy, store.stepScores(userId, engine, store.scoreIndex(userId)).scores);
 }
 /** One line for the plan's reasons: what the split picked and why. */
 export function describeStep(engine: Engine, depth: number, step: StepPick): string {
@@ -188,7 +194,7 @@ export function modelRank(engine: Engine, model: string | null): number {
   if (!model) return -1;
   const aliases: Record<string, string> = { fable: 'best', 'opus[1m]': 'opus', 'sonnet[1m]': 'sonnet' };
   const name = aliases[model] ?? model;
-  for (let level = 0; level <= 4; level++) if (TIER_TABLE[level][engine].model === name) return level;
+  for (let level = 0; level <= 4; level++) if (TIER_TABLE[level][engine]?.model === name) return level;
   return 2;   // unknown model: treat as mid-tier
 }
 
@@ -796,7 +802,7 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     reason.push(`engine ${engine} (${usable.map((e) => `${e} ${scores[e].score!.toFixed(2)}`).join(', ')})`);
   } else reason.push('no engine is available (none allowed+authenticated)');
   // ---- tier -----------------------------------------------------------------------------------
-  const tier = engine ? { ...TIER_TABLE[depth][engine] } : { model: null as string | null, effort: null as string | null };
+  const tier = engine ? tierOf(engine, depth) : { model: null as string | null, effort: null as string | null };
   // a provider the user gave a ladder: the split over their model and effort range (no tier_policy — their range rules)
   const step = engine ? splitTier(store, userId, engine, depth, input.sessionId, { modelFloor: input.modelFloor, effortCap: input.effortCap }) : null;
   if (engine && step) {
@@ -804,16 +810,19 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     reason.push(describeStep(engine, depth, step));
     // an agent-pinned model applies when it is in the range and stronger (it never weakens a run)
     if (agent.model && agent.model !== step.model) {
-      const steps = policySteps(engine, store.providerPolicy(userId, engine, input.sessionId, { modelFloor: input.modelFloor, effortCap: input.effortCap }));
+      const steps = policySteps(store.providerPolicy(userId, engine, input.sessionId, { modelFloor: input.modelFloor, effortCap: input.effortCap }));
       const own = steps.filter((s) => s.model === agent.model);
       if (own.length && steps.findIndex((s) => s.model === agent.model) > step.index) { tier.model = agent.model; tier.effort = (own.find((s) => s.effort === step.effort) ?? own[0]).effort; reason.push(`agent pins model ${agent.model}`); }
       else reason.push(`agent model ${agent.model} ignored (outside the range or not stronger than ${step.model})`);
     }
-  } else if (engine) {
+  } else if (engine && TIER_TABLE[depth][engine]) {
     const tp = store.tierPolicy(agent.domain, depth, engine);
     if (tp?.model) { tier.model = tp.model; tier.effort = tp.effort ?? tier.effort; reason.push(`tier_policy override ${tp.model}/${tp.effort}`); }
-    // an agent-pinned model applies only when it is at least as strong as the tier's (it never weakens a run)
-    if (agent.model && modelRank(engine, agent.model) >= modelRank(engine, tier.model)) { if (agent.model !== tier.model) reason.push(`agent pins model ${agent.model}`); tier.model = agent.model; }
+    // an agent-pinned model applies only when it is at least as strong as the tier's (it never weakens a run) — and
+    // never a model of another engine's ladder (an agent pinned to opus running on Codex keeps Codex's model)
+    const foreign = agent.model !== null && ENGINES.some((other) => other !== engine && MODEL_LADDER[other].includes(agent.model!));
+    if (foreign) reason.push(`agent model ${agent.model} ignored (not a ${engine} model)`);
+    else if (agent.model && modelRank(engine, agent.model) >= modelRank(engine, tier.model)) { if (agent.model !== tier.model) reason.push(`agent pins model ${agent.model}`); tier.model = agent.model; }
     else if (agent.model) reason.push(`agent model ${agent.model} ignored (weaker than ${tier.model})`);
     // the user's model floor (account, or this chat's): never a weaker model than that, whatever the depth
     const floorInfo = store.effectiveModelFloor(userId, input.sessionId, input.modelFloor);

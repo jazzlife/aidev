@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { aidevApi, type Engine } from '@/modules/aidev-router/api';
+import { allowedOnly } from '@/modules/aidev-router/hooks/useEffortCap';
 
 /** Short Korean names for the tier models (the value itself is what the engines receive). */
 export const MODEL_LABEL: Record<string, string> = {
@@ -17,10 +18,10 @@ export const MODEL_LABEL: Record<string, string> = {
 export function useModelFloor() {
   // the account floor and the engines' tier model ladders, from /engines (null until loaded)
   const [floor, setFloor] = useState<Partial<Record<Engine, string>> | null>(null);
-  const [ladder, setLadder] = useState<Record<Engine, string[]> | null>(null);
+  const [ladder, setLadder] = useState<Partial<Record<Engine, string[]>> | null>(null);
   const [error, setError] = useState<string | null>(null);
   useEffect(() => {
-    aidevApi.engines().then((response) => { setFloor(response.model_floor ?? {}); setLadder(response.model_ladder ?? null); }).catch(() => undefined);
+    aidevApi.engines().then((response) => { setFloor(response.model_floor ?? {}); setLadder(response.model_ladder ? allowedOnly(response.model_ladder, response.engines) : null); }).catch(() => undefined);
   }, []);
   /** `''` clears the engine's floor. */
   const save = useCallback(async (engine: Engine, value: string) => {

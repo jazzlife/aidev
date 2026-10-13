@@ -2,7 +2,7 @@ import type { openStore } from './store.js';
 import { ENGINES, type Engine } from './store-aidev.js';
 import type { LayaClient } from './laya.js';
 import { decide } from './laya-questions.js';
-import { TIER_TABLE, applyEffortCap, applyModelFloor, splitTier, type EngineAvailability } from './routing.js';
+import { applyEffortCap, applyModelFloor, splitTier, tierOf, type EngineAvailability } from './routing.js';
 import { pickStep, policySteps, type Step } from './provider-policy.js';
 import { EFFORT_LADDER } from './store-aidev.js';
 
@@ -65,7 +65,7 @@ export async function decideNext(store: Store, laya: LayaClient, run: RunRow, en
     const step = splitTier(store, run.user_id, planEngine, planDepth, run.session_id);
     if (step) return { ...base, action, engine: planEngine, model: step.model, effort: step.effort, depth: planDepth, reason };
     // the user's model floor holds for the retry too (a retry never runs below the chat's floor)
-    const tier = { ...TIER_TABLE[planDepth][planEngine] };
+    const tier = tierOf(planEngine, planDepth);
     applyModelFloor(planEngine, tier, floor[planEngine]);
     return { ...base, action, engine: planEngine, model: tier.model, effort: applyEffortCap(tier.effort, planDepth, planEngine, cap[planEngine]), depth: planDepth, reason };
   };
@@ -73,10 +73,10 @@ export async function decideNext(store: Store, laya: LayaClient, run: RunRow, en
   const policy = store.providerPolicy(run.user_id, engine, run.session_id);
   let policyNext: Step | null = null;
   if (policy.ladder) {
-    const scores = store.stepScores(engine, store.scoreIndex(run.user_id)).scores;
-    const steps = policySteps(engine, policy, scores);
+    const scores = store.stepScores(run.user_id, engine, store.scoreIndex(run.user_id)).scores;
+    const steps = policySteps(policy, scores);
     const current = steps.findIndex((s) => s.model === run.model && (s.effort ?? null) === (run.effort ?? null));
-    const up = depth < 4 ? pickStep(engine, depth + 1, policy, scores) : null;
+    const up = depth < 4 ? pickStep(depth + 1, policy, scores) : null;
     policyNext = up && up.index > current ? up : (current >= 0 && current + 1 < steps.length ? steps[current + 1] : null);
   }
   // at the top tier the effort can still climb (one step per attempt) until the user's ceiling

@@ -72,7 +72,7 @@ const DESTRUCTIVE: Array<[RegExp, string]> = [
   [/\b(kill|pkill|killall)\b/, '프로세스 종료'],
   [/>\s*\/dev\/(sd|disk|nvme)|:\(\)\s*\{/, '장치 덮어쓰기·폭주 스크립트'],
   [/\bfind\b[^;&|]*\s-(delete|exec|execdir|ok)\b/, 'find로 삭제·명령 실행'],
-  [/\b(claude|codex|gemini)\b[^;&|\n]*(--dangerously-skip-permissions|bypassPermissions|danger-full-access|--full-auto|--yolo|--approval-mode[= ]yolo|--allowedTools[= ]\S*Bash)/, '다른 AI agent에 이 PC 전체 권한 위임'],
+  [/\b(claude|codex|gemini)\b[^;&|\n]*(--dangerously-skip-permissions|bypassPermissions|danger-full-access|--full-auto|--yolo|--approval-mode[= ]yolo|--allowedTools[= ]\S*Bash)|\bopencode\b[^;&|\n]*\s(--auto|--dangerously-skip-permissions)(\s|$)/, '다른 AI agent에 이 PC 전체 권한 위임'],
   [/(^|[\s;&|])(~|\$HOME|\/Users\/[^/\s]+|\/home\/[^/\s]+)\/?(\s|$)/, '홈 폴더 전체 대상'],
 ];
 

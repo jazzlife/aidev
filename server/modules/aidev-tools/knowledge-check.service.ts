@@ -3,7 +3,9 @@ import os from 'node:os';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { Codex } from '@openai/codex-sdk';
 
+import { askOpenCodeSideTurn } from '@/modules/aidev-tools/opencode-side-turn.client.js';
 import { codexSandboxConfig, noteCodexTurnError } from '@/shared/index.js';
+import type { AidevSideEngine } from '@/shared/index.js';
 
 /**
  * Knowledge refresh (IMPLEMENTATION-PLAN §3.8, E-04): re-checks one stored knowledge item against its
@@ -18,7 +20,7 @@ export type KnowledgeCheckInput = {
   sourceUrl: string | null;
   sourceDate: string | null;
   agent: string | null;
-  engine: 'claude' | 'codex';
+  engine: AidevSideEngine;
   model: string | null;
   /** knowledge-refresher agent prompt (from the gateway catalog); a built-in copy is used when absent */
   prompt: string | null;
@@ -114,12 +116,16 @@ async function askCodex(system: string, prompt: string, model: string | null): P
   return turn.finalResponse ?? '';
 }
 
+/** How long an OpenCode check may read the web (its `webfetch` under the plan agent). */
+const OPENCODE_CHECK_TIMEOUT_MS = 5 * 60_000;
+
 /** Used by aidev-tools.routes.ts (`POST /knowledge-check`). */
 export const knowledgeCheckService = {
   async check(input: KnowledgeCheckInput): Promise<KnowledgeCheck & { engine: string }> {
     const system = input.prompt?.trim() || DEFAULT_PROMPT;
     const prompt = buildRequest(input);
-    const text = input.engine === 'codex' ? await askCodex(system, prompt, input.model) : await askClaude(system, prompt, input.model);
+    const text = input.engine === 'opencode' ? await askOpenCodeSideTurn({ label: 'knowledge', instructions: system, prompt, cwd: os.homedir(), model: input.model, effort: null, access: 'read', timeoutMs: OPENCODE_CHECK_TIMEOUT_MS })
+      : input.engine === 'codex' ? await askCodex(system, prompt, input.model) : await askClaude(system, prompt, input.model);
     const parsed = parseKnowledgeCheck(text);
     console.log(`[aidev-tools] knowledge-check "${clip(input.title, 60)}" via ${input.engine} → ${parsed?.status ?? 'unparsed'}`);
     if (!parsed) throw new Error(`검증 결과를 읽지 못했습니다: ${clip(text.replace(/\s+/g, ' ').trim(), 200)}`);

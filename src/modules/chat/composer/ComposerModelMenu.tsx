@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useState } from 'react';
+import { Fragment, memo, useCallback, useEffect, useMemo, useState } from 'react';
 import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import { ChevronDown, ChevronRight } from 'lucide-react';
@@ -24,8 +24,8 @@ type ComposerModelMenuProps = {
   /** Model catalog for the active provider; empty hides the section. */
   modelOptions: ProviderModelOption[];
   onSelectModel: (model: string) => void;
-  /** While routing: the other engine's models, listed after this engine's; picking one pins the chat to that engine. */
-  otherEngineModels?: ComposerOtherEngineModels | null;
+  /** While routing: the other engines' models, one group each after this engine's; picking one pins the chat to that engine. */
+  otherEngineModels?: ComposerOtherEngineModels[];
   modelsLoading: boolean;
   /** When the router chooses model/effort per command: its label replaces the provider model, plus a reset to 자동. */
   routing?: ComposerModelRouting | null;
@@ -34,6 +34,9 @@ type ComposerModelMenuProps = {
 export type ComposerModelRouting = { label: string; detail: string; pinned: boolean; onReset: () => void };
 
 export type ComposerOtherEngineModels = { heading: string; options: ProviderModelOption[]; onSelectModel: (model: string) => void };
+
+// a stable default, so the selected-option memo does not recompute on every render
+const NO_OTHER_ENGINE_MODELS: ComposerOtherEngineModels[] = [];
 
 /**
  * Rendered by chat's ChatComposer as the popover for choosing the active
@@ -47,7 +50,7 @@ function ComposerModelMenu({
   model,
   modelOptions,
   onSelectModel,
-  otherEngineModels = null,
+  otherEngineModels = NO_OTHER_ENGINE_MODELS,
   modelsLoading,
   routing = null,
 }: ComposerModelMenuProps) {
@@ -73,7 +76,7 @@ function ComposerModelMenu({
   const effortLabel = effort === DEFAULT_EFFORT_VALUE ? defaultEffortLabel : effort;
 
   const selectedModelOption = useMemo(
-    () => modelOptions.find((option) => option.value === model) ?? otherEngineModels?.options.find((option) => option.value === model) ?? null,
+    () => modelOptions.find((option) => option.value === model) ?? otherEngineModels.flatMap((group) => group.options).find((option) => option.value === model) ?? null,
     [model, modelOptions, otherEngineModels],
   );
   const modelLabel = selectedModelOption?.label || model;
@@ -184,22 +187,22 @@ function ComposerModelMenu({
                       }}
                     />
                   ))}
-                  {otherEngineModels && (
-                    <>
-                      <ComposerMenuHeading>{otherEngineModels.heading}</ComposerMenuHeading>
-                      {otherEngineModels.options.map((option) => (
+                  {otherEngineModels.map((group) => (
+                    <Fragment key={group.heading}>
+                      <ComposerMenuHeading>{group.heading}</ComposerMenuHeading>
+                      {group.options.map((option) => (
                         <ComposerMenuItem
                           key={`other-${option.value}`}
                           label={option.label || option.value}
                           isSelected={option.value === model}
                           onSelect={() => {
-                            otherEngineModels.onSelectModel(option.value);
+                            group.onSelectModel(option.value);
                             setIsOpen(false);
                           }}
                         />
                       ))}
-                    </>
-                  )}
+                    </Fragment>
+                  ))}
                 </>
               )}
             </>

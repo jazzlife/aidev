@@ -9,12 +9,20 @@ import os from 'node:os';
 import path from 'node:path';
 import { Readable } from 'node:stream';
 
-const { pickStep, policySteps, previewPolicy, estimateScores, stepKey, MODEL_CATALOG } = await import('../dist/provider-policy.js');
+const policyModule = await import('../dist/provider-policy.js');
+const { stepKey, MODEL_CATALOG } = policyModule;
+// the functions take the catalog with the policy (an engine's own, or an account's OpenCode models); by engine name here
+const withCatalog = (engine, p) => ({ catalog: MODEL_CATALOG[engine], ...p });
+const policySteps = (engine, p, scores) => policyModule.policySteps(withCatalog(engine, p), scores);
+const previewPolicy = (engine, p, scores) => policyModule.previewPolicy(withCatalog(engine, p), scores);
+const pickStep = (engine, depth, p, scores) => policyModule.pickStep(depth, withCatalog(engine, p), scores);
+const estimateScores = (engine, known) => policyModule.estimateScores(MODEL_CATALOG[engine], known);
 const { MODEL_LADDER, EFFORT_LADDER, ENGINES } = await import('../dist/store-aidev.js');
 const { TIER_TABLE } = await import('../dist/routing.js');
 
 // ---- the catalog is the tier table's models (same names, weakest first) ----------------------------------------
-for (const engine of ENGINES) {
+assert.deepEqual(ENGINES.filter((engine) => !MODEL_CATALOG[engine]), ['opencode'], 'OpenCode has no fixed catalog: its models are per account');
+for (const engine of ENGINES.filter((e) => MODEL_CATALOG[e])) {
   assert.deepEqual(MODEL_CATALOG[engine].map((m) => m.model), MODEL_LADDER[engine], `${engine} catalog = MODEL_LADDER`);
   for (const m of MODEL_CATALOG[engine]) for (const effort of m.efforts) assert.ok(EFFORT_LADDER[engine].includes(effort), `${engine} ${m.model} ${effort}`);
   for (let d = 0; d <= 4; d++) assert.ok(MODEL_CATALOG[engine].find((m) => m.model === TIER_TABLE[d][engine].model).level >= d, `${engine} D${d} model carries D${d}`);
@@ -82,7 +90,8 @@ assert.throws(() => store.setProviderPolicy(uid, 'claude', { ladder: ['sonnet', 
 assert.throws(() => store.setProviderPolicy(uid, 'claude', { effortFloor: 'max', effortCap: 'high' }), /above its ceiling/);
 assert.throws(() => store.setProviderPolicy(uid, 'claude', { ladder: ['gpt-6-astra'] }), /model must be one of/);
 store.setProviderPolicy(uid, 'claude', { ladder: ['sonnet', 'opus', 'best'], floor: 'sonnet', ceiling: 'opus', effortFloor: 'low', effortCap: 'xhigh' });
-assert.deepEqual(store.providerPolicy(uid, 'claude'), { ladder: ['sonnet', 'opus', 'best'], floor: 'sonnet', ceiling: 'opus', effortFloor: 'low', effortCap: 'xhigh' });
+{ const { catalog, ...range } = store.providerPolicy(uid, 'claude');
+  assert.deepEqual(range, { ladder: ['sonnet', 'opus', 'best'], floor: 'sonnet', ceiling: 'opus', effortFloor: 'low', effortCap: 'xhigh' }); assert.equal(catalog, MODEL_CATALOG.claude); }
 assert.throws(() => store.setModelFloor(uid, { claude: 'best' }), /above the ceiling/, 'the old floor setting checks the ceiling too');
 store.setEffortFloor(uid, { claude: 'high' });
 assert.throws(() => store.setEffortCap(uid, { claude: 'medium' }), /below its floor/, 'the effort ceiling cannot go under the floor');
@@ -146,8 +155,9 @@ console.log('PASS escalation: Q1 and the range');
 
 // ---- verifier candidates: the verification order, each provider's pick at max(depth, 3) ---------------------------------
 const session = { user: { id: uid, username: 'alice', runtime: 'u' + 'a'.repeat(24) }, sid: 's1' };
-let verifyBody = null; let curateBody = null;
+let verifyBody = null; let curateBody = null; let modelsBody = null;
 const runtimeFetch = async (_s, p, init = {}) => {
+  if (p === '/api/providers/opencode/models' && modelsBody) return Response.json(modelsBody);
   if (p.startsWith('/api/providers/')) return Response.json({ data: { authenticated: true } });
   if (p === '/api/aidev-tools/curate') { curateBody = JSON.parse(init.body); return Response.json({ data: { candidate: null } }); }
   if (p === '/api/aidev-tools/verify') { verifyBody = JSON.parse(init.body); return Response.json({ data: { verdict: 'pass', summary: 'ok', checked: [], issues: [], engine: 'codex', model: 'x' } }); }
@@ -199,15 +209,70 @@ const pages = [
 let fetched = 0;
 const sync = await syncModelScores(store, async (url, init) => { assert.equal(init.headers['x-api-key'], 'test-key'); return Response.json(pages[fetched++]); });
 assert.equal(sync.ok, true); assert.equal(sync.matched, 2); assert.equal(sync.version, '4.3'); assert.equal(fetched, 2);
-const coding = store.stepScores('claude', 'coding').scores;
+const coding = store.stepScores(uid, 'claude', 'coding').scores;
 assert.equal(coding.get('opus|high'), 51); assert.equal(coding.get('opus|low'), 44); assert.equal(coding.get('opus|medium'), 47.5, 'estimated between low and high');
 assert.equal(coding.get('sonnet|low'), 30, 'admin value');
 // a new index version: rows not synced again are not mixed in
 store.kvSet('aa.index_version', '5.0');
-assert.equal(store.stepScores('claude', 'coding').scores.get('opus|high'), undefined, 'old-version scores are not used');
-assert.equal(store.stepScores('claude', 'coding').scores.get('sonnet|low'), 30, 'admin values stay');
+assert.equal(store.stepScores(uid, 'claude', 'coding').scores.get('opus|high'), undefined, 'old-version scores are not used');
+assert.equal(store.stepScores(uid, 'claude', 'coding').scores.get('sonnet|low'), 30, 'admin values stay');
 const failed = await syncModelScores(store, async () => new Response('no', { status: 500 }));
 assert.equal(failed.ok, false);
 console.log('PASS model score sync');
+
+// ---- OpenCode: no tier table — always the split, over the account's own models (PROVIDER-ENGINE-PLAN G3) -----------------
+const GLM = 'opencode-go/glm-5.3'; const FREE = 'opencode/big-pickle';
+assert.equal(store.providerPolicy(uid, 'opencode').ladder, null, 'no models reported yet: nothing to split');
+store.setEnginePriority(uid, ['opencode', 'claude', 'codex']);
+const three = { ...both, opencode: { allowed: true, authenticated: true } };
+r = await route(store, laya(2), uid, three, { text: '설명해줘' });
+assert.deepEqual([r.plan.engine, r.plan.model, r.plan.effort, r.plan.step], ['opencode', null, null, null], 'first in the work order; OpenCode picks its own model until its list is known');
+store.setUserEngineModels(uid, 'opencode', [{ model: FREE, efforts: [] }, { model: GLM, efforts: ['low', 'medium', 'high'] }], GLM);
+assert.deepEqual(store.providerPolicy(uid, 'opencode').ladder, [GLM], 'no ladder set: the model OpenCode starts on');
+assert.deepEqual(store.catalog(uid, 'opencode').map((m) => m.level), [2, 2], 'unmeasured models carry D2');
+r = await route(store, laya(2), uid, three, { text: '설명해줘' });
+assert.deepEqual([r.plan.engine, r.plan.model, r.plan.effort], ['opencode', GLM, 'medium'], 'D2 of low..high');
+r = await route(store, laya(3), uid, three, { text: '설명해줘' });
+assert.deepEqual([r.plan.model, r.plan.effort, r.plan.step.q2], [GLM, 'high', true], 'D3 above an unmeasured model → its highest effort (Q2)');
+store.setModelLevel('opencode', GLM, 4);
+r = await route(store, laya(3), uid, three, { text: '설명해줘' });
+assert.deepEqual([r.plan.model, r.plan.effort, r.plan.step.q2], [GLM, 'high', false], 'levelled by an administrator: inside the range');
+assert.throws(() => store.setModelLevel('opencode', GLM, 5), /0-4/);
+// Q1 with three providers: only OpenCode's limit moves the work, to the next in the order
+r = await route(store, laya(1), uid, { ...three, opencode: { ...three.opencode, limited_until: Date.now() + 3600_000 } }, { text: '설명해줘' });
+assert.equal(r.plan.engine, 'claude', 'OpenCode on a usage limit → Claude');
+r = await route(store, laya(1), uid, { ...three, opencode: { allowed: true, authenticated: false } }, { text: '설명해줘' });
+assert.equal(r.plan.engine, 'claude', 'signed out of OpenCode → skipped');
+// a failed OpenCode run climbs inside OpenCode; its limit hands the work to the next provider
+next = await decideNext(store, noLaya, addRun({ engine: 'opencode', model: GLM, effort: 'low', depth: 0 }), three);
+assert.deepEqual([next.action, next.engine, next.model, next.effort, next.from_engine], ['escalate_tier', 'opencode', GLM, 'medium', 'opencode']);
+const ocLimited = addRun({ engine: 'opencode', model: GLM, effort: 'low', depth: 1 });
+store.updateRun(uid, ocLimited.id, { usageLimitResetsAt: 0 });
+next = await decideNext(store, noLaya, store.run(uid, ocLimited.id), three);
+assert.deepEqual([next.action, next.engine, next.from_engine], ['switch_engine', 'claude', 'opencode']);
+// the settings API: OpenCode's range over its own models, and the model list refreshed from the runtime
+res = await call('PUT', '/api/aidev/settings/provider-policy', { engine: 'opencode', ladder: [FREE, GLM] });
+assert.equal(res.status, 200, JSON.stringify(res.body));
+assert.deepEqual([res.body.providers.opencode.mode, res.body.providers.opencode.tier_table, res.body.providers.opencode.own_ladder], ['split', false, true]);
+assert.deepEqual(res.body.providers.opencode.preview.map(at), [FREE, `${GLM}·low`, `${GLM}·medium`, `${GLM}·medium`, `${GLM}·high`], '4 steps over D0..D4');
+res = await call('PUT', '/api/aidev/settings/provider-policy', { engine: 'opencode', ladder: ['opencode/unknown'] });
+assert.equal(res.status, 400, 'a model the account\'s OpenCode does not list');
+res = await call('PUT', '/api/aidev/settings/provider-policy', { engine: 'opencode', reset: true });
+assert.deepEqual([res.body.providers.opencode.own_ladder, res.body.providers.opencode.ladder], [false, [GLM]], 'reset: back to OpenCode\'s own model');
+assert.equal(res.body.providers.claude.tier_table, true);
+// the settings read OpenCode's models from the runtime when the stored list is older than a minute
+store.db.prepare('UPDATE user_engine_models SET fetched_at=0').run();
+modelsBody = { data: { provider: 'opencode', models: { OPTIONS: [{ value: 'opencode/new-free', label: 'New' }, { value: GLM, effort: { values: [{ value: 'low' }, { value: 'high' }] } }], DEFAULT: GLM } } };
+res = await call('GET', '/api/aidev/settings/provider-policy');
+assert.deepEqual(res.body.providers.opencode.catalog.map((m) => [m.model, m.efforts]), [['opencode/new-free', []], [GLM, ['low', 'high']]]);
+assert.equal(res.body.providers.opencode.allowed, false, 'OpenCode is on only where an administrator named it'); assert.equal(res.body.providers.claude.allowed, true);
+store.setAccountEngines('alice', ['claude', 'codex', 'opencode']);
+res = await call('GET', '/api/aidev/settings/provider-policy');
+assert.equal(res.body.providers.opencode.allowed, true);
+res = await call('GET', '/api/aidev/engines');
+assert.deepEqual([res.body.engines.opencode.allowed, res.body.engines.opencode.authenticated], [true, true]);
+res = await call('PUT', '/api/aidev/engine-models', { engine: 'opencode', model: GLM, level: 3 });
+assert.equal(res.status, 403, 'model levels: administrators');
+console.log('PASS OpenCode: split over the account\'s models, Q1 with three providers');
 
 console.log('provider policy: all checks passed');

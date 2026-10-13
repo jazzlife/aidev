@@ -1,8 +1,10 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { Codex } from '@openai/codex-sdk';
 
+import { askOpenCodeSideTurn } from '@/modules/aidev-tools/opencode-side-turn.client.js';
 import { sessionsDb } from '@/modules/database/index.js';
 import { codexSandboxConfig, noteCodexTurnError } from '@/shared/index.js';
+import type { AidevSideEngine } from '@/shared/index.js';
 
 /**
  * Lesson curation for failed runs (IMPLEMENTATION-PLAN §3.8 / E-01): summarises the session's
@@ -15,14 +17,15 @@ export type CurateInput = {
   sessionId: string;
   runId: number | null;
   agent: string | null;
-  engine: 'claude' | 'codex' | null;
-  /** the engines this account may use (D-05); the fallback stays inside them. Default both. */
-  engines?: Array<'claude' | 'codex'>;
+  engine: AidevSideEngine | null;
+  /** the engines this account may use (D-05); the fallback stays inside them. Default Claude and Codex. */
+  engines?: AidevSideEngine[];
   /**
    * The gateway's order once the account set a work order or a provider policy (PROVIDER-ENGINE-PLAN §2.5): tried in
-   * this order; a null model is the engine's light side-turn model. Absent = the session's engine first (curatorOrder).
+   * this order; a null model is the engine's light side-turn model (OpenCode: the model it starts on). Absent = the
+   * session's engine first (curatorOrder).
    */
-  candidates?: Array<{ engine: 'claude' | 'codex'; model: string | null }> | null;
+  candidates?: Array<{ engine: AidevSideEngine; model: string | null }> | null;
   command: string | null;
   signals: Record<string, unknown>;
 };
@@ -113,18 +116,24 @@ async function askCodex(prompt: string, cwd: string, model: string): Promise<str
   return turn.finalResponse ?? '';
 }
 
+/** How long an OpenCode curation turn may take (Claude and Codex answer a tool-less turn in seconds). */
+const OPENCODE_CURATE_TIMEOUT_MS = 3 * 60_000;
+
 /**
  * The engines the curator tries, in order, with their models: the gateway's candidates when it sent them, else the
- * session's engine first (Codex when that ran the session or Claude is not among the account's engines) and the other
- * one as the fallback when the account may use it. Used by `curate` and its test.
+ * session's engine first (Codex when that ran the session or Claude is not among the account's engines) and the
+ * others as the fallback when the account may use them — OpenCode only when the gateway named it among the account's
+ * engines or it ran the session. Used by `curate` and its test.
  */
-export function curatorOrder(input: Pick<CurateInput, 'engine' | 'engines' | 'candidates'>): Array<{ engine: 'claude' | 'codex'; model: string }> {
-  const light = (engine: 'claude' | 'codex') => (engine === 'claude' ? CLAUDE_SIDE_MODEL : CODEX_SIDE_MODEL);
+export function curatorOrder(input: Pick<CurateInput, 'engine' | 'engines' | 'candidates'>): Array<{ engine: AidevSideEngine; model: string | null }> {
+  const light = (engine: AidevSideEngine) => (engine === 'claude' ? CLAUDE_SIDE_MODEL : engine === 'codex' ? CODEX_SIDE_MODEL : null);
   if (input.candidates) return input.candidates.map((c) => ({ engine: c.engine, model: c.model ?? light(c.engine) }));
-  const preferCodex = input.engine === 'codex' || Boolean(input.engines?.length && !input.engines.includes('claude'));
-  const first: 'claude' | 'codex' = preferCodex ? 'codex' : 'claude';
-  const other: 'claude' | 'codex' = preferCodex ? 'claude' : 'codex';
-  return [first, ...(!input.engines?.length || input.engines.includes(other) ? [other] : [])].map((engine) => ({ engine, model: light(engine) }));
+  const named = input.engines?.length ? input.engines : null;
+  const preferCodex = input.engine === 'codex' || Boolean(named && !named.includes('claude'));
+  const order: AidevSideEngine[] = input.engine === 'opencode' || (named && !named.includes('claude') && !named.includes('codex')) ? ['opencode', 'claude', 'codex']
+    : preferCodex ? ['codex', 'claude', 'opencode'] : ['claude', 'codex', 'opencode'];
+  const fallback = order.slice(1).filter((engine) => (named ? named.includes(engine) : engine !== 'opencode'));
+  return [order[0], ...fallback].map((engine) => ({ engine, model: light(engine) }));
 }
 
 export const lessonCuratorService = {
@@ -142,7 +151,8 @@ export const lessonCuratorService = {
     // an engine unavailable for a side turn: the next one in the order takes it; the first failure is the one reported
     for (const candidate of order) {
       try {
-        text = candidate.engine === 'claude' ? await askClaude(prompt, cwd, candidate.model) : await askCodex(prompt, cwd, candidate.model);
+        text = candidate.engine === 'opencode' ? await askOpenCodeSideTurn({ label: 'curate', instructions: CURATOR_PROMPT, prompt, cwd, model: candidate.model, effort: null, access: 'read', timeoutMs: OPENCODE_CURATE_TIMEOUT_MS })
+          : candidate.engine === 'claude' ? await askClaude(prompt, cwd, candidate.model!) : await askCodex(prompt, cwd, candidate.model!);
         engine = candidate.engine; firstError = null;
         break;
       } catch (error) { firstError ??= error; }

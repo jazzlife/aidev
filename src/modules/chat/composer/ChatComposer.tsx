@@ -62,7 +62,7 @@ type ChatComposerProps = {
   model: string;
   availableModelOptions: ProviderModelOption[];
   /** While routing: the other engine's models, which pin the chat to that engine. */
-  otherEngineModels?: ComposerOtherEngineModels | null;
+  otherEngineModels?: ComposerOtherEngineModels[];
   onSelectModel: (model: string) => void;
   /** Nado AI Dev routing: what the router will use, shown instead of the provider default (null = routing off). */
   modelRouting?: ComposerModelRouting | null;
@@ -147,7 +147,7 @@ export default function ChatComposer({
   onSelectEffort,
   model,
   availableModelOptions,
-  otherEngineModels = null,
+  otherEngineModels,
   onSelectModel,
   modelRouting = null,
   modelsLoading,

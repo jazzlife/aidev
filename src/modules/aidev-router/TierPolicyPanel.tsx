@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react';
 import { ChevronDown, ChevronRight, Gauge, Lock, RefreshCw, RotateCcw } from 'lucide-react';
 
 import { aidevApi, type EngineWeightRow, type TierPolicyCell, type TierPolicyView } from '@/modules/aidev-router/api';
+import { AIDEV_ENGINES } from '@/shared/constants';
 
 const when = (at: number | null) => (at ? new Date(at).toLocaleString('ko-KR', { dateStyle: 'short', timeStyle: 'short' }) : '없음');
 
@@ -73,7 +74,7 @@ export function TierPolicyPanel() {
                 <tbody>{[...new Set(weights.map((row) => row.task_kind))].map((kind) => (
                   <tr key={kind} className="border-t border-border/50">
                     <td className="py-0.5">{kind}</td>
-                    {(['claude', 'codex'] as const).map((engine) => {
+                    {AIDEV_ENGINES.map((engine) => {
                       const row = weights.find((entry) => entry.task_kind === kind && entry.engine === engine);
                       const n = row ? row.success_n + row.fail_n : 0;
                       return (

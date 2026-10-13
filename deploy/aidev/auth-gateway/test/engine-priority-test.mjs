@@ -53,6 +53,8 @@ assert.deepEqual(store.enginePriority(uid), []);
 r = await route(store, laya, uid, both(), { text: '배포 스크립트 점검' });
 assert.equal(r.plan.engine, 'codex');
 assert.throws(() => store.setEnginePriority(uid, ['gemini']), /engines must be among/);
+assert.deepEqual(store.setEnginePriority(uid, ['opencode', 'claude', 'codex']), ['opencode', 'claude', 'codex'], 'three providers in the user\'s order');
+store.setEnginePriority(uid, null);
 
 store.db.close();
 console.log('engine-priority-test: PASS');

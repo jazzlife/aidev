@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 
 import { api } from '@/shared/api';
 import type { Engine } from '@/modules/aidev-router/api';
+import { AIDEV_ENGINES } from '@/shared/constants';
 import type { ProviderUsageLimitsSnapshot, ProviderUsageWindow } from '@/shared/types';
 
 /** Korean names of the usage windows the engines report. */
@@ -62,5 +63,5 @@ export function useUsageLimits(enabled = true): { views: UsageLimitView[]; loade
     const timer = window.setInterval(() => { if (document.visibilityState !== 'hidden') poll(); }, POLL_MS);
     return () => { alive = false; window.clearInterval(timer); };
   }, [enabled]);
-  return { views: (['claude', 'codex'] as Engine[]).filter((engine) => snapshots?.[engine]).map((engine) => usageLimitView(engine, snapshots?.[engine])), loaded: snapshots !== null };
+  return { views: AIDEV_ENGINES.filter((engine) => snapshots?.[engine]).map((engine) => usageLimitView(engine, snapshots?.[engine])), loaded: snapshots !== null };
 }

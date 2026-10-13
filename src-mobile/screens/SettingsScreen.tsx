@@ -2,6 +2,8 @@ import { useEffect, useState } from 'react';
 
 import { api } from '@/shared/api';
 import { aidevApi, claudeAuth, routingStore, useClaudeAuth, useRoutingState, type EnginesResult, type RoutingMode } from '@/modules/aidev-router';
+import { AIDEV_ENGINES, ENGINE_LABELS } from '@/shared/constants';
+import type { AidevEngine } from '@/shared/types';
 import { ProviderPolicySection } from '@m/components/ProviderPolicySection';
 import { ClaudeLoginSheet } from '@m/components/ClaudeLoginSheet';
 import { KnowledgeSection } from '@m/components/KnowledgeSection';
@@ -31,10 +33,10 @@ export function SettingsScreen() {
   const [pushBusy, setPushBusy] = useState(false);
   const [pushNote, setPushNote] = useState<string | null>(null);
   // the engine being signed out (its button waits) and why the last sign-out failed
-  const [loggingOut, setLoggingOut] = useState<'claude' | 'codex' | null>(null);
+  const [loggingOut, setLoggingOut] = useState<AidevEngine | null>(null);
   const [engineNote, setEngineNote] = useState<string | null>(null);
-  const logout = async (engine: 'claude' | 'codex') => {
-    const name = engine === 'claude' ? 'Claude' : 'Codex';
+  const logout = async (engine: AidevEngine) => {
+    const name = ENGINE_LABELS[engine];
     if (!window.confirm(`${name}에서 로그아웃할까요? 실행 중인 작업이 멈출 수 있고, 다시 쓰려면 로그인해야 합니다.`)) return;
     setLoggingOut(engine); setEngineNote(null);
     try {
@@ -86,12 +88,13 @@ export function SettingsScreen() {
         <section>
           <div className="text-[12px] uppercase tracking-wide text-muted mb-2">엔진</div>
           <div className="rounded-xl2 border border-line bg-surface divide-y divide-line">
-            {(['claude', 'codex'] as const).map((engine) => {
+            {/* OpenCode is listed for the accounts an administrator enabled it for */}
+            {AIDEV_ENGINES.filter((engine) => engine !== 'opencode' || engines?.engines.opencode?.allowed).map((engine) => {
               const state = engines?.engines[engine];
               return (
                 <div key={engine} className="px-4 py-3 flex items-center gap-3">
                   <span className={`w-2.5 h-2.5 rounded-full ${!state ? 'bg-line' : !state.allowed ? 'bg-line' : state.authenticated ? 'bg-ok' : 'bg-warn'}`} />
-                  <span className="flex-1 text-[15px] capitalize">{engine}</span>
+                  <span className="flex-1 text-[15px]">{ENGINE_LABELS[engine]}</span>
                   <span className="text-[12px] text-muted">{!state ? '…' : !state.allowed ? '이 계정에 없음' : state.authenticated ? (engine === 'claude' && auth.daysLeft !== null ? `연결됨 · D-${auth.daysLeft}` : '연결됨') : (state.error || '로그인 필요')}</span>
                   {engine === 'claude' && state?.allowed ? <button type="button" onClick={() => claudeAuth.openDialog()} className="text-[13px] text-accent">{state.authenticated && !auth.expired ? '다시 로그인' : '로그인'}</button> : null}
                   {state?.allowed && state.authenticated ? <button type="button" disabled={loggingOut !== null} onClick={() => { void logout(engine); }} className="text-[13px] text-muted">{loggingOut === engine ? '로그아웃 중…' : '로그아웃'}</button> : null}

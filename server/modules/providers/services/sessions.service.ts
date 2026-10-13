@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { randomUUID } from 'node:crypto';
 import fsp from 'node:fs/promises';
 import path from 'node:path';
@@ -69,6 +70,24 @@ const MAX_CLOUDCLI_SESSION_NAME_WORDS = 4;
 function buildCloudCliSessionName(initialMessage: string): string {
   const words = initialMessage.trim().split(/\s+/).filter(Boolean);
   return words.slice(0, MAX_CLOUDCLI_SESSION_NAME_WORDS).join(' ') || 'Untitled Session';
+}
+
+/** How long `opencode session delete` gets before the app row is removed regardless. */
+const OPENCODE_DELETE_TIMEOUT_MS = 15_000;
+
+/**
+ * Removes a conversation from OpenCode's own store. OpenCode keeps its transcripts in its sqlite database, not in a
+ * file this service can unlink, and its session synchronizer indexes every session found there — a chat deleted here
+ * only would come back on the next sync. True when OpenCode reported the deletion.
+ */
+function deleteOpenCodeSession(providerSessionId: string): Promise<boolean> {
+  return new Promise((resolve) => {
+    let child: ReturnType<typeof spawn>;
+    try { child = spawn('opencode', ['session', 'delete', providerSessionId], { stdio: 'ignore' }); } catch { resolve(false); return; }
+    const timer = setTimeout(() => { child.kill('SIGKILL'); resolve(false); }, OPENCODE_DELETE_TIMEOUT_MS);
+    child.on('error', () => { clearTimeout(timer); resolve(false); });
+    child.on('close', (code) => { clearTimeout(timer); resolve(code === 0); });
+  });
 }
 
 /**
@@ -620,6 +639,9 @@ export const sessionsService = {
       ];
       for (const transcript of transcripts) {
         removedFromDisk = (await removeFileIfExists(transcript)) || removedFromDisk;
+      }
+      if (session.provider === 'opencode' && session.provider_session_id) {
+        removedFromDisk = (await deleteOpenCodeSession(session.provider_session_id)) || removedFromDisk;
       }
     }
 

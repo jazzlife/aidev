@@ -39,8 +39,9 @@ export default function AgentsSettingsTab({
   const [selectedCategory, setSelectedCategory] = useState<AgentCategory>('account');
   const visibleCategories = useMemo<AgentCategory[]>(() => (
     selectedAgent === 'opencode'
-      // no permissions tab yet: OpenCode has no panel there (it showed an empty page); it comes with the engine UI (G4)
-      ? ['account', 'mcp']
+      // no permissions or skills tab: OpenCode keeps those in its own config (opencode.json), and the panels here have
+      // nothing to show for it; like the other engines it has its model/effort range
+      ? ['account', 'mcp', 'routing']
       // providers routing picks between also get their model/effort range (provider policy)
       : ['account', 'permissions', 'mcp', 'skills', ...(isPolicyProvider(selectedAgent) ? ['routing' as const] : [])]
   ), [selectedAgent]);

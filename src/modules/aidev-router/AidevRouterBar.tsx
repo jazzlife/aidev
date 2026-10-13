@@ -12,6 +12,10 @@ import { MODEL_LABEL } from '@/modules/aidev-router/hooks/useModelFloor';
 import { ClaudeLoginDialog } from '@/modules/aidev-router/ClaudeLoginPanel';
 import { useTargetChoice } from '@/modules/aidev-router/hooks/useTargetChoice';
 import { policyNote } from '@/modules/aidev-router/hooks/useProviderPolicy';
+import { AIDEV_ENGINES, ENGINE_LABELS } from '@/shared/constants';
+
+/** A provider's display name; '엔진 없음' when routing found none. */
+const engineName = (engine: Engine | null | undefined) => (engine ? ENGINE_LABELS[engine] ?? engine : '엔진 없음');
 
 const DEPTH_LABEL = ['즉답', '한 파일', '기능', '심층', '설계'];
 const MODES: Array<{ value: RoutingMode; label: string }> = [{ value: 'auto', label: '자동' }, { value: 'manual', label: '확인 후' }, { value: 'off', label: '끄기' }];
@@ -98,21 +102,23 @@ export function AidevRouterBar({ sessionId = null }: { sessionId?: string | null
           </span>
           <span className="relative">
             <button type="button" className={`${chip} text-foreground`} onClick={(event) => { event.stopPropagation(); setOpen(open === 'engine' ? null : 'engine', event); }} title={last.plan.reason.join('\n')}>
-              <span className="capitalize">{state.overrides.engine ?? last.plan.engine ?? '엔진 없음'}</span>{state.overrides.engine || last.plan.engine_pinned ? <span className="text-muted-foreground">· 고정</span> : null}
+              <span>{engineName(state.overrides.engine ?? last.plan.engine)}</span>{state.overrides.engine || last.plan.engine_pinned ? <span className="text-muted-foreground">· 고정</span> : null}
               {last.plan.model ? <span className="text-muted-foreground">· {last.plan.model}/{last.plan.effort}</span> : null}
               <ChevronDown size={11} />
             </button>
             {open === 'engine' ? (
               <div className="z-50 rounded-md border border-border bg-popover p-1 shadow-md" style={menuStyle('left', 256)} onClick={(event) => event.stopPropagation()}>
                 <button type="button" onClick={autoEngine} className={`w-full rounded px-2 py-1.5 text-left hover:bg-accent ${!state.overrides.engine && !last.plan.engine_pinned ? 'font-medium' : ''}`}>
-                  <div>자동</div><div className="text-muted-foreground">{engines?.engine_priority?.length ? `우선순위 ${engines.engine_priority.join(' > ')} · 한도가 풀리면 되돌아갑니다` : '판정과 학습된 가중치로 고릅니다'}</div>
+                  <div>자동</div><div className="text-muted-foreground">{engines?.engine_priority?.length ? `우선순위 ${engines.engine_priority.map(engineName).join(' > ')} · 한도가 풀리면 되돌아갑니다` : '판정과 학습된 가중치로 고릅니다'}</div>
                 </button>
-                {(['claude', 'codex'] as Engine[]).map((engine) => {
+                {AIDEV_ENGINES.map((engine) => {
                   const info = engines?.engines[engine] ?? last.engines[engine];
+                  // an engine the gateway did not report (an older gateway) is not offered
+                  if (!info) return null;
                   const usable = info.allowed && info.authenticated;
                   return (
                     <button key={engine} type="button" disabled={!usable} onClick={() => overrideEngine(engine)} className="w-full rounded px-2 py-1.5 text-left hover:bg-accent disabled:opacity-50">
-                      <div className="flex justify-between"><span className="font-medium capitalize">{engine}</span><span className="text-muted-foreground">{last.engines[engine].score !== null ? `점수 ${last.engines[engine].score?.toFixed(2)}` : ''}</span></div>
+                      <div className="flex justify-between"><span className="font-medium">{engineName(engine)}</span><span className="text-muted-foreground">{typeof last.engines[engine]?.score === 'number' ? `점수 ${last.engines[engine]!.score!.toFixed(2)}` : ''}</span></div>
                       <div className="text-muted-foreground">{!info.allowed ? '이 계정에서 사용 불가' : !info.authenticated ? (info.error || '로그인 필요') : '사용 가능'}</div>
                     </button>
                   );
@@ -172,12 +178,12 @@ export function AidevRouterBar({ sessionId = null }: { sessionId?: string | null
             {chatCap.defaults && chatCap.ladder ? (
               <div className="mt-1 border-t border-border px-2 pt-1.5" data-testid="effort-cap">
                 <div className="mb-1 text-[11px] text-muted-foreground" title="이 채팅에만 적용됩니다. '기본값'은 설정 → Agents의 기본 상한을 따릅니다. 가장 어려운 작업(D4)은 이 강도로 실행하고, 다른 등급도 이 값을 넘지 않습니다.">이 채팅의 추론 강도 상한</div>
-                {(['claude', 'codex'] as const).map((engine) => (
+                {AIDEV_ENGINES.filter((engine) => chatCap.ladder![engine]?.length).map((engine) => (
                   <label key={engine} className="mb-1 flex items-center gap-2">
-                    <span className="w-12 capitalize">{engine}</span>
+                    <span className="w-16">{engineName(engine)}</span>
                     <select aria-label={`${engine} 이 채팅 effort 상한`} value={chatCap.cap?.[engine] ?? 'default'} onChange={(event) => { void chatCap.set(engine, event.target.value); }} className="h-6 flex-1 rounded border border-border bg-background px-1">
-                      <option value="default">기본값 ({chatCap.defaults![engine]})</option>
-                      {chatCap.ladder![engine].map((level) => <option key={level} value={level}>{level} · {EFFORT_LABEL[level] ?? level}</option>)}
+                      <option value="default">기본값 ({chatCap.defaults![engine] ?? '-'})</option>
+                      {chatCap.ladder![engine]!.map((level) => <option key={level} value={level}>{level} · {EFFORT_LABEL[level] ?? level}</option>)}
                     </select>
                   </label>
                 ))}
@@ -187,12 +193,12 @@ export function AidevRouterBar({ sessionId = null }: { sessionId?: string | null
             {chatFloor.defaults && chatFloor.ladder ? (
               <div className="mt-1 border-t border-border px-2 pt-1.5" data-testid="model-floor">
                 <div className="mb-1 text-[11px] text-muted-foreground" title="이 채팅에만 적용됩니다. '기본값'은 설정 → Agents의 기본 하한을 따릅니다. 라우터가 어떤 깊이로 판정하든 이 모델보다 약한 모델로는 실행하지 않습니다.">이 채팅의 최소 모델</div>
-                {(['claude', 'codex'] as const).map((engine) => (
+                {AIDEV_ENGINES.filter((engine) => chatFloor.ladder![engine]?.length).map((engine) => (
                   <label key={engine} className="mb-1 flex items-center gap-2">
-                    <span className="w-12 capitalize">{engine}</span>
+                    <span className="w-16">{engineName(engine)}</span>
                     <select aria-label={`${engine} 이 채팅 최소 모델`} value={chatFloor.floor?.[engine] ?? 'default'} onChange={(event) => { void chatFloor.set(engine, event.target.value); }} className="h-6 flex-1 rounded border border-border bg-background px-1">
                       <option value="default">기본값 ({chatFloor.defaults![engine] ? MODEL_LABEL[chatFloor.defaults![engine]!] ?? chatFloor.defaults![engine] : '하한 없음'})</option>
-                      {chatFloor.ladder![engine].map((model) => <option key={model} value={model}>{MODEL_LABEL[model] ?? model}</option>)}
+                      {chatFloor.ladder![engine]!.map((model) => <option key={model} value={model}>{MODEL_LABEL[model] ?? model}</option>)}
                     </select>
                   </label>
                 ))}

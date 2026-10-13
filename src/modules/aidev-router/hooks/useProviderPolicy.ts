@@ -1,6 +1,8 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { aidevApi, type Engine, type ProviderPolicyPatch, type ProviderPolicyView, type RouteResult, type ScoreIndex } from '@/modules/aidev-router/api';
+import { ENGINE_LABELS } from '@/shared/constants';
+import { isAidevEngine } from '@/shared/utils';
 
 /**
  * Provider policy (2026-10-13, docs/aidev/PROVIDER-ENGINE-PLAN.md): the work order (kept until a usage limit), the
@@ -34,9 +36,8 @@ export function useProviderPolicy() {
   return { view, error, saving, setProvider, setWorkPriority, setVerifyPriority, setScoreIndex };
 }
 
-/** Providers that have a policy (a range tab in the settings); OpenCode joins with stage G3. */
-export const POLICY_PROVIDERS: readonly Engine[] = ['claude', 'codex'];
-export const isPolicyProvider = (provider: string): provider is Engine => (POLICY_PROVIDERS as readonly string[]).includes(provider);
+/** Providers that have a policy (a range tab in the settings): the engines routing picks between. */
+export const isPolicyProvider = (provider: string): provider is Engine => isAidevEngine(provider);
 
 /** The labels of the score indexes (Artificial Analysis). */
 export const SCORE_INDEX_LABEL: Record<ScoreIndex, string> = { coding: 'Coding Index (기본)', intelligence: 'Intelligence Index', agentic: 'Agentic Index' };
@@ -57,7 +58,7 @@ export function moveInOrder(order: Engine[], engine: Engine, delta: -1 | 1): Eng
  * null when neither applies (the tier table picked on the first provider).
  */
 export function policyNote(route: Pick<RouteResult, 'plan' | 'engines'>, now = Date.now()): string | null {
-  const name = (engine: string) => engine.charAt(0).toUpperCase() + engine.slice(1);
+  const name = (engine: Engine) => ENGINE_LABELS[engine] ?? engine;
   const parts: string[] = [];
   const picked = route.plan.engine;
   const limited = (Object.keys(route.engines) as Engine[]).filter((engine) => engine !== picked && (route.engines[engine]?.limited_until ?? 0) > now);

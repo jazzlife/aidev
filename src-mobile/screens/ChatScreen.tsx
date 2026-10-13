@@ -4,7 +4,7 @@ import { Clock, Download, Gauge, GitBranch, MoreHorizontal, Search } from 'lucid
 
 import { api, grantClaudeToolPermission, buildClaudeToolPermissionEntry, useChatRealtimeHandlers, useSessionStore, useWebSocket, type LLMProvider, type NormalizedMessage, type PendingPermissionRequest, type ProjectSession } from '@/modules/chat-core';
 import { AgentCreateCard, aidevApi, routingStore, shouldAskClarify, useAgentCreation, useAidevRouting, useEscalation, usePrejudge, useReturnFromHandoff, useRoutingState, ReturnCard, VerificationCard, type AidevSendDecoration, type Engine } from '@/modules/aidev-router';
-import { parseProviderUsageLimit } from '@/shared/utils';
+import { isAidevEngine, parseProviderUsageLimit } from '@/shared/utils';
 import { hydrateChatDrafts, readQueuedMessages, subscribeToChatDrafts, writeQueuedMessages, type StoredQueuedMessage } from '@/shared/chatDrafts';
 import { Composer } from '@m/components/Composer';
 import { MessageList } from '@m/components/MessageList';
@@ -49,7 +49,7 @@ const createQueuedId = () => `q-${Date.now().toString(36)}-${Math.random().toStr
 const readQueue = (sessionId: string | null): StoredQueuedMessage[] => (sessionId ? readQueuedMessages(sessionId).map((turn, index) => ({ ...turn, id: turn.id ?? `queued-${index}` })) : []);
 const PROVIDERS: LLMProvider[] = ['claude', 'cursor', 'codex', 'opencode'];
 /** The provider a new chat starts on: the last routed engine (routing only stores Claude or Codex here). */
-const readProvider = (): LLMProvider => { try { const value = localStorage.getItem(PROVIDER_KEY); return value === 'codex' ? 'codex' : 'claude'; } catch { return 'claude'; } };
+const readProvider = (): LLMProvider => { try { const value = localStorage.getItem(PROVIDER_KEY); return isAidevEngine(value) ? value : 'claude'; } catch { return 'claude'; } };
 
 /**
  * Mobile chat: one session (or a brand-new one), streaming transcript, tool permission prompts,
@@ -316,7 +316,7 @@ export function ChatScreen() {
       // §3.1: essential detail missing from a deeper command → ask once (not for agent creation or the app's re-sends)
       if (shouldAskClarify(decoration)) { setClarify({ text, decoration, attachments, previews }); return; }
       // engine priority: the chat continues on the higher engine that is usable again (unless pinned)
-      if (switchBack && meta && (meta.provider === 'claude' || meta.provider === 'codex') && !attachments.length) {
+      if (switchBack && meta && isAidevEngine(meta.provider) && !attachments.length) {
         const moved = await switchBackRef.current?.({ sessionId: meta.id, engine: switchBack.engine, fromEngine: meta.provider, text: routed, reason: switchBack.reason });
         if (moved) return;
       }

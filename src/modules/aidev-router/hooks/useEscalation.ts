@@ -1,9 +1,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { api } from '@/shared/api';
-import { aidevApi, type Engine } from '@/modules/aidev-router/api';
+import { aidevApi, type Engine, type EnginesResult } from '@/modules/aidev-router/api';
 import { routingStore, useRoutingState } from '@/modules/aidev-router/store';
 import { rememberHandoff } from '@/modules/aidev-router/hooks/useReturnFromHandoff';
+import { AIDEV_ENGINES, ENGINE_LABELS } from '@/shared/constants';
 
 type UseEscalationArgs = {
   /** Sends text as a new user turn in the open session through the composer (routing runs again). */
@@ -29,7 +30,18 @@ type HandoffArgs = {
   appendText?: string;
 };
 
-const ENGINE_LABEL: Record<Engine, string> = { claude: 'Claude', codex: 'Codex' };
+/**
+ * The provider a usage-limited chat continues on: the first of the user's work order (then the rest) that is not the
+ * blocked one, is allowed, signed in and not on a usage limit itself; null when there is none. Used by
+ * handoffOnUsageLimit and its test.
+ */
+export function nextUsableEngine(blocked: Engine, available: Pick<EnginesResult, 'engines' | 'engine_priority'>, now = Date.now()): Engine | null {
+  const order = [...new Set([...(available.engine_priority ?? []), ...AIDEV_ENGINES])];
+  return order.find((engine) => {
+    const info = available.engines[engine];
+    return engine !== blocked && Boolean(info?.allowed && info.authenticated) && (info?.limited_until ?? 0) <= now;
+  }) ?? null;
+}
 
 /**
  * One-tap follow-up for a failed routed run (IMPLEMENTATION-PLAN §3.8, E-03). The gateway's
@@ -97,8 +109,8 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
     if (!current.sessionId) { setError('인계할 세션 정보가 없습니다'); return; }
     await handoff({
       engine: next.engine,
-      // a switch_engine proposal always targets the other engine, so the failed run's engine is its opposite
-      fromEngine: next.engine === 'claude' ? 'codex' : 'claude',
+      // the engine the failed run ran on, as the gateway names it (an older gateway: the last route's engine, else the other of the pair)
+      fromEngine: next.from_engine ?? (last?.plan.engine && last.plan.engine !== next.engine ? last.plan.engine : next.engine === 'claude' ? 'codex' : 'claude'),
       sessionId: current.sessionId,
       text,
       reason: next.reason,
@@ -106,7 +118,7 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
       oneShotAgent,
       title: `[인계] ${(text || '이어서 작업').slice(0, 60)}`,
     });
-  }, [busy, dismiss, handoff, resend]);
+  }, [busy, dismiss, handoff, last, resend]);
 
   // Runs already sent back to their worker, so a re-render (or the card reappearing) never sends twice.
   const reworkedRuns = useRef<Set<number>>(new Set());
@@ -119,9 +131,8 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
   }, [escalation, run]);
 
   /**
-   * Carries the work to the other engine without waiting for a tap, for a run the
-   * provider refused on a usage limit (claude ↔ codex — the only two engines the
-   * gateway routes between).
+   * Carries the work to the next provider without waiting for a tap, for a run the
+   * provider refused on a usage limit (the next usable one in the user's work order).
    *
    * This is the one failure where asking first only stalls: the limit is not a bad
    * plan the user could choose differently about, and the same engine cannot succeed
@@ -132,19 +143,27 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
    * in, a limit is a dead end, not a handoff, so this reports `blocked` instead of
    * silently trying (and failing) to open a session nothing is signed into.
    */
-  const handoffOnUsageLimit = useCallback(async (args: { sessionId: string; blockedEngine: Engine; reason: string }): Promise<{ status: 'handed-off' | 'blocked' | 'skipped'; otherEngine: Engine }> => {
-    const otherEngine: Engine = args.blockedEngine === 'claude' ? 'codex' : 'claude';
-    if (busy || handedOffSessions.current.has(args.sessionId)) return { status: 'skipped', otherEngine };
+  const handoffOnUsageLimit = useCallback(async (args: { sessionId: string; blockedEngine: Engine; reason: string }): Promise<{ status: 'handed-off' | 'blocked' | 'skipped'; otherEngine: Engine | null }> => {
+    if (busy || handedOffSessions.current.has(args.sessionId)) return { status: 'skipped', otherEngine: null };
 
-    const authResponse = await api.providers.authStatus(otherEngine);
-    const authBody = authResponse.ok ? await authResponse.json() as { data?: { authenticated?: boolean } } : null;
-    if (!authBody?.data?.authenticated) {
-      // Only one engine is usable, so this is a dead end rather than a handoff —
+    // the next provider of the user's work order that can run now; the gateway out of reach: the runtime's own sign-in
+    // check on the other of Claude and Codex, as before the work order existed
+    let otherEngine: Engine | null = null;
+    try {
+      otherEngine = nextUsableEngine(args.blockedEngine, await aidevApi.engines());
+    } catch {
+      const fallback: Engine = args.blockedEngine === 'claude' ? 'codex' : 'claude';
+      const authResponse = await api.providers.authStatus(fallback);
+      const authBody = authResponse.ok ? await authResponse.json() as { data?: { authenticated?: boolean } } : null;
+      if (authBody?.data?.authenticated) otherEngine = fallback;
+    }
+    if (!otherEngine) {
+      // No other provider is usable, so this is a dead end rather than a handoff —
       // surfaced through the same ask_user card other failures use, so the user
       // is not left staring at a transcript that just stopped.
       routingStore.patch({
         escalation: {
-          next: { action: 'ask_user', engine: null, model: null, effort: null, depth: null, from_run: 0, chain: 0, reason: `${ENGINE_LABEL[otherEngine]}도 로그인되어 있지 않아 자동으로 전환할 수 없습니다. 한도가 초기화될 때까지 기다리거나 ${ENGINE_LABEL[otherEngine]}에 로그인해주세요.` },
+          next: { action: 'ask_user', engine: null, model: null, effort: null, depth: null, from_run: 0, chain: 0, reason: `${ENGINE_LABELS[args.blockedEngine]} 사용량 한도에 걸렸는데, 지금 쓸 수 있는 다른 공급자가 없어 자동으로 전환할 수 없습니다. 한도가 초기화될 때까지 기다리거나 다른 공급자에 로그인해주세요.` },
           text: routingStore.get().lastText ?? '',
           sessionId: args.sessionId,
         },
@@ -163,7 +182,7 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
       reason: args.reason,
       plan: { engine: otherEngine },
       oneShotAgent: agentName && agentName !== 'agent-architect' ? agentName : null,
-      title: `[${ENGINE_LABEL[otherEngine]} 인계] ${(text || '이어서 작업').slice(0, 60)}`,
+      title: `[${ENGINE_LABELS[otherEngine]} 인계] ${(text || '이어서 작업').slice(0, 60)}`,
     });
     return { status: 'handed-off', otherEngine };
   }, [busy, handoff]);
@@ -187,7 +206,7 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
       reason: args.reason,
       plan: { engine: args.engine },
       oneShotAgent: agentName && agentName !== 'agent-architect' ? agentName : null,
-      title: `[${ENGINE_LABEL[args.engine]} ${routingStore.get().overrides.engine === args.engine ? '인계' : '복귀'}] ${args.text.slice(0, 60)}`,
+      title: `[${ENGINE_LABELS[args.engine]} ${routingStore.get().overrides.engine === args.engine ? '인계' : '복귀'}] ${args.text.slice(0, 60)}`,
     });
     return routingStore.get().pendingHandoff !== null;
   }, [busy, handoff]);
@@ -205,7 +224,7 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
     : next.action === 'retry_same' ? '같은 설정으로 다시 시도'
       : next.action === 'retry_worker' ? '지적된 문제를 작업자에게 다시 맡기기'
         : next.action === 'escalate_tier' ? `더 강한 모델로 다시 시도 (${next.model}${next.effort ? ` · ${next.effort}` : ''})`
-          : next.action === 'switch_engine' && next.engine ? `${ENGINE_LABEL[next.engine]}로 인계 (${next.model})`
+          : next.action === 'switch_engine' && next.engine ? `${ENGINE_LABELS[next.engine]}로 인계 (${next.model})`
             : null;
   return { escalation, agentName: last?.agent.name ?? null, label, busy, error, run, dismiss, takeHandoff, handoffOnUsageLimit, switchBack };
 }

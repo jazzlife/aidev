@@ -7,8 +7,12 @@ test('sideEngines: an account whose engines cannot run side turns is refused, no
   // an older gateway sends no list: every engine, as before
   assert.deepEqual(sideEngines(undefined), { engines: undefined, none: false });
   assert.deepEqual(sideEngines(['claude', 'codex']), { engines: ['claude', 'codex'], none: false });
-  assert.deepEqual(sideEngines(['codex', 'opencode']), { engines: ['codex'], none: false });
-  // OpenCode-only (or nothing usable): the empty list used to mean "all" and ran the turn on Claude
-  assert.deepEqual(sideEngines(['opencode']), { engines: [], none: true });
+  // OpenCode runs side turns too (verification, curation, design, knowledge checks); Cursor does not
+  assert.deepEqual(sideEngines(['codex', 'opencode', 'cursor']), { engines: ['codex', 'opencode'], none: false });
+  assert.deepEqual(sideEngines(['opencode']), { engines: ['opencode'], none: false });
+  // the judge runs on Claude and Codex only: an OpenCode-only account is refused — the empty list used to mean "all"
+  // and ran the turn on Claude
+  assert.deepEqual(sideEngines(['codex', 'opencode'], ['claude', 'codex']), { engines: ['codex'], none: false });
+  assert.deepEqual(sideEngines(['opencode'], ['claude', 'codex']), { engines: [], none: true });
   assert.deepEqual(sideEngines([]), { engines: [], none: true });
 });

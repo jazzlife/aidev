@@ -16,4 +16,6 @@ test('describeOpenCodeError tells a usage limit and a rejected sign-in from othe
   assert.equal(describeOpenCodeError({ _tag: 'BadRequest' }).message, 'BadRequest');
   assert.equal(describeOpenCodeError(undefined).message, 'Unknown OpenCode error');
   assert.equal(describeOpenCodeError('rate limit reached').kind, 'usage_limit');
+  // the wording OpenCode's own key gave on the server (2026-10-13), without relying on the status
+  assert.equal(describeOpenCodeError({ name: 'APIError', data: { message: 'You have no credits remaining. Add credits to continue.' } }).kind, 'usage_limit');
 });

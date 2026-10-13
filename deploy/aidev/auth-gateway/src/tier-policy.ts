@@ -25,7 +25,8 @@ const DOWN_FROM = 0.9; const DOWN_MIN_N = 10; const DOWN_UP_SHARE = 0.5;
 export const downgradeEnabled = (store: Store) => store.kvGet('tier_policy_downgrade') === 'on';
 const HOLD_BELOW = 0.75;
 
-const tierOf = (level: number, engine: string) => TIER_TABLE[Math.max(0, Math.min(4, level))][engine as Engine];
+// only engines with a tier-table column learn tiers (OpenCode runs on its policy): callers skip the others
+const tierOf = (level: number, engine: string) => TIER_TABLE[Math.max(0, Math.min(4, level))][engine as Engine]!;
 const label = (level: number, engine: string) => { const t = tierOf(level, engine); return `D${level} ${t.model}/${t.effort}`; };
 
 /** Aggregates and applies one pass; returns what changed (also logged). `windowDays` bounds the runs read. */
@@ -36,7 +37,7 @@ export function runTierPolicy(store: Store, opts: { windowDays?: number; actor?:
   const cells = new Map<string, { domain: string; depth: number; engine: string }>();
   for (const run of runs) {
     const depth = Math.max(0, Math.min(4, Math.round(run.depth)));
-    if (!ENGINES.includes(run.engine as Engine)) continue;
+    if (!ENGINES.includes(run.engine as Engine) || !TIER_TABLE[0][run.engine as Engine]) continue;
     cells.set(`${run.domain}|${depth}|${run.engine}`, { domain: run.domain, depth, engine: run.engine });
   }
   for (const row of store.tierPolicyRows()) if (row.domain !== '*') cells.set(`${row.domain}|${row.depth}|${row.engine}`, { domain: row.domain, depth: row.depth, engine: row.engine });
@@ -83,7 +84,7 @@ export function runTierPolicy(store: Store, opts: { windowDays?: number; actor?:
 
 /** Administrator pin / reset of one cell (`level` null = back to the table; `pinned` stops the job moving it). */
 export function setTierPolicy(store: Store, cell: { domain: string; depth: number; engine: string }, level: number | null, pinned: boolean, actor: string) {
-  if (!ENGINES.includes(cell.engine as Engine)) throw new Error(`engine must be ${ENGINES.join('|')}`);
+  if (!ENGINES.includes(cell.engine as Engine) || !TIER_TABLE[0][cell.engine as Engine]) throw new Error(`engine must be ${ENGINES.filter((e) => TIER_TABLE[0][e]).join('|')}`);
   if (!Number.isInteger(cell.depth) || cell.depth < 0 || cell.depth > 4) throw new Error('depth must be 0-4');
   if (level !== null && (!Number.isInteger(level) || level < 0 || level > 4)) throw new Error('level must be 0-4 or null');
   const row = store.tierPolicyRow(cell.domain, cell.depth, cell.engine);

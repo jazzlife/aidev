@@ -48,7 +48,10 @@ fi
 
 r=$(jget /api/aidev/laya/health); check "$r" 'j.status==="ok" && j.device' "laya health ($(echo "$r" | sed -n 's/.*"device": *"\([^"]*\)".*/\1/p'))"
 r=$(jget /api/aidev/agents); check "$r" 'j.agents.length>=13' "catalog seeded ($(echo "$r" | grep -o '"name"' | wc -l) agents)"
-r=$(jget /api/aidev/engines); check "$r" 'j.engines && j.engines.claude && j.engines.codex' "engines: $(echo "$r" | cut -c1-200)"
+r=$(jget /api/aidev/engines); check "$r" 'j.engines && j.engines.claude && j.engines.codex && j.engines.opencode && j.policy && j.policy.providers.opencode' "engines: $(echo "$r" | cut -c1-200)"
+# the runtime image carries the OpenCode CLI (a rebuilt image only reaches a runtime when its container is recreated)
+r=$(jget /api/providers/opencode/auth/status); check "$r" 'j.data && j.data.installed===true' "OpenCode CLI in the runtime (authenticated=$(jeval "$r" 'j.data && j.data.authenticated'))"
+r=$(jget /api/aidev/settings/provider-policy); check "$r" 'j.providers.claude.preview.length===5 && j.providers.codex.preview.length===5 && j.providers.opencode.tier_table===false' "provider policy: D0..D4 per provider (opencode allowed=$(jeval "$r" 'j.providers.opencode.allowed'), models=$(jeval "$r" 'j.providers.opencode.catalog.length'))"
 r=$(jpost /api/aidev/route '{"text":"React 컴포넌트에 다크모드 토글 훅을 추가해줘"}'); check "$r" 'j.agent && j.decision_id>0' "route react → $(echo "$r" | sed -n 's/.*"agent":{"id":[0-9]*,"name":"\([^"]*\)".*/\1/p') fallback=$(echo "$r" | sed -n 's/.*"fallback":\([a-z]*\).*/\1/p') plan=$(echo "$r" | grep -o '"plan":{[^}]*' | grep -oE '"(engine|model|effort)":("[^"]*"|null)' | cut -d: -f2 | tr -d '"' | tr '\n' ' ') laya_ms=$(echo "$r" | sed -n 's/.*"latency_ms":\([0-9.]*\).*/\1/p')"
 check "$r" 'j.agent.name==="frontend-react"' "route react picks frontend-react"
 r=$(jpost /api/aidev/route '{"text":"이 로그 파일 5만 줄을 읽고 분석해서 오류 패턴을 요약해줘"}'); check "$r" 'j.scope.task_kind==="bulk_read"' "bulk_read recognised (task_kind=$(echo "$r" | sed -n 's/.*"task_kind":"\([^"]*\)".*/\1/p'), engine=$(echo "$r" | sed -n 's/.*"plan":{"engine":\("[^"]*"\|null\).*/\1/p'))"

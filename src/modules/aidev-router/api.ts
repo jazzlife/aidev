@@ -1,11 +1,12 @@
 import { authenticatedFetch } from '@/shared/api';
+import type { AidevEngine } from '@/shared/types';
 
 /**
  * Gateway `/api/aidev/*` client (IMPLEMENTATION-PLAN §3.3). Shared, non-visual: the
  * workbench and the mobile app both use it. Errors are thrown as Error with the
  * gateway's message so callers can degrade (routing is never allowed to block a send).
  */
-export type Engine = 'claude' | 'codex';
+export type Engine = AidevEngine;
 
 export type RouteScope = {
   depth: number;
@@ -70,7 +71,8 @@ export type RouteResult = {
   device_decision?: { decision_id: number; answer: unknown; confidence: number; fallback: boolean } | null;
   /** The PCs that were online when this was routed (the router chip's choices). */
   targets?: RouteTargetOption[];
-  engines: Record<Engine, { allowed: boolean; authenticated: boolean; error?: string | null; /** epoch ms until which a usage limit holds (2026-10-09); routing skips the engine until then */ limited_until?: number | null; score: number | null; notes: string[] }>;
+  /** every engine the gateway knows; an older gateway leaves the newer ones out */
+  engines: Partial<Record<Engine, { allowed: boolean; authenticated: boolean; error?: string | null; /** epoch ms until which a usage limit holds (2026-10-09); routing skips the engine until then */ limited_until?: number | null; score: number | null; notes: string[] }>>;
   lessons: Array<{ id: number; trigger: string; rule: string; trial?: boolean }>;
   knowledge_digest: string | null;
   latency_ms: number | null;
@@ -98,14 +100,18 @@ export type ScoreIndex = 'coding' | 'intelligence' | 'agentic';
  * model floor..ceiling × effort floor..ceiling ('split'). `preview` is what D0..D4 run at — computed by the gateway.
  */
 export type ProviderPolicyEntry = {
+  /** whether this account routes to the provider (OpenCode is on where an administrator enabled it) */
+  allowed?: boolean;
   mode: 'tier' | 'split';
+  /** false for a provider without a tier table (OpenCode): it always runs the split — over the model it starts on until the user sets a ladder (`own_ladder`) */
+  tier_table?: boolean; own_ladder?: boolean;
   ladder: string[] | null; floor: string | null; ceiling: string | null; effort_floor: string | null; effort_cap: string | null;
   effort_ladder: string[];
   preview: Array<PolicyStepView | null>;
   catalog: Array<{ model: string; level: number; efforts: string[]; scores: Array<{ effort: string | null; score: number | null; estimated: boolean }> }>;
 };
 export type ProviderPolicyView = {
-  providers: Record<Engine, ProviderPolicyEntry>;
+  providers: Partial<Record<Engine, ProviderPolicyEntry>>;
   /** the work order ([] = the learned weights) and the verification order ([] = the worker's other provider first) */
   work_priority: Engine[]; verify_priority: Engine[];
   score_index: ScoreIndex;
@@ -120,16 +126,16 @@ export type EnginesResult = {
   default_engine: Engine | null;
   role: string;
   /** the user's reasoning-effort ceiling per engine and the levels each engine accepts (weakest first) */
-  effort_cap?: Record<Engine, string>;
-  effort_ladder?: Record<Engine, string[]>;
+  effort_cap?: Partial<Record<Engine, string>>;
+  effort_ladder?: Partial<Record<Engine, string[]>>;
   /** the user's model floor per engine (engines absent: none) and the tier models each engine runs on (weakest first) */
   model_floor?: Partial<Record<Engine, string>>;
-  model_ladder?: Record<Engine, string[]>;
+  model_ladder?: Partial<Record<Engine, string[]>>;
   /** whether finished D2+ runs get an independent verification turn */
   verification?: boolean;
   /** the order engines are used in ([] = the learned weights decide) */
   engine_priority?: Engine[];
-  weights: Record<string, Record<Engine, number>>;
+  weights: Record<string, Partial<Record<Engine, number>>>;
   /** provider policy (2026-10-13) */
   policy?: ProviderPolicyView;
 };
@@ -267,6 +273,8 @@ async function readRuntimeData<T>(response: Response): Promise<T> {
 export type NextAction = {
   action: 'retry_same' | 'retry_worker' | 'escalate_tier' | 'switch_engine' | 'ask_user';
   engine: Engine | null; model: string | null; effort: string | null; depth: number | null;
+  /** the engine the failed run ran on (a switch_engine names where the work comes from) */
+  from_engine?: Engine | null;
   from_run: number; chain: number; reason: string;
 };
 
@@ -323,7 +331,7 @@ export type RemoteRun = {
 };
 
 /** GET/PUT /session-settings/:id — the chat's ceiling, the account default and what routing will use. */
-export type SessionEffortCap = { effort_cap: Partial<Record<Engine, string>> | null; default: Record<Engine, string>; effective: Record<Engine, string>;
+export type SessionEffortCap = { effort_cap: Partial<Record<Engine, string>> | null; default: Partial<Record<Engine, string>>; effective: Partial<Record<Engine, string>>;
   /** the chat's model floor, the account default and what routing will use (GET only) */
   model_floor?: Partial<Record<Engine, string>> | null; model_floor_default?: Partial<Record<Engine, string>>; model_floor_effective?: Partial<Record<Engine, string>>;
   /** the engine this chat is pinned to by hand, or null */
@@ -424,7 +432,7 @@ export const aidevApi = {
   setSessionEffortCap: (sessionId: string, cap: Partial<Record<Engine, string>> | null) => (cap && Object.keys(cap).length
     ? post(`/api/aidev/session-settings/${encodeURIComponent(sessionId)}`, cap, 'PUT')
     : authenticatedFetch(`/api/aidev/session-settings/${encodeURIComponent(sessionId)}`, { method: 'DELETE' })).then((response) => readJson<SessionEffortCap>(response)),
-  setEffortCap: (cap: Partial<Record<Engine, string>>) => post('/api/aidev/settings/effort-cap', cap, 'PUT').then((response) => readJson<{ effort_cap: Record<Engine, string> }>(response)),
+  setEffortCap: (cap: Partial<Record<Engine, string>>) => post('/api/aidev/settings/effort-cap', cap, 'PUT').then((response) => readJson<{ effort_cap: Partial<Record<Engine, string>> }>(response)),
   /** The account's model floor per engine ('' clears an engine's floor). */
   setModelFloor: (floor: Partial<Record<Engine, string>>) => post('/api/aidev/settings/model-floor', floor, 'PUT').then((response) => readJson<{ model_floor: Partial<Record<Engine, string>> }>(response)),
   /** Provider policy: the whole view, one provider's range, the verification order, the score index. */

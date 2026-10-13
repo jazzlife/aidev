@@ -46,6 +46,5 @@ export function useChatEffortCap(sessionId: string | null) {
     catch (e) { setError((e as Error).message); }
   }, [sessionId]);
 
-  const effective = account.cap ? { claude: cap?.claude ?? account.cap.claude, codex: cap?.codex ?? account.cap.codex } : null;
-  return { cap, defaults: account.cap, ladder: account.ladder, effective, set, error: error ?? account.error };
+  return { cap, defaults: account.cap, ladder: account.ladder, set, error: error ?? account.error };
 }

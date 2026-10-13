@@ -2,7 +2,7 @@ import type { openStore } from './store.js';
 import { ENGINES, KNOWLEDGE_TTL_MS, type Engine, type KnowledgeRow } from './store-aidev.js';
 import type { LayaClient } from './laya.js';
 import { decide } from './laya-questions.js';
-import { splitTier, TIER_TABLE, type EngineAvailability } from './routing.js';
+import { splitTier, tierOf, type EngineAvailability } from './routing.js';
 import type { PushPayload } from './push.js';
 
 /**
@@ -113,7 +113,8 @@ export function createKnowledgeRefresher(deps: Deps) {
     for (const engine of priority.length ? priority : ENGINES) {
       const e = engines[engine];
       if (!e?.allowed || !e.authenticated || (e.limited_until && e.limited_until > Date.now())) continue;
-      return { engine, model: splitTier(store, account.id, engine, 1)?.model ?? TIER_TABLE[1][engine].model };
+      const model = splitTier(store, account.id, engine, 1)?.model ?? tierOf(engine, 1).model;
+      if (model) return { engine, model };   // an engine with no model to name (OpenCode before its models are known) is passed over
     }
     return null;
   }

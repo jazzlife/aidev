@@ -1,7 +1,8 @@
 import { useState } from 'react';
 import { Monitor, Sparkles, Star } from 'lucide-react';
 
-import { useRoutingState, routingStore, aidevApi, claudeAuth, policyNote, useClaudeAuth, useTargetChoice, type Engine } from '@/modules/aidev-router';
+import { useRoutingState, routingStore, aidevApi, claudeAuth, policyNote, useClaudeAuth, useTargetChoice } from '@/modules/aidev-router';
+import { AIDEV_ENGINES, ENGINE_LABELS } from '@/shared/constants';
 import { ClaudeLoginSheet } from '@m/components/ClaudeLoginSheet';
 import { BottomSheet } from '@m/components/BottomSheet';
 import { ChatEffortCapControl } from '@m/components/EffortCapControl';
@@ -66,14 +67,16 @@ export function RouterChip({ sessionId = null }: { sessionId?: string | null }) 
             <div>
               <div className="text-[12px] text-muted mb-1">엔진 · 모델</div>
               <div className="flex gap-2">
-                {(['claude', 'codex'] as Engine[]).map((engine) => {
+                {AIDEV_ENGINES.map((engine) => {
                   const info = last.engines[engine];
-                  const usable = info.allowed && info.authenticated;
+                  // an engine this account does not route to (or an older gateway did not report) is not offered
+                  if (!info?.allowed) return null;
+                  const usable = info.authenticated;
                   return (
                     <button key={engine} type="button" disabled={!usable} onClick={() => { routingStore.setOverrides({ engine }); void aidevApi.overrideDecision(last.decision_id, { final_engine: engine }); if (sessionId) void aidevApi.setSessionEngine(sessionId, engine).catch(() => undefined); }}
                       className={`flex-1 rounded-xl border px-3 py-2 text-left disabled:opacity-40 ${(state.overrides.engine ?? last.plan.engine) === engine ? 'border-accent' : 'border-line'}`}>
-                      <div className="text-[13px] capitalize">{engine}</div>
-                      <div className="text-[11px] text-muted">{!info.allowed ? '계정에 없음' : !info.authenticated ? (info.error || '로그인 필요') : info.score !== null ? `점수 ${info.score.toFixed(2)}` : ''}</div>
+                      <div className="text-[13px]">{ENGINE_LABELS[engine]}</div>
+                      <div className="text-[11px] text-muted">{!info.authenticated ? (info.error || '로그인 필요') : info.score !== null ? `점수 ${info.score.toFixed(2)}` : ''}</div>
                     </button>
                   );
                 })}

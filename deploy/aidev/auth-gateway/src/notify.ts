@@ -12,7 +12,7 @@ import type { openStore } from './store.js';
 type Store = ReturnType<typeof openStore>;
 export type NotifyEvent = { code: string; sessionId: string | null; sessionName: string | null; provider: string | null; detail: string | null; /** where the push opens (default: the session) */ url?: string };
 
-const PROVIDER_LABEL: Record<string, string> = { claude: 'Claude', codex: 'Codex' };
+const PROVIDER_LABEL: Record<string, string> = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' };
 
 /** The Korean line shown on the phone for a runtime event code. */
 export function describeEvent(e: NotifyEvent) {

@@ -50,6 +50,10 @@ test('verifierEngineOrder prefers the worker\'s other engine and stays inside th
   // Codex at capacity lately goes last: the check runs on the worker's own engine as another agent first
   assert.deepEqual(verifierEngineOrder('claude', ['claude', 'codex'], { busy: true }), ['claude', 'codex']);
   assert.deepEqual(verifierEngineOrder('codex', ['codex'], { busy: true }), ['codex']);
+  // OpenCode: checked by Claude, then Codex; it checks last (its model's strength is unknown here), or alone
+  assert.deepEqual(verifierEngineOrder('opencode', ['claude', 'codex', 'opencode']), ['claude', 'codex', 'opencode']);
+  assert.deepEqual(verifierEngineOrder('claude', ['claude', 'codex', 'opencode']), ['codex', 'claude', 'opencode']);
+  assert.deepEqual(verifierEngineOrder('opencode', ['opencode']), ['opencode']);
 });
 
 test('buildVerificationBrief covers only the last turn: its files, commands, errors and the final report', () => {
@@ -75,7 +79,7 @@ test('buildVerificationBrief covers only the last turn: its files, commands, err
 });
 
 test('verifierCandidates follows the gateway\'s order with its models and efforts, else the runtime\'s own order', () => {
-  const base = { engine: 'claude' as const, engines: ['claude', 'codex'] as Array<'claude' | 'codex'>, workerModel: 'opus', modelFloor: {} };
+  const base = { engine: 'claude' as const, engines: ['claude', 'codex'] as Array<'claude' | 'codex' | 'opencode'>, workerModel: 'opus', modelFloor: {} };
   // no candidates: the runtime's order (other engine first) with verifierModel and no effort
   assert.deepEqual(verifierCandidates({ ...base, candidates: null }), [{ engine: 'codex', model: 'gpt-5.6-sol', effort: null }, { engine: 'claude', model: 'opus', effort: null }]);
   // the verification order as the gateway sent it — the worker's own provider first when the user put it first
@@ -84,4 +88,7 @@ test('verifierCandidates follows the gateway\'s order with its models and effort
   // this runtime's knowledge of Codex still applies: signed out → dropped, at capacity → last
   assert.deepEqual(verifierCandidates({ ...base, candidates: [...candidates].reverse() }, { signedOut: true }).map((c) => c.engine), ['claude']);
   assert.deepEqual(verifierCandidates({ ...base, candidates: [...candidates].reverse() }, { busy: true }).map((c) => c.engine), ['claude', 'codex']);
+  // OpenCode: the gateway's model and effort as sent; without one, the model OpenCode starts on (null)
+  assert.deepEqual(verifierCandidates({ ...base, candidates: [{ engine: 'opencode', model: 'opencode-go/glm-5.3', effort: 'high' }] }), [{ engine: 'opencode', model: 'opencode-go/glm-5.3', effort: 'high' }]);
+  assert.deepEqual(verifierCandidates({ ...base, engine: 'opencode', engines: ['opencode'], candidates: null }), [{ engine: 'opencode', model: null, effort: null }]);
 });

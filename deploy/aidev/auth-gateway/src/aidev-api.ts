@@ -20,8 +20,12 @@ import { launchCommand, validateLaunch, type DebugHub } from './debug-hub.js';
 import type { ConsoleHub } from './console-hub.js';
 import { ShipError, type PlatformShip } from './platform-ship.js';
 import { GithubOauthError, type GithubOauth } from './github-oauth.js';
-import { applyEffortCap, applyModelFloor, ARCHITECT_MIN_DEPTH, evaluateJudge, evaluateRouting, prejudge, route, runTeachesAgent, splitTier, TIER_TABLE, type EngineAvailability, type JudgeVerdict, type RouteInput, type SpecialistJudge } from './routing.js';
+import { applyEffortCap, applyModelFloor, ARCHITECT_MIN_DEPTH, evaluateJudge, evaluateRouting, prejudge, route, runTeachesAgent, splitTier, tierOf, TIER_TABLE, type EngineAvailability, type JudgeVerdict, type RouteInput, type SpecialistJudge } from './routing.js';
 import { MODEL_CATALOG, policySteps, previewPolicy, stepKey } from './provider-policy.js';
+/** The engines the runtime runs the specialist judge on. */
+const JUDGE_ENGINES: Engine[] = ['claude', 'codex'];
+/** How long an account's OpenCode model list is trusted before the runtime is asked again (as the sign-in probe). */
+const ENGINE_MODELS_CACHE_MS = 60_000;
 import { syncModelScores } from './model-scores.js';
 /** Hard limit of one judge call in the runtime; a send waits less (routing.ts AIDEV_JUDGE_WAIT_MS) and the rest is cached. */
 const JUDGE_TIMEOUT_MS = Number(process.env.AIDEV_JUDGE_TIMEOUT_MS ?? 60_000);
@@ -132,12 +136,31 @@ export function createAidevApi(deps: AidevDeps) {
         const error = authenticated ? null : (body.data?.error ?? (body.data?.installed === false ? 'not installed' : 'not signed in'));
         store.setEngineStatus(session.user.id, engine, authenticated, error);
         out[engine].authenticated = authenticated; out[engine].error = error;
+        // not awaited: a route does not wait for OpenCode's model list (the settings read it fresh themselves)
+        if (authenticated) void refreshEngineModels(session, engine, force);
       } catch (error) {
         // keep the last known value; surface the probe failure
         out[engine].authenticated = Boolean(c?.authenticated); out[engine].error = c?.last_error ?? (error instanceof Error ? error.message : 'status check failed');
       }
     }));
     return out;
+  }
+
+  /**
+   * An engine without a fixed catalog (OpenCode): what its CLI can run for this account right now — the runtime's model
+   * list with each model's efforts and its default — kept by the store for the routing code, which is synchronous.
+   */
+  async function refreshEngineModels(session: Session, engine: Engine, force = false) {
+    if (MODEL_CATALOG[engine]) return;
+    if (!force && Date.now() - store.userEngineModelsAt(session.user.id, engine) < ENGINE_MODELS_CACHE_MS) return;
+    try {
+      const r = await deps.runtimeFetch(session, `/api/providers/${engine}/models`);
+      const body = await r.json() as { data?: { models?: { OPTIONS?: Array<{ value?: unknown; effort?: { values?: Array<{ value?: unknown }> } }>; DEFAULT?: unknown } } };
+      const options = body.data?.models?.OPTIONS;
+      if (!r.ok || !Array.isArray(options)) return;
+      const models = options.filter((o) => typeof o.value === 'string' && o.value.length <= 100).map((o) => ({ model: o.value as string, efforts: (o.effort?.values ?? []).map((v) => v.value).filter((v): v is string => typeof v === 'string') }));
+      store.setUserEngineModels(session.user.id, engine, models, typeof body.data?.models?.DEFAULT === 'string' ? body.data.models.DEFAULT : null);
+    } catch { /* keep the last list: a failed probe changes nothing */ }
   }
 
   /** D-05: engines the account may use and is signed in to — side turns (judge, curation) stay inside them. */
@@ -154,14 +177,19 @@ export function createAidevApi(deps: AidevDeps) {
    */
   function policyView(uid: number) {
     const index = store.scoreIndex(uid);
+    // which providers this account routes to: the settings offer the orders and ranges of those only
+    const allowed = store.accountEngines(uid).engines;
     const providers = Object.fromEntries(ENGINES.map((engine) => {
       const policy = store.providerPolicy(uid, engine);
-      const { scores, estimated } = store.stepScores(engine, index);
-      // the table's own D0..D4 when no ladder is set (model floor and effort ceiling applied, as routing does)
-      const preview = policy.ladder ? previewPolicy(engine, policy, scores).map((p) => (p ? { model: p.model, effort: p.effort, score: p.score, q2: p.q2, mode: p.mode } : null))
-        : [0, 1, 2, 3, 4].map((depth) => { const tier = { ...TIER_TABLE[depth][engine] }; applyModelFloor(engine, tier, policy.floor); return { model: tier.model, effort: applyEffortCap(tier.effort, depth, engine, policy.effortCap ?? ''), score: null, q2: false, mode: 'tier' }; });
-      const catalog = MODEL_CATALOG[engine].map((m) => ({ ...m, scores: (m.efforts.length ? m.efforts : [null]).map((effort) => ({ effort, score: scores.get(stepKey(m.model, effort)) ?? null, estimated: estimated.has(stepKey(m.model, effort)) })) }));
-      return [engine, { mode: policy.ladder ? 'split' : 'tier', ladder: policy.ladder, floor: policy.floor, ceiling: policy.ceiling, effort_floor: policy.effortFloor, effort_cap: policy.effortCap, effort_ladder: EFFORT_LADDER[engine], preview, catalog }];
+      const { scores, estimated } = store.stepScores(uid, engine, index);
+      const hasTable = Boolean(TIER_TABLE[0][engine]);
+      // the table's own D0..D4 when no ladder is set (model floor and effort ceiling applied, as routing does); an engine
+      // without a table (OpenCode) always shows its split — over its default model until the user sets a ladder
+      const preview = policy.ladder ? previewPolicy(policy, scores).map((p) => (p ? { model: p.model, effort: p.effort, score: p.score, q2: p.q2, mode: p.mode } : null))
+        : hasTable ? [0, 1, 2, 3, 4].map((depth) => { const tier = tierOf(engine, depth); applyModelFloor(engine, tier, policy.floor); return { model: tier.model, effort: applyEffortCap(tier.effort, depth, engine, policy.effortCap ?? ''), score: null, q2: false, mode: 'tier' }; })
+          : [];
+      const catalog = policy.catalog.map((m) => ({ ...m, scores: (m.efforts.length ? m.efforts : [null]).map((effort) => ({ effort, score: scores.get(stepKey(m.model, effort)) ?? null, estimated: estimated.has(stepKey(m.model, effort)) })) }));
+      return [engine, { allowed: allowed.includes(engine), mode: policy.ladder ? 'split' : 'tier', tier_table: hasTable, own_ladder: Boolean(store.modelLadder(uid)[engine]), ladder: policy.ladder, floor: policy.floor, ceiling: policy.ceiling, effort_floor: policy.effortFloor, effort_cap: policy.effortCap, effort_ladder: EFFORT_LADDER[engine], preview, catalog }];
     }));
     const synced = Number(store.kvGet('aa.synced_at') ?? 0);
     return { providers, work_priority: store.enginePriority(uid), verify_priority: store.verifyPriority(uid), score_index: index,
@@ -183,24 +211,28 @@ export function createAidevApi(deps: AidevDeps) {
     const order = verifyOrder.length ? verifyOrder.filter((e) => engines.includes(e))
       : [...workOrder.filter((e) => e !== worker && engines.includes(e)), ...(worker && engines.includes(worker) ? [worker] : [])];
     const need = Math.max(Math.round(run.depth ?? 0), 3);
-    return order.map((engine) => {
+    return order.flatMap((engine) => {
       const step = splitTier(store, uid, engine, need, run.session_id);
-      if (!step) return { engine, model: null as string | null, effort: null as string | null };
+      if (!step) return [{ engine, model: null as string | null, effort: null as string | null }];
+      // OpenCode's models are unmeasured until an administrator levels them: a range that cannot carry the check (Q2)
+      // verifies only when the user named the provider in the verification order
+      if (step.q2 && !verifyOrder.length && !TIER_TABLE[0][engine]) return [];
       let pick: { model: string; effort: string | null } = step;
       if (engine === worker) {
         const policy = store.providerPolicy(uid, engine, run.session_id);
-        const steps = policySteps(engine, policy, store.stepScores(engine, store.scoreIndex(uid)).scores);
+        const steps = policySteps(policy, store.stepScores(uid, engine, store.scoreIndex(uid)).scores);
         const own = steps.findIndex((s) => s.model === run.model && (s.effort ?? null) === (run.effort ?? null));
         const stronger = own >= 0 && (steps[own].score !== null && step.score !== null ? steps[own].score! > step.score : own > step.index);
         if (stronger) pick = steps[own];
       }
-      return { engine, model: pick.model, effort: pick.effort };
+      return [{ engine, model: pick.model, effort: pick.effort }];
     });
   }
 
   /** The specialist judge runs in the user's runtime (their Claude/Codex login); off when no engine is usable. */
   function judgeFor(session: Session, engines: EngineAvailability, only?: Engine): SpecialistJudge | undefined {
-    const usable = usableEngines(engines).filter((engine) => !only || engine === only);
+    // the judge stays on Claude and Codex (PROVIDER-ENGINE-PLAN §9 Q4): an OpenCode-only account routes without it
+    const usable = usableEngines(engines).filter((engine) => JUDGE_ENGINES.includes(engine) && (!only || engine === only));
     if (!usable.length) return undefined;
     return async (payload) => {
       // D-05: the judge turn runs only on engines this account may use (a Codex-only account never gets Claude)
@@ -384,8 +416,9 @@ export function createAidevApi(deps: AidevDeps) {
       for (const engine of order) {
         // agent design is D3 work (routing ARCHITECT_MIN_DEPTH): the provider policy's pick, else the table never below the floor
         const step = splitTier(store, uid, engine, ARCHITECT_MIN_DEPTH, sessionId);
-        const tier = step ? { model: step.model, effort: step.effort } : { ...TIER_TABLE[ARCHITECT_MIN_DEPTH][engine] };
+        const tier = step ? { model: step.model, effort: step.effort } : tierOf(engine, ARCHITECT_MIN_DEPTH);
         if (!step) applyModelFloor(engine, tier, floor[engine]);
+        if (!tier.model) continue;   // an engine with no model to name yet (OpenCode before its models are known)
         try {
           const response = await deps.runtimeFetch(session, '/api/aidev-tools/design-agent', { method: 'POST', headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ command, proposal: create.proposal, catalog: create.catalog, prompt: architect.prompt, tools: architect.tools ? JSON.parse(architect.tools) as string[] : null, max_turns: architect.max_turns, engine, model: tier.model, session_id: sessionId }) }, DESIGN_TIMEOUT_MS);
@@ -445,7 +478,7 @@ export function createAidevApi(deps: AidevDeps) {
           preferEngine: ENGINES.includes(b.preferEngine as Engine) ? b.preferEngine as Engine : null, targetId: b.targetId === undefined || b.targetId === null ? null : num(b.targetId, 'targetId'),
           forceAgent: optStr(b.forceAgent, 41) ?? null, createProposal: b.createProposal === undefined || b.createProposal === null ? null : num(b.createProposal, 'createProposal'), projectHint: optStr(b.projectHint, 400), recentFiles: Array.isArray(b.recentFiles) ? (b.recentFiles as unknown[]).map(String).slice(0, 10) : null, model: optStr(b.model, 100), effort: optStr(b.effort, 20),
           effortCap: b.effortCap && typeof b.effortCap === 'object' ? perEngine(b.effortCap, 20) as Partial<Record<Engine, string>> : null,
-          modelFloor: b.modelFloor && typeof b.modelFloor === 'object' ? perEngine(b.modelFloor, 40) as Partial<Record<Engine, string>> : null };
+          modelFloor: b.modelFloor && typeof b.modelFloor === 'object' ? perEngine(b.modelFloor, 100) as Partial<Record<Engine, string>> : null };
         const engines = await engineAvailability(session);
         const judge = judgeFor(session, engines);
         // the send waits for the judge (Codex alone answers in 12–28 s): no specialist is used without its verdict
@@ -484,7 +517,7 @@ export function createAidevApi(deps: AidevDeps) {
       if (sessFloorMatch && (m === 'PUT' || m === 'DELETE')) {
         const b = m === 'PUT' ? await readJson(req) : {};
         try {
-          const floor = m === 'DELETE' ? null : Object.fromEntries(ENGINES.map((e) => [e, b[e] === null ? undefined : optStr(b[e], 40)])) as Partial<Record<Engine, string>>;
+          const floor = m === 'DELETE' ? null : Object.fromEntries(ENGINES.map((e) => [e, b[e] === null ? undefined : optStr(b[e], 100)])) as Partial<Record<Engine, string>>;
           const saved = store.setSessionModelFloor(uid, sessFloorMatch[1], floor);
           const info = store.effectiveModelFloor(uid, sessFloorMatch[1]);
           return json(res, 200, { model_floor: saved, default: info.account, effective: info.floor }), true;
@@ -668,7 +701,7 @@ export function createAidevApi(deps: AidevDeps) {
       // the user's model floor per engine ("" or null clears that engine's floor)
       if (rest === '/settings/model-floor' && m === 'PUT') {
         const b = await readJson(req);
-        const value = (v: unknown) => (v === null || v === '' ? null : optStr(v, 40));
+        const value = (v: unknown) => (v === null || v === '' ? null : optStr(v, 100));
         try { return json(res, 200, { model_floor: store.setModelFloor(uid, Object.fromEntries(ENGINES.map((e) => [e, value(b[e])])) as Partial<Record<Engine, string | null>>) }), true; }
         catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid model'); }
       }
@@ -679,13 +712,18 @@ export function createAidevApi(deps: AidevDeps) {
         catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid effort'); }
       }
       // ---- provider policy (PROVIDER-ENGINE-PLAN §3.2): one provider's range, the verification order, the score index
-      if (rest === '/settings/provider-policy' && m === 'GET') return json(res, 200, policyView(uid)), true;
+      if (rest === '/settings/provider-policy' && m === 'GET') {
+        // OpenCode's models as its CLI lists them now, so the range card offers what the account can run
+        await Promise.all(ENGINES.map((engine) => refreshEngineModels(session, engine)));
+        return json(res, 200, policyView(uid)), true;
+      }
       if (rest === '/settings/provider-policy' && m === 'PUT') {
         const b = await readJson(req);
         const engine = str(b.engine, 'engine', 20) as Engine;
         const field = (v: unknown) => (v === undefined ? undefined : v === null || v === '' ? null : optStr(v, 100));
         try {
-          if (b.reset === true) store.setProviderPolicy(uid, engine, { ladder: null, ceiling: null, effortFloor: null });   // back to the tier table
+          // back to the tier table; OpenCode (no table) back to the model it starts on, so its model floor goes too
+          if (b.reset === true) store.setProviderPolicy(uid, engine, { ladder: null, ceiling: null, effortFloor: null, ...(TIER_TABLE[0][engine] ? {} : { floor: null }) });
           else store.setProviderPolicy(uid, engine, { ladder: b.ladder === undefined ? undefined : b.ladder === null ? null : b.ladder as string[], floor: field(b.floor), ceiling: field(b.ceiling), effortFloor: field(b.effort_floor), effortCap: field(b.effort_cap) });
         } catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid policy'); }
         return json(res, 200, policyView(uid)), true;
@@ -711,12 +749,23 @@ export function createAidevApi(deps: AidevDeps) {
         requireAdmin(session);
         const b = await readJson(req);
         const engine = str(b.engine, 'engine', 20) as Engine; const model = str(b.model, 'model', 100); const effort = b.effort === null || b.effort === undefined || b.effort === '' ? null : str(b.effort, 'effort', 20);
-        if (!ENGINES.includes(engine) || !MODEL_CATALOG[engine].some((x) => x.model === model && (effort === null ? !x.efforts.length : x.efforts.includes(effort)))) throw new HttpError(400, 'unknown model/effort for that engine');
+        // (for OpenCode: the administrator's own model list)
+        if (!ENGINES.includes(engine) || !store.catalog(uid, engine).some((x) => x.model === model && (effort === null ? !x.efforts.length : x.efforts.includes(effort)))) throw new HttpError(400, 'unknown model/effort for that engine');
         try {
           if (b.aa_ref !== undefined) store.setModelScoreRef(engine, model, effort, b.aa_ref === null || b.aa_ref === '' ? null : str(b.aa_ref, 'aa_ref', 200));
           if (b.scores !== undefined) store.setModelScoreManual(engine, model, effort, b.scores === null ? null : b.scores as Record<string, number>);
         } catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid scores'); }
         return json(res, 200, { rows: store.modelScoreRows() }), true;
+      }
+      // how hard a task an OpenCode model carries (0–4; null = unmeasured, routed as D2) — administrators
+      if (rest === '/engine-models' && m === 'PUT') {
+        requireAdmin(session);
+        const b = await readJson(req);
+        const engine = str(b.engine, 'engine', 20) as Engine;
+        if (!ENGINES.includes(engine) || MODEL_CATALOG[engine]) throw new HttpError(400, 'levels are set for engines without a fixed catalog (opencode)');
+        try { store.setModelLevel(engine, str(b.model, 'model', 100), b.level === null || b.level === undefined ? null : num(b.level, 'level')); }
+        catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid level'); }
+        return json(res, 200, policyView(uid)), true;
       }
       if (rest === '/model-scores/sync' && m === 'POST') { requireAdmin(session); return json(res, 200, await syncModelScores(store)), true; }
       if (rest === '/engines/weights' && m === 'PUT') {

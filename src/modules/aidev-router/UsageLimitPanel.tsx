@@ -1,8 +1,8 @@
 import type { ReactNode } from 'react';
 
 import { formatTimeLeft, useUsageLimits, type UsageLimitView } from '@/modules/aidev-router/hooks/useUsageLimits';
+import { ENGINE_LABELS } from '@/shared/constants';
 
-const ENGINE_LABEL: Record<string, string> = { claude: 'Claude', codex: 'Codex' };
 
 /**
  * The two apps have different Tailwind themes: the workbench's shadcn tokens, the mobile app's `--m-*`
@@ -24,7 +24,7 @@ function EngineUsage({ view, compact, now }: { view: UsageLimitView; compact: bo
     <div className={compact ? 'px-3 py-2' : 'px-2.5 py-1.5'} data-testid={`usage-${view.engine}`} data-blocked={blocked || undefined}>
       <div className="flex items-center gap-2">
         <span className={`h-2 w-2 shrink-0 rounded-full ${view.unknown ? palette.unknownDot : blocked ? palette.bad : palette.ok}`} />
-        <span className={`${compact ? 'text-[14px]' : 'text-xs'} font-medium`}>{ENGINE_LABEL[view.engine] ?? view.engine}</span>
+        <span className={`${compact ? 'text-[14px]' : 'text-xs'} font-medium`}>{ENGINE_LABELS[view.engine] ?? view.engine}</span>
         {/* a status only when there is something to say: no picture yet, or a refusal in force */}
         {view.unknown || blocked ? (
           <span className={`ml-auto ${small} ${palette.muted}`}>

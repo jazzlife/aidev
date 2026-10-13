@@ -8,6 +8,7 @@ import type { IProviderSessionSynchronizer } from '@/shared/interfaces.js';
 import {
   getOpenCodeDatabasePath,
   normalizeProviderTimestamp,
+  OPENCODE_SIDE_TURN_TITLE,
   normalizeSessionName,
   readJsonRecord,
   readOptionalString,
@@ -92,6 +93,8 @@ export class OpenCodeSessionSynchronizer implements IProviderSessionSynchronizer
         LEFT JOIN project p ON p.id = s.project_id
         WHERE s.time_archived IS NULL
           AND s.parent_id IS NULL
+          -- the platform's own side turns (verification, curation, …) are not the user's chats
+          AND (s.title IS NULL OR s.title NOT LIKE '${OPENCODE_SIDE_TURN_TITLE}%')
           AND (? IS NULL OR COALESCE(s.time_updated, s.time_created, 0) >= ?)
         ORDER BY COALESCE(s.time_updated, s.time_created, 0) DESC, s.id DESC
         ${limitClause}

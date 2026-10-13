@@ -1,8 +1,10 @@
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { Codex } from '@openai/codex-sdk';
 
+import { askOpenCodeSideTurn } from '@/modules/aidev-tools/opencode-side-turn.client.js';
 import { sessionsDb } from '@/modules/database/index.js';
 import { codexCheckSandboxMode, codexSandboxConfig, currentCodexAuthFailure, noteCodexTurnError } from '@/shared/index.js';
+import type { AidevSideEngine } from '@/shared/index.js';
 
 /**
  * Independent verification of a finished run (2026-10-07, worker ≠ verifier). The worker agent's final
@@ -16,16 +18,19 @@ import { codexCheckSandboxMode, codexSandboxConfig, currentCodexAuthFailure, not
  * worker is checked by Codex and the other way round), which also keeps the usage from piling up on one
  * engine. With a single engine it is a fresh thread on that engine acting as a different agent than the
  * worker — the gateway picks that agent and sends its prompt as the verifier's background.
+ *
+ * OpenCode (2026-10-13): a third engine for the check. Its models are the account's own, so without the gateway's
+ * candidates it runs on the model OpenCode starts on, after Claude and Codex.
  */
 export type VerifyInput = {
   sessionId: string;
   runId: number | null;
   agent: string | null;
   /** the worker's engine and model */
-  engine: 'claude' | 'codex' | null;
+  engine: AidevSideEngine | null;
   workerModel: string | null;
   /** the engines this account may use, is signed in to and is not usage-limited on (D-05); the verifier stays inside them */
-  engines: Array<'claude' | 'codex'>;
+  engines: AidevSideEngine[];
   /** a different agent than the worker, chosen by the gateway: its prompt is the verifier's domain background */
   verifierAgent: { name: string; prompt: string } | null;
   command: string | null;
@@ -34,10 +39,10 @@ export type VerifyInput = {
   modelFloor: Partial<Record<'claude' | 'codex', string>>;
   /**
    * The gateway's verifier order once the account set a verification order or a provider policy (PROVIDER-ENGINE-PLAN
-   * §2.4): tried in this order; a null model is this runtime's verifierModel, a null effort the engine's default.
-   * null = the runtime's own order (verifierEngineOrder).
+   * §2.4): tried in this order; a null model is this runtime's verifierModel (OpenCode: the model it starts on), a null
+   * effort the engine's default. null = the runtime's own order (verifierEngineOrder).
    */
-  candidates: Array<{ engine: 'claude' | 'codex'; model: string | null; effort: string | null }> | null;
+  candidates: Array<{ engine: AidevSideEngine; model: string | null; effort: string | null }> | null;
 };
 
 export type VerificationCheck = { claim: string; result: 'ok' | 'wrong' | 'unverified'; evidence: string };
@@ -77,19 +82,19 @@ export function verifierModel(engine: 'claude' | 'codex', input: { workerEngine:
 
 /**
  * Engines to try for the verifier, best first: the worker's other engine, then the worker's own (a different
- * thread / agent there). Only engines the gateway reported usable are kept, so a limited or signed-out engine
+ * thread / agent there); OpenCode last, since this runtime does not know how strong its model is (an OpenCode worker
+ * is checked by Claude, then Codex). Only engines the gateway reported usable are kept, so a limited or signed-out engine
  * never gets the check. This runtime's own knowledge goes on top, since the gateway's view can be a minute old:
  * Codex whose sign-in stopped working (a lapsed subscription) is dropped, and Codex that was at capacity lately goes
  * last instead of first (a model at capacity cost run 274 3.5 min before the next engine started). Used by `verify`
  * and its test.
  */
 export function verifierEngineOrder(
-  workerEngine: 'claude' | 'codex' | null,
-  engines: Array<'claude' | 'codex'>,
+  workerEngine: AidevSideEngine | null,
+  engines: AidevSideEngine[],
   codex: { signedOut?: boolean; busy?: boolean } = {},
-): Array<'claude' | 'codex'> {
-  const other: 'claude' | 'codex' | null = workerEngine === 'claude' ? 'codex' : workerEngine === 'codex' ? 'claude' : null;
-  const preferred: Array<'claude' | 'codex'> = other && workerEngine ? [other, workerEngine] : ['claude', 'codex'];
+): AidevSideEngine[] {
+  const preferred: AidevSideEngine[] = workerEngine === 'claude' ? ['codex', 'claude', 'opencode'] : ['claude', 'codex', 'opencode'];
   const usable = preferred.filter((engine) => engines.includes(engine) && !(engine === 'codex' && codex.signedOut));
   return codex.busy ? [...usable.filter((engine) => engine !== 'codex'), ...usable.filter((engine) => engine === 'codex')] : usable;
 }
@@ -99,8 +104,9 @@ export function verifierEngineOrder(
  * (Codex dropped when its sign-in stopped working, moved last while it is at capacity), else verifierEngineOrder with
  * verifierModel. Used by `verify` and its test.
  */
-export function verifierCandidates(input: Pick<VerifyInput, 'candidates' | 'engine' | 'engines' | 'workerModel' | 'modelFloor'>, codex: { signedOut?: boolean; busy?: boolean } = {}): Array<{ engine: 'claude' | 'codex'; model: string; effort: string | null }> {
-  const resolve = (engine: 'claude' | 'codex', model: string | null, effort: string | null) => ({ engine, model: model ?? verifierModel(engine, { workerEngine: input.engine, workerModel: input.workerModel, floor: input.modelFloor[engine] }), effort });
+export function verifierCandidates(input: Pick<VerifyInput, 'candidates' | 'engine' | 'engines' | 'workerModel' | 'modelFloor'>, codex: { signedOut?: boolean; busy?: boolean } = {}): Array<{ engine: AidevSideEngine; model: string | null; effort: string | null }> {
+  // OpenCode has no ladder here: without the gateway's model it runs on the one it starts on (null)
+  const resolve = (engine: AidevSideEngine, model: string | null, effort: string | null) => ({ engine, model: model ?? (engine === 'opencode' ? null : verifierModel(engine, { workerEngine: input.engine, workerModel: input.workerModel, floor: input.modelFloor[engine] })), effort });
   if (!input.candidates) return verifierEngineOrder(input.engine, input.engines, codex).map((engine) => resolve(engine, null, null));
   const usable = input.candidates.filter((c) => !(c.engine === 'codex' && codex.signedOut)).map((c) => resolve(c.engine, c.model, c.effort));
   return codex.busy ? [...usable.filter((c) => c.engine !== 'codex'), ...usable.filter((c) => c.engine === 'codex')] : usable;
@@ -261,17 +267,18 @@ export const runVerifierService = {
       const remaining = deadline - Date.now();
       if (remaining < MIN_ENGINE_MS) break;
       try {
-        const text = engine === 'claude' ? await askClaude(brief.text, cwd, model, effort, systemPrompt, remaining) : await askCodex(brief.text, cwd, model, effort, systemPrompt, remaining);
+        const text = engine === 'opencode' ? await askOpenCodeSideTurn({ label: 'verify', instructions: systemPrompt, prompt: brief.text, cwd, model, effort, access: 'check', timeoutMs: remaining })
+          : engine === 'claude' ? await askClaude(brief.text, cwd, model!, effort, systemPrompt, remaining) : await askCodex(brief.text, cwd, model!, effort, systemPrompt, remaining);
         const parsed = parseVerification(text);
         const result: Verification = parsed
           ? { ...parsed, engine, model }
           : { verdict: 'unclear', summary: `검증자가 판정 블록을 내지 않았습니다: ${clip(text.replace(/\s+/g, ' ').trim(), 300)}`, checked: [], issues: [], engine, model };
-        console.log(`[aidev-tools] verify run=${input.runId ?? '-'} agent=${input.agent ?? '-'} by ${engine} ${model}${input.verifierAgent ? ` as ${input.verifierAgent.name}` : ''}: ${result.verdict} — ${clip(result.summary, 200)}`);
+        console.log(`[aidev-tools] verify run=${input.runId ?? '-'} agent=${input.agent ?? '-'} by ${engine} ${model ?? '(default)'}${input.verifierAgent ? ` as ${input.verifierAgent.name}` : ''}: ${result.verdict} — ${clip(result.summary, 200)}`);
         return { ...result, briefChars: brief.text.length };
       } catch (error) {
         lastError = error;
         if (engine === 'codex' && /at capacity/i.test(error instanceof Error ? error.message : String(error))) codexBusyUntil = Date.now() + CODEX_BUSY_MS;
-        console.warn(`[aidev-tools] verify run=${input.runId ?? '-'} ${engine} ${model} failed: ${error instanceof Error ? error.message : String(error)}`);
+        console.warn(`[aidev-tools] verify run=${input.runId ?? '-'} ${engine} ${model ?? '(default)'} failed: ${error instanceof Error ? error.message : String(error)}`);
       }
     }
     return { verdict: 'unclear', summary: `검증 턴을 실행하지 못했습니다: ${lastError instanceof Error ? lastError.message : '사용 가능한 엔진 없음'}`, checked: [], issues: [], engine: null, model: null, briefChars: brief.text.length };

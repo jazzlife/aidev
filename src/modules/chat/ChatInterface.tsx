@@ -14,7 +14,9 @@ import type {
   SessionEstablishedContext,
   SessionNavigationOptions,
 } from '@/shared/types';
-import { parseProviderUsageLimit } from '@/shared/utils';
+import type { AidevEngine } from '@/shared/types';
+import { AIDEV_ENGINES, ENGINE_LABELS } from '@/shared/constants';
+import { isAidevEngine, parseProviderUsageLimit } from '@/shared/utils';
 import { useChatProviderState } from '@/modules/chat/hooks/useChatProviderState';
 import { useScheduledMessages } from '@/modules/chat/composer/useScheduledMessages';
 import { useChatSessionState } from '@/modules/chat/hooks/useChatSessionState';
@@ -83,9 +85,9 @@ function ChatInterface({
   });
   const handleVoiceTranscriptRef = useRef<((text: string, send?: boolean) => void) | null>(null);
   // Assigned from useEscalation below; the composer hook that calls it is created before it exists.
-  const switchBackRef = useRef<((args: { sessionId: string; engine: 'claude' | 'codex'; fromEngine: 'claude' | 'codex'; text: string; reason: string }) => Promise<boolean>) | null>(null);
+  const switchBackRef = useRef<((args: { sessionId: string; engine: AidevEngine; fromEngine: AidevEngine; text: string; reason: string }) => Promise<boolean>) | null>(null);
   // Assigned from useEscalation below; the complete subscriber is installed before it exists.
-  const handoffOnUsageLimitRef = useRef<((args: { sessionId: string; blockedEngine: 'claude' | 'codex'; reason: string }) => Promise<unknown>) | null>(null);
+  const handoffOnUsageLimitRef = useRef<((args: { sessionId: string; blockedEngine: AidevEngine; reason: string }) => Promise<unknown>) | null>(null);
   const agentCreationRef = useRef(agentCreation);
   useEffect(() => { agentCreationRef.current = agentCreation; });
   useEffect(() => subscribe((event) => {
@@ -95,12 +97,12 @@ function ChatInterface({
     const usageLimit = parseProviderUsageLimit(event.usageLimit);
     // a limit refusal is reported as such: the gateway skips the engine until the reset, and holds nothing else against it
     void reportAidevOutcome({ exit_code: exitCode, session_id: event.sessionId ?? selectedSession?.id ?? null, ...(usageLimit ? { usage_limit: { type: usageLimit.type, resets_at: usageLimit.resetsAt ?? null } } : {}) });
-    // A usage limit refused this run, so the work continues on the other engine
-    // (claude ↔ codex) instead of stopping — this engine cannot answer again until
-    // the window resets (E-03, no tap). handoffOnUsageLimit blocks instead if the
-    // other engine is not logged in, rather than attempting a handoff that cannot work.
+    // A usage limit refused this run, so the work continues on the next provider of
+    // the work order instead of stopping — this engine cannot answer again until
+    // the window resets (E-03, no tap). handoffOnUsageLimit blocks instead if no
+    // other provider is usable, rather than attempting a handoff that cannot work.
     const limitedSessionId = event.sessionId ?? selectedSession?.id ?? null;
-    if (usageLimit && limitedSessionId && (event.provider === 'claude' || event.provider === 'codex')) {
+    if (usageLimit && limitedSessionId && isAidevEngine(event.provider)) {
       void handoffOnUsageLimitRef.current?.({ sessionId: limitedSessionId, blockedEngine: event.provider, reason: `${event.provider}_usage_limit:${usageLimit.type}` });
     }
     // the workbench opens a changed file and brings the right pane forward (C-10)
@@ -479,24 +481,29 @@ function ChatInterface({
   // shows that (last plan, or "자동") instead of the provider default it would ignore; picking a model or
   // effort there pins it for the router (engine = this composer's provider) until reset to 자동.
   const routingState = useRoutingState();
-  // routing covers Claude and Codex chats; an OpenCode (or old Cursor) chat keeps its own model picker until it is an engine (G3)
-  const routingOn = routingState.mode !== 'off' && isPolicyProvider(provider);
+  // the router's effort levels are the pinned engine's (the session's last model may accept none, e.g. haiku); the
+  // ladder lists the engines this account routes to
+  const { ladder: effortLadder } = useEffortCap();
+  // Routing covers chats on the engines the account routes to. A chat on another provider (an old Cursor session, or
+  // OpenCode where no administrator enabled it) is sent unrouted and keeps its own model picker. Until the engines are
+  // known, Claude and Codex count as routed (every account has had them) and OpenCode does not.
+  const routedProvider = isPolicyProvider(provider) && (effortLadder ? Boolean(effortLadder[provider]) : provider !== 'opencode');
+  const routingOn = routingState.mode !== 'off' && routedProvider;
   const pinnedModel = routingState.overrides.model;
   const pinnedEffort = routingState.overrides.effort;
   const lastPlan = routingState.last?.plan;
-  const composerEngine = provider === 'codex' ? 'codex' : 'claude';
-  // the router's effort levels are the pinned engine's (the session's last model may accept none, e.g. haiku)
-  const { ladder: effortLadder } = useEffortCap();
+  const composerEngine: AidevEngine = isAidevEngine(provider) ? provider : 'claude';
   const routedEngine = routingState.overrides.engine ?? composerEngine;
   const routedEffortOptions = useMemo(() => (effortLadder?.[routedEngine] ?? []).map((value) => ({ value })), [effortLadder, routedEngine]);
-  // A model of the other engine pins the chat there; a chat already bound to this engine is then handed off on its next send.
-  const otherEngine = composerEngine === 'claude' ? 'codex' : 'claude';
-  const otherEngineModelOptions = providerModelCatalog[otherEngine]?.OPTIONS;
-  const otherEngineModels = useMemo(() => (routingOn && (provider === 'claude' || provider === 'codex') && otherEngineModelOptions?.length ? {
-    heading: `${otherEngine === 'codex' ? 'Codex' : 'Claude'} 모델${currentSessionId || selectedSession?.id ? ' · 다음 명령부터 새 채팅으로 인계' : ''}`,
-    options: otherEngineModelOptions,
-    onSelectModel: (model: string) => routingStore.setOverrides({ model, engine: otherEngine }),
-  } : null), [currentSessionId, otherEngine, otherEngineModelOptions, provider, routingOn, selectedSession?.id]);
+  // A model of another engine pins the chat there; a chat already bound to this engine is then handed off on its next
+  // send. One group per engine the account routes to (the effort ladder lists those).
+  const otherEngineModels = useMemo(() => (routingOn ? AIDEV_ENGINES
+    .filter((engine) => engine !== composerEngine && effortLadder?.[engine] && providerModelCatalog[engine]?.OPTIONS?.length)
+    .map((engine) => ({
+      heading: `${ENGINE_LABELS[engine]} 모델${currentSessionId || selectedSession?.id ? ' · 다음 명령부터 새 채팅으로 인계' : ''}`,
+      options: providerModelCatalog[engine]!.OPTIONS,
+      onSelectModel: (model: string) => routingStore.setOverrides({ model, engine }),
+    })) : []), [composerEngine, currentSessionId, effortLadder, providerModelCatalog, routingOn, selectedSession?.id]);
   const modelRouting = routingOn ? {
     label: pinnedModel || pinnedEffort ? ['고정', pinnedModel, pinnedEffort ? `강도 ${pinnedEffort}` : null].filter(Boolean).join(' · ') : lastPlan?.model ? `자동 · ${lastPlan.model}${lastPlan.effort ? `/${lastPlan.effort}` : ''}` : '자동',
     detail: pinnedModel || pinnedEffort ? '선택한 모델·강도로 고정됨 (라우터 바에서 해제 가능)' : '라우터가 명령마다 작업에 맞는 모델·강도를 고릅니다',

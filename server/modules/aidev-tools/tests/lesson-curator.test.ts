@@ -32,4 +32,11 @@ test('curatorOrder: the gateway\'s candidates as sent, else the session\'s engin
   assert.deepEqual(curatorOrder({ engine: 'claude', engines: ['claude', 'codex'], candidates: [{ engine: 'codex', model: 'gpt-5.6-terra' }, { engine: 'claude', model: null }] }),
     [{ engine: 'codex', model: 'gpt-5.6-terra' }, { engine: 'claude', model: 'haiku' }]);
   assert.deepEqual(curatorOrder({ engine: 'claude', candidates: [] }), [], 'every provider of the order on a usage limit: none');
+  // OpenCode: first when it ran the session or is the account's only engine, a fallback only when the gateway named it;
+  // its model is the one it starts on unless the gateway sent one
+  assert.deepEqual(curatorOrder({ engine: 'opencode', engines: ['claude', 'opencode'] }), [{ engine: 'opencode', model: null }, { engine: 'claude', model: 'haiku' }]);
+  assert.deepEqual(curatorOrder({ engine: 'claude', engines: ['opencode'] }), [{ engine: 'opencode', model: null }]);
+  assert.deepEqual(curatorOrder({ engine: 'claude', engines: ['claude', 'codex', 'opencode'] }).map((c) => c.engine), ['claude', 'codex', 'opencode']);
+  assert.deepEqual(curatorOrder({ engine: 'claude' }).map((c) => c.engine), ['claude', 'codex'], 'an older gateway (no list): Claude and Codex, as before');
+  assert.deepEqual(curatorOrder({ engine: 'claude', candidates: [{ engine: 'opencode', model: 'opencode-go/glm-5.3' }] }), [{ engine: 'opencode', model: 'opencode-go/glm-5.3' }]);
 });

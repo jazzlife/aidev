@@ -5,7 +5,8 @@ import { openStore } from './store.js';
 import { runTierPolicy } from './tier-policy.js';
 import { runEngineWeights } from './engine-weights.js';
 import { syncModelScores } from './model-scores.js';
-import { MODEL_CATALOG } from './provider-policy.js';
+import { effortRank, MODEL_CATALOG } from './provider-policy.js';
+import { ENGINES } from './store-aidev.js';
 
 const store = openStore(process.env.DATABASE_PATH ?? '/data/auth.db');
 const [action, username, extra] = process.argv.slice(2);
@@ -16,9 +17,9 @@ async function runtime(name: string, operation: 'provision' | 'delete') {
   if (!response.ok) throw new Error(`Runtime ${operation} failed; check runtime-manager logs and retry`);
 }
 try {
-  const usage = 'Usage: list | decisions [N] | tier-policy [run] | session USERNAME | end-session SID | add USERNAME | admin-login USERNAME (password on stdin; signs in to /admin) | delete USERNAME | disable USERNAME | engines USERNAME codex|claude|claude,codex | default-engine USERNAME claude|codex|none | role USERNAME user|admin | effort-cap USERNAME claude=xhigh|max,codex=xhigh|max|ultra | model-floor USERNAME claude=opus|best|none,codex=gpt-5.6-sol|gpt-6-astra|none | engine-priority USERNAME claude,codex|codex,claude|none | model-ceiling USERNAME claude=opus|none,codex=… | effort-floor USERNAME claude=medium|none,codex=… | model-ladder USERNAME claude=sonnet+opus+best|none,codex=… | verify-priority USERNAME codex,claude|none | score-index USERNAME coding|intelligence|agentic | aa-key (Artificial Analysis API key on stdin) | model-scores [sync] | model-score ENGINE/MODEL[/EFFORT] ref=AA_ID_OR_SLUG|ref=none|coding=N,intelligence=N,agentic=N|scores=none';
-  const withExtra = ['engines', 'default-engine', 'role', 'effort-cap', 'model-floor', 'engine-priority', 'model-ceiling', 'effort-floor', 'model-ladder', 'verify-priority', 'score-index', 'model-score'].includes(action ?? '');
-  if ((extra && !withExtra) || (withExtra && !extra) || (action === 'list' ? username : action === 'decisions' ? false : action === 'end-session' ? !/^[A-Za-z0-9_-]{16,128}$/.test(username ?? '') : action === 'tier-policy' ? (username !== undefined && username !== 'run') : action === 'model-scores' ? (username !== undefined && username !== 'sync') : action === 'aa-key' ? username !== undefined : action === 'model-score' ? !/^[a-z]+\/[A-Za-z0-9._\[\]-]+(\/[a-z]+)?$/.test(username ?? '') : !/^[a-z0-9][a-z0-9_.-]{2,63}$/.test(username ?? ''))) throw new Error(usage);
+  const usage = 'Usage: list | decisions [N] | tier-policy [run] | session USERNAME | end-session SID | add USERNAME | admin-login USERNAME (password on stdin; signs in to /admin) | delete USERNAME | disable USERNAME | engines USERNAME codex|claude|claude,codex|claude,codex,opencode | default-engine USERNAME claude|codex|opencode|none | role USERNAME user|admin | effort-cap USERNAME claude=xhigh|max,codex=xhigh|max|ultra | model-floor USERNAME claude=opus|best|none,codex=gpt-5.6-sol|gpt-6-astra|none | engine-priority USERNAME claude,codex|opencode,claude,codex|none | model-ceiling USERNAME claude=opus|none,codex=… | effort-floor USERNAME claude=medium|none,codex=… | model-ladder USERNAME claude=sonnet+opus+best|none,codex=… | engine-model opencode MODEL=0..4|none (how hard a task an OpenCode model carries) | verify-priority USERNAME codex,claude|none | score-index USERNAME coding|intelligence|agentic | aa-key (Artificial Analysis API key on stdin) | model-scores [sync] | model-score ENGINE/MODEL[/EFFORT] (OpenCode: opencode/PROVIDER/MODEL[/EFFORT]) ref=AA_ID_OR_SLUG|ref=none|coding=N,intelligence=N,agentic=N|scores=none';
+  const withExtra = ['engines', 'default-engine', 'role', 'effort-cap', 'model-floor', 'engine-priority', 'model-ceiling', 'effort-floor', 'model-ladder', 'verify-priority', 'score-index', 'model-score', 'engine-model'].includes(action ?? '');
+  if ((extra && !withExtra) || (withExtra && !extra) || (action === 'list' ? username : action === 'decisions' ? false : action === 'end-session' ? !/^[A-Za-z0-9_-]{16,128}$/.test(username ?? '') : action === 'tier-policy' ? (username !== undefined && username !== 'run') : action === 'model-scores' ? (username !== undefined && username !== 'sync') : action === 'aa-key' ? username !== undefined : action === 'model-score' ? !/^[a-z]+(\/[A-Za-z0-9._:\[\]-]+){1,3}$/.test(username ?? '') : action === 'engine-model' ? !ENGINES.includes(username as never) : !/^[a-z0-9][a-z0-9_.-]{2,63}$/.test(username ?? ''))) throw new Error(usage);
   if (action === 'decisions') {
     // last routing decisions with the signals behind them (B-13 evidence / routing post-mortems)
     const rows = store.db.prepare("SELECT d.id, a.username, d.command, d.agent, d.probability, d.needs_new, d.decision, d.final_engine, d.final_model, d.fallback, d.probabilities, d.created_at FROM decision_log d JOIN accounts a ON a.id=d.user_id WHERE d.kind='route' ORDER BY d.id DESC LIMIT ?").all(Number(username ?? 10) || 10) as Array<Record<string, unknown>>;
@@ -73,6 +74,14 @@ try {
     const saved = action === 'model-ceiling' ? store.setModelCeiling(account.id, pairs) : action === 'effort-floor' ? store.setEffortFloor(account.id, pairs) : store.setModelLadder(account.id, pairs);
     console.log(`${username}: ${action} ${JSON.stringify(saved)}`);
   }
+  else if (action === 'engine-model') {
+    // an OpenCode model's level (0–4; none = unmeasured, routed as D2): MODEL=LEVEL
+    const at = extra.lastIndexOf('=');
+    if (at < 1 || MODEL_CATALOG[username as never]) throw new Error(usage);
+    const level = extra.slice(at + 1);
+    store.setModelLevel(username as never, extra.slice(0, at), level === 'none' ? null : Number(level));
+    console.log(`${username}/${extra.slice(0, at)}: level ${level}`);
+  }
   else if (action === 'verify-priority') {
     const account = store.account(username); if (!account) throw new Error('User not found');
     console.log(`${username}: verify priority ${JSON.stringify(store.setVerifyPriority(account.id, extra === 'none' ? null : extra.split(',').map((s) => s.trim()) as never))}`);
@@ -97,9 +106,14 @@ try {
   }
   else if (action === 'model-score') {
     // which AA model a combination is (ref=…), or an administrator's own scores (coding=…,intelligence=…,agentic=…)
-    const [engine, model, effort] = username.split('/');
-    const spec = (MODEL_CATALOG as Record<string, Array<{ model: string; efforts: string[] }>>)[engine]?.find((x) => x.model === model);
-    if (!spec || (effort ? !spec.efforts.includes(effort) : spec.efforts.length > 0)) throw new Error(`unknown combination ${username} (efforts: ${spec?.efforts.join('|') || 'none'})`);
+    // a fixed catalog names its combinations; OpenCode's models are per account ("provider/model"), so only the engine is checked
+    const [engine, ...rest] = username.split('/');
+    if (!ENGINES.includes(engine as never)) throw new Error(`engine must be one of ${ENGINES.join('|')}`);
+    const fixed = (MODEL_CATALOG as Record<string, Array<{ model: string; efforts: string[] }> | undefined>)[engine];
+    const effort = (fixed ? rest.length > 1 : rest.length > 2 && effortRank(rest[rest.length - 1]) >= 0) ? rest.pop() : undefined;
+    const model = rest.join('/');
+    const spec = fixed?.find((x) => x.model === model);
+    if (fixed && (!spec || (effort ? !spec.efforts.includes(effort) : spec.efforts.length > 0))) throw new Error(`unknown combination ${username} (efforts: ${spec?.efforts.join('|') || 'none'})`);
     const pairs = Object.fromEntries(extra.split(',').map((pair) => pair.split('=').map((s) => s.trim())));
     if ('ref' in pairs) store.setModelScoreRef(engine as never, model, effort ?? null, pairs.ref === 'none' ? null : pairs.ref);
     else if (pairs.scores === 'none') store.setModelScoreManual(engine as never, model, effort ?? null, null);

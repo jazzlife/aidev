@@ -69,6 +69,13 @@ export type AuthenticatedWebSocketRequest = IncomingMessage & {
 export type LLMProvider = 'claude' | 'codex' | 'cursor' | 'opencode';
 
 /**
+ * The engines the platform runs its own headless side turns on (verification, lesson curation, agent design, knowledge
+ * checks): the engines the gateway routes work to. The specialist judge is narrower — Claude and Codex only.
+ * Used by the aidev-tools services and their routes.
+ */
+export type AidevSideEngine = Exclude<LLMProvider, 'cursor'>;
+
+/**
  * One selectable model row in a provider model catalog.
  */
 export type ProviderModelOption = {

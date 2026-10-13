@@ -1,13 +1,14 @@
 import type Database from 'better-sqlite3';
-import { EFFORT_ORDER, effortRank, estimateScores, policyLadder, stepKey, cleanLadder, cleanOrder, type ProviderPolicy, type StepScores } from './provider-policy.js';
+import { EFFORT_ORDER, MODEL_CATALOG, UNMEASURED_LEVEL, effortRank, estimateScores, policyLadder, stepKey, cleanLadder, cleanOrder, type CatalogModel, type ProviderPolicy, type StepScores } from './provider-policy.js';
 
 /**
  * Routing / learning / remote-target tables (IMPLEMENTATION-PLAN §3.2). Everything that is
  * not account identity lives here. Only the gateway process writes; runtimes and runners
  * go through the gateway API. Migrations are idempotent: re-running on an existing DB is a no-op.
  */
-export type Engine = 'claude' | 'codex';
-export const ENGINES: Engine[] = ['claude', 'codex'];
+export type Engine = 'claude' | 'codex' | 'opencode';
+/** Every engine routing knows, in the order used when nothing else decides (2026-10-13: OpenCode is the third). */
+export const ENGINES: Engine[] = ['claude', 'codex', 'opencode'];
 export const TASK_KINDS = ['bulk_read', 'implement', 'debug', 'refactor', 'design', 'ops', 'explain'] as const;
 export type TaskKind = typeof TASK_KINDS[number];
 
@@ -18,15 +19,21 @@ export const KNOWLEDGE_TTL_MS = 90 * 86400_000;
 export type KnowledgeRow = { id: number; agent_id: number; title: string; body: string; source_url: string | null; source_date: string | null; status: string; superseded_by: number | null; expires_at: number | null; owner_id: number | null; created_at: number; updated_at: number; checked_at: number | null; check_fails: number; check_note: string | null; replaces: number | null };
 /** Reasoning-effort levels each engine accepts, weakest first (the runtime model catalogs; Claude's
  * 'ultracode' is a session mode, not a level). The user's ceiling is one of these. */
-export const EFFORT_LADDER: Record<Engine, string[]> = { claude: ['low', 'medium', 'high', 'xhigh', 'max'], codex: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'] };
-export const DEFAULT_EFFORT_CAP: Record<Engine, string> = { claude: 'xhigh', codex: 'xhigh' };
+export const EFFORT_LADDER: Record<Engine, string[]> = { claude: ['low', 'medium', 'high', 'xhigh', 'max'], codex: ['low', 'medium', 'high', 'xhigh', 'max', 'ultra'],
+  // OpenCode's variants differ per model (GLM: low, high, max): every level a model of its may offer
+  opencode: ['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max'] };
+export const DEFAULT_EFFORT_CAP: Record<Engine, string> = { claude: 'xhigh', codex: 'xhigh', opencode: 'xhigh' };
 /**
  * The models each engine's tier ladder runs on, weakest first — the same names as TIER_TABLE in
  * routing.ts (D0..D4; sonnet serves D1 and D2). A model floor (account or chat) is one of these:
  * routing never runs below it, whatever depth Laya scored (2026-10-07 — "high-level work landed on sonnet").
  */
-export const MODEL_LADDER: Record<Engine, string[]> = { claude: ['haiku', 'sonnet', 'opus', 'best'], codex: ['gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.6-sol', 'gpt-6-astra'] };
-const cleanFloor = (floor: Partial<Record<Engine, string>>) => Object.fromEntries(ENGINES.filter((e) => typeof floor[e] === 'string' && MODEL_LADDER[e].includes(floor[e]!)).map((e) => [e, floor[e]!])) as Partial<Record<Engine, string>>;
+export const MODEL_LADDER: Record<Engine, string[]> = { claude: ['haiku', 'sonnet', 'opus', 'best'], codex: ['gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.6-sol', 'gpt-6-astra'],
+  // OpenCode has no fixed ladder: its models are the account's own (store.catalog), checked when a floor is set
+  opencode: [] };
+/** Whether a stored model name can be one of the engine's (an engine without a fixed ladder: any name). */
+const onLadder = (engine: Engine, model: unknown): model is string => typeof model === 'string' && model.length > 0 && model.length <= 100 && (!MODEL_LADDER[engine].length || MODEL_LADDER[engine].includes(model));
+const cleanFloor = (floor: Partial<Record<Engine, string>>) => Object.fromEntries(ENGINES.filter((e) => onLadder(e, floor[e])).map((e) => [e, floor[e]!])) as Partial<Record<Engine, string>>;
 /** Keeps only engines with a level on their ladder (quietly: stored data). */
 const cleanCap = (cap: Partial<Record<Engine, string>>) => Object.fromEntries(ENGINES.filter((e) => typeof cap[e] === 'string' && EFFORT_LADDER[e].includes(cap[e]!)).map((e) => [e, cap[e]!])) as Partial<Record<Engine, string>>;
 /** Same, but a wrong level is an error (user input). */
@@ -220,13 +227,15 @@ export function migrateAidev(db: Database.Database) {
     id INTEGER PRIMARY KEY AUTOINCREMENT, at INTEGER NOT NULL, domain TEXT NOT NULL, depth INTEGER NOT NULL, engine TEXT NOT NULL,
     from_level INTEGER, to_level INTEGER, from_model TEXT, to_model TEXT, success_n INTEGER, fail_n INTEGER, reason TEXT NOT NULL, actor TEXT NOT NULL);`);
   // engine_weights seed: bulk reading/analysis prefers Codex, everything else neutral (§0 decisions)
-  const n = (db.prepare('SELECT COUNT(*) AS n FROM engine_weights').get() as { n: number }).n;
-  if (n === 0) {
-    const ins = db.prepare('INSERT INTO engine_weights VALUES(?,?,?)');
-    db.transaction(() => {
-      for (const kind of TASK_KINDS) for (const engine of ENGINES) ins.run(kind, engine, kind === 'bulk_read' ? (engine === 'codex' ? 0.7 : 0.3) : 0.5);
-    })();
-  }
+  // (per engine and kind, so an engine added later — OpenCode — gets its neutral rows on existing databases too)
+  const seedWeight = db.prepare('INSERT OR IGNORE INTO engine_weights(task_kind, engine, weight) VALUES(?,?,?)');
+  db.transaction(() => {
+    for (const kind of TASK_KINDS) for (const engine of ENGINES) seedWeight.run(kind, engine, kind === 'bulk_read' ? (engine === 'codex' ? 0.7 : engine === 'claude' ? 0.3 : 0.5) : 0.5);
+  })();
+  // OpenCode's models (stage G3): what each account's sign-ins reach (the runtime's `opencode models`, refreshed with
+  // the engine probe) and — global, set by an administrator — the difficulty a model carries (null: unmeasured).
+  db.exec(`CREATE TABLE IF NOT EXISTS user_engine_models (user_id INTEGER NOT NULL, engine TEXT NOT NULL, models TEXT NOT NULL, default_model TEXT, fetched_at INTEGER NOT NULL, PRIMARY KEY(user_id, engine));
+    CREATE TABLE IF NOT EXISTS engine_models (engine TEXT NOT NULL, model TEXT NOT NULL, level INTEGER, updated_at INTEGER, PRIMARY KEY(engine, model));`);
   // Engine weight learning (§3.4 / E-06): the seed/admin prior the learned weight is smoothed toward,
   // an admin pin, and the statistics behind the current weight; changes go to engine_weight_log.
   addColumn(db, 'engine_weights', 'prior', 'REAL');
@@ -271,8 +280,13 @@ export function aidevMethods(db: Database.Database) {
     return value;
   };
   /** Floor and ceiling must be on the ladder (the catalog when none is set), the floor not above the ceiling. */
-  const checkRange = (engine: Engine, ladder: string[] | null, floor: string | null, ceiling: string | null) => {
-    const order = policyLadder(engine, { ladder });
+  /** A model the user names must be one the engine has for this account. */
+  const knownModel = (userId: number, engine: Engine, model: string) => {
+    const known = m.catalog(userId, engine).map((c) => c.model);
+    if (!known.includes(model)) throw new Error(`${engine} model must be one of ${known.slice(0, 30).join('|') || '(no models reported yet)'}`);
+  };
+  const checkRange = (userId: number, engine: Engine, ladder: string[] | null, floor: string | null, ceiling: string | null) => {
+    const order = policyLadder({ ladder, catalog: m.catalog(userId, engine) });
     if (floor && !order.includes(floor)) throw new Error(`${engine} floor ${floor} is not on the ladder (${order.join(',')})`);
     if (ceiling && !order.includes(ceiling)) throw new Error(`${engine} ceiling ${ceiling} is not on the ladder (${order.join(',')})`);
     if (floor && ceiling && order.indexOf(floor) > order.indexOf(ceiling)) throw new Error(`${engine} floor ${floor} is above the ceiling ${ceiling}`);
@@ -309,7 +323,8 @@ export function aidevMethods(db: Database.Database) {
     accountEngines(userId: number): { engines: Engine[]; defaultEngine: Engine | null; role: string } {
       const row = db.prepare('SELECT engines, default_engine, role FROM accounts WHERE id=?').get(userId) as { engines: string; default_engine: string | null; role: string } | undefined;
       const engines = (row?.engines ?? '').split(',').map((s) => s.trim()).filter((s): s is Engine => ENGINES.includes(s as Engine));
-      return { engines: engines.length ? engines : [...ENGINES], defaultEngine: (row?.default_engine as Engine | null) ?? null, role: row?.role ?? 'user' };
+      // nothing usable in the column: the column's own default — OpenCode is on only where an administrator named it
+      return { engines: engines.length ? engines : ['claude', 'codex'], defaultEngine: (row?.default_engine as Engine | null) ?? null, role: row?.role ?? 'user' };
     },
     setAccountEngines(username: string, engines: Engine[]) {
       const list = engines.filter((e) => ENGINES.includes(e));
@@ -427,8 +442,8 @@ export function aidevMethods(db: Database.Database) {
         const value = floor[engine];
         if (value === undefined) continue;
         if (value === null || value === '') { delete next[engine]; continue; }
-        if (!MODEL_LADDER[engine].includes(value)) throw new Error(`${engine} model must be one of ${MODEL_LADDER[engine].join('|')}`);
-        checkRange(engine, m.modelLadder(userId)[engine] ?? null, value, m.modelCeiling(userId)[engine] ?? null);
+        knownModel(userId, engine, value);
+        checkRange(userId, engine, m.modelLadder(userId)[engine] ?? null, value, m.modelCeiling(userId)[engine] ?? null);
         next[engine] = value;
       }
       db.prepare('UPDATE accounts SET model_floor=? WHERE id=?').run(Object.keys(next).length ? JSON.stringify(next) : null, userId);
@@ -441,7 +456,7 @@ export function aidevMethods(db: Database.Database) {
       try { return cleanFloor(JSON.parse(row.model_floor) as Partial<Record<Engine, string>>); } catch { return null; }
     },
     setSessionModelFloor(userId: number, sessionId: string, floor: Partial<Record<Engine, string>> | null) {
-      if (floor) for (const engine of ENGINES) if (floor[engine] !== undefined && !MODEL_LADDER[engine].includes(floor[engine]!)) throw new Error(`${engine} model must be one of ${MODEL_LADDER[engine].join('|')}`);
+      if (floor) for (const engine of ENGINES) if (floor[engine] !== undefined) knownModel(userId, engine, floor[engine]!);
       const clean = floor ? cleanFloor(floor) : null;
       if (!clean || !Object.keys(clean).length) {
         db.prepare('UPDATE session_settings SET model_floor=NULL, updated_at=? WHERE user_id=? AND session_id=?').run(Date.now(), userId, sessionId);
@@ -458,21 +473,55 @@ export function aidevMethods(db: Database.Database) {
       const chat = { ...(sessionId ? m.sessionModelFloor(userId, sessionId) ?? {} : {}), ...(inline ? cleanFloor(inline) : {}) };
       return { floor: { ...account, ...chat } as Partial<Record<Engine, string>>, chat: Object.keys(chat).length ? chat : null, account };
     },
+    // ---- model catalog per engine (PROVIDER-ENGINE-PLAN §2.1) ---------------------------
+    /**
+     * The engine's models with the difficulty each carries and its efforts: the fixed catalog (Claude, Codex), or the
+     * account's own list as its runtime last reported it (OpenCode) with the administrator's levels — unmeasured: D2.
+     */
+    catalog(userId: number, engine: Engine): CatalogModel[] {
+      const fixed = MODEL_CATALOG[engine];
+      if (fixed) return fixed;
+      const row = db.prepare('SELECT models FROM user_engine_models WHERE user_id=? AND engine=?').get(userId, engine) as { models: string } | undefined;
+      let listed: Array<{ model: string; efforts: string[] }> = [];
+      try { listed = row ? JSON.parse(row.models) as Array<{ model: string; efforts: string[] }> : []; } catch { listed = []; }
+      const levels = new Map((db.prepare('SELECT model, level FROM engine_models WHERE engine=?').all(engine) as Array<{ model: string; level: number | null }>).map((r) => [r.model, r.level]));
+      return listed.map((entry) => ({ model: entry.model, efforts: entry.efforts, level: levels.get(entry.model) ?? UNMEASURED_LEVEL }));
+    },
+    /** The model the engine starts on for this account when no ladder is set (OpenCode's own default), or null. */
+    defaultModel(userId: number, engine: Engine): string | null {
+      const row = db.prepare('SELECT default_model, models FROM user_engine_models WHERE user_id=? AND engine=?').get(userId, engine) as { default_model: string | null; models: string } | undefined;
+      if (!row) return null;
+      const listed = m.catalog(userId, engine).map((c) => c.model);
+      return row.default_model && listed.includes(row.default_model) ? row.default_model : listed[0] ?? null;
+    },
+    /** What the account's runtime says the engine can run now (the engine probe stores it; sync code reads it). */
+    setUserEngineModels(userId: number, engine: Engine, models: Array<{ model: string; efforts: string[] }>, defaultModel: string | null) {
+      db.prepare('INSERT INTO user_engine_models(user_id,engine,models,default_model,fetched_at) VALUES(?,?,?,?,?) ON CONFLICT(user_id,engine) DO UPDATE SET models=excluded.models, default_model=excluded.default_model, fetched_at=excluded.fetched_at')
+        .run(userId, engine, JSON.stringify(models.slice(0, 400)), defaultModel, Date.now());
+    },
+    userEngineModelsAt(userId: number, engine: Engine): number {
+      return (db.prepare('SELECT fetched_at FROM user_engine_models WHERE user_id=? AND engine=?').get(userId, engine) as { fetched_at: number } | undefined)?.fetched_at ?? 0;
+    },
+    /** An administrator's measure of how hard a task a model carries (0–4; null: back to unmeasured). */
+    setModelLevel(engine: Engine, model: string, level: number | null) {
+      if (level !== null && (!Number.isInteger(level) || level < 0 || level > 4)) throw new Error('level must be 0-4 or null');
+      db.prepare('INSERT INTO engine_models(engine,model,level,updated_at) VALUES(?,?,?,?) ON CONFLICT(engine,model) DO UPDATE SET level=excluded.level, updated_at=excluded.updated_at').run(engine, model, level, Date.now());
+    },
     // ---- provider policy (PROVIDER-ENGINE-PLAN §2.1) -------------------------------------
     /** The account's model ceiling per engine (none = the ladder's strongest). */
-    modelCeiling(userId: number): Partial<Record<Engine, string>> { return readEngineJson(userId, 'model_ceiling', (e, v) => typeof v === 'string' && MODEL_LADDER[e].includes(v)) as Partial<Record<Engine, string>>; },
+    modelCeiling(userId: number): Partial<Record<Engine, string>> { return readEngineJson(userId, 'model_ceiling', (e, v) => onLadder(e, v)) as Partial<Record<Engine, string>>; },
     /** The account's effort floor per engine (none = each model's lowest). */
     effortFloor(userId: number): Partial<Record<Engine, string>> { return readEngineJson(userId, 'effort_floor', (_e, v) => typeof v === 'string' && effortRank(v) >= 0) as Partial<Record<Engine, string>>; },
     /** The account's model ladder per engine: set = the split picks inside it, unset = the tier table. */
-    modelLadder(userId: number): Partial<Record<Engine, string[]>> { return readEngineJson(userId, 'model_ladder', (e, v) => { try { cleanLadder(e, v); return true; } catch { return false; } }) as Partial<Record<Engine, string[]>>; },
+    modelLadder(userId: number): Partial<Record<Engine, string[]>> { return readEngineJson(userId, 'model_ladder', (_e, v) => Array.isArray(v) && v.length > 0 && v.every((x) => typeof x === 'string')) as Partial<Record<Engine, string[]>>; },
     setModelCeiling(userId: number, patch: Partial<Record<Engine, string | null>>) {
       const next = { ...m.modelCeiling(userId) };
       for (const engine of ENGINES) {
         const value = patch[engine];
         if (value === undefined) continue;
         if (value === null || value === '') { delete next[engine]; continue; }
-        if (!MODEL_LADDER[engine].includes(value)) throw new Error(`${engine} model must be one of ${MODEL_LADDER[engine].join('|')}`);
-        checkRange(engine, m.modelLadder(userId)[engine] ?? null, m.modelFloor(userId)[engine] ?? null, value);
+        knownModel(userId, engine, value);
+        checkRange(userId, engine, m.modelLadder(userId)[engine] ?? null, m.modelFloor(userId)[engine] ?? null, value);
         next[engine] = value;
       }
       return writeEngineJson(userId, 'model_ceiling', next);
@@ -497,8 +546,8 @@ export function aidevMethods(db: Database.Database) {
         const value = patch[engine];
         if (value === undefined) continue;
         if (value === null) { delete next[engine]; continue; }
-        const ladder = cleanLadder(engine, value);
-        checkRange(engine, ladder, m.modelFloor(userId)[engine] ?? null, m.modelCeiling(userId)[engine] ?? null);
+        const ladder = cleanLadder(engine, m.catalog(userId, engine), value);
+        checkRange(userId, engine, ladder, m.modelFloor(userId)[engine] ?? null, m.modelCeiling(userId)[engine] ?? null);
         next[engine] = ladder;
       }
       return writeEngineJson(userId, 'model_ladder', next);
@@ -510,13 +559,13 @@ export function aidevMethods(db: Database.Database) {
     setProviderPolicy(userId: number, engine: Engine, patch: { ladder?: string[] | null; floor?: string | null; ceiling?: string | null; effortFloor?: string | null; effortCap?: string | null }) {
       if (!ENGINES.includes(engine)) throw new Error(`engine must be one of ${ENGINES.join('|')}`);
       const pick = <T>(value: T | null | undefined, current: T | null) => (value === undefined ? current : value === '' ? null : value);
-      const ladder = patch.ladder === undefined ? m.modelLadder(userId)[engine] ?? null : patch.ladder === null ? null : cleanLadder(engine, patch.ladder);
+      const ladder = patch.ladder === undefined ? m.modelLadder(userId)[engine] ?? null : patch.ladder === null ? null : cleanLadder(engine, m.catalog(userId, engine), patch.ladder);
       const floor = pick(patch.floor, m.modelFloor(userId)[engine] ?? null);
       const ceiling = pick(patch.ceiling, m.modelCeiling(userId)[engine] ?? null);
       const effortFloor = pick(patch.effortFloor, m.effortFloor(userId)[engine] ?? null);
       const effortCap = patch.effortCap === undefined || patch.effortCap === null || patch.effortCap === '' ? m.effortCap(userId)[engine] : patch.effortCap;
-      for (const model of [floor, ceiling]) if (model && !MODEL_LADDER[engine].includes(model)) throw new Error(`${engine} model must be one of ${MODEL_LADDER[engine].join('|')}`);
-      checkRange(engine, ladder, floor, ceiling);
+      for (const model of [floor, ceiling]) if (model) knownModel(userId, engine, model);
+      checkRange(userId, engine, ladder, floor, ceiling);
       if (!EFFORT_LADDER[engine].includes(effortCap)) throw new Error(`${engine} effort must be one of ${EFFORT_LADDER[engine].join('|')}`);
       if (effortFloor && effortRank(effortFloor) < 0) throw new Error(`${engine} effort must be one of ${EFFORT_ORDER.join('|')}`);
       if (effortFloor && effortRank(effortFloor) > effortRank(effortCap)) throw new Error(`${engine} effort floor ${effortFloor} is above its ceiling ${effortCap}`);
@@ -556,15 +605,20 @@ export function aidevMethods(db: Database.Database) {
      * the account ceiling lifts the ceiling with it; an effort floor above a chat's effort ceiling drops to it.
      */
     providerPolicy(userId: number, engine: Engine, sessionId?: string | null, inline?: { modelFloor?: Partial<Record<Engine, string>> | null; effortCap?: Partial<Record<Engine, string>> | null }): ProviderPolicy {
-      const ladder = m.modelLadder(userId)[engine] ?? null;
+      const catalog = m.catalog(userId, engine);
+      // An engine without a tier table (OpenCode) always runs on its policy: with no ladder set, the ladder is the one
+      // model OpenCode itself starts on, so D0..D4 spread over that model's efforts.
+      const own = (m.modelLadder(userId)[engine] ?? null)?.filter((model) => catalog.some((c) => c.model === model)) ?? null;
+      const fallback = MODEL_CATALOG[engine] ? null : (() => { const start = m.defaultModel(userId, engine); return start ? [start] : null; })();
+      const ladder = own && own.length ? own : fallback;
       const floor = m.effectiveModelFloor(userId, sessionId, inline?.modelFloor).floor[engine] ?? null;
       let ceiling = m.modelCeiling(userId)[engine] ?? null;
       const effortCap = m.effectiveEffortCap(userId, sessionId, inline?.effortCap).cap[engine] ?? null;
       let effortFloor = m.effortFloor(userId)[engine] ?? null;
-      const order = policyLadder(engine, { ladder });
+      const order = policyLadder({ ladder, catalog });
       if (floor && ceiling && order.indexOf(floor) > order.indexOf(ceiling)) ceiling = floor;
       if (effortFloor && effortCap && effortRank(effortFloor) > effortRank(effortCap)) effortFloor = effortCap;
-      return { ladder, floor, ceiling, effortFloor, effortCap };
+      return { catalog, ladder, floor, ceiling, effortFloor, effortCap };
     },
     // ---- intelligence scores (Artificial Analysis) ---------------------------------------
     modelScoreRows(): ModelScoreRow[] { return db.prepare('SELECT * FROM model_scores ORDER BY engine, model, effort').all() as ModelScoreRow[]; },
@@ -595,7 +649,7 @@ export function aidevMethods(db: Database.Database) {
      * The scores the split uses for an engine on an index: administrator values, and synced values of the current index
      * version; the gaps between a model's efforts are estimated (provider-policy estimateScores).
      */
-    stepScores(engine: Engine, index: ScoreIndex): { scores: StepScores; estimated: Set<string> } {
+    stepScores(userId: number, engine: Engine, index: ScoreIndex): { scores: StepScores; estimated: Set<string> } {
       const version = m.kvGet('aa.index_version');
       const known: StepScores = new Map();
       for (const row of db.prepare('SELECT * FROM model_scores WHERE engine=?').all(engine) as ModelScoreRow[]) {
@@ -603,7 +657,7 @@ export function aidevMethods(db: Database.Database) {
         if (value === null || (row.source === 'aa' && row.index_version !== version)) continue;
         known.set(stepKey(row.model, row.effort || null), value);
       }
-      return estimateScores(engine, known);
+      return estimateScores(m.catalog(userId, engine), known);
     },
     setDefaultEngine(username: string, engine: Engine | null) {
       if (engine && !ENGINES.includes(engine)) throw new Error(`engine must be one of ${ENGINES.join(',')}`);

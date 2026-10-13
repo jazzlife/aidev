@@ -1008,8 +1008,17 @@ export function readJsonRecord(value: unknown): AnyRecord | null {
 }
 
 // ---------------------------
+//----------------- OPENCODE SIDE TURNS ------------
+/**
+ * The session-title prefix of the platform's own headless OpenCode turns (verification, lesson curation, agent design,
+ * knowledge checks). `opencode run` always writes a session, so the side-turn client titles its sessions with this
+ * prefix and the OpenCode session synchronizer leaves such sessions out of the user's chat list.
+ */
+export const OPENCODE_SIDE_TURN_TITLE = 'aidev-side:';
+
+// ---------------------------
 //----------------- OPENCODE RUN ERRORS ------------
-const OPENCODE_USAGE_LIMIT = /usage limit|rate limit|too many requests|quota|limit (?:reached|exceeded)|exceeded (?:your|the) (?:\w+ )?limit|out of credits|insufficient (?:balance|credit)/i;
+const OPENCODE_USAGE_LIMIT = /usage limit|rate limit|too many requests|quota|limit (?:reached|exceeded)|exceeded (?:your|the) (?:\w+ )?limit|out of credits|no credits remaining|insufficient (?:balance|credit)/i;
 const OPENCODE_AUTH_FAILURE = /invalid credential|invalid api key|unauthori[sz]ed|not authenticated|authentication (?:failed|required)|login required|token (?:expired|is invalid)/i;
 let openCodeAuthFailure: { at: number; message: string } | null = null;
 
