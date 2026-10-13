@@ -38,6 +38,7 @@ export default function AgentCategoryTabsSection({
             {category === 'account' && t('tabs.account')}
             {category === 'permissions' && t('tabs.permissions')}
             {category === 'mcp' && t('tabs.mcpServers')}
+            {category === 'routing' && t('tabs.routing', { defaultValue: '모델·강도 범위' })}
             {category === 'skills' && t('tabs.skills', {
               defaultValue: selectedAgent === 'opencode' ? 'Shared Skills' : 'Skills',
             })}

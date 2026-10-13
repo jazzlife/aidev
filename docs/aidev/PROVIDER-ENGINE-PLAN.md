@@ -376,6 +376,7 @@ agent 도구 `nadovibe_settings`(`server/modules/aidev-tools/app-control.service
 - `ENGINE_LABEL` 중복 네 곳(`useEscalation.ts:32`, `useReturnFromHandoff.ts:15`, `UsageLimitPanel.tsx:5`, `ChatInterface.tsx:495`)을 `ENGINE_LABELS`로 합친다.
 - 설정 UI 배치
   - 작업대: 설정 → **Agents 탭 상단 블록**(`AgentsSettingsTab.tsx:87`, 지금 `EnginePriorityDefaults`와 `EffortCapDefaults`가 있는 곳)에 둔다. 블록이 커지므로 "라우팅" 카테고리로 분리한다(§9 Q9).
+    - (2026-10-13 사용자 요청) 공급자 카드는 상단이 아니라 **아래 공급자별 설정의 「모델·강도 범위」 탭**에 둔다. 상단에는 점수 지수·작업 순서·검증 순서만.
     - **점수 지수**: Coding(기본) / Intelligence / Agentic 선택. 바꾸면 미리보기가 그 지수로 다시 계산된다
     - **작업 우선순위**: 공급자 순서 편집(체크 해제 = 작업에 쓰지 않음)과 '자동(학습 점수)'. 문구: "한도에 걸렸을 때만 다음 순위로 넘어갑니다"
     - **검증 우선순위**: 공급자 순서 편집, '자동(작업자와 다른 공급자 우선)'
@@ -426,7 +427,7 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
 - [~] GP-06 부가 턴: agent 설계(작업 순서만, `splitTier(3)`), 지식 점검(작업 순서, `splitTier(1)`, 한도 제외). 교훈 정제(curate)는 아직 런타임의 엔진 선택 그대로 — G5-07 나머지
 - [~] GP-07 점수 동기화 `model-scores.ts`(하루 1회, 키 없으면 아무 일 없음, 한 번에 기록, admin 값 보존, 실패 시 유지), 게이트웨이 시작 시 예약. API `GET/PUT /model-scores`·`POST /model-scores/sync`(관리자). = G5-02a. **남은 것: AA 키 설치와 우리 조합의 매핑(G0-09)** — 그 전까지는 칸 수 분할
 - [~] GP-08 API `GET/PUT /settings/provider-policy`, `PUT /settings/verify-priority`, `PUT /settings/score-index`, `GET /engines`의 `policy`; 입력 파싱의 `{claude, codex}` 하드코딩 제거. CLI `manage-users model-ceiling|effort-floor|model-ladder|verify-priority|score-index|aa-key|model-scores|model-score`, agent 도구 `nadovibe_settings`의 `model_ceiling.<e>`·`effort_floor.<e>`·`model_ladder.<e>`·`verify_priority`·`score_index`. = G5-09
-- [~] GP-09 작업대 설정 → Agents 상단 `ProviderPolicySettings`(작업·검증 순서 편집, 점수 지수, 공급자 카드: 사다리·모델 하한/상한·강도 하한/상한·D0~D4 미리보기·조합별 점수·출처 표기), 블록은 최대 45vh로 자체 스크롤. 이전의 `EnginePriorityDefaults`·`EffortCapDefaults`·`useEnginePriority`는 대체·삭제. 모바일 설정 `ProviderPolicySection`(같은 훅), 계정 단위 `EffortCapControl` 대체(채팅 단위는 유지). = G5-10·G5-11
+- [~] GP-09 작업대 설정 → Agents: 상단 `ProviderPolicySettings`에는 공급자 전체에 걸친 것만(작업·검증 순서, 점수 지수와 출처), 각 공급자의 범위는 아래 공급자별 설정의 「모델·강도 범위」 탭 `ProviderPolicyCard`(사다리·모델 하한/상한·강도 하한/상한·D0~D4 미리보기·조합별 점수 — 2026-10-13 사용자 요청 "모델 상한 하한 설정은 하단 프로바이더별 설정 안으로"). 탭은 정책이 있는 공급자(`isPolicyProvider`: claude·codex, OpenCode는 G3에서)에만. 이전의 `EnginePriorityDefaults`·`EffortCapDefaults`·`useEnginePriority`는 대체·삭제. 모바일 설정 `ProviderPolicySection`(같은 훅), 계정 단위 `EffortCapControl` 대체(채팅 단위는 유지). = G5-10·G5-11
 - [ ] GP-10 라우터 바에 선택 사유 한 줄(G5-12) — 지금은 `plan.reason`에만 있음
 - 검증(로컬, 2026-10-13): 게이트웨이 테스트 30개(새 `provider-policy-test.mjs`: 예시 1·2 표, Q1·Q2, 범위 검사, 라우팅·에스컬레이션·검증 후보·설정 API·AA 동기화), 서버 555(실패 0), 클라이언트 638(새 `providerPolicySettings.test.tsx`), typecheck·lint 오류 0. 로컬 플랫폼에서 작업대·모바일 설정 화면을 열어 하한 sonnet·상한 opus → D0~D4가 예시 2와 같게 표시·라우팅됨을 확인.
 

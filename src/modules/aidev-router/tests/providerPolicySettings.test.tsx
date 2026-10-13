@@ -31,7 +31,7 @@ vi.mock('@/shared/api', () => ({
   },
 }));
 
-const { ProviderPolicySettings } = await import('@/modules/aidev-router/ProviderPolicySettings');
+const { ProviderPolicyCard, ProviderPolicySettings } = await import('@/modules/aidev-router/ProviderPolicySettings');
 const { moveInOrder, stepLabel } = await import('@/modules/aidev-router/hooks/useProviderPolicy');
 
 test('moveInOrder and stepLabel', () => {
@@ -41,18 +41,25 @@ test('moveInOrder and stepLabel', () => {
   assert.equal(stepLabel(null), '—');
 });
 
-test('shows the gateway preview, sends the work order and a provider range', async () => {
-  render(<ProviderPolicySettings />);
-  await waitFor(() => screen.getByTestId('provider-policy-claude'));
-  assert.match(screen.getByTestId('provider-preview-claude').textContent ?? '', /D0.*Haiku/);
-  assert.ok(screen.getByText('자동 (작업 종류별 학습 가중치)'));
+test('the policy section sends the work order and credits the score source; it holds no provider ranges', async () => {
+  const { unmount } = render(<ProviderPolicySettings />);
+  await waitFor(() => screen.getByText('자동 (작업 종류별 학습 가중치)'));
+  assert.equal(screen.queryByTestId('provider-policy-claude'), null, 'ranges live in each provider\'s tab');
   fireEvent.click(screen.getAllByText('+ Codex')[0]);
   await waitFor(() => assert.ok(sent.some((s) => s.url.endsWith('/settings/engine-priority'))));
   assert.deepEqual(sent.find((s) => s.url.endsWith('/settings/engine-priority'))!.body, { order: ['codex'] });
+  assert.ok(screen.getByRole('link', { name: 'Artificial Analysis' }), 'the score source is credited');
+  unmount();
+});
+
+test('a provider\'s range tab shows the gateway preview and sends its range', async () => {
+  render(<ProviderPolicyCard engine="claude" />);
+  await waitFor(() => screen.getByTestId('provider-policy-claude'));
+  assert.match(screen.getByTestId('provider-preview-claude').textContent ?? '', /D0.*Haiku/);
+  assert.equal(screen.queryByTestId('provider-policy-codex'), null, 'only the selected provider');
   // "범위 설정" turns the tier table into the split over the catalog ladder
-  fireEvent.click(screen.getAllByText('범위 설정')[0]);
+  fireEvent.click(screen.getByText('범위 설정'));
   await waitFor(() => assert.match(screen.getByTestId('provider-preview-claude').textContent ?? '', /상한·최대/));
   assert.deepEqual(sent.find((s) => s.url.endsWith('/settings/provider-policy'))!.body, { engine: 'claude', ladder: ['haiku', 'sonnet', 'opus', 'best'] });
   assert.ok(screen.getByText('등급표로 되돌리기'));
-  assert.ok(screen.getByRole('link', { name: 'Artificial Analysis' }), 'the score source is credited');
 });

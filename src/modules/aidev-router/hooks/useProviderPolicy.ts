@@ -34,6 +34,10 @@ export function useProviderPolicy() {
   return { view, error, saving, setProvider, setWorkPriority, setVerifyPriority, setScoreIndex };
 }
 
+/** Providers that have a policy (a range tab in the settings); OpenCode joins with stage G3. */
+export const POLICY_PROVIDERS: readonly Engine[] = ['claude', 'codex'];
+export const isPolicyProvider = (provider: string): provider is Engine => (POLICY_PROVIDERS as readonly string[]).includes(provider);
+
 /** The labels of the score indexes (Artificial Analysis). */
 export const SCORE_INDEX_LABEL: Record<ScoreIndex, string> = { coding: 'Coding Index (기본)', intelligence: 'Intelligence Index', agentic: 'Agentic Index' };
 

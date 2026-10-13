@@ -137,9 +137,9 @@ function ProviderCard({ engine, entry, disabled, onChange }: { engine: Engine; e
 }
 
 /**
- * Used by the workbench Settings → Agents tab (settings module): the provider policy — work and verification orders,
- * the score index and each provider's range with what D0..D4 run at. Replaces the earlier engine-priority and
- * effort/model-floor sections (the tier-table mode keeps those two settings).
+ * Used by the workbench Settings → Agents tab (settings module), above the per-provider tabs: what spans the providers —
+ * the work and verification orders and the score index. Each provider's own range is its "모델·강도 범위" tab
+ * (ProviderPolicyCard). Replaces the earlier engine-priority and effort/model-floor sections.
  */
 export function ProviderPolicySettings() {
   const policy = useProviderPolicy();
@@ -148,7 +148,7 @@ export function ProviderPolicySettings() {
   return (
     <section className="rounded-lg border border-border p-3 text-sm" data-testid="provider-policy">
       <div className="font-medium">공급자 정책</div>
-      <div className="mt-0.5 text-xs text-muted-foreground">작업은 작업 우선순위의 첫 공급자가 맡고, 사용량 한도에 걸렸을 때만 다음 순위로 넘어갑니다(한도가 풀리면 되돌아옴). 공급자 안에서는 정한 범위(모델·강도의 하한~상한)를 명령 난이도 D0~D4에 맞춰 나눠 고르고, 상한 모델이 그 난이도에 못 미치면 상한 모델을 최대 강도로 씁니다. 높을수록 구독 사용량이 많이 듭니다.</div>
+      <div className="mt-0.5 text-xs text-muted-foreground">작업은 작업 우선순위의 첫 공급자가 맡고, 사용량 한도에 걸렸을 때만 다음 순위로 넘어갑니다(한도가 풀리면 되돌아옴). 공급자마다 쓸 모델·강도의 범위는 아래 공급자별 설정의 「모델·강도 범위」 탭에서 정합니다.</div>
       {!view ? <div className="mt-2 text-xs text-muted-foreground">{policy.error ?? '불러오는 중…'}</div> : (
         <>
           <OrderEditor label="작업 우선순위" hint="새 채팅과 작업을 맡을 공급자 순서입니다. 채팅에서 엔진을 직접 고정한 경우만 예외입니다." autoLabel="자동 (작업 종류별 학습 가중치)"
@@ -160,20 +160,28 @@ export function ProviderPolicySettings() {
             <select className={selectClass} disabled={policy.saving} value={view.score_index} aria-label="분할 기준 점수" onChange={(event) => { void policy.setScoreIndex(event.target.value as ScoreIndex); }}>
               {(Object.keys(SCORE_INDEX_LABEL) as ScoreIndex[]).map((index) => <option key={index} value={index}>{SCORE_INDEX_LABEL[index]}</option>)}
             </select>
+            <span className="text-muted-foreground">출처: <a className="underline" href={view.scores_source.url} target="_blank" rel="noreferrer">{view.scores_source.name}</a>{view.scores_source.version ? ` · Index v${view.scores_source.version}` : ''}{view.scores_source.synced_at ? ` · ${new Date(view.scores_source.synced_at).toLocaleDateString('ko-KR')} 갱신` : ' · 아직 동기화 전'}</span>
           </label>
-          <div className="mt-3 grid grid-cols-1 gap-2 md:grid-cols-2">
-            {engines.map((engine) => (
-              <ProviderCard key={engine} engine={engine} entry={view.providers[engine]} disabled={policy.saving} onChange={(patch) => { void policy.setProvider({ engine, ...patch }); }} />
-            ))}
-          </div>
-          <div className="mt-2 text-[11px] text-muted-foreground">
-            지능 점수: <a className="underline" href={view.scores_source.url} target="_blank" rel="noreferrer">{view.scores_source.name}</a>
-            {view.scores_source.version ? ` · Index v${view.scores_source.version}` : ''}
-            {view.scores_source.synced_at ? ` · ${new Date(view.scores_source.synced_at).toLocaleDateString('ko-KR')} 갱신` : ' · 아직 동기화 전'}
-          </div>
         </>
       )}
       {view && policy.error ? <div className="mt-1 text-xs text-red-600">{policy.error}</div> : null}
+    </section>
+  );
+}
+
+/**
+ * Used by the workbench Settings → Agents tab (settings module) as the selected provider's "모델·강도 범위" category:
+ * that provider's ladder, model and effort floors/ceilings and what D0..D4 run at (the gateway's preview).
+ */
+export function ProviderPolicyCard({ engine }: { engine: Engine }) {
+  const policy = useProviderPolicy();
+  const entry = policy.view?.providers[engine];
+  return (
+    <section className="space-y-2 text-sm" data-testid="provider-policy-card">
+      <div className="text-xs text-muted-foreground">이 공급자 안에서 쓸 모델과 추론 강도의 범위입니다. 「범위 설정」을 누르면 정한 범위를 명령 난이도 D0~D4에 맞춰 나눠 고르고(지능 점수가 있으면 점수로), 상한 모델이 그 난이도에 못 미치면 상한 모델을 최대 강도로 씁니다. 높을수록 구독 사용량이 많이 듭니다.</div>
+      {entry ? <ProviderCard engine={engine} entry={entry} disabled={policy.saving} onChange={(patch) => { void policy.setProvider({ engine, ...patch }); }} />
+        : <div className="text-xs text-muted-foreground">{policy.error ?? '불러오는 중…'}</div>}
+      {entry && policy.error ? <div className="text-xs text-red-600">{policy.error}</div> : null}
     </section>
   );
 }
