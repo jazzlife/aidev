@@ -444,7 +444,7 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
 - [~] GP-05 검증 후보를 게이트웨이가 계산(`aidev-api.ts verifyCandidates`, 검증 순서 또는 사다리가 있을 때만 — 없으면 지금처럼 런타임이 정함), 런타임 `run-verifier.service.ts verifierCandidates`가 순서대로 시도(모델·강도 적용, Codex 로그아웃·과부하 규칙 유지). = G5-06
 - [~] GP-06 부가 턴: agent 설계(작업 순서만, `splitTier(3)`), 지식 점검(작업 순서, `splitTier(1)`, 한도 제외). 교훈 정제(curate)도 작업 순서가 있으면 게이트웨이가 후보(`candidates`, 한도 제외, 정책의 D0 모델)를 보내고 런타임 `curatorOrder`가 순서대로 시도
 - [~] GP-07 점수 동기화 `model-scores.ts`(하루 1회, 키 없으면 아무 일 없음, 한 번에 기록, admin 값 보존, 실패 시 유지), 게이트웨이 시작 시 예약. API `GET/PUT /model-scores`·`POST /model-scores/sync`(관리자). = G5-02a. **남은 것: AA 키 설치와 우리 조합의 매핑(G0-09)** — 그 전까지는 칸 수 분할
-- [~] GP-08 API `GET/PUT /settings/provider-policy`, `PUT /settings/verify-priority`, `PUT /settings/score-index`, `GET /engines`의 `policy`; 입력 파싱의 `{claude, codex}` 하드코딩 제거. CLI `manage-users model-ceiling|effort-floor|model-ladder|verify-priority|score-index|aa-key|model-scores|model-score`, agent 도구 `nadovibe_settings`의 `model_ceiling.<e>`·`effort_floor.<e>`·`model_ladder.<e>`·`verify_priority`·`score_index`. = G5-09
+- [x] 서버 확인(2026-10-13: 정책 조회, 값이 바뀌지 않는 PUT 3종, 불가능한 범위 400, 설정 불변) — GP-08 API `GET/PUT /settings/provider-policy`, `PUT /settings/verify-priority`, `PUT /settings/score-index`, `GET /engines`의 `policy`; 입력 파싱의 `{claude, codex}` 하드코딩 제거. CLI `manage-users model-ceiling|effort-floor|model-ladder|verify-priority|score-index|aa-key|model-scores|model-score`, agent 도구 `nadovibe_settings`의 `model_ceiling.<e>`·`effort_floor.<e>`·`model_ladder.<e>`·`verify_priority`·`score_index`. = G5-09
 - [~] GP-09 작업대 설정 → Agents: 상단 `ProviderPolicySettings`에는 공급자 전체에 걸친 것만(작업·검증 순서, 점수 지수와 출처), 각 공급자의 범위는 아래 공급자별 설정의 「모델·강도 범위」 탭 `ProviderPolicyCard`(사다리·모델 하한/상한·강도 하한/상한·D0~D4 미리보기·조합별 점수 — 2026-10-13 사용자 요청 "모델 상한 하한 설정은 하단 프로바이더별 설정 안으로"). 탭은 정책이 있는 공급자(`isPolicyProvider`: claude·codex, OpenCode는 G3에서)에만. 이전의 `EnginePriorityDefaults`·`EffortCapDefaults`·`useEnginePriority`는 대체·삭제. 모바일 설정 `ProviderPolicySection`(같은 훅), 계정 단위 `EffortCapControl` 대체(채팅 단위는 유지). = G5-10·G5-11
 - [~] GP-10 라우터 바·모바일 라우팅 시트에 선택 사유 한 줄(`policyNote`: "Claude 한도 → Codex · 범위 5/8 · 상한·최대") = G5-12
 - 검증(로컬, 2026-10-13): 게이트웨이 테스트 30개(새 `provider-policy-test.mjs`: 예시 1·2 표, Q1·Q2, 범위 검사, 라우팅·에스컬레이션·검증 후보·설정 API·AA 동기화), 서버 555(실패 0), 클라이언트 638(새 `providerPolicySettings.test.tsx`), typecheck·lint 오류 0. 로컬 플랫폼에서 작업대·모바일 설정 화면을 열어 하한 sonnet·상한 opus → D0~D4가 예시 2와 같게 표시·라우팅됨을 확인.
@@ -486,12 +486,12 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
   - 결과: §9 Q13~Q15 확정, 빈칸이 많으면 추정 규칙(Q14)을 보강한다.
 
 ### G1. 기반 (릴리스 ① + 런타임 이미지 재빌드)
-- [~] 구현·로컬검증(`Dockerfile`에 `OPENCODE_VERSION`·전역 설치·`OPENCODE_DISABLE_AUTOUPDATE=1`), 서버 확인 대기 — G1-01 런타임 이미지에 opencode를 설치한다. `deploy/aidev/runtime/Dockerfile`
+- [x] 서버 확인(2026-10-13, `d41a7f575824`: 서버 이미지 `tools-20261013`, jazzlife 런타임에서 `opencode 1.19.0`) — G1-01 런타임 이미지에 opencode를 설치한다. `deploy/aidev/runtime/Dockerfile`
   - `ARG OPENCODE_VERSION`, `test -n` 검사를 추가한다.
   - `npm install -g @anthropic-ai/claude-code@… opencode-ai@${OPENCODE_VERSION}`로 설치한다(global이라 postinstall이 실행됨).
   - 자동 업데이트 끄기 환경변수를 `ENV`에 넣는다(G0-01).
   - 상단 주석 "Rebuild only when a tool version changes"에 OpenCode를 추가한다.
-- [~] 구현·로컬검증(`runtime-image.sh` build-arg, `.env.example` `OPENCODE_VERSION=1.19.0`), 서버 확인 대기 — G1-02 빌드 인자를 넘긴다.
+- [x] 서버 확인(2026-10-13, `d41a7f575824`: 서버 `.env`·`runtime-image.sh` 사본 갱신 후 빌드) — G1-02 빌드 인자를 넘긴다.
   - `deploy/aidev/release/runtime-image.sh:16-20`에 `--build-arg OPENCODE_VERSION="${OPENCODE_VERSION:?}"`
   - `deploy/aidev/.env.example`에 `OPENCODE_VERSION=<G0-01>`
   - 서버 `~/aidev/deploy/.env`에도 같은 값을 넣는다(배포 시 G6-03).
@@ -524,7 +524,7 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
   - 모바일도 같은 훅을 쓰는지 확인한다.
   - G4-02에서 제거한다.
 - [ ] G1-10 Gemini 경로: OpenCode Zen 로그인이면 코드 변경이 없다(`opencode/gemini-*`가 카탈로그에 있음). Google API 키를 쓰기로 하면(§9 Q8) G1-11에서 `google/…` 모델을 추가한다.
-- [~] 구현·로컬검증(목록 정정 대신 **설치된 CLI의 `opencode models`를 기준**으로(10분 캐시, 로그인 변경 시 갱신): 카탈로그 항목은 이름·강도만 제공, 모르는 모델은 id로 표시, CLI가 없으면 기존 방식. Google 키 등 사용자가 연결한 공급자의 모델도 이것으로 보임), 서버 확인 대기 — G1-11 OpenCode 카탈로그 정정(`opencode-models.provider.ts`)
+- [x] 서버 확인(2026-10-13, `d41a7f575824`: 서버 런타임이 CLI 목록 그대로 92개(openai 80 + 무료 12)를 돌려줌) — G1-11 OpenCode 카탈로그 정정(`opencode-models.provider.ts`)
   - G0-02 실측 목록과 다른 Go 모델 id를 고친다.
   - (Q8 결정 시) `google/<id>` 항목을 추가하고, `OPENCODE_ENV_PROVIDER_IDS`(`:299-303`)에 `GOOGLE_GENERATIVE_AI_API_KEY: 'google'`을 추가한다.
   - 테스트 `server/modules/providers/tests/opencode-models.test.ts`
@@ -537,10 +537,10 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
 
 ### G2. OpenCode 런타임 동등화 (릴리스 ②)
 로컬 e2e(2026-10-13, 로컬 플랫폼 + 실제 opencode 1.19.0 + 무료 모델 `opencode/big-pickle`, 웹소켓 `chat.send`): ① 일반 채팅(응답·토큰) ② 주입된 aidev-tools의 `nadovibe_settings` 호출(`aidev-tools_nadovibe_settings`, 게이트웨이 실제 응답) ③ 전문 agent 지시문 적용 + 기본 도구(read) + 실패한 도구 호출의 오류 표시 ④ `--session`으로 이어가기 — 모두 통과. 런타임 로그 `[OpenCode] aidev routing: agent=aidev-frontend-react mcp=aidev-tools …`.
-- [~] 구현·로컬검증(`part` 기반으로 읽고 예전 평평한 형태도 유지, 오류는 `describeOpenCodeError`), 서버 확인 대기 — G2-01 **이벤트 정규화**: `opencode-sessions.provider.ts:205-302`를 G0-03 형식(`part` 기반) 기준으로 고친다.
+- [x] 서버 확인(2026-10-13, `d41a7f575824`: 서버에서 실시간 텍스트·도구 호출·토큰이 정상 표시) — G2-01 **이벤트 정규화**: `opencode-sessions.provider.ts:205-302`를 G0-03 형식(`part` 기반) 기준으로 고친다.
   - text, reasoning, tool(입력·출력·상태), step, error(`{name, data:{message, statusCode}}`)를 모두 처리한다. 지금은 error가 "Unknown OpenCode error"로 표시된다.
   - 픽스처 교체: `opencode-runtime.provider.test.js:36-39`, `server/modules/providers/tests/opencode-sessions.test.ts:221-505`
-- [~] 구현·로컬검증(`buildOpenCodeAidevConfig`(aidev-tools MCP 45분 타임아웃·agent MCP·`aidev-<name>` agent·`steps`) → `OPENCODE_CONFIG_CONTENT`·`--agent`. plan 모드는 OpenCode의 plan agent 유지(전문 agent 지시문 미적용), 도구 제한은 미적용 — 둘 다 유료 로그인 후 확인), 서버 확인 대기 — G2-02 **aidev 어댑터** `buildOpenCodeAidevConfig(options.aidev)`(§2.7)
+- [x] 서버 확인(2026-10-13, `d41a7f575824`: 서버에서 aidev-tools 호출(`aidev-tools_nadovibe_settings`)과 전문 agent 지시문 적용) — G2-02 **aidev 어댑터** `buildOpenCodeAidevConfig(options.aidev)`(§2.7)
   - `opencode-runtime.provider.js:250-298`의 args와 env에 `--agent`, `OPENCODE_CONFIG_CONTENT`를 넣는다.
   - aidev-tools MCP는 aidev가 null이어도 주입한다(`aidevToolsService.getMcpServerConfig`, `aidev-tools.service.ts:375-389`).
   - agent 전용 mcpServers를 병합한다(url은 remote, command는 local).
@@ -550,7 +550,7 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
   - plan 모드와 aidev agent가 함께 오면 permission deny로 표현한다.
   - 로그는 `[OpenCode] aidev routing: agent=… run=…`(Claude `:267`, Codex `:317`와 같은 형식).
 - [ ] G2-03 도구 이름 변환 함수(Claude→OpenCode)를 `aidev-tools.service.ts`에 두고 `index.ts`로 export한다(backend 표준 확인).
-- [~] 구현·로컬검증(엔진 화이트리스트에 opencode), 서버 확인 대기 — G2-04 `sanitizeAidevOptions` 엔진 화이트리스트(`aidev-tools.service.ts:323`)와 `AidevTurnOptions.engine`(`:257`)에 opencode를 추가한다. 테스트 `aidev-tools/tests/aidev-tools.service.test.ts:21-62`
+- [x] 서버 확인(2026-10-13, `d41a7f575824`: 서버 채팅에서 `engine: opencode` payload 수용) — G2-04 `sanitizeAidevOptions` 엔진 화이트리스트(`aidev-tools.service.ts:323`)와 `AidevTurnOptions.engine`(`:257`)에 opencode를 추가한다. 테스트 `aidev-tools/tests/aidev-tools.service.test.ts:21-62`
 - [~] 구현·로컬검증(오류 이벤트가 한도(429·문구)면 complete에 `usageLimit{type:unknown}`, `recordBlock`/`recordClear`, `USAGE_ENGINES`에 opencode. 실제 한도 문구는 발생 시 보강), 서버 확인 대기 — G2-05 **사용량 한도**: 감지 규칙(G0-06)을 넣는다.
   - error 이벤트와 stderr에서 감지하면 `recordBlock('opencode')`, 성공 턴이면 `recordClear`, complete에 `usageLimit`을 싣는다(`opencode-runtime.provider.js:353`, `:396`).
   - `USAGE_ENGINES`에 opencode를 넣는다(`provider-usage-limits.service.ts:32`).
@@ -752,6 +752,7 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
   - 검증 우선순위대로 검증 엔진이 정해진다(`runs.verification.engine`).
 
 ### G6. 검증·배포·문서 (매 릴리스)
+**서버 확인 기록 (2026-10-13, 릴리스 `d41a7f575824`, jazzlife)**: 게이트웨이를 거친 실제 OpenCode 채팅 4종(응답 `SERVER-OK`·토큰 18,779 / aidev-tools 도구 호출 / 전문 agent 지시문 + read 도구 / 이어가기) 통과, 정책 API 통과(설정 불변), `verify-b` 22 PASS · 1 FAIL(분류기 정확도 0.714 — 이번 작업 전부터 같은 수치). 화면은 같은 커밋의 로컬 플랫폼에서 확인(Cursor 없음, OpenCode 탭은 Account·MCP, 「모델·강도 범위」는 Claude·Codex). **확인 못 한 것**: 범위 분할 모드의 실제 명령(운영 계정은 모두 등급표 모드), 사용량 한도 인계·로그인 거절(실제 발생 없음), 작업 순서에 따른 교훈 정제 후보, 운영 화면 직접 조회. **발견**: ① 강제 삭제한 OpenCode 세션이 OpenCode 자체 DB에 남아 있으면 동기화가 다시 목록에 올림(검증 중 1건 재등장 → `opencode session delete`까지 해야 사라짐) — G2 잔여로 수정 ② 다른 두 계정의 런타임은 아직 옛 이미지(opencode 없음) ③ jazzlife의 Codex는 "not configured" ④ OpenCode 로그인은 `openai`(API 키)이고 Go는 아직 아님.
 - [ ] G6-01 로컬 관문(ship.sh와 같음): `npm run typecheck`, `npm run lint`, `npm test`(server), `npm run test:client`, `npm run build`, 게이트웨이와 runtime-manager `npm test`
 - [ ] G6-02 로컬 플랫폼 e2e: `deploy/aidev/release/local-platform.sh`에 opencode를 설치한 런타임으로 라우팅과 opencode 실행을 확인한다(목(mock) Laya).
 - [ ] G6-03 **배포 순서**
