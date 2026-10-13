@@ -1,5 +1,5 @@
 import type { openStore } from './store.js';
-import type { Engine } from './store-aidev.js';
+import { ENGINES, type Engine } from './store-aidev.js';
 
 /**
  * Engine weight learning (IMPLEMENTATION-PLAN §3.4, E-06). w(task_kind, engine) is the base of the
@@ -25,7 +25,7 @@ export function runEngineWeights(store: Store, opts: { windowDays?: number; acto
   const kinds = new Set([...runs.map((run) => run.task_kind), ...[...rows.values()].map((row) => row.task_kind)]);
   const changes: WeightChange[] = [];
   for (const kind of kinds) {
-    const stats = (['claude', 'codex'] as Engine[]).map((engine) => {
+    const stats = ENGINES.map((engine) => {
       const list = runs.filter((run) => run.task_kind === kind && run.engine === engine);
       const successN = list.filter((run) => run.outcome === 'success').length;
       const durations = list.filter((run) => run.finished_at).map((run) => run.finished_at! - run.started_at);
@@ -34,11 +34,14 @@ export function runEngineWeights(store: Store, opts: { windowDays?: number; acto
       return { engine, row, prior, successN, failN: list.length - successN, n: list.length, avgMs: durations.length ? Math.round(durations.reduce((a, b) => a + b, 0) / durations.length) : null };
     });
     const learned = stats.map((s) => ({ ...s, weight: (s.successN + PRIOR_N * s.prior) / (s.n + PRIOR_N) }));
-    // speed tie-break: similar success, clearly faster (≥20%) engine gets a small bonus
-    const [a, b] = learned;
-    if (a.n >= 5 && b.n >= 5 && a.avgMs && b.avgMs && Math.abs(a.successN / a.n - b.successN / b.n) <= 0.05) {
-      const faster = a.avgMs < b.avgMs * 0.8 ? a : b.avgMs < a.avgMs * 0.8 ? b : null;
-      if (faster) faster.weight += SPEED_BONUS;
+    // speed tie-break: among the engines within 5 points of the best success rate (5+ runs each), the fastest gets a
+    // small bonus when it is clearly (≥20%) faster than every other one
+    const measured = learned.filter((s) => s.n >= 5 && s.avgMs);
+    const best = Math.max(...measured.map((s) => s.successN / s.n));
+    const close = measured.filter((s) => best - s.successN / s.n <= 0.05);
+    if (close.length >= 2) {
+      const [faster, ...rest] = [...close].sort((x, y) => x.avgMs! - y.avgMs!);
+      if (rest.every((s) => faster.avgMs! < s.avgMs! * 0.8)) faster.weight += SPEED_BONUS;
     }
     for (const s of learned) {
       if (!s.n && !s.row) continue;

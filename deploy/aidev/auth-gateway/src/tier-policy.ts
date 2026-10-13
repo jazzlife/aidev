@@ -1,5 +1,5 @@
 import type { openStore } from './store.js';
-import type { Engine } from './store-aidev.js';
+import { ENGINES, type Engine } from './store-aidev.js';
 import { TIER_TABLE } from './routing.js';
 import { runEngineWeights } from './engine-weights.js';
 
@@ -36,7 +36,7 @@ export function runTierPolicy(store: Store, opts: { windowDays?: number; actor?:
   const cells = new Map<string, { domain: string; depth: number; engine: string }>();
   for (const run of runs) {
     const depth = Math.max(0, Math.min(4, Math.round(run.depth)));
-    if (run.engine !== 'claude' && run.engine !== 'codex') continue;
+    if (!ENGINES.includes(run.engine as Engine)) continue;
     cells.set(`${run.domain}|${depth}|${run.engine}`, { domain: run.domain, depth, engine: run.engine });
   }
   for (const row of store.tierPolicyRows()) if (row.domain !== '*') cells.set(`${row.domain}|${row.depth}|${row.engine}`, { domain: row.domain, depth: row.depth, engine: row.engine });
@@ -83,7 +83,7 @@ export function runTierPolicy(store: Store, opts: { windowDays?: number; actor?:
 
 /** Administrator pin / reset of one cell (`level` null = back to the table; `pinned` stops the job moving it). */
 export function setTierPolicy(store: Store, cell: { domain: string; depth: number; engine: string }, level: number | null, pinned: boolean, actor: string) {
-  if (cell.engine !== 'claude' && cell.engine !== 'codex') throw new Error('engine must be claude|codex');
+  if (!ENGINES.includes(cell.engine as Engine)) throw new Error(`engine must be ${ENGINES.join('|')}`);
   if (!Number.isInteger(cell.depth) || cell.depth < 0 || cell.depth > 4) throw new Error('depth must be 0-4');
   if (level !== null && (!Number.isInteger(level) || level < 0 || level > 4)) throw new Error('level must be 0-4 or null');
   const row = store.tierPolicyRow(cell.domain, cell.depth, cell.engine);

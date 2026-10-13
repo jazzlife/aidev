@@ -1,8 +1,8 @@
 import type { openStore } from './store.js';
-import { KNOWLEDGE_TTL_MS, type Engine, type KnowledgeRow } from './store-aidev.js';
+import { ENGINES, KNOWLEDGE_TTL_MS, type Engine, type KnowledgeRow } from './store-aidev.js';
 import type { LayaClient } from './laya.js';
 import { decide } from './laya-questions.js';
-import { TIER_TABLE, type EngineAvailability } from './routing.js';
+import { splitTier, TIER_TABLE, type EngineAvailability } from './routing.js';
 import type { PushPayload } from './push.js';
 
 /**
@@ -106,10 +106,15 @@ export function createKnowledgeRefresher(deps: Deps) {
   const jobs = new Map<number, { running: boolean; total: number; done: number; results: RefreshResult[]; startedAt: number; finishedAt: number | null; error: string | null }>();
   let scheduled: Promise<void> | null = null;
 
+  /** The first usable provider of the work order (none set: the catalog order) at D1 — its policy's pick, else the table's. */
   async function pickEngine(account: RefreshAccount): Promise<{ engine: Engine; model: string } | null> {
     const engines = await deps.engines(account);
-    if (engines.claude.allowed && engines.claude.authenticated) return { engine: 'claude', model: 'sonnet' };
-    if (engines.codex.allowed && engines.codex.authenticated) return { engine: 'codex', model: TIER_TABLE[1].codex.model };
+    const priority = store.enginePriority(account.id);
+    for (const engine of priority.length ? priority : ENGINES) {
+      const e = engines[engine];
+      if (!e?.allowed || !e.authenticated || (e.limited_until && e.limited_until > Date.now())) continue;
+      return { engine, model: splitTier(store, account.id, engine, 1)?.model ?? TIER_TABLE[1][engine].model };
+    }
     return null;
   }
 

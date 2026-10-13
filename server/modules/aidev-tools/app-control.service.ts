@@ -61,13 +61,20 @@ export async function appSettingsGet() {
     effort_cap: engines.effort_cap ?? null, effort_ladder: engines.effort_ladder ?? null,
     model_floor: engines.model_floor ?? null, model_ladder: engines.model_ladder ?? null,
     engine_priority: engines.engine_priority ?? null,
+    // provider policy (PROVIDER-ENGINE-PLAN §2): per engine the range, what D0..D4 run at, the scores; verification order
+    policy: engines.policy ?? null,
     engines: engines.engines ?? null, default_engine: engines.default_engine ?? null,
     keys: {
       'pc.policy': 'full | auto | ask | deny (target required)', 'pc.default': 'true | false (target required)',
       'pc.screen': 'true | false — screen capture on that PC (target required)', 'pc.control': 'true | false — remote mouse/keyboard (target required; implies screen)',
       'effort_cap.claude': 'an effort from effort_ladder.claude, or "" for none', 'effort_cap.codex': 'an effort from effort_ladder.codex, or "" for none',
       'model_floor.claude': 'a model from model_ladder.claude — routing never picks a weaker one; "" for none', 'model_floor.codex': 'a model from model_ladder.codex, or "" for none',
-      engine_priority: '"claude,codex" | "codex,claude" | "" (learned weights) — the order engines are used in; a limited engine is skipped and the chat moves back when it is usable again',
+      engine_priority: '"claude,codex" | "codex,claude" | "" (learned weights) — the work order; the next engine is used only while one is on a usage limit (or signed out), and the chat moves back when it is usable again',
+      'model_ceiling.<engine>': 'a model of policy.providers.<engine>.catalog — the strongest model routing may pick; "" for none',
+      'effort_floor.<engine>': 'an effort of that engine — the lowest reasoning effort routing may pick; "" for none',
+      'model_ladder.<engine>': '"model,model,…" weakest first — the models routing splits D0..D4 over (with the floors/ceilings); "" = back to the tier table',
+      verify_priority: '"codex,claude" … | "" (the worker\'s other engine first) — the order engines verify finished work in',
+      score_index: 'coding | intelligence | agentic — the Artificial Analysis index the split uses (default coding)',
       routing_mode: 'auto | manual | off — applied by the user\'s open pages',
     },
   };
@@ -112,6 +119,28 @@ export async function appSettingsSet(input: { key: string; value: unknown; targe
     const engine = key.slice('model_floor.'.length);
     const r = await callGateway('PUT', '/settings/model-floor', { [engine]: String(input.value ?? '') }) as { model_floor?: unknown };
     return { key, value: input.value, model_floor: r.model_floor ?? null };
+  }
+  // provider policy: one bound of one engine's range at a time (the gateway checks the range as a whole)
+  const policyKey = /^(model_ceiling|effort_floor|model_ladder)\.([a-z]+)$/.exec(key);
+  if (policyKey) {
+    const [, field, engine] = policyKey;
+    const raw = String(input.value ?? '').trim();
+    const value = field === 'model_ladder' ? (raw ? raw.split(',').map((s) => s.trim()).filter(Boolean) : null) : raw || null;
+    const body = field === 'model_ladder' && value === null ? { engine, reset: true } : { engine, [field === 'model_ceiling' ? 'ceiling' : field === 'effort_floor' ? 'effort_floor' : 'ladder']: value };
+    const r = await callGateway('PUT', '/settings/provider-policy', body) as { providers?: Record<string, unknown>; error?: string };
+    if (!r.providers) throw new Error(String(r.error ?? '바꾸지 못했습니다'));
+    return { key, value, policy: r.providers[engine] ?? null };
+  }
+  if (key === 'verify_priority') {
+    const order = String(input.value ?? '').split(',').map((s) => s.trim()).filter(Boolean);
+    const r = await callGateway('PUT', '/settings/verify-priority', { order: order.length ? order : null }) as { verify_priority?: unknown; error?: string };
+    if (r.verify_priority === undefined) throw new Error(String(r.error ?? '바꾸지 못했습니다'));
+    return { key, value: r.verify_priority };
+  }
+  if (key === 'score_index') {
+    const r = await callGateway('PUT', '/settings/score-index', { index: String(input.value ?? '') || null }) as { score_index?: unknown; error?: string };
+    if (r.score_index === undefined) throw new Error(String(r.error ?? '바꾸지 못했습니다'));
+    return { key, value: r.score_index };
   }
   if (key === 'engine_priority') {
     const order = String(input.value ?? '').split(',').map((s) => s.trim()).filter(Boolean);

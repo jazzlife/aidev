@@ -32,6 +32,12 @@ export type VerifyInput = {
   depth: number | null;
   /** the user's model floor per engine (routing MODEL_LADDER names) */
   modelFloor: Partial<Record<'claude' | 'codex', string>>;
+  /**
+   * The gateway's verifier order once the account set a verification order or a provider policy (PROVIDER-ENGINE-PLAN
+   * §2.4): tried in this order; a null model is this runtime's verifierModel, a null effort the engine's default.
+   * null = the runtime's own order (verifierEngineOrder).
+   */
+  candidates: Array<{ engine: 'claude' | 'codex'; model: string | null; effort: string | null }> | null;
 };
 
 export type VerificationCheck = { claim: string; result: 'ok' | 'wrong' | 'unverified'; evidence: string };
@@ -86,6 +92,18 @@ export function verifierEngineOrder(
   const preferred: Array<'claude' | 'codex'> = other && workerEngine ? [other, workerEngine] : ['claude', 'codex'];
   const usable = preferred.filter((engine) => engines.includes(engine) && !(engine === 'codex' && codex.signedOut));
   return codex.busy ? [...usable.filter((engine) => engine !== 'codex'), ...usable.filter((engine) => engine === 'codex')] : usable;
+}
+
+/**
+ * What the verifier tries, in order, with the model and effort of each: the gateway's candidates when it sent them
+ * (Codex dropped when its sign-in stopped working, moved last while it is at capacity), else verifierEngineOrder with
+ * verifierModel. Used by `verify` and its test.
+ */
+export function verifierCandidates(input: Pick<VerifyInput, 'candidates' | 'engine' | 'engines' | 'workerModel' | 'modelFloor'>, codex: { signedOut?: boolean; busy?: boolean } = {}): Array<{ engine: 'claude' | 'codex'; model: string; effort: string | null }> {
+  const resolve = (engine: 'claude' | 'codex', model: string | null, effort: string | null) => ({ engine, model: model ?? verifierModel(engine, { workerEngine: input.engine, workerModel: input.workerModel, floor: input.modelFloor[engine] }), effort });
+  if (!input.candidates) return verifierEngineOrder(input.engine, input.engines, codex).map((engine) => resolve(engine, null, null));
+  const usable = input.candidates.filter((c) => !(c.engine === 'codex' && codex.signedOut)).map((c) => resolve(c.engine, c.model, c.effort));
+  return codex.busy ? [...usable.filter((c) => c.engine !== 'codex'), ...usable.filter((c) => c.engine === 'codex')] : usable;
 }
 
 /** How long a Codex model at capacity sends the verifier to the other engine first. */
@@ -185,7 +203,7 @@ const VERIFY_BUDGET_MS = 11 * 60_000;
 const MIN_ENGINE_MS = 60_000;
 const VERIFIER_TOOLS = ['Read', 'Glob', 'Grep', 'Bash'];
 
-async function askClaude(prompt: string, cwd: string, model: string, systemPrompt: string, timeoutMs: number): Promise<string> {
+async function askClaude(prompt: string, cwd: string, model: string, effort: string | null, systemPrompt: string, timeoutMs: number): Promise<string> {
   let output = '';
   const abortController = new AbortController();
   const timer = setTimeout(() => abortController.abort(), timeoutMs);
@@ -193,7 +211,7 @@ async function askClaude(prompt: string, cwd: string, model: string, systemPromp
     const stream = query({
       prompt,
       options: {
-        cwd, maxTurns: 25, model, allowedTools: VERIFIER_TOOLS, tools: VERIFIER_TOOLS, permissionMode: 'bypassPermissions', systemPrompt,
+        cwd, maxTurns: 25, model, ...(effort ? { effort: effort as 'high' } : {}), allowedTools: VERIFIER_TOOLS, tools: VERIFIER_TOOLS, permissionMode: 'bypassPermissions', systemPrompt,
         // an internal side turn: no transcript, so it never shows up as a conversation in the user's project
         settingSources: [], persistSession: false, abortController,
       },
@@ -213,11 +231,11 @@ async function askClaude(prompt: string, cwd: string, model: string, systemPromp
  *  session indexer skips them (see lesson-curator.service.ts). */
 const SIDE_TURN_SOURCE = 'subagent';
 
-async function askCodex(prompt: string, cwd: string, model: string, systemPrompt: string, timeoutMs: number): Promise<string> {
+async function askCodex(prompt: string, cwd: string, model: string, effort: string | null, systemPrompt: string, timeoutMs: number): Promise<string> {
   const codex = new Codex({ config: { ...codexSandboxConfig(), developer_instructions: systemPrompt } as never });
   // reads and runs checks in the project; write access (where the host's sandbox allows it) only so build/test caches
   // work — the prompt forbids edits
-  const thread = codex.startThread({ threadSource: SIDE_TURN_SOURCE, workingDirectory: cwd, skipGitRepoCheck: true, sandboxMode: codexCheckSandboxMode(), approvalPolicy: 'never', model, modelReasoningEffort: 'high', webSearchMode: 'disabled' });
+  const thread = codex.startThread({ threadSource: SIDE_TURN_SOURCE, workingDirectory: cwd, skipGitRepoCheck: true, sandboxMode: codexCheckSandboxMode(), approvalPolicy: 'never', model, modelReasoningEffort: (effort ?? 'high') as 'high', webSearchMode: 'disabled' });
   const turn = await thread.run(prompt, { signal: AbortSignal.timeout(timeoutMs) }).catch((error: unknown) => { noteCodexTurnError(error); throw error; });
   return turn.finalResponse ?? '';
 }
@@ -231,17 +249,18 @@ export const runVerifierService = {
     const { sessionsService } = await import('@/modules/providers/index.js');
     const history = await sessionsService.fetchHistory(input.sessionId, { limit: 400, offset: 0 });
     const brief = buildVerificationBrief(history.messages as HistoryMessage[], { command: input.command, agent: input.agent, engine: input.engine, model: input.workerModel });
-    // the worker's other engine first; on the same engine the check runs as a different agent (verifierAgent)
-    const order = verifierEngineOrder(input.engine, input.engines, { signedOut: Boolean(currentCodexAuthFailure()), busy: codexBusyUntil > Date.now() });
+    // the gateway's candidates (verification order / provider policy) or the worker's other engine first; on the same
+    // engine the check runs as a different agent (verifierAgent). This runtime's own knowledge of Codex applies to both.
+    const codexState = { signedOut: Boolean(currentCodexAuthFailure()), busy: codexBusyUntil > Date.now() };
+    const order = verifierCandidates(input, codexState);
     const systemPrompt = verifierSystemPrompt(input.verifierAgent);
     let lastError: unknown = null;
     const deadline = Date.now() + VERIFY_BUDGET_MS;
-    for (const engine of order) {
+    for (const { engine, model, effort } of order) {
       const remaining = deadline - Date.now();
       if (remaining < MIN_ENGINE_MS) break;
-      const model = verifierModel(engine, { workerEngine: input.engine, workerModel: input.workerModel, floor: input.modelFloor[engine] });
       try {
-        const text = engine === 'claude' ? await askClaude(brief.text, cwd, model, systemPrompt, remaining) : await askCodex(brief.text, cwd, model, systemPrompt, remaining);
+        const text = engine === 'claude' ? await askClaude(brief.text, cwd, model, effort, systemPrompt, remaining) : await askCodex(brief.text, cwd, model, effort, systemPrompt, remaining);
         const parsed = parseVerification(text);
         const result: Verification = parsed
           ? { ...parsed, engine, model }

@@ -91,6 +91,12 @@ router.post('/verify', asyncHandler(async (req: Request, res: Response) => {
     depth: typeof body.depth === 'number' ? body.depth : null,
     modelFloor: { ...(typeof floor.claude === 'string' ? { claude: floor.claude } : {}), ...(typeof floor.codex === 'string' ? { codex: floor.codex } : {}) },
     verifierAgent: verifierAgent && typeof verifierAgent.name === 'string' && typeof verifierAgent.prompt === 'string' ? { name: verifierAgent.name, prompt: verifierAgent.prompt } : null,
+    // the gateway's verifier order (verification priority / provider policy); absent = this runtime's own order
+    candidates: Array.isArray(body.candidates) ? (body.candidates as unknown[]).flatMap((entry) => {
+      const c = entry && typeof entry === 'object' ? entry as Record<string, unknown> : {};
+      if (c.engine !== 'claude' && c.engine !== 'codex') return [];
+      return [{ engine: c.engine, model: typeof c.model === 'string' ? c.model.slice(0, 100) : null, effort: typeof c.effort === 'string' ? c.effort.slice(0, 20) : null }];
+    }) : null,
   });
   res.json(createApiSuccessResponse(result));
 }));

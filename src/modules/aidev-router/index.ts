@@ -41,9 +41,6 @@ export { ReturnCard } from '@/modules/aidev-router/ReturnCard';
 export { useUsageLimits, usageLimitView, formatTimeLeft } from '@/modules/aidev-router/hooks/useUsageLimits';
 export type { UsageLimitView, UsageWindowView } from '@/modules/aidev-router/hooks/useUsageLimits';
 export { UsageLimitPanel } from '@/modules/aidev-router/UsageLimitPanel';
-// 2026-10-09: the order engines are used in (workbench settings + mobile settings).
-export { useEnginePriority, PRIORITY_CHOICES, priorityKey } from '@/modules/aidev-router/hooks/useEnginePriority';
-export { EnginePriorityDefaults } from '@/modules/aidev-router/EnginePriorityDefaults';
 export type { NextAction } from '@/modules/aidev-router/api';
 // E-04: knowledge re-check and review (workbench catalog + mobile settings).
 export { useKnowledgeRefresh, knowledgeLabel, refreshSummary } from '@/modules/aidev-router/hooks/useKnowledgeRefresh';
@@ -51,13 +48,17 @@ export type { KnowledgeItem, KnowledgeProposal, KnowledgeRefreshJob } from '@/mo
 // Effort ceiling per engine (workbench router bar + mobile settings).
 export { useEffortCap, EFFORT_LABEL } from '@/modules/aidev-router/hooks/useEffortCap';
 export { useChatEffortCap } from '@/modules/aidev-router/hooks/useChatEffortCap';
-export { EffortCapDefaults } from '@/modules/aidev-router/EffortCapDefaults';
 // Model floor per engine (workbench settings/router bar + mobile settings/routing sheet) — 2026-10-07.
 export { useModelFloor, MODEL_LABEL } from '@/modules/aidev-router/hooks/useModelFloor';
 export { useChatModelFloor } from '@/modules/aidev-router/hooks/useChatModelFloor';
 // Independent verification of a finished run (worker ≠ verifier): the verdict card, both apps.
 export { VerificationCard } from '@/modules/aidev-router/VerificationCard';
 export type { RunVerification } from '@/modules/aidev-router/api';
+// 2026-10-13 provider policy: work/verification order, score index and each provider's range (workbench settings +
+// mobile settings).
+export { useProviderPolicy, moveInOrder, stepLabel, SCORE_INDEX_LABEL } from '@/modules/aidev-router/hooks/useProviderPolicy';
+export { ProviderPolicySettings } from '@/modules/aidev-router/ProviderPolicySettings';
+export type { ProviderPolicyView, ProviderPolicyEntry, ProviderPolicyPatch, PolicyStepView, ScoreIndex } from '@/modules/aidev-router/api';
 // F-08: the PC a chat's remote work goes to (router bar chip + mobile router sheet).
 export { useTargetChoice, targetChipView, TARGET_SOURCE_LABEL } from '@/modules/aidev-router/hooks/useTargetChoice';
 export type { RouteDevice, RouteTargetOption, RouteTargetSource } from '@/modules/aidev-router/api';

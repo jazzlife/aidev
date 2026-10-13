@@ -63,7 +63,8 @@ export type RouteResult = {
   agent: { id: number; name: string; version: number; domain: string; description: string; probability: number; confidence: number; definition: AgentDefinition };
   alternatives: Array<{ name: string; probability: number; description: string }>;
   needs_new: number;
-  plan: { engine: Engine | null; engine_locked: boolean; /** the chat is pinned to its engine by hand (2026-10-09) */ engine_pinned?: boolean; /** a higher-priority engine is usable again: the app should continue this chat there */ switch_back?: { engine: Engine; reason: string } | null; engine_error?: string | null; model: string | null; effort: string | null; target: RouteTarget; device?: RouteDevice; reason: string[] };
+  plan: { engine: Engine | null; engine_locked: boolean; /** the chat is pinned to its engine by hand (2026-10-09) */ engine_pinned?: boolean; /** a higher-priority engine is usable again: the app should continue this chat there */ switch_back?: { engine: Engine; reason: string } | null; engine_error?: string | null; model: string | null; effort: string | null; target: RouteTarget; device?: RouteDevice; reason: string[];
+    /** where the provider policy's split landed (2026-10-13; null = the tier table picked) */ step?: PolicyStepView | null };
   /** Laya's target.select / device.select, logged as their own decisions (an override is recorded on them). */
   target_decision?: { decision_id: number; answer: unknown; confidence: number; fallback: boolean } | null;
   device_decision?: { decision_id: number; answer: unknown; confidence: number; fallback: boolean } | null;
@@ -88,6 +89,32 @@ export type DecideResult = {
   latency_ms: number | null;
 };
 
+/** A provider policy's pick for one difficulty: the split's step, or the tier table's model/effort ('tier'). */
+export type PolicyStepView = { model: string; effort: string | null; score: number | null; q2: boolean; mode: 'score' | 'steps' | 'tier'; index?: number; total?: number; target?: number | null };
+/** Score index the split uses (Artificial Analysis). */
+export type ScoreIndex = 'coding' | 'intelligence' | 'agentic';
+/**
+ * One provider's range (PROVIDER-ENGINE-PLAN §2.1): ladder null = the tier table ('tier'); set = the split over
+ * model floor..ceiling × effort floor..ceiling ('split'). `preview` is what D0..D4 run at — computed by the gateway.
+ */
+export type ProviderPolicyEntry = {
+  mode: 'tier' | 'split';
+  ladder: string[] | null; floor: string | null; ceiling: string | null; effort_floor: string | null; effort_cap: string | null;
+  effort_ladder: string[];
+  preview: Array<PolicyStepView | null>;
+  catalog: Array<{ model: string; level: number; efforts: string[]; scores: Array<{ effort: string | null; score: number | null; estimated: boolean }> }>;
+};
+export type ProviderPolicyView = {
+  providers: Record<Engine, ProviderPolicyEntry>;
+  /** the work order ([] = the learned weights) and the verification order ([] = the worker's other provider first) */
+  work_priority: Engine[]; verify_priority: Engine[];
+  score_index: ScoreIndex;
+  /** attribution is required wherever the scores are shown */
+  scores_source: { name: string; url: string; version: string | null; synced_at: number | null };
+};
+/** A change to one provider's range; undefined keeps a value, null/'' clears it, reset returns to the tier table. */
+export type ProviderPolicyPatch = { engine: Engine; ladder?: string[] | null; floor?: string | null; ceiling?: string | null; effort_floor?: string | null; effort_cap?: string | null; reset?: boolean };
+
 export type EnginesResult = {
   engines: RouteResult['engines'];
   default_engine: Engine | null;
@@ -103,6 +130,8 @@ export type EnginesResult = {
   /** the order engines are used in ([] = the learned weights decide) */
   engine_priority?: Engine[];
   weights: Record<string, Record<Engine, number>>;
+  /** provider policy (2026-10-13) */
+  policy?: ProviderPolicyView;
 };
 
 export type CatalogAgent = {
@@ -398,6 +427,11 @@ export const aidevApi = {
   setEffortCap: (cap: Partial<Record<Engine, string>>) => post('/api/aidev/settings/effort-cap', cap, 'PUT').then((response) => readJson<{ effort_cap: Record<Engine, string> }>(response)),
   /** The account's model floor per engine ('' clears an engine's floor). */
   setModelFloor: (floor: Partial<Record<Engine, string>>) => post('/api/aidev/settings/model-floor', floor, 'PUT').then((response) => readJson<{ model_floor: Partial<Record<Engine, string>> }>(response)),
+  /** Provider policy: the whole view, one provider's range, the verification order, the score index. */
+  providerPolicy: () => authenticatedFetch('/api/aidev/settings/provider-policy').then((response) => readJson<ProviderPolicyView>(response)),
+  setProviderPolicy: (patch: ProviderPolicyPatch) => post('/api/aidev/settings/provider-policy', patch, 'PUT').then((response) => readJson<ProviderPolicyView>(response)),
+  setVerifyPriority: (order: Engine[] | null) => post('/api/aidev/settings/verify-priority', { order }, 'PUT').then((response) => readJson<ProviderPolicyView>(response)),
+  setScoreIndex: (index: ScoreIndex) => post('/api/aidev/settings/score-index', { index }, 'PUT').then((response) => readJson<ProviderPolicyView>(response)),
   /** The order engines are used in; null → the learned weights decide. */
   setEnginePriority: (order: Engine[] | null) => post('/api/aidev/settings/engine-priority', { order }, 'PUT').then((response) => readJson<{ engine_priority: Engine[] }>(response)),
   /** Pins a chat to an engine by hand (routing never moves it); null unpins. */

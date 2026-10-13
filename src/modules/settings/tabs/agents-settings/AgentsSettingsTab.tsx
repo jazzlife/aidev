@@ -4,7 +4,7 @@ import type { AgentCategory, AgentContextByProvider, AgentProvider, AgentSetting
 import AgentCategoryContentSection from '@/modules/settings/tabs/agents-settings/sections/AgentCategoryContentSection';
 import AgentCategoryTabsSection from '@/modules/settings/tabs/agents-settings/sections/AgentCategoryTabsSection';
 import AgentSelectorSection from '@/modules/settings/tabs/agents-settings/sections/AgentSelectorSection';
-import { EffortCapDefaults, EnginePriorityDefaults } from '@/modules/aidev-router';
+import { ProviderPolicySettings } from '@/modules/aidev-router';
 
 type ProviderAuthStatusByProvider = Record<AgentProvider, ProviderAuthStatus>;
 
@@ -84,7 +84,8 @@ export default function AgentsSettingsTab({
 
   return (
     <div className="-mx-4 -mb-4 -mt-2 flex min-h-[300px] min-w-0 flex-col overflow-hidden md:-mx-6 md:-mb-6 md:-mt-2 md:min-h-[500px]">
-      <div className="shrink-0 space-y-3 px-4 pb-3 pt-2 md:px-6"><EnginePriorityDefaults /><EffortCapDefaults /></div>
+      {/* the provider policy grows with its ranges: it scrolls on its own so the per-agent tabs below stay reachable */}
+      <div className="max-h-[45vh] shrink-0 space-y-3 overflow-y-auto px-4 pb-3 pt-2 md:px-6"><ProviderPolicySettings /></div>
       <AgentSelectorSection
         agents={visibleAgents}
         selectedAgent={selectedAgent}

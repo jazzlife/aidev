@@ -1,4 +1,5 @@
 import type Database from 'better-sqlite3';
+import { EFFORT_ORDER, effortRank, estimateScores, policyLadder, stepKey, cleanLadder, cleanOrder, type ProviderPolicy, type StepScores } from './provider-policy.js';
 
 /**
  * Routing / learning / remote-target tables (IMPLEMENTATION-PLAN §3.2). Everything that is
@@ -33,6 +34,10 @@ const validCap = (cap: Partial<Record<Engine, string>>) => {
   for (const e of ENGINES) if (cap[e] !== undefined && cap[e] !== null && !EFFORT_LADDER[e].includes(cap[e]!)) throw new Error(`${e} effort must be one of ${EFFORT_LADDER[e].join('|')}`);
   return cleanCap(cap);
 };
+/** Scores the split runs on (PROVIDER-ENGINE-PLAN §2.1): Artificial Analysis indexes, Coding by default. */
+export const SCORE_INDEXES = ['coding', 'intelligence', 'agentic'] as const;
+export type ScoreIndex = typeof SCORE_INDEXES[number];
+export type ModelScoreRow = { engine: string; model: string; effort: string; aa_ref: string | null; coding: number | null; intelligence: number | null; agentic: number | null; source: string; index_version: string | null; fetched_at: number | null; updated_at: number | null };
 export type TierPolicyRow = { domain: string; depth: number; engine: string; model: string | null; effort: string | null; success_n: number; fail_n: number; avg_ms: number | null; level: number | null; pinned: number; updated_at: number | null };
 export type LessonRow = { id: number; agent_id: number; engine: string | null; trigger: string; rule: string; evidence_run_id: number | null; status: string; hits: number; owner_id: number | null; promoted_to_prompt: number; fails: number; verified_by: string | null; promoted_version: number | null; created_at: number };
 export type CreateQueueRow = { id: number; user_id: number; name: string; domain: string; description: string; technologies: string; count: number; commands: string; status: string; created_at: number; updated_at: number };
@@ -182,6 +187,19 @@ export function migrateAidev(db: Database.Database) {
   // asks the apps to move a chat back to a higher engine once that engine is usable again.
   addColumn(db, 'accounts', 'engine_priority', 'TEXT');
   addColumn(db, 'session_settings', 'pinned_engine', 'TEXT');
+  // Provider policy (2026-10-13, PROVIDER-ENGINE-PLAN §3.1): per engine the model ceiling, the effort floor, the model
+  // ladder (set = the split decides, unset = the tier table), the verification order and the score index — JSON
+  // keyed by engine. The work order is engine_priority, the model floor model_floor, the effort ceiling effort_cap.
+  addColumn(db, 'accounts', 'model_ceiling', 'TEXT');
+  addColumn(db, 'accounts', 'effort_floor', 'TEXT');
+  addColumn(db, 'accounts', 'model_ladder', 'TEXT');
+  addColumn(db, 'accounts', 'verify_priority', 'TEXT');
+  addColumn(db, 'accounts', 'score_index', 'TEXT');
+  // Intelligence scores of (model, effort) combinations: Artificial Analysis (aa_ref = its model id or slug, synced
+  // daily) or an administrator's value (source 'admin', never overwritten by the sync).
+  db.exec(`CREATE TABLE IF NOT EXISTS model_scores (engine TEXT NOT NULL, model TEXT NOT NULL, effort TEXT NOT NULL DEFAULT '', aa_ref TEXT,
+    coding REAL, intelligence REAL, agentic REAL, source TEXT NOT NULL DEFAULT 'aa', index_version TEXT, fetched_at INTEGER, updated_at INTEGER,
+    PRIMARY KEY (engine, model, effort));`);
   // Independent verification of a finished run (worker ≠ verifier): the verifier's verdict (JSON).
   addColumn(db, 'runs', 'verification', 'TEXT');
   // A run the engine refused on a usage limit (2026-10-09): when the window resets (epoch ms; 0 = unknown).
@@ -241,6 +259,24 @@ export function migrateAidev(db: Database.Database) {
 
 export function aidevMethods(db: Database.Database) {
   let exampleVersion = 1;
+  /** A per-engine JSON column of accounts, keeping only valid entries (quietly: stored data). */
+  const readEngineJson = (userId: number, column: string, valid: (engine: Engine, value: unknown) => boolean) => {
+    const row = db.prepare(`SELECT ${column} AS v FROM accounts WHERE id=?`).get(userId) as { v: string | null } | undefined;
+    let saved: Record<string, unknown> = {};
+    try { saved = row?.v ? JSON.parse(row.v) as Record<string, unknown> : {}; } catch { saved = {}; }
+    return Object.fromEntries(ENGINES.filter((e) => saved[e] !== undefined && valid(e, saved[e])).map((e) => [e, saved[e]]));
+  };
+  const writeEngineJson = <T extends Record<string, unknown>>(userId: number, column: string, value: T) => {
+    db.prepare(`UPDATE accounts SET ${column}=? WHERE id=?`).run(Object.keys(value).length ? JSON.stringify(value) : null, userId);
+    return value;
+  };
+  /** Floor and ceiling must be on the ladder (the catalog when none is set), the floor not above the ceiling. */
+  const checkRange = (engine: Engine, ladder: string[] | null, floor: string | null, ceiling: string | null) => {
+    const order = policyLadder(engine, { ladder });
+    if (floor && !order.includes(floor)) throw new Error(`${engine} floor ${floor} is not on the ladder (${order.join(',')})`);
+    if (ceiling && !order.includes(ceiling)) throw new Error(`${engine} ceiling ${ceiling} is not on the ladder (${order.join(',')})`);
+    if (floor && ceiling && order.indexOf(floor) > order.indexOf(ceiling)) throw new Error(`${engine} floor ${floor} is above the ceiling ${ceiling}`);
+  };
   const m = {
     // ---- key/value + web push ---------------------------------------------
     kvGet(k: string) { return (db.prepare('SELECT v FROM app_kv WHERE k=?').get(k) as { v: string } | undefined)?.v ?? null; },
@@ -273,7 +309,7 @@ export function aidevMethods(db: Database.Database) {
     accountEngines(userId: number): { engines: Engine[]; defaultEngine: Engine | null; role: string } {
       const row = db.prepare('SELECT engines, default_engine, role FROM accounts WHERE id=?').get(userId) as { engines: string; default_engine: string | null; role: string } | undefined;
       const engines = (row?.engines ?? '').split(',').map((s) => s.trim()).filter((s): s is Engine => ENGINES.includes(s as Engine));
-      return { engines: engines.length ? engines : ['claude', 'codex'], defaultEngine: (row?.default_engine as Engine | null) ?? null, role: row?.role ?? 'user' };
+      return { engines: engines.length ? engines : [...ENGINES], defaultEngine: (row?.default_engine as Engine | null) ?? null, role: row?.role ?? 'user' };
     },
     setAccountEngines(username: string, engines: Engine[]) {
       const list = engines.filter((e) => ENGINES.includes(e));
@@ -286,7 +322,7 @@ export function aidevMethods(db: Database.Database) {
       const row = db.prepare('SELECT effort_cap FROM accounts WHERE id=?').get(userId) as { effort_cap: string | null } | undefined;
       let saved: Partial<Record<Engine, string>> = {};
       try { saved = row?.effort_cap ? JSON.parse(row.effort_cap) as Partial<Record<Engine, string>> : {}; } catch { saved = {}; }
-      return { claude: EFFORT_LADDER.claude.includes(saved.claude ?? '') ? saved.claude! : DEFAULT_EFFORT_CAP.claude, codex: EFFORT_LADDER.codex.includes(saved.codex ?? '') ? saved.codex! : DEFAULT_EFFORT_CAP.codex };
+      return Object.fromEntries(ENGINES.map((e) => [e, EFFORT_LADDER[e].includes(saved[e] ?? '') ? saved[e]! : DEFAULT_EFFORT_CAP[e]])) as Record<Engine, string>;
     },
     setEffortCap(userId: number, cap: Partial<Record<Engine, string>>) {
       const next = { ...m.effortCap(userId) };
@@ -294,6 +330,8 @@ export function aidevMethods(db: Database.Database) {
         const value = cap[engine];
         if (value === undefined) continue;
         if (!EFFORT_LADDER[engine].includes(value)) throw new Error(`${engine} effort must be one of ${EFFORT_LADDER[engine].join('|')}`);
+        const floor = m.effortFloor(userId)[engine];
+        if (floor && effortRank(value) < effortRank(floor)) throw new Error(`${engine} effort ceiling ${value} is below its floor ${floor}`);
         next[engine] = value;
       }
       db.prepare('UPDATE accounts SET effort_cap=? WHERE id=?').run(JSON.stringify(next), userId);
@@ -390,6 +428,7 @@ export function aidevMethods(db: Database.Database) {
         if (value === undefined) continue;
         if (value === null || value === '') { delete next[engine]; continue; }
         if (!MODEL_LADDER[engine].includes(value)) throw new Error(`${engine} model must be one of ${MODEL_LADDER[engine].join('|')}`);
+        checkRange(engine, m.modelLadder(userId)[engine] ?? null, value, m.modelCeiling(userId)[engine] ?? null);
         next[engine] = value;
       }
       db.prepare('UPDATE accounts SET model_floor=? WHERE id=?').run(Object.keys(next).length ? JSON.stringify(next) : null, userId);
@@ -419,6 +458,153 @@ export function aidevMethods(db: Database.Database) {
       const chat = { ...(sessionId ? m.sessionModelFloor(userId, sessionId) ?? {} : {}), ...(inline ? cleanFloor(inline) : {}) };
       return { floor: { ...account, ...chat } as Partial<Record<Engine, string>>, chat: Object.keys(chat).length ? chat : null, account };
     },
+    // ---- provider policy (PROVIDER-ENGINE-PLAN §2.1) -------------------------------------
+    /** The account's model ceiling per engine (none = the ladder's strongest). */
+    modelCeiling(userId: number): Partial<Record<Engine, string>> { return readEngineJson(userId, 'model_ceiling', (e, v) => typeof v === 'string' && MODEL_LADDER[e].includes(v)) as Partial<Record<Engine, string>>; },
+    /** The account's effort floor per engine (none = each model's lowest). */
+    effortFloor(userId: number): Partial<Record<Engine, string>> { return readEngineJson(userId, 'effort_floor', (_e, v) => typeof v === 'string' && effortRank(v) >= 0) as Partial<Record<Engine, string>>; },
+    /** The account's model ladder per engine: set = the split picks inside it, unset = the tier table. */
+    modelLadder(userId: number): Partial<Record<Engine, string[]>> { return readEngineJson(userId, 'model_ladder', (e, v) => { try { cleanLadder(e, v); return true; } catch { return false; } }) as Partial<Record<Engine, string[]>>; },
+    setModelCeiling(userId: number, patch: Partial<Record<Engine, string | null>>) {
+      const next = { ...m.modelCeiling(userId) };
+      for (const engine of ENGINES) {
+        const value = patch[engine];
+        if (value === undefined) continue;
+        if (value === null || value === '') { delete next[engine]; continue; }
+        if (!MODEL_LADDER[engine].includes(value)) throw new Error(`${engine} model must be one of ${MODEL_LADDER[engine].join('|')}`);
+        checkRange(engine, m.modelLadder(userId)[engine] ?? null, m.modelFloor(userId)[engine] ?? null, value);
+        next[engine] = value;
+      }
+      return writeEngineJson(userId, 'model_ceiling', next);
+    },
+    setEffortFloor(userId: number, patch: Partial<Record<Engine, string | null>>) {
+      const next = { ...m.effortFloor(userId) };
+      const cap = m.effortCap(userId);
+      for (const engine of ENGINES) {
+        const value = patch[engine];
+        if (value === undefined) continue;
+        if (value === null || value === '') { delete next[engine]; continue; }
+        if (effortRank(value) < 0) throw new Error(`${engine} effort must be one of ${EFFORT_ORDER.join('|')}`);
+        if (effortRank(value) > effortRank(cap[engine])) throw new Error(`${engine} effort floor ${value} is above its ceiling ${cap[engine]}`);
+        next[engine] = value;
+      }
+      return writeEngineJson(userId, 'effort_floor', next);
+    },
+    /** Sets (or with null clears: back to the tier table) the ladder of each engine given. */
+    setModelLadder(userId: number, patch: Partial<Record<Engine, string[] | null>>) {
+      const next = { ...m.modelLadder(userId) };
+      for (const engine of ENGINES) {
+        const value = patch[engine];
+        if (value === undefined) continue;
+        if (value === null) { delete next[engine]; continue; }
+        const ladder = cleanLadder(engine, value);
+        checkRange(engine, ladder, m.modelFloor(userId)[engine] ?? null, m.modelCeiling(userId)[engine] ?? null);
+        next[engine] = ladder;
+      }
+      return writeEngineJson(userId, 'model_ladder', next);
+    },
+    /**
+     * One provider's range in one step (the settings card): ladder, model floor/ceiling, effort floor/ceiling, checked
+     * as a whole so a new ladder can come with the floor and ceiling that fit it. undefined keeps a value, null clears it.
+     */
+    setProviderPolicy(userId: number, engine: Engine, patch: { ladder?: string[] | null; floor?: string | null; ceiling?: string | null; effortFloor?: string | null; effortCap?: string | null }) {
+      if (!ENGINES.includes(engine)) throw new Error(`engine must be one of ${ENGINES.join('|')}`);
+      const pick = <T>(value: T | null | undefined, current: T | null) => (value === undefined ? current : value === '' ? null : value);
+      const ladder = patch.ladder === undefined ? m.modelLadder(userId)[engine] ?? null : patch.ladder === null ? null : cleanLadder(engine, patch.ladder);
+      const floor = pick(patch.floor, m.modelFloor(userId)[engine] ?? null);
+      const ceiling = pick(patch.ceiling, m.modelCeiling(userId)[engine] ?? null);
+      const effortFloor = pick(patch.effortFloor, m.effortFloor(userId)[engine] ?? null);
+      const effortCap = patch.effortCap === undefined || patch.effortCap === null || patch.effortCap === '' ? m.effortCap(userId)[engine] : patch.effortCap;
+      for (const model of [floor, ceiling]) if (model && !MODEL_LADDER[engine].includes(model)) throw new Error(`${engine} model must be one of ${MODEL_LADDER[engine].join('|')}`);
+      checkRange(engine, ladder, floor, ceiling);
+      if (!EFFORT_LADDER[engine].includes(effortCap)) throw new Error(`${engine} effort must be one of ${EFFORT_LADDER[engine].join('|')}`);
+      if (effortFloor && effortRank(effortFloor) < 0) throw new Error(`${engine} effort must be one of ${EFFORT_ORDER.join('|')}`);
+      if (effortFloor && effortRank(effortFloor) > effortRank(effortCap)) throw new Error(`${engine} effort floor ${effortFloor} is above its ceiling ${effortCap}`);
+      const put = <T>(record: Partial<Record<Engine, T>>, value: T | null) => { const next = { ...record }; if (value === null) delete next[engine]; else next[engine] = value; return next; };
+      db.transaction(() => {
+        writeEngineJson(userId, 'model_ladder', put(m.modelLadder(userId), ladder));
+        writeEngineJson(userId, 'model_floor', put(m.modelFloor(userId), floor));
+        writeEngineJson(userId, 'model_ceiling', put(m.modelCeiling(userId), ceiling));
+        writeEngineJson(userId, 'effort_floor', put(m.effortFloor(userId), effortFloor));
+        db.prepare('UPDATE accounts SET effort_cap=? WHERE id=?').run(JSON.stringify({ ...m.effortCap(userId), [engine]: effortCap }), userId);
+      })();
+      return m.providerPolicy(userId, engine);
+    },
+    /** The order providers verify in ([] = none set: the worker's other provider first). */
+    verifyPriority(userId: number): Engine[] {
+      const row = db.prepare('SELECT verify_priority FROM accounts WHERE id=?').get(userId) as { verify_priority: string | null } | undefined;
+      try { return row?.verify_priority ? cleanOrder(JSON.parse(row.verify_priority)) : []; } catch { return []; }
+    },
+    setVerifyPriority(userId: number, order: Engine[] | null) {
+      const clean = order && order.length ? cleanOrder(order) : [];
+      db.prepare('UPDATE accounts SET verify_priority=? WHERE id=?').run(clean.length ? JSON.stringify(clean) : null, userId);
+      return clean;
+    },
+    /** The score index the split uses (Artificial Analysis; Coding by default). */
+    scoreIndex(userId: number): ScoreIndex {
+      const row = db.prepare('SELECT score_index FROM accounts WHERE id=?').get(userId) as { score_index: string | null } | undefined;
+      return SCORE_INDEXES.includes(row?.score_index as ScoreIndex) ? row!.score_index as ScoreIndex : 'coding';
+    },
+    setScoreIndex(userId: number, index: string | null) {
+      if (index !== null && !SCORE_INDEXES.includes(index as ScoreIndex)) throw new Error(`index must be one of ${SCORE_INDEXES.join('|')}`);
+      db.prepare('UPDATE accounts SET score_index=? WHERE id=?').run(index === 'coding' ? null : index, userId);
+      return m.scoreIndex(userId);
+    },
+    /**
+     * The range routing picks a provider's model and effort in: the ladder (null = tier table), the floor (chat over
+     * account), the account ceiling, the effort floor and the effort ceiling (chat over account). A chat floor above
+     * the account ceiling lifts the ceiling with it; an effort floor above a chat's effort ceiling drops to it.
+     */
+    providerPolicy(userId: number, engine: Engine, sessionId?: string | null, inline?: { modelFloor?: Partial<Record<Engine, string>> | null; effortCap?: Partial<Record<Engine, string>> | null }): ProviderPolicy {
+      const ladder = m.modelLadder(userId)[engine] ?? null;
+      const floor = m.effectiveModelFloor(userId, sessionId, inline?.modelFloor).floor[engine] ?? null;
+      let ceiling = m.modelCeiling(userId)[engine] ?? null;
+      const effortCap = m.effectiveEffortCap(userId, sessionId, inline?.effortCap).cap[engine] ?? null;
+      let effortFloor = m.effortFloor(userId)[engine] ?? null;
+      const order = policyLadder(engine, { ladder });
+      if (floor && ceiling && order.indexOf(floor) > order.indexOf(ceiling)) ceiling = floor;
+      if (effortFloor && effortCap && effortRank(effortFloor) > effortRank(effortCap)) effortFloor = effortCap;
+      return { ladder, floor, ceiling, effortFloor, effortCap };
+    },
+    // ---- intelligence scores (Artificial Analysis) ---------------------------------------
+    modelScoreRows(): ModelScoreRow[] { return db.prepare('SELECT * FROM model_scores ORDER BY engine, model, effort').all() as ModelScoreRow[]; },
+    /** Which Artificial Analysis model (id or slug) a combination is (null clears the mapping). */
+    setModelScoreRef(engine: Engine, model: string, effort: string | null, aaRef: string | null) {
+      db.prepare(`INSERT INTO model_scores(engine,model,effort,aa_ref,updated_at) VALUES(?,?,?,?,?) ON CONFLICT(engine,model,effort) DO UPDATE SET aa_ref=excluded.aa_ref, updated_at=excluded.updated_at`)
+        .run(engine, model, effort ?? '', aaRef, Date.now());
+    },
+    /** An administrator's scores for a combination (never overwritten by the sync); null hands it back to the sync. */
+    setModelScoreManual(engine: Engine, model: string, effort: string | null, scores: Partial<Record<ScoreIndex, number>> | null) {
+      const now = Date.now();
+      if (!scores) { db.prepare("UPDATE model_scores SET source='aa', coding=NULL, intelligence=NULL, agentic=NULL, updated_at=? WHERE engine=? AND model=? AND effort=?").run(now, engine, model, effort ?? ''); return; }
+      for (const value of Object.values(scores)) if (typeof value !== 'number' || !Number.isFinite(value) || value < 0 || value > 100) throw new Error('scores must be 0-100');
+      db.prepare(`INSERT INTO model_scores(engine,model,effort,coding,intelligence,agentic,source,updated_at) VALUES(?,?,?,?,?,?,'admin',?) ON CONFLICT(engine,model,effort)
+        DO UPDATE SET coding=excluded.coding, intelligence=excluded.intelligence, agentic=excluded.agentic, source='admin', updated_at=excluded.updated_at`)
+        .run(engine, model, effort ?? '', scores.coding ?? null, scores.intelligence ?? null, scores.agentic ?? null, now);
+    },
+    /** One sync's results, written together (a version change never leaves old and new scores mixed). */
+    applySyncedScores(rows: Array<{ engine: string; model: string; effort: string; coding: number | null; intelligence: number | null; agentic: number | null }>, version: string) {
+      const now = Date.now();
+      const up = db.prepare("UPDATE model_scores SET coding=?, intelligence=?, agentic=?, index_version=?, fetched_at=? WHERE engine=? AND model=? AND effort=? AND source='aa'");
+      db.transaction(() => {
+        for (const r of rows) up.run(r.coding, r.intelligence, r.agentic, version, now, r.engine, r.model, r.effort);
+        m.kvSet('aa.index_version', version); m.kvSet('aa.synced_at', String(now));
+      })();
+    },
+    /**
+     * The scores the split uses for an engine on an index: administrator values, and synced values of the current index
+     * version; the gaps between a model's efforts are estimated (provider-policy estimateScores).
+     */
+    stepScores(engine: Engine, index: ScoreIndex): { scores: StepScores; estimated: Set<string> } {
+      const version = m.kvGet('aa.index_version');
+      const known: StepScores = new Map();
+      for (const row of db.prepare('SELECT * FROM model_scores WHERE engine=?').all(engine) as ModelScoreRow[]) {
+        const value = row[index];
+        if (value === null || (row.source === 'aa' && row.index_version !== version)) continue;
+        known.set(stepKey(row.model, row.effort || null), value);
+      }
+      return estimateScores(engine, known);
+    },
     setDefaultEngine(username: string, engine: Engine | null) {
       if (engine && !ENGINES.includes(engine)) throw new Error(`engine must be one of ${ENGINES.join(',')}`);
       const r = db.prepare('UPDATE accounts SET default_engine=? WHERE username=?').run(engine, username);
@@ -437,12 +623,12 @@ export function aidevMethods(db: Database.Database) {
     },
     engineWeights() {
       const out: Record<string, Record<Engine, number>> = {};
-      for (const r of db.prepare('SELECT * FROM engine_weights').all() as Array<{ task_kind: string; engine: Engine; weight: number }>) (out[r.task_kind] ??= { claude: 0.5, codex: 0.5 })[r.engine] = r.weight;
+      for (const r of db.prepare('SELECT * FROM engine_weights').all() as Array<{ task_kind: string; engine: Engine; weight: number }>) (out[r.task_kind] ??= Object.fromEntries(ENGINES.map((e) => [e, 0.5])) as Record<Engine, number>)[r.engine] = r.weight;
       return out;
     },
     /** Administrator edit: the value becomes the prior too (learning is smoothed toward it); `pinned` stops learning. */
     setEngineWeight(taskKind: string, engine: Engine, weight: number, opts: { pinned?: boolean; actor?: string } = {}) {
-      if (!ENGINES.includes(engine)) throw new Error('engine must be claude|codex');
+      if (!ENGINES.includes(engine)) throw new Error(`engine must be ${ENGINES.join('|')}`);
       const w = Math.max(0, Math.min(1, weight));
       const cur = db.prepare('SELECT weight FROM engine_weights WHERE task_kind=? AND engine=?').get(taskKind, engine) as { weight: number } | undefined;
       db.prepare(`INSERT INTO engine_weights(task_kind,engine,weight,prior,pinned,updated_at) VALUES(?,?,?,?,?,?) ON CONFLICT(task_kind,engine)
@@ -462,7 +648,7 @@ export function aidevMethods(db: Database.Database) {
     engineWeightLog(limit = 50) { return db.prepare('SELECT * FROM engine_weight_log ORDER BY id DESC LIMIT ?').all(limit) as Array<Record<string, unknown>>; },
     /** Finished runs with a clear outcome since `since`, per task kind and engine (weight learning input). */
     engineRuns(since: number) {
-      return db.prepare("SELECT task_kind, engine, outcome, started_at, finished_at FROM runs WHERE started_at >= ? AND outcome IN ('success','fail') AND task_kind IS NOT NULL AND engine IN ('claude','codex')").all(since) as Array<{ task_kind: string; engine: Engine; outcome: string; started_at: number; finished_at: number | null }>;
+      return db.prepare(`SELECT task_kind, engine, outcome, started_at, finished_at FROM runs WHERE started_at >= ? AND outcome IN ('success','fail') AND task_kind IS NOT NULL AND engine IN (${ENGINES.map(() => '?').join(',')})`).all(since, ...ENGINES) as Array<{ task_kind: string; engine: Engine; outcome: string; started_at: number; finished_at: number | null }>;
     },
     tierPolicy(domain: string, depth: number, engine: Engine) {
       return db.prepare('SELECT * FROM tier_policy WHERE domain IN (?, \'*\') AND depth=? AND engine=? ORDER BY domain=\'*\' LIMIT 1').get(domain, depth, engine) as { model: string | null; effort: string | null; success_n: number; fail_n: number; avg_ms: number | null; level: number | null } | undefined;

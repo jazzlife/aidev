@@ -20,7 +20,9 @@ import { launchCommand, validateLaunch, type DebugHub } from './debug-hub.js';
 import type { ConsoleHub } from './console-hub.js';
 import { ShipError, type PlatformShip } from './platform-ship.js';
 import { GithubOauthError, type GithubOauth } from './github-oauth.js';
-import { applyModelFloor, ARCHITECT_MIN_DEPTH, evaluateJudge, evaluateRouting, prejudge, route, runTeachesAgent, TIER_TABLE, type EngineAvailability, type JudgeVerdict, type RouteInput, type SpecialistJudge } from './routing.js';
+import { applyEffortCap, applyModelFloor, ARCHITECT_MIN_DEPTH, evaluateJudge, evaluateRouting, prejudge, route, runTeachesAgent, splitTier, TIER_TABLE, type EngineAvailability, type JudgeVerdict, type RouteInput, type SpecialistJudge } from './routing.js';
+import { MODEL_CATALOG, policySteps, previewPolicy, stepKey } from './provider-policy.js';
+import { syncModelScores } from './model-scores.js';
 /** Hard limit of one judge call in the runtime; a send waits less (routing.ts AIDEV_JUDGE_WAIT_MS) and the rest is cached. */
 const JUDGE_TIMEOUT_MS = Number(process.env.AIDEV_JUDGE_TIMEOUT_MS ?? 60_000);
 
@@ -115,7 +117,7 @@ export function createAidevApi(deps: AidevDeps) {
   async function engineAvailability(session: Session, force = false): Promise<EngineAvailability> {
     const acct = store.accountEngines(session.user.id);
     const cached = Object.fromEntries(store.engineStatus(session.user.id).map((r) => [r.engine, r]));
-    const out = { claude: { allowed: false, authenticated: false, error: null, limited_until: null }, codex: { allowed: false, authenticated: false, error: null, limited_until: null } } as EngineAvailability;
+    const out = Object.fromEntries(ENGINES.map((e) => [e, { allowed: false, authenticated: false, error: null, limited_until: null }])) as EngineAvailability;
     await Promise.all(ENGINES.map(async (engine) => {
       out[engine].allowed = acct.engines.includes(engine);
       if (!out[engine].allowed) return;
@@ -139,7 +141,62 @@ export function createAidevApi(deps: AidevDeps) {
   }
 
   /** D-05: engines the account may use and is signed in to — side turns (judge, curation) stay inside them. */
-  const usableEngines = (engines: EngineAvailability) => (['claude', 'codex'] as const).filter((e) => engines[e].allowed && engines[e].authenticated);
+  const usableEngines = (engines: EngineAvailability) => ENGINES.filter((e) => engines[e]?.allowed && engines[e]?.authenticated);
+  /** Per-engine values from a request body ({claude: …, codex: …}): every known engine, strings only. */
+  const perEngine = (body: unknown, max: number, nullable = false) => {
+    const b = body && typeof body === 'object' ? body as Record<string, unknown> : {};
+    return Object.fromEntries(ENGINES.map((e) => [e, nullable && (b[e] === null || b[e] === '') ? null : optStr(b[e], max)])) as Partial<Record<Engine, string | null>>;
+  };
+
+  /**
+   * The provider policy as the settings read it (PROVIDER-ENGINE-PLAN §3.2): per engine the range (ladder: null = the
+   * tier table), what D0..D4 run at under it (split or table), the models and efforts to choose from and their scores.
+   */
+  function policyView(uid: number) {
+    const index = store.scoreIndex(uid);
+    const providers = Object.fromEntries(ENGINES.map((engine) => {
+      const policy = store.providerPolicy(uid, engine);
+      const { scores, estimated } = store.stepScores(engine, index);
+      // the table's own D0..D4 when no ladder is set (model floor and effort ceiling applied, as routing does)
+      const preview = policy.ladder ? previewPolicy(engine, policy, scores).map((p) => (p ? { model: p.model, effort: p.effort, score: p.score, q2: p.q2, mode: p.mode } : null))
+        : [0, 1, 2, 3, 4].map((depth) => { const tier = { ...TIER_TABLE[depth][engine] }; applyModelFloor(engine, tier, policy.floor); return { model: tier.model, effort: applyEffortCap(tier.effort, depth, engine, policy.effortCap ?? ''), score: null, q2: false, mode: 'tier' }; });
+      const catalog = MODEL_CATALOG[engine].map((m) => ({ ...m, scores: (m.efforts.length ? m.efforts : [null]).map((effort) => ({ effort, score: scores.get(stepKey(m.model, effort)) ?? null, estimated: estimated.has(stepKey(m.model, effort)) })) }));
+      return [engine, { mode: policy.ladder ? 'split' : 'tier', ladder: policy.ladder, floor: policy.floor, ceiling: policy.ceiling, effort_floor: policy.effortFloor, effort_cap: policy.effortCap, effort_ladder: EFFORT_LADDER[engine], preview, catalog }];
+    }));
+    const synced = Number(store.kvGet('aa.synced_at') ?? 0);
+    return { providers, work_priority: store.enginePriority(uid), verify_priority: store.verifyPriority(uid), score_index: index,
+      scores_source: { name: 'Artificial Analysis', url: 'https://artificialanalysis.ai', version: store.kvGet('aa.index_version'), synced_at: synced || null } };
+  }
+
+  /**
+   * The verifier's candidates (PROVIDER-ENGINE-PLAN §2.4) once the account set a verification order or a provider
+   * policy: that order as set (none: the worker's other providers in the work order, then the worker's), each at
+   * max(depth, 3) in its range — on the worker's own provider never below the worker's step. A provider without a
+   * ladder sends no model (the runtime's verifierModel). null = neither is set: the runtime keeps its own order.
+   */
+  function verifyCandidates(uid: number, run: RunRow, engines: Engine[]) {
+    const verifyOrder = store.verifyPriority(uid);
+    const ladders = store.modelLadder(uid);
+    if (!verifyOrder.length && !engines.some((e) => ladders[e])) return null;
+    const worker = ENGINES.includes(run.engine as Engine) ? run.engine as Engine : null;
+    const workOrder = [...new Set([...store.enginePriority(uid), ...ENGINES])];
+    const order = verifyOrder.length ? verifyOrder.filter((e) => engines.includes(e))
+      : [...workOrder.filter((e) => e !== worker && engines.includes(e)), ...(worker && engines.includes(worker) ? [worker] : [])];
+    const need = Math.max(Math.round(run.depth ?? 0), 3);
+    return order.map((engine) => {
+      const step = splitTier(store, uid, engine, need, run.session_id);
+      if (!step) return { engine, model: null as string | null, effort: null as string | null };
+      let pick: { model: string; effort: string | null } = step;
+      if (engine === worker) {
+        const policy = store.providerPolicy(uid, engine, run.session_id);
+        const steps = policySteps(engine, policy, store.stepScores(engine, store.scoreIndex(uid)).scores);
+        const own = steps.findIndex((s) => s.model === run.model && (s.effort ?? null) === (run.effort ?? null));
+        const stronger = own >= 0 && (steps[own].score !== null && step.score !== null ? steps[own].score! > step.score : own > step.index);
+        if (stronger) pick = steps[own];
+      }
+      return { engine, model: pick.model, effort: pick.effort };
+    });
+  }
 
   /** The specialist judge runs in the user's runtime (their Claude/Codex login); off when no engine is usable. */
   function judgeFor(session: Session, engines: EngineAvailability, only?: Engine): SpecialistJudge | undefined {
@@ -262,8 +319,9 @@ export function createAidevApi(deps: AidevDeps) {
     const floor = store.effectiveModelFloor(uid, run.session_id).floor;
     let verdict: Verification;
     try {
+      const candidates = verifyCandidates(uid, run, engines);
       const response = await deps.runtimeFetch(session, '/api/aidev-tools/verify', { method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ session_id: run.session_id, run_id: run.id, agent: agent.name, engine: run.engine, engines, command: decisionRow?.command ?? null, worker_model: run.model, depth: run.depth, model_floor: floor, verifier_agent: verifierAgentFor(uid, agent) }) }, VERIFY_TIMEOUT_MS);
+        body: JSON.stringify({ session_id: run.session_id, run_id: run.id, agent: agent.name, engine: run.engine, engines, command: decisionRow?.command ?? null, worker_model: run.model, depth: run.depth, model_floor: floor, verifier_agent: verifierAgentFor(uid, agent), ...(candidates ? { candidates } : {}) }) }, VERIFY_TIMEOUT_MS);
       const body = await response.json().catch(() => ({})) as { data?: Omit<Verification, 'at'>; error?: string };
       verdict = response.ok && body.data ? { ...body.data, at: Date.now() } : unclear(`검증을 실행하지 못했습니다: ${body.error ?? response.status}`);
     } catch (error) {
@@ -312,15 +370,18 @@ export function createAidevApi(deps: AidevDeps) {
     if (!architect || designing.has(key) || store.agent(uid, create.proposal.name)) return;
     // the account's engine order (none set: Claude first — its web tools), skipping signed-out and usage-limited engines (D-05)
     const usable = usableEngines(availability).filter((engine) => !availability[engine].limited_until);
-    const order = [...new Set([...store.enginePriority(uid), 'claude', 'codex'] as Engine[])].filter((engine) => usable.includes(engine));
+    // with a work order only its providers design (Q1: the order is kept); without one the catalog order follows it
+    const priority = store.enginePriority(uid);
+    const order = (priority.length ? priority : ENGINES).filter((engine) => usable.includes(engine));
     if (!order.length) { console.warn(`[aidev] design ${create.proposal.name}: no usable engine`); return; }
     const floor = store.effectiveModelFloor(uid, sessionId).floor;
     designing.add(key);
     try {
       for (const engine of order) {
-        // agent design is D3 work (routing ARCHITECT_MIN_DEPTH), never below the user's model floor
-        const tier = { ...TIER_TABLE[ARCHITECT_MIN_DEPTH][engine] };
-        applyModelFloor(engine, tier, floor[engine]);
+        // agent design is D3 work (routing ARCHITECT_MIN_DEPTH): the provider policy's pick, else the table never below the floor
+        const step = splitTier(store, uid, engine, ARCHITECT_MIN_DEPTH, sessionId);
+        const tier = step ? { model: step.model, effort: step.effort } : { ...TIER_TABLE[ARCHITECT_MIN_DEPTH][engine] };
+        if (!step) applyModelFloor(engine, tier, floor[engine]);
         try {
           const response = await deps.runtimeFetch(session, '/api/aidev-tools/design-agent', { method: 'POST', headers: { 'content-type': 'application/json' },
             body: JSON.stringify({ command, proposal: create.proposal, catalog: create.catalog, prompt: architect.prompt, tools: architect.tools ? JSON.parse(architect.tools) as string[] : null, max_turns: architect.max_turns, engine, model: tier.model, session_id: sessionId }) }, DESIGN_TIMEOUT_MS);
@@ -379,8 +440,8 @@ export function createAidevApi(deps: AidevDeps) {
         const input: RouteInput = { text: str(b.text, 'text', 32000), sessionId: optStr(b.sessionId, 200), sessionEngine: ENGINES.includes(b.sessionEngine as Engine) ? b.sessionEngine as Engine : null,
           preferEngine: ENGINES.includes(b.preferEngine as Engine) ? b.preferEngine as Engine : null, targetId: b.targetId === undefined || b.targetId === null ? null : num(b.targetId, 'targetId'),
           forceAgent: optStr(b.forceAgent, 41) ?? null, createProposal: b.createProposal === undefined || b.createProposal === null ? null : num(b.createProposal, 'createProposal'), projectHint: optStr(b.projectHint, 400), recentFiles: Array.isArray(b.recentFiles) ? (b.recentFiles as unknown[]).map(String).slice(0, 10) : null, model: optStr(b.model, 100), effort: optStr(b.effort, 20),
-          effortCap: b.effortCap && typeof b.effortCap === 'object' ? { claude: optStr((b.effortCap as Record<string, unknown>).claude, 20), codex: optStr((b.effortCap as Record<string, unknown>).codex, 20) } as Partial<Record<Engine, string>> : null,
-          modelFloor: b.modelFloor && typeof b.modelFloor === 'object' ? { claude: optStr((b.modelFloor as Record<string, unknown>).claude, 40), codex: optStr((b.modelFloor as Record<string, unknown>).codex, 40) } as Partial<Record<Engine, string>> : null };
+          effortCap: b.effortCap && typeof b.effortCap === 'object' ? perEngine(b.effortCap, 20) as Partial<Record<Engine, string>> : null,
+          modelFloor: b.modelFloor && typeof b.modelFloor === 'object' ? perEngine(b.modelFloor, 40) as Partial<Record<Engine, string>> : null };
         const engines = await engineAvailability(session);
         const judge = judgeFor(session, engines);
         // the send waits for the judge (Codex alone answers in 12–28 s): no specialist is used without its verdict
@@ -419,7 +480,7 @@ export function createAidevApi(deps: AidevDeps) {
       if (sessFloorMatch && (m === 'PUT' || m === 'DELETE')) {
         const b = m === 'PUT' ? await readJson(req) : {};
         try {
-          const floor = m === 'DELETE' ? null : { claude: b.claude === null ? undefined : optStr(b.claude, 40), codex: b.codex === null ? undefined : optStr(b.codex, 40) };
+          const floor = m === 'DELETE' ? null : Object.fromEntries(ENGINES.map((e) => [e, b[e] === null ? undefined : optStr(b[e], 40)])) as Partial<Record<Engine, string>>;
           const saved = store.setSessionModelFloor(uid, sessFloorMatch[1], floor);
           const info = store.effectiveModelFloor(uid, sessFloorMatch[1]);
           return json(res, 200, { model_floor: saved, default: info.account, effective: info.floor }), true;
@@ -433,7 +494,7 @@ export function createAidevApi(deps: AidevDeps) {
         if (m === 'PUT' || m === 'DELETE') {
           const b = m === 'PUT' ? await readJson(req) : {};
           try {
-            const cap = m === 'DELETE' ? null : { claude: b.claude === null ? undefined : optStr(b.claude, 20), codex: b.codex === null ? undefined : optStr(b.codex, 20) };
+            const cap = m === 'DELETE' ? null : Object.fromEntries(ENGINES.map((e) => [e, b[e] === null ? undefined : optStr(b[e], 20)])) as Partial<Record<Engine, string>>;
             const saved = store.setSessionEffortCap(uid, sid, cap);
             const info = store.effectiveEffortCap(uid, sid);
             return json(res, 200, { effort_cap: saved, default: info.account, effective: info.cap }), true;
@@ -590,7 +651,7 @@ export function createAidevApi(deps: AidevDeps) {
       if (rest === '/engines' && m === 'GET') {
         const acct = store.accountEngines(uid);
         // ?refresh=1 right after an in-app login, so the next route sees the engine at once
-        return json(res, 200, { engines: await engineAvailability(session, url.searchParams.get('refresh') === '1'), default_engine: acct.defaultEngine, role: acct.role, weights: store.engineWeights(), effort_cap: store.effortCap(uid), effort_ladder: EFFORT_LADDER, model_floor: store.modelFloor(uid), model_ladder: MODEL_LADDER, engine_priority: store.enginePriority(uid), verification: store.kvGet('run_verification') !== 'off' }), true;
+        return json(res, 200, { engines: await engineAvailability(session, url.searchParams.get('refresh') === '1'), default_engine: acct.defaultEngine, role: acct.role, weights: store.engineWeights(), effort_cap: store.effortCap(uid), effort_ladder: EFFORT_LADDER, model_floor: store.modelFloor(uid), model_ladder: MODEL_LADDER, engine_priority: store.enginePriority(uid), verification: store.kvGet('run_verification') !== 'off', policy: policyView(uid) }), true;
       }
       // the order engines are used in (null / [] → the learned weights decide)
       if (rest === '/settings/engine-priority' && m === 'PUT') {
@@ -604,15 +665,56 @@ export function createAidevApi(deps: AidevDeps) {
       if (rest === '/settings/model-floor' && m === 'PUT') {
         const b = await readJson(req);
         const value = (v: unknown) => (v === null || v === '' ? null : optStr(v, 40));
-        try { return json(res, 200, { model_floor: store.setModelFloor(uid, { claude: value(b.claude), codex: value(b.codex) }) }), true; }
+        try { return json(res, 200, { model_floor: store.setModelFloor(uid, Object.fromEntries(ENGINES.map((e) => [e, value(b[e])])) as Partial<Record<Engine, string | null>>) }), true; }
         catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid model'); }
       }
       // the user's effort ceiling per engine (own subscription usage, so every user sets their own)
       if (rest === '/settings/effort-cap' && m === 'PUT') {
         const b = await readJson(req);
-        try { return json(res, 200, { effort_cap: store.setEffortCap(uid, { claude: optStr(b.claude, 20), codex: optStr(b.codex, 20) }) }), true; }
+        try { return json(res, 200, { effort_cap: store.setEffortCap(uid, perEngine(b, 20) as Partial<Record<Engine, string>>) }), true; }
         catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid effort'); }
       }
+      // ---- provider policy (PROVIDER-ENGINE-PLAN §3.2): one provider's range, the verification order, the score index
+      if (rest === '/settings/provider-policy' && m === 'GET') return json(res, 200, policyView(uid)), true;
+      if (rest === '/settings/provider-policy' && m === 'PUT') {
+        const b = await readJson(req);
+        const engine = str(b.engine, 'engine', 20) as Engine;
+        const field = (v: unknown) => (v === undefined ? undefined : v === null || v === '' ? null : optStr(v, 100));
+        try {
+          if (b.reset === true) store.setProviderPolicy(uid, engine, { ladder: null, ceiling: null, effortFloor: null });   // back to the tier table
+          else store.setProviderPolicy(uid, engine, { ladder: b.ladder === undefined ? undefined : b.ladder === null ? null : b.ladder as string[], floor: field(b.floor), ceiling: field(b.ceiling), effortFloor: field(b.effort_floor), effortCap: field(b.effort_cap) });
+        } catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid policy'); }
+        return json(res, 200, policyView(uid)), true;
+      }
+      if (rest === '/settings/verify-priority' && m === 'PUT') {
+        const b = await readJson(req);
+        try { store.setVerifyPriority(uid, b.order === null || b.order === undefined ? null : b.order as Engine[]); }
+        catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid engines'); }
+        return json(res, 200, policyView(uid)), true;
+      }
+      if (rest === '/settings/score-index' && m === 'PUT') {
+        const b = await readJson(req);
+        try { store.setScoreIndex(uid, b.index === null || b.index === undefined ? null : String(b.index)); }
+        catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid index'); }
+        return json(res, 200, policyView(uid)), true;
+      }
+      // the score rows and their Artificial Analysis mapping (admin); the API key is never returned
+      if (rest === '/model-scores' && m === 'GET') {
+        requireAdmin(session);
+        return json(res, 200, { rows: store.modelScoreRows(), version: store.kvGet('aa.index_version'), synced_at: Number(store.kvGet('aa.synced_at') ?? 0) || null, key_set: Boolean(store.kvGet('aa.api_key')) }), true;
+      }
+      if (rest === '/model-scores' && m === 'PUT') {
+        requireAdmin(session);
+        const b = await readJson(req);
+        const engine = str(b.engine, 'engine', 20) as Engine; const model = str(b.model, 'model', 100); const effort = b.effort === null || b.effort === undefined || b.effort === '' ? null : str(b.effort, 'effort', 20);
+        if (!ENGINES.includes(engine) || !MODEL_CATALOG[engine].some((x) => x.model === model && (effort === null ? !x.efforts.length : x.efforts.includes(effort)))) throw new HttpError(400, 'unknown model/effort for that engine');
+        try {
+          if (b.aa_ref !== undefined) store.setModelScoreRef(engine, model, effort, b.aa_ref === null || b.aa_ref === '' ? null : str(b.aa_ref, 'aa_ref', 200));
+          if (b.scores !== undefined) store.setModelScoreManual(engine, model, effort, b.scores === null ? null : b.scores as Record<string, number>);
+        } catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid scores'); }
+        return json(res, 200, { rows: store.modelScoreRows() }), true;
+      }
+      if (rest === '/model-scores/sync' && m === 'POST') { requireAdmin(session); return json(res, 200, await syncModelScores(store)), true; }
       if (rest === '/engines/weights' && m === 'PUT') {
         requireAdmin(session);
         const b = await readJson(req);

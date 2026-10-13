@@ -1,8 +1,8 @@
 import { useEffect, useState } from 'react';
 
 import { api } from '@/shared/api';
-import { aidevApi, claudeAuth, PRIORITY_CHOICES, priorityKey, routingStore, useClaudeAuth, useEnginePriority, useRoutingState, type EnginesResult, type RoutingMode } from '@/modules/aidev-router';
-import { EffortCapControl } from '@m/components/EffortCapControl';
+import { aidevApi, claudeAuth, routingStore, useClaudeAuth, useRoutingState, type EnginesResult, type RoutingMode } from '@/modules/aidev-router';
+import { ProviderPolicySection } from '@m/components/ProviderPolicySection';
 import { ClaudeLoginSheet } from '@m/components/ClaudeLoginSheet';
 import { KnowledgeSection } from '@m/components/KnowledgeSection';
 import { DefaultPermissionSection, GithubSection, PermissionRulesSection, VoiceSection } from '@m/components/SettingsSections';
@@ -27,8 +27,6 @@ export function SettingsScreen() {
   const [githubNotice] = useState(takeGithubReturn);
   const [engines, setEngines] = useState<EnginesResult | null>(null);
   const auth = useClaudeAuth();
-  // the order engines are used in (shared with the workbench settings)
-  const priority = useEnginePriority();
   const [push, setPush] = useState<PushState | null>(null);
   const [pushBusy, setPushBusy] = useState(false);
   const [pushNote, setPushNote] = useState<string | null>(null);
@@ -82,8 +80,8 @@ export function SettingsScreen() {
           </div>
         </section>
         <section data-testid="effort-cap">
-          <div className="text-[12px] uppercase tracking-wide text-muted mb-2">추론 강도(effort) 상한</div>
-          <EffortCapControl />
+          <div className="text-[12px] uppercase tracking-wide text-muted mb-2">공급자 정책</div>
+          <ProviderPolicySection />
         </section>
         <section>
           <div className="text-[12px] uppercase tracking-wide text-muted mb-2">엔진</div>
@@ -102,18 +100,6 @@ export function SettingsScreen() {
             })}
           </div>
           {engineNote ? <div className="text-[12px] text-muted mt-2">{engineNote}</div> : null}
-        </section>
-        <section data-testid="engine-priority">
-          <div className="text-[12px] uppercase tracking-wide text-muted mb-2">엔진 우선순위</div>
-          <div className="rounded-xl2 border border-line bg-surface divide-y divide-line">
-            {PRIORITY_CHOICES.map((choice) => (
-              <button key={choice.key} type="button" className="w-full text-left px-4 py-3 flex items-center gap-3" disabled={priority.order === null} onClick={() => { void priority.save(choice.order); }}>
-                <span className={`w-4 h-4 rounded-full border ${priorityKey(priority.order) === choice.key ? 'bg-accent border-accent' : 'border-line'}`} />
-                <span className="flex-1"><div className="text-[15px]">{choice.label}</div><div className="text-[12px] text-muted">{choice.hint}</div></span>
-              </button>
-            ))}
-          </div>
-          <div className="text-[12px] text-muted mt-2">{priority.error ?? '한도로 다른 엔진이 대신 맡았다가 한도가 풀리면 다음 메시지부터 우선 엔진으로 이어갑니다. 채팅의 라우팅 시트에서 엔진을 직접 고르면 그 채팅은 고정됩니다.'}</div>
         </section>
         <DefaultPermissionSection />
         <PermissionRulesSection />

@@ -16,6 +16,7 @@ import { createRunnerHub, screenOpts, type RunnerHub } from './runner-hub.js';
 import { createPreview } from './preview.js';
 import { startTierPolicySchedule } from './tier-policy.js';
 import { startBackupSchedule } from './db-backup.js';
+import { startScoreSync } from './model-scores.js';
 import { seedAgents } from './seed-agents.js';
 import { createPlatformShip } from './platform-ship.js';
 import { createGithubOauth } from './github-oauth.js';
@@ -230,6 +231,8 @@ const aidev = createAidevApi({
   },
 });
 aidev.knowledgeRefresher.startSchedule();
+// provider policy: Artificial Analysis scores of the (model, effort) combinations, once a day once a key is stored
+startScoreSync(store);
 // /admin: user administration with its own sign-in (admin.ts)
 const admin = createAdmin({ store, secret, origin, json, provision: (runtime) => managerRequest(runtime, 'provision'), removeRuntime: (runtime) => managerRequest(runtime, 'delete') });
 /** A signed-in session for `user`: the token in the body and the host-only cookie. */

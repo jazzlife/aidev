@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildVerificationBrief, parseVerification, verifierEngineOrder, verifierModel } from '@/modules/aidev-tools/run-verifier.service.js';
+import { buildVerificationBrief, parseVerification, verifierCandidates, verifierEngineOrder, verifierModel } from '@/modules/aidev-tools/run-verifier.service.js';
 
 const verdict = { verdict: 'fail', summary: '테스트가 통과했다는 주장이 틀렸다', checked: [{ claim: 'npm test 통과', result: 'wrong', evidence: 'npm test → 2 failed' }], issues: ['GameLoop.cs의 타이머가 60fps를 보장하지 않음'] };
 
@@ -72,4 +72,16 @@ test('buildVerificationBrief covers only the last turn: its files, commands, err
   assert.match(brief.text, /빌드가 통과했습니다/);
   assert.doesNotMatch(brief.text, /old\.ts|이전 보고/);
   assert.match(brief.text, /game-loop-player · claude sonnet/);
+});
+
+test('verifierCandidates follows the gateway\'s order with its models and efforts, else the runtime\'s own order', () => {
+  const base = { engine: 'claude' as const, engines: ['claude', 'codex'] as Array<'claude' | 'codex'>, workerModel: 'opus', modelFloor: {} };
+  // no candidates: the runtime's order (other engine first) with verifierModel and no effort
+  assert.deepEqual(verifierCandidates({ ...base, candidates: null }), [{ engine: 'codex', model: 'gpt-5.6-sol', effort: null }, { engine: 'claude', model: 'opus', effort: null }]);
+  // the verification order as the gateway sent it — the worker's own provider first when the user put it first
+  const candidates = [{ engine: 'claude' as const, model: 'opus', effort: 'medium' }, { engine: 'codex' as const, model: null, effort: null }];
+  assert.deepEqual(verifierCandidates({ ...base, candidates }), [{ engine: 'claude', model: 'opus', effort: 'medium' }, { engine: 'codex', model: 'gpt-5.6-sol', effort: null }]);
+  // this runtime's knowledge of Codex still applies: signed out → dropped, at capacity → last
+  assert.deepEqual(verifierCandidates({ ...base, candidates: [...candidates].reverse() }, { signedOut: true }).map((c) => c.engine), ['claude']);
+  assert.deepEqual(verifierCandidates({ ...base, candidates: [...candidates].reverse() }, { busy: true }).map((c) => c.engine), ['claude', 'codex']);
 });

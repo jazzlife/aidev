@@ -1,8 +1,9 @@
 import type { openStore } from './store.js';
-import type { Engine } from './store-aidev.js';
+import { ENGINES, type Engine } from './store-aidev.js';
 import type { LayaClient } from './laya.js';
 import { decide } from './laya-questions.js';
-import { TIER_TABLE, applyEffortCap, applyModelFloor, type EngineAvailability } from './routing.js';
+import { TIER_TABLE, applyEffortCap, applyModelFloor, splitTier, type EngineAvailability } from './routing.js';
+import { pickStep, policySteps, type Step } from './provider-policy.js';
 import { EFFORT_LADDER } from './store-aidev.js';
 
 /**
@@ -16,6 +17,9 @@ import { EFFORT_LADDER } from './store-aidev.js';
  *   - escalate_tier at the top tier                 → one more effort step up to the user's ceiling,
  *                                                     then switch_engine when possible, else ask_user
  *   - switch_engine with no other usable engine     → escalate_tier / ask_user
+ * With a work order set (accounts.engine_priority) the order is kept (2026-10-13, Q1): the work moves to the next
+ * provider only on a usage limit or a lost sign-in; a failure at the top of the range asks the user instead. A
+ * provider with a ladder (provider policy) climbs its own range: escalate_tier is the next step up in it.
  * The proposal is stored on the run and returned to the client, which offers it as a one-tap card;
  * nothing but retry_worker re-runs by itself (each attempt spends the user's subscription).
  */
@@ -24,6 +28,7 @@ type RunRow = NonNullable<ReturnType<Store['run']>>;
 export type NextAction = {
   action: 'retry_same' | 'retry_worker' | 'escalate_tier' | 'switch_engine' | 'ask_user';
   engine: Engine | null; model: string | null; effort: string | null; depth: number | null;
+  /** the failed run's provider (the apps hand a chat over from it) */ from_engine: Engine;
   from_run: number; chain: number; reason: string;
 };
 
@@ -42,33 +47,51 @@ function chainLength(store: Store, run: RunRow) {
 }
 
 export async function decideNext(store: Store, laya: LayaClient, run: RunRow, engines: EngineAvailability): Promise<NextAction> {
-  const engine = (run.engine === 'codex' ? 'codex' : 'claude') as Engine;
-  const other: Engine = engine === 'claude' ? 'codex' : 'claude';
-  const otherUsable = Boolean(engines[other]?.allowed && engines[other]?.authenticated);
+  const engine = (ENGINES.includes(run.engine as Engine) ? run.engine : ENGINES[0]) as Engine;
+  // the next provider: the work order's first usable one other than this (none set: the catalog order); a provider
+  // refusing on a usage limit is not usable
+  const priority = store.enginePriority(run.user_id);
+  const strict = priority.length > 0;
+  const usable = (e: Engine) => Boolean(engines[e]?.allowed && engines[e]?.authenticated && !(engines[e]?.limited_until && engines[e]!.limited_until! > Date.now()));
+  const other = (strict ? priority : ENGINES).find((e) => e !== engine && usable(e)) ?? null;
+  const otherUsable = other !== null;
   const depth = Math.max(0, Math.min(4, Math.round(run.depth ?? 1)));
   const chain = chainLength(store, run);
-  const base = { from_run: run.id, chain };
+  const base = { from_run: run.id, from_engine: engine, chain };
   const cap = store.effectiveEffortCap(run.user_id, run.session_id).cap;
   const floor = store.effectiveModelFloor(run.user_id, run.session_id).floor;
   const plan = (action: NextAction['action'], planEngine: Engine | null, planDepth: number | null, reason: string): NextAction => {
     if (!planEngine || planDepth === null) return { ...base, action, engine: null, model: null, effort: null, depth: null, reason };
+    const step = splitTier(store, run.user_id, planEngine, planDepth, run.session_id);
+    if (step) return { ...base, action, engine: planEngine, model: step.model, effort: step.effort, depth: planDepth, reason };
     // the user's model floor holds for the retry too (a retry never runs below the chat's floor)
     const tier = { ...TIER_TABLE[planDepth][planEngine] };
     applyModelFloor(planEngine, tier, floor[planEngine]);
     return { ...base, action, engine: planEngine, model: tier.model, effort: applyEffortCap(tier.effort, planDepth, planEngine, cap[planEngine]), depth: planDepth, reason };
   };
+  // the next step up inside a provider policy's range: D+1's pick, or (at D4 / when D+1 lands no higher) the next step
+  const policy = store.providerPolicy(run.user_id, engine, run.session_id);
+  let policyNext: Step | null = null;
+  if (policy.ladder) {
+    const scores = store.stepScores(engine, store.scoreIndex(run.user_id)).scores;
+    const steps = policySteps(engine, policy, scores);
+    const current = steps.findIndex((s) => s.model === run.model && (s.effort ?? null) === (run.effort ?? null));
+    const up = depth < 4 ? pickStep(engine, depth + 1, policy, scores) : null;
+    policyNext = up && up.index > current ? up : (current >= 0 && current + 1 < steps.length ? steps[current + 1] : null);
+  }
   // at the top tier the effort can still climb (one step per attempt) until the user's ceiling
   const ladder = EFFORT_LADDER[engine];
-  const effortRoom = depth >= 4 && ladder.indexOf(run.effort ?? '') >= 0 && ladder.indexOf(run.effort ?? '') < ladder.indexOf(cap[engine]);
+  const effortRoom = policy.ladder ? policyNext !== null : depth >= 4 && ladder.indexOf(run.effort ?? '') >= 0 && ladder.indexOf(run.effort ?? '') < ladder.indexOf(cap[engine]);
+  const room = policy.ladder ? policyNext !== null : depth < 4 || effortRoom;
 
   if (chain >= MAX_CHAIN) return plan('ask_user', null, null, `이미 ${chain}번 이어서 시도했습니다`);
   // refused on a usage limit: not a failure of the plan — the other engine takes over, or the user waits for the reset
   if (run.usage_limit_resets_at !== null && run.usage_limit_resets_at !== undefined) {
     const resetNote = run.usage_limit_resets_at > 0 ? ` (초기화 ${new Date(run.usage_limit_resets_at).toLocaleTimeString('ko-KR', { hour: '2-digit', minute: '2-digit' })})` : '';
-    return otherUsable ? plan('switch_engine', other, depth, `${engine} 사용량 한도에 걸려 ${other}로 넘깁니다${resetNote}`) : plan('ask_user', null, null, `${engine} 사용량 한도에 걸렸습니다${resetNote}. 한도가 풀리면 다시 시도하세요`);
+    return other ? plan('switch_engine', other, depth, `${engine} 사용량 한도에 걸려 ${other}로 넘깁니다${resetNote}`) : plan('ask_user', null, null, `${engine} 사용량 한도에 걸렸습니다${resetNote}. 한도가 풀리면 다시 시도하세요`);
   }
   if (!engines[engine]?.authenticated) {
-    return otherUsable ? plan('switch_engine', other, depth, `${engine} 로그인이 필요해 ${other}로 넘깁니다`) : plan('ask_user', null, null, `${engine} 로그인이 필요합니다`);
+    return other ? plan('switch_engine', other, depth, `${engine} 로그인이 필요해 ${other}로 넘깁니다`) : plan('ask_user', null, null, `${engine} 로그인이 필요합니다`);
   }
   // cross-verification (2026-10-09): the verifier's findings go back to the worker that made them, on the same
   // plan — a stronger model is not what was missing; the chain cap above ends the loop after two reworks
@@ -78,17 +101,23 @@ export async function decideNext(store: Store, laya: LayaClient, run: RunRow, en
 
   const decision = store.db.prepare('SELECT command FROM decision_log WHERE id=?').get(run.decision_id ?? -1) as { command: string } | undefined;
   const signals = { exit_code: run.exit_code, tool_errors: run.tool_errors, user_feedback: run.user_feedback, reverted: run.reverted, test_result: run.test_result };
-  const judged = await decide(laya, 'escalate', { state: { command: decision?.command ?? '', engine, model: run.model, depth, signals, other_engine_available: otherUsable } });
+  // with a work order the provider is kept (Q1): Laya is not offered a switch for an ordinary failure
+  const judged = await decide(laya, 'escalate', { state: { command: decision?.command ?? '', engine, model: run.model, depth, signals, other_engine_available: otherUsable && !strict } });
   store.logKindDecision({ userId: run.user_id, kind: judged.kind, command: decision?.command ?? '', answer: judged.answer, confidence: judged.confidence, probabilities: judged.probabilities, latencyMs: judged.latency_ms, device: judged.device, fallback: judged.fallback });
   let action = (typeof judged.answer === 'string' ? judged.answer : 'escalate_tier') as NextAction['action'];
   // Laya unavailable: stronger model first, then the other engine
-  if (judged.fallback) action = depth < 4 || effortRoom ? 'escalate_tier' : (otherUsable ? 'switch_engine' : 'ask_user');
-  if (action === 'escalate_tier' && depth >= 4 && !effortRoom) action = otherUsable ? 'switch_engine' : 'ask_user';
-  if (action === 'switch_engine' && !otherUsable) action = depth < 4 || effortRoom ? 'escalate_tier' : 'ask_user';
+  const canSwitch = otherUsable && !strict;
+  if (judged.fallback) action = room ? 'escalate_tier' : (canSwitch ? 'switch_engine' : 'ask_user');
+  if (action === 'escalate_tier' && !room) action = canSwitch ? 'switch_engine' : 'ask_user';
+  if (action === 'switch_engine' && !canSwitch) action = room ? 'escalate_tier' : 'ask_user';
 
   switch (action) {
     case 'retry_same': return { ...base, action, engine, model: run.model, effort: run.effort, depth, reason: '일시적인 실패로 보여 같은 설정으로 다시 시도합니다' };
     case 'escalate_tier': {
+      if (policyNext) {
+        const at = `${policyNext.model}${policyNext.effort ? `/${policyNext.effort}` : ''}`;
+        return { ...base, action, engine, model: policyNext.model, effort: policyNext.effort, depth: Math.min(4, depth + 1), reason: `설정한 범위에서 한 단계 위(${at})로 다시 시도합니다` };
+      }
       if (depth >= 4) {
         const effort = ladder[ladder.indexOf(run.effort ?? '') + 1];
         return { ...base, action, engine, model: run.model, effort, depth: 4, reason: `최상위 모델에서 추론 강도를 ${run.effort} → ${effort}(상한 ${cap[engine]})로 올려 다시 시도합니다` };
@@ -96,6 +125,7 @@ export async function decideNext(store: Store, laya: LayaClient, run: RunRow, en
       return plan(action, engine, depth + 1, `더 강한 모델(D${depth + 1})로 다시 시도합니다`);
     }
     case 'switch_engine': return plan(action, other, depth, `${engine}가 이 작업에 막혀 ${other}로 넘깁니다`);
+    case 'ask_user': return plan('ask_user', null, null, strict && !room ? `${engine}의 설정 범위 최상단(${run.model ?? ''}${run.effort ? `/${run.effort}` : ''})에서도 실패했습니다. 공급자 순서는 유지합니다 — 명령을 보완하거나 범위·순서를 바꿔 주세요` : '추가 정보가 필요합니다');
     default: return plan('ask_user', null, null, '추가 정보가 필요합니다');
   }
 }

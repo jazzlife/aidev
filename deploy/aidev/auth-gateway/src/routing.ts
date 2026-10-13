@@ -1,5 +1,6 @@
 import type { openStore } from './store.js';
-import { EFFORT_LADDER, routingHint, type Engine } from './store-aidev.js';
+import { EFFORT_LADDER, ENGINES, routingHint, type Engine } from './store-aidev.js';
+import { pickStep, policySteps, type StepPick } from './provider-policy.js';
 import { budgetState, topChoice, type LayaClient, type Question } from './laya.js';
 import { DEPTH_LEVELS, REMOTE_ACTIONS, RISK_LEVELS, TASK_KIND_CRITERIA, decide } from './laya-questions.js';
 import { NaiveBayesRouter, fuse, tokenize } from './classifier.js';
@@ -155,6 +156,23 @@ export function applyModelFloor(engine: Engine, tier: { model: string | null; ef
  */
 export function runTeachesAgent(answer: string | null | undefined): boolean {
   try { return (JSON.parse(answer ?? '{}') as { agent_source?: string }).agent_source !== 'session'; } catch { return true; }
+}
+
+/**
+ * The provider policy's pick for `engine` at `depth` (PROVIDER-ENGINE-PLAN §2.3): the split over the user's model and
+ * effort range when the user set a ladder for the engine, else null (the tier table decides). Used by route(),
+ * escalation, background design, knowledge checks and the verifier candidates.
+ */
+export function splitTier(store: Store, userId: number, engine: Engine, depth: number, sessionId?: string | null, inline?: { modelFloor?: Partial<Record<Engine, string>> | null; effortCap?: Partial<Record<Engine, string>> | null }): StepPick | null {
+  const policy = store.providerPolicy(userId, engine, sessionId, inline);
+  if (!policy.ladder) return null;
+  return pickStep(engine, depth, policy, store.stepScores(engine, store.scoreIndex(userId)).scores);
+}
+/** One line for the plan's reasons: what the split picked and why. */
+export function describeStep(engine: Engine, depth: number, step: StepPick): string {
+  const at = `${step.model}${step.effort ? `/${step.effort}` : ''}`;
+  if (step.q2) return `policy ${engine}: D${depth} above the ceiling model's level → ${at} (ceiling, highest effort)`;
+  return `policy ${engine}: D${depth} → ${at} (${step.mode === 'score' ? `score ${step.score} ≥ target ${step.target}` : `step ${step.index + 1}/${step.total}`})`;
 }
 
 /** The agent-architect designs a specialist: design work, so its turn runs at least at D3 (§3.4 D3 = 설계·심층). */
@@ -723,8 +741,8 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   // (2026-10-09: ops-classified commands sent agent creation to Codex on the learned ops weight).
   const weightKind = decision === 'create' ? 'design' : taskKind;
   if (weightKind !== taskKind) reason.push(`agent design: engines weighed as design work, not ${taskKind}`);
-  const scores: Record<Engine, { score: number | null; parts: string[] }> = { claude: { score: null, parts: [] }, codex: { score: null, parts: [] } };
-  for (const engine of ['claude', 'codex'] as Engine[]) {
+  const scores = Object.fromEntries(ENGINES.map((e) => [e, { score: null as number | null, parts: [] as string[] }])) as Record<Engine, { score: number | null; parts: string[] }>;
+  for (const engine of ENGINES) {
     const e = engines[engine];
     if (!e?.allowed) { scores[engine].parts.push('not allowed for this account'); continue; }
     if (!e.authenticated) { scores[engine].parts.push(`not authenticated${e.error ? ` (${e.error})` : ''}`); continue; }
@@ -737,7 +755,7 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     if (errs > 0) { s -= 0.3; scores[engine].parts.push(`recent failures −0.30`); }
     scores[engine].score = s;
   }
-  const usable = (['claude', 'codex'] as Engine[]).filter((e) => scores[e].score !== null);
+  const usable = ENGINES.filter((e) => scores[e].score !== null);
   let engine: Engine | null = null; let engineLocked = false;
   const acct = store.accountEngines(userId);
   let engineError: string | null = null;
@@ -758,18 +776,40 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
       switchBack = { engine: firstByPriority, reason: `engine priority ${priority.join(' > ')}: ${firstByPriority} is usable again` };
       reason.push(`switch back → ${firstByPriority} (${switchBack.reason})`);
     }
+    // the bound engine is refusing on a usage limit (2026-10-13, Q1: only a limit moves work to the next provider): the
+    // chat continues on the next usable one — by priority, else the best score — unless the user pinned it here
+    const limitedUntil = engines[engine].limited_until;
+    if (!switchBack && !pinnedEngine && !input.preferEngine && limitedUntil && limitedUntil > Date.now()) {
+      const next = firstByPriority ?? (usable.length ? [...usable].sort((a, b) => scores[b].score! - scores[a].score!)[0] : null);
+      if (next && next !== engine) {
+        switchBack = { engine: next, reason: `${engine} usage limit until ${new Date(limitedUntil).toISOString().slice(11, 16)}Z` };
+        reason.push(`switch → ${next} (${switchBack.reason})`);
+      }
+    }
   }
   else if (input.preferEngine && usable.includes(input.preferEngine)) { engine = input.preferEngine; reason.push(`user prefers ${engine}`); }
   else if (firstByPriority) { engine = firstByPriority; reason.push(`engine priority ${priority.join(' > ')} → ${engine}${usable.length > 1 ? '' : ' (only usable engine)'}`); }
   else if (usable.length) {
     const best = Math.max(...usable.map((e) => scores[e].score!));
     const tied = usable.filter((e) => Math.abs(scores[e].score! - best) < 1e-6);
-    engine = tied.length === 1 ? tied[0] : (acct.defaultEngine && tied.includes(acct.defaultEngine) ? acct.defaultEngine : (tied.includes('claude') ? 'claude' : tied[0]));
+    engine = tied.length === 1 ? tied[0] : (acct.defaultEngine && tied.includes(acct.defaultEngine) ? acct.defaultEngine : (ENGINES.find((e) => tied.includes(e)) ?? tied[0]));
     reason.push(`engine ${engine} (${usable.map((e) => `${e} ${scores[e].score!.toFixed(2)}`).join(', ')})`);
   } else reason.push('no engine is available (none allowed+authenticated)');
   // ---- tier -----------------------------------------------------------------------------------
   const tier = engine ? { ...TIER_TABLE[depth][engine] } : { model: null as string | null, effort: null as string | null };
-  if (engine) {
+  // a provider the user gave a ladder: the split over their model and effort range (no tier_policy — their range rules)
+  const step = engine ? splitTier(store, userId, engine, depth, input.sessionId, { modelFloor: input.modelFloor, effortCap: input.effortCap }) : null;
+  if (engine && step) {
+    tier.model = step.model; tier.effort = step.effort;
+    reason.push(describeStep(engine, depth, step));
+    // an agent-pinned model applies when it is in the range and stronger (it never weakens a run)
+    if (agent.model && agent.model !== step.model) {
+      const steps = policySteps(engine, store.providerPolicy(userId, engine, input.sessionId, { modelFloor: input.modelFloor, effortCap: input.effortCap }));
+      const own = steps.filter((s) => s.model === agent.model);
+      if (own.length && steps.findIndex((s) => s.model === agent.model) > step.index) { tier.model = agent.model; tier.effort = (own.find((s) => s.effort === step.effort) ?? own[0]).effort; reason.push(`agent pins model ${agent.model}`); }
+      else reason.push(`agent model ${agent.model} ignored (outside the range or not stronger than ${step.model})`);
+    }
+  } else if (engine) {
     const tp = store.tierPolicy(agent.domain, depth, engine);
     if (tp?.model) { tier.model = tp.model; tier.effort = tp.effort ?? tier.effort; reason.push(`tier_policy override ${tp.model}/${tp.effort}`); }
     // an agent-pinned model applies only when it is at least as strong as the tier's (it never weakens a run)
@@ -903,7 +943,8 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   const decisionId = store.logDecision({ userId, command: text, agent: agentName, probability: agentTop.probability, confidence: agentTop.confidence, needsNew, risk, decision, probabilities, latencyMs: latency ?? undefined, device: device ?? undefined });
   store.db.prepare('UPDATE decision_log SET kind=?, fallback=?, answer=?, state=? WHERE id=?').run('route', fallback ? 1 : 0,
     JSON.stringify({ agent: agentName, engine, model: tier.model, effort: tier.effort, depth, task_kind: taskKind, remote_action: remoteAction, target: target?.name ?? null, target_source: targetSource, device: targetDevice?.serial ?? null,
-      agent_source: priorAgent && agentName === priorAgent ? 'session' : 'routed', judge_level: judgedLevel, laya_depth: layaDepth }), JSON.stringify(state).slice(0, 8000), decisionId);
+      agent_source: priorAgent && agentName === priorAgent ? 'session' : 'routed', judge_level: judgedLevel, laya_depth: layaDepth,
+      step: step ? { index: step.index, total: step.total, mode: step.mode, q2: step.q2, score: step.score } : null, providers: Object.fromEntries(ENGINES.map((e) => [e, scores[e].score === null ? scores[e].parts.slice(-1)[0] ?? 'unusable' : 'usable'])) }), JSON.stringify(state).slice(0, 8000), decisionId);
   store.recordInjectedLessons(decisionId, lessons.map((l) => ({ id: l.id, trial: l === trial })));
 
   // Creation flow (§3.7): the client sends the same command to the agent-architect meta agent first.
@@ -929,8 +970,9 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
       definition: { prompt, tools: agent.tools ? JSON.parse(agent.tools) as string[] : null, model: agent.model, maxTurns: agent.max_turns, skills: agent.skills ? JSON.parse(agent.skills) as string[] : null, mcpServers: agent.mcp_servers ? JSON.parse(agent.mcp_servers) as Record<string, unknown> : null } },
     alternatives: agentTop.ranked.filter(([name]) => name !== agentName).slice(0, 3).map(([name, probability]) => ({ name, probability, description: descriptions[name] })),
     needs_new: needsNew, shortlisted,
-    plan: { engine, engine_locked: engineLocked, engine_pinned: Boolean(pinnedEngine), switch_back: switchBack, engine_error: engineError, model: tier.model, effort: tier.effort, target: target ? { id: target.id, name: target.name, platform: target.platform, tags: target.tags ? JSON.parse(target.tags) as string[] : [], capabilities: target.capabilities ? JSON.parse(target.capabilities) as unknown : null, source: targetSource } : null, device: targetDevice, reason },
-    engines: { claude: { ...engines.claude, score: scores.claude.score, notes: scores.claude.parts }, codex: { ...engines.codex, score: scores.codex.score, notes: scores.codex.parts } },
+    plan: { engine, engine_locked: engineLocked, engine_pinned: Boolean(pinnedEngine), switch_back: switchBack, engine_error: engineError, model: tier.model, effort: tier.effort,
+      step: step ? { index: step.index, total: step.total, mode: step.mode, q2: step.q2, target: step.target, score: step.score } : null, target: target ? { id: target.id, name: target.name, platform: target.platform, tags: target.tags ? JSON.parse(target.tags) as string[] : [], capabilities: target.capabilities ? JSON.parse(target.capabilities) as unknown : null, source: targetSource } : null, device: targetDevice, reason },
+    engines: Object.fromEntries(ENGINES.map((e) => [e, { ...engines[e], score: scores[e].score, notes: scores[e].parts }])) as Record<Engine, EngineAvailability[Engine] & { score: number | null; notes: string[] }>,
     lessons: lessons.map((l) => ({ id: l.id, trigger: l.trigger, rule: l.rule, trial: l === trial })),
     knowledge_digest: knowledgeDigest || null,
     target_decision: targetDecision ? { decision_id: targetDecision.decision_id, answer: targetDecision.answer, confidence: targetDecision.confidence, fallback: targetDecision.fallback, probabilities: targetDecision.probabilities ?? null } : null,
