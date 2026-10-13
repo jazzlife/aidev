@@ -10,6 +10,7 @@ import { closeConnection, initializeDatabase } from '@/modules/database/index.js
 import {
   mergeOpenCodeCliModels,
   OpenCodeProviderModels,
+  parseOpenCodeCliModels,
   OPENCODE_PREDEFINED_MODELS,
 } from '@/modules/providers/list/opencode/opencode-models.provider.js';
 
@@ -300,18 +301,50 @@ test('OpenCode composes the provider prefix into session model ids', async () =>
   }
 });
 
-test('the CLI\'s own model list decides the picker: curated entries keep their labels, unknown ones appear by id', async () => {
-  const cli = ['opencode/big-pickle', 'opencode/space-bunny-free', 'opencode-go/glm-5.3', 'google/gemini-3-pro'];
+test('the CLI\'s own model list decides the picker: curated entries keep their labels, unknown ones appear with the CLI\'s name and efforts', async () => {
+  const model = (id: string, over: Partial<{ name: string | null; efforts: string[]; runsAgentTurns: boolean }> = {}) => ({ id, name: null, efforts: [], runsAgentTurns: true, ...over });
+  const cli = [model('opencode/big-pickle'), model('opencode/space-bunny-free'), model('opencode-go/glm-5.3'), model('google/gemini-3-pro'),
+    // a provider signed in to with an API key: OpenCode says which efforts each model takes, and which models are not for chat
+    model('openai/gpt-9-preview', { name: 'GPT-9 Preview', efforts: ['none', 'low', 'medium', 'high', 'xhigh', 'max'] }),
+    model('openai/text-embedding-3-small', { name: 'text-embedding-3-small', runsAgentTurns: false })];
   const merged = mergeOpenCodeCliModels(OPENCODE_PREDEFINED_MODELS, cli);
-  assert.deepEqual(merged.OPTIONS.map((option) => option.value).sort(), [...cli].sort());
+  assert.deepEqual(merged.OPTIONS.map((option) => option.value).sort(), ['google/gemini-3-pro', 'openai/gpt-9-preview', 'opencode-go/glm-5.3', 'opencode/big-pickle', 'opencode/space-bunny-free'], 'the embedding model is not offered');
   assert.equal(merged.OPTIONS.find((option) => option.value === 'opencode/big-pickle')?.label, 'Big Pickle');
-  assert.deepEqual(merged.OPTIONS.find((option) => option.value === 'opencode-go/glm-5.3')?.effort?.values.map((v) => v.value), ['low', 'high', 'max'], 'effort levels come from the catalog');
+  assert.deepEqual(merged.OPTIONS.find((option) => option.value === 'opencode-go/glm-5.3')?.effort?.values.map((v) => v.value), ['low', 'high', 'max'], 'the CLI reported no variants: the catalog\'s effort levels stay');
   assert.deepEqual(merged.OPTIONS.find((option) => option.value === 'google/gemini-3-pro'), { value: 'google/gemini-3-pro', label: 'gemini-3-pro', description: 'google' });
+  assert.deepEqual(merged.OPTIONS.find((option) => option.value === 'openai/gpt-9-preview'), { value: 'openai/gpt-9-preview', label: 'GPT-9 Preview', description: 'openai', effort: { values: ['none', 'low', 'medium', 'high', 'xhigh', 'max'].map((value) => ({ value })) } });
+  // a curated model takes the CLI's variants when it reports them: they are what `--variant` accepts
+  const curatedWithVariants = mergeOpenCodeCliModels(OPENCODE_PREDEFINED_MODELS, [model('opencode-go/glm-5.3', { efforts: ['low', 'high'] })]);
+  assert.deepEqual(curatedWithVariants.OPTIONS[0].effort?.values.map((v) => v.value), ['low', 'high']);
   // the catalog's default is not something this install can run: the first listed model takes its place
   assert.equal(merged.DEFAULT, merged.OPTIONS[0].value);
   // through the adapter
   const adapter = new OpenCodeProviderModels(async () => cli);
-  assert.equal((await adapter.getSupportedModels()).OPTIONS.length, 4);
+  assert.equal((await adapter.getSupportedModels()).OPTIONS.length, 5);
   // nothing listed (a broken CLI answer): the catalog stays
   assert.equal(mergeOpenCodeCliModels(OPENCODE_PREDEFINED_MODELS, []), OPENCODE_PREDEFINED_MODELS);
+});
+
+test('parseOpenCodeCliModels reads `opencode models --verbose` (opencode 1.19.0): ids, names, variants, chat capability', () => {
+  const block = (detail: unknown) => JSON.stringify(detail, null, 2);
+  const output = [
+    'openai/gpt-5.6-sol',
+    block({ id: 'gpt-5.6-sol', providerID: 'openai', name: 'GPT-5.6 Sol', api: { id: 'gpt-5.6-sol', url: 'https://api.openai.com/v1', npm: '@ai-sdk/openai' }, capabilities: { reasoning: true, toolcall: true, output: { text: true, image: false } },
+      variants: { none: { reasoningEffort: 'none' }, low: { reasoningEffort: 'low' }, high: { reasoningEffort: 'high', include: ['reasoning.encrypted_content'] } } }),
+    'openai/text-embedding-3-small',
+    block({ id: 'text-embedding-3-small', name: 'text-embedding-3-small', capabilities: { toolcall: false, output: { text: false } }, variants: {} }),
+    'openai/gpt-image-2',
+    block({ id: 'gpt-image-2', name: 'gpt-image-2', capabilities: { toolcall: true, output: { text: false, image: true } }, variants: {} }),
+    'opencode/space-bunny-free',
+    '{ not json',
+    '',
+  ].join('\n');
+  assert.deepEqual(parseOpenCodeCliModels(output), [
+    { id: 'openai/gpt-5.6-sol', name: 'GPT-5.6 Sol', efforts: ['none', 'low', 'high'], runsAgentTurns: true },
+    { id: 'openai/text-embedding-3-small', name: 'text-embedding-3-small', efforts: [], runsAgentTurns: false },
+    { id: 'openai/gpt-image-2', name: 'gpt-image-2', efforts: [], runsAgentTurns: false },
+    { id: 'opencode/space-bunny-free', name: null, efforts: [], runsAgentTurns: true },
+  ]);
+  // the plain listing (ids only) still reads: an older CLI without --verbose detail
+  assert.deepEqual(parseOpenCodeCliModels('opencode/a\nopencode/b\n').map((m) => m.id), ['opencode/a', 'opencode/b']);
 });
