@@ -565,10 +565,10 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
 - [~] 구현·로컬검증(SIGTERM 후 종료까지 대기(10초 뒤 SIGKILL)), 서버 확인 대기 — G2-09 **중단**: SIGTERM 뒤 close까지 기다린다(Codex `ABORT_SETTLE_TIMEOUT_MS` 10초와 같음, `opencode-runtime.provider.js:405-417`). 끼어들기 직후 같은 세션 재개 경합을 막기 위해서다.
 - [ ] G2-10 **이미지**: G0-07이 되면 `-f`로 첨부한다. 안 되면 경로 태그를 유지하고 사유를 기록한다.
 - [~] 구현·로컬검증(`bash`, `filePath`), 서버 확인 대기 — G2-11 **브리프 도구 이름**: `handoff.service.ts:9-10`, `run-verifier.service.ts:101-102`의 `FILE_TOOLS/COMMAND_TOOLS`에 opencode 이름(`bash`, `edit`, `write`, `read`…)과 입력 키 `filePath`를 추가한다. 테스트 `handoff.test.ts`
-- [~] 구현·로컬검증(`opencode-side-turn.client.ts askOpenCodeSideTurn`: `opencode run --format json`을 메시지는 stdin으로(인자 길이 한계 회피), 제목 `aidev-side: <용도>`, 읽기 턴은 `--agent plan`, 검증 턴은 `--auto`, 끝나면 `opencode session delete`. 동기화기는 그 제목의 세션을 건너뜀. 임시 폴더 대신 제목+삭제 방식(검증은 프로젝트 폴더에서 돌아야 함). 무료 모델로 실측: 읽기·검증 턴 통과, 세션 남지 않음. **plan agent의 안내문이 답을 오염시키는 것 발견 → 메시지 앞에 실행 환경 안내를 넣어 해결(무의미한 실패 → `{"none":true}`, 실제 실패 → 관련 교훈)**. 권한을 직접 제한한 custom agent는 무료 등급에서 403), 서버 확인 대기 — G2-12 **부가 턴 실행기** `askOpenCode` (§3.3)
+- [x] 서버 확인(2026-10-13, `667c7e025e16`: jazzlife 런타임에서 OpenCode 검증 턴 17초·정제 턴 53초 실행, 끝난 뒤 OpenCode 세션 목록에 새 세션 0개·`aidev-side` 0개, 강제 삭제한 채팅도 OpenCode 저장소에서 삭제) — 구현 내용: `opencode-side-turn.client.ts askOpenCodeSideTurn`: `opencode run --format json`을 메시지는 stdin으로(인자 길이 한계 회피), 제목 `aidev-side: <용도>`, 읽기 턴은 `--agent plan`, 검증 턴은 `--auto`, 끝나면 `opencode session delete`. 동기화기는 그 제목의 세션을 건너뜀. 임시 폴더 대신 제목+삭제 방식(검증은 프로젝트 폴더에서 돌아야 함). 무료 모델로 실측: 읽기·검증 턴 통과, 세션 남지 않음. **plan agent의 안내문이 답을 오염시키는 것 발견 → 메시지 앞에 실행 환경 안내를 넣어 해결(무의미한 실패 → `{"none":true}`, 실제 실패 → 관련 교훈)**. 권한을 직접 제한한 custom agent는 무료 등급에서 403 — G2-12 **부가 턴 실행기** `askOpenCode` (§3.3)
   - 임시 폴더(`/tmp/aidev-side-<id>`), `--format json`, 결과 텍스트 추출, 타임아웃, read-only(plan 권한)를 지원한다.
   - 세션 동기화기(`opencode-session-synchronizer.provider.ts:93-94`)가 임시 폴더 세션을 제외하게 한다.
-- [~] 구현·로컬검증(검증·교훈 정제·설계·지식 점검이 OpenCode로 실행(`AidevSideEngine`), 런타임 자체 순서에서는 OpenCode가 마지막(모델 강도를 모름), 판정은 Claude·Codex만(`sideEngines(…, JUDGE_ENGINES)`). 로컬 e2e: OpenCode 작업 → OpenCode 검증 pass 15초, 실패 run → OpenCode 정제), 서버 확인 대기 — G2-13 **부가 턴 opencode 지원**: 엔진 유니온과 분기를 확장한다.
+- [~] 구현·로컬검증(검증·교훈 정제·설계·지식 점검이 OpenCode로 실행(`AidevSideEngine`), 런타임 자체 순서에서는 OpenCode가 마지막(모델 강도를 모름), 판정은 Claude·Codex만(`sideEngines(…, JUDGE_ENGINES)`). 로컬 e2e: OpenCode 작업 → OpenCode 검증 pass 15초, 실패 run → OpenCode 정제), 서버 확인: 검증·교훈 정제는 확인(2026-10-13, `667c7e025e16`), 판정은 OpenCode만 있는 목록에 409 확인, 설계·지식 점검의 OpenCode 실행은 미확인 — G2-13 **부가 턴 opencode 지원**: 엔진 유니온과 분기를 확장한다.
   - `run-verifier.service.ts:25`, `:28`, `:34`, `:244`, `:253`
   - `lesson-curator.service.ts:18-20`, `:115-126`
   - `agent-designer.service.ts:26`, `:145`
@@ -586,15 +586,15 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
   - 부가 턴 세션이 사이드바에 보이지 않는다.
 
 ### G3. 게이트웨이 3엔진 (릴리스 ③, G4와 함께)
-- [~] 구현·로컬검증(`Engine`·`ENGINES`·`EFFORT_LADDER.opencode`(none~max)·`DEFAULT_EFFORT_CAP`·`MODEL_LADDER.opencode=[]`. **계정 허용 기본값은 그대로 claude,codex**(빈 값 폴백도) — OpenCode는 관리자가 켠 계정만), 서버 확인 대기 — G3-01 `store-aidev.ts`
+- [x] 서버 확인(2026-10-13, `667c7e025e16`: `/engines`·정책 응답에 opencode, 세 계정 모두 `engines=claude,codex` 그대로 → OpenCode `allowed false`) — 구현 내용: `Engine`·`ENGINES`·`EFFORT_LADDER.opencode`(none~max)·`DEFAULT_EFFORT_CAP`·`MODEL_LADDER.opencode=[]`. **계정 허용 기본값은 그대로 claude,codex**(빈 값 폴백도) — OpenCode는 관리자가 켠 계정만 — G3-01 `store-aidev.ts`
   - `:8-9`에 `Engine`·`ENGINES` opencode 추가
   - `:20` `EFFORT_LADDER.opencode = ['none','low','medium','high','xhigh','max']`(프런트 `useChatProviderState.ts:25`와 같음. 실제 모델 사다리는 G5에서 모델별로)
   - `:21` `DEFAULT_EFFORT_CAP.opencode`
   - `:27` `MODEL_LADDER.opencode`(G3-02 모델)
-- [~] 구현·로컬검증(**등급표 열을 만들지 않고** OpenCode는 항상 분할 모드로(사다리를 정하지 않으면 OpenCode가 시작하는 모델 하나의 강도 범위를 D0~D4로). `TIER_TABLE`은 `Partial`, `tierOf(engine, depth)`. 카탈로그는 계정별 런타임 목록(`user_engine_models`) + 관리자 level(`engine_models`, 미측정 2)), 서버 확인 대기 — G3-02 `TIER_TABLE`(`routing.ts:104-110`)에 opencode 열을 추가한다(G5에서 카탈로그로 대체될 임시 표).
+- [x] 서버 확인(2026-10-13, `667c7e025e16`: 정책 응답 `tier_table false`, 기본 사다리 = OpenCode 시작 모델, Claude·Codex는 등급표 그대로) — 구현 내용: **등급표 열을 만들지 않고** OpenCode는 항상 분할 모드로(사다리를 정하지 않으면 OpenCode가 시작하는 모델 하나의 강도 범위를 D0~D4로). `TIER_TABLE`은 `Partial`, `tierOf(engine, depth)`. 카탈로그는 계정별 런타임 목록(`user_engine_models`) + 관리자 level(`engine_models`, 미측정 2) — G3-02 `TIER_TABLE`(`routing.ts:104-110`)에 opencode 열을 추가한다(G5에서 카탈로그로 대체될 임시 표).
   - 초기 모델은 G0-02 목록을 보고 사용자가 정한다(§9 Q3). 기본안: 측정 전에는 D0~D2만 같은 모델로, D3·D4는 Go 목록에서 가장 강한 모델로 둔다.
   - `modelRank`(`:169-175`)의 alias는 claude 전용이다. opencode는 `provider/model` 전체 id로 비교한다.
-- [~] 구현·로컬검증(남은 리터럴 제거: `notify.ts` 라벨, `remote-gate.ts`(`opencode … --auto`), `manage-users.ts` 문구·`engine-model`·OpenCode `model-score`, 모델 id 길이 100), 서버 확인 대기 — G3-03 **리터럴 제거** (전부 `ENGINES` 순회로) — GP에서 끝낸 곳: `routing.ts` 점수·usable·동점·응답, `aidev-api.ts` 가용성·usableEngines·설계 순서·입력 파싱, `store-aidev.ts` 폴백·effortCap·engineWeights·engineRuns, `tier-policy.ts`, `engine-weights.ts`, `knowledge-refresh.ts`. 남은 곳: `aidev-api.ts:456`(eval-judge 동시성), `notify.ts`, `remote-gate.ts`, `manage-users.ts` 문구, TIER_TABLE·사다리의 opencode 열
+- [x] 서버 확인(2026-10-13, `667c7e025e16`: 게이트웨이 오류 로그 없음, verify-b 통과) — 구현 내용: 남은 리터럴 제거: `notify.ts` 라벨, `remote-gate.ts`(`opencode … --auto`), `manage-users.ts` 문구·`engine-model`·OpenCode `model-score`, 모델 id 길이 100 — G3-03 **리터럴 제거** (전부 `ENGINES` 순회로) — GP에서 끝낸 곳: `routing.ts` 점수·usable·동점·응답, `aidev-api.ts` 가용성·usableEngines·설계 순서·입력 파싱, `store-aidev.ts` 폴백·effortCap·engineWeights·engineRuns, `tier-policy.ts`, `engine-weights.ts`, `knowledge-refresh.ts`. 남은 곳: `aidev-api.ts:456`(eval-judge 동시성), `notify.ts`, `remote-gate.ts`, `manage-users.ts` 문구, TIER_TABLE·사다리의 opencode 열
   - `routing.ts:726`, `:727`, `:740`, `:933`(응답 `engines`)
   - `aidev-api.ts:118`(as 캐스트, opencode가 들어오면 **TypeError**), `:142`(usableEngines), `:315`(설계 순서 폴백), `:382-383`, `:422`, `:436`, `:607`, `:613`(입력 파싱), `:456`(eval-judge 동시성)
   - `store-aidev.ts:276`(accountEngines 폴백), `:289`(effortCap 조립), `:440`(engineWeights 기본), `:445`(오류 문구), `:465`(`engine IN ('claude','codex')` → opencode run이 학습에서 빠짐)
@@ -603,7 +603,7 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
   - `notify.ts:15`(`PROVIDER_LABEL`)
   - `remote-gate.ts:75`(위험 패턴에 opencode와 그 권한 우회 플래그 `--auto` 등을 추가)
   - `manage-users.ts:17`(usage 문구)
-- [~] 구현·로컬검증(엔진별 `INSERT OR IGNORE`), 서버 확인 대기 — G3-04 `engine_weights` 시드(`store-aidev.ts:205-211`)를 엔진별 `INSERT OR IGNORE`로 바꾼다. 기존 DB에 opencode 행 0.5가 생기게 한다.
+- [x] 서버 확인(2026-10-13, `667c7e025e16`: 기존 DB에서 게이트웨이 기동·정책 실행 정상) — 구현 내용: 엔진별 `INSERT OR IGNORE` — G3-04 `engine_weights` 시드(`store-aidev.ts:205-211`)를 엔진별 `INSERT OR IGNORE`로 바꾼다. 기존 DB에 opencode 행 0.5가 생기게 한다.
 - [~] 구현·로컬검증(GP에서 구현, 로컬검증), 서버 확인 대기 — G3-05 `engine-weights.ts:28`, `:36-42`의 속도 보너스를 2엔진 쌍(`const [a, b]`)에서 N엔진으로 바꾼다. 규칙: 성공률이 최고값 ±5% 안에 있는 엔진 중 가장 빠른 엔진이 나머지보다 20% 이상 빠르면 보너스.
   - 학습 가중치는 작업 우선순위를 정하지 않은 계정(점수 모드, §9 Q11)에서만 공급자 선택에 쓰인다. 우선순위를 정한 계정에서는 통계로만 남는다.
 - [~] 구현·로컬검증(GP-04에서 구현, 로컬검증), 서버 확인 대기 — G3-06 `escalation.ts` 이분법을 제거한다.
@@ -616,10 +616,10 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
   - `laya-questions.ts:99-107`의 escalate 설명을 "다음 공급자"로 고친다.
 - [~] 구현·로컬검증(다른 엔진 사다리의 모델이면 무시(같은 엔진의 낯선 id는 종전대로)), 서버 확인 대기 — G3-07 `routing.ts:776`: agent.model이 **그 엔진의 사다리에 있는 모델일 때만** 적용한다. 지금은 다른 엔진의 모델 이름이 rank 2로 통과할 수 있다.
 - [~] 구현·로컬검증(`provider-policy-test.mjs`: OpenCode 한도 → Claude, 로그아웃 → 건너뜀, OpenCode run 실패 → 같은 공급자 다음 칸, 한도 → `switch_engine`(`from_engine: opencode`)), 서버 확인 대기 — G3-08 G1-08(채팅 엔진 limited)을 3엔진에서 다시 확인한다.
-- [~] 구현·로컬검증(`engineAvailability`가 로그인 확인 때 런타임 `/api/providers/opencode/models`를 받아 저장(60초, 라우팅은 기다리지 않음), 설정 조회는 바로 갱신. 정책 응답에 `allowed`·`tier_table`·`own_ladder`), 서버 확인 대기 — G3-09 가용성
+- [x] 서버 확인(2026-10-13, `667c7e025e16`: 설정 조회 때 런타임에서 모델 92개 수신) — 구현 내용: `engineAvailability`가 로그인 확인 때 런타임 `/api/providers/opencode/models`를 받아 저장(60초, 라우팅은 기다리지 않음), 설정 조회는 바로 갱신. 정책 응답에 `allowed`·`tier_table`·`own_ladder` — G3-09 가용성
   - opencode `allowed`는 `accounts.engines`를 따른다. 기존 계정에 opencode를 추가하는 방법은 §9 Q5에 따른다.
   - 런타임 `GET /api/providers/opencode/models` 결과(연결된 하위 공급자 기준)를 캐시한다(60초, auth와 같이). G5의 `routable(e)`에 쓴다.
-- [~] 구현·로컬검증(게이트웨이 테스트 30개 통과(`provider-policy-test`에 OpenCode 절, `engine-priority`·`remote-gate` 보강)), 서버 확인 대기 — G3-10 테스트 (`deploy/aidev/auth-gateway/test/`)
+- [x] 서버 확인(2026-10-13, `667c7e025e16`: ship 관문에서 게이트웨이 테스트 통과) — 구현 내용: 게이트웨이 테스트 30개 통과(`provider-policy-test`에 OpenCode 절, `engine-priority`·`remote-gate` 보강) — G3-10 테스트 (`deploy/aidev/auth-gateway/test/`)
   - `engine-priority-test.mjs`: 3엔진 순서, `setEnginePriority(['gemini'])` 거부 유지
   - `engine-weights-test.mjs`: N엔진 속도 보너스
   - `usage-limit-test.mjs`: 한도 시 우선순위상 다음 엔진
@@ -627,7 +627,7 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
   - `model-floor-test.mjs`, `tier-policy-test.mjs`, `capability-routing-test.mjs`(opencode 전용 계정), `routing-floors-test.mjs`, `background-design-test.mjs`, `knowledge-refresh-test.mjs`, `notify-test.mjs`, `remote-gate-test.mjs`
   - `mock-services.mjs`: opencode auth와 models 목(mock)
   - `smoke.sh:40-47`
-- [~] 구현·로컬검증(`engines.opencode`·`policy.providers.opencode` 확인, 런타임 OpenCode 설치 확인, 정책 미리보기 확인 추가), 서버 확인 대기 — G3-11 `verify-b.sh:51`의 엔진 확인을 `ENGINES` 기준으로 바꾼다. 계정이 opencode를 허용하면 `j.engines.opencode`가 있는지 확인한다.
+- [x] 서버 확인(2026-10-13, `667c7e025e16`: verify-b 24 PASS / 1 FAIL(기존 `fused routing accuracy 0.714`), 새 항목 2개 PASS) — 구현 내용: `engines.opencode`·`policy.providers.opencode` 확인, 런타임 OpenCode 설치 확인, 정책 미리보기 확인 추가 — G3-11 `verify-b.sh:51`의 엔진 확인을 `ENGINES` 기준으로 바꾼다. 계정이 opencode를 허용하면 `j.engines.opencode`가 있는지 확인한다.
 
 ### G4. 프런트 3엔진 (릴리스 ③)
 - [~] 구현·로컬검증(`Engine = AidevEngine`, 서버가 빠뜨릴 수 있는 Record는 `Partial`, `NextAction.from_engine`), 서버 확인 대기 — G4-01 `src/modules/aidev-router/api.ts:8` `Engine = AidevEngine`으로 바꾼다.
@@ -753,22 +753,23 @@ G5의 정책 구조를 OpenCode 없이 두 엔진으로 먼저 구현했다. Ope
   - 검증 우선순위대로 검증 엔진이 정해진다(`runs.verification.engine`).
 
 ### G6. 검증·배포·문서 (매 릴리스)
+**서버 확인 기록 (2026-10-13, `667c7e025e16`, jazzlife)**: 계정 설정을 바꾸지 않고 확인함. Claude·Codex 정책은 등급표 그대로(하한 opus / gpt-5.6-sol, 강도 상한 high), 라우팅 결과 종전과 같음(`claude opus/high`). 정책 응답에 OpenCode(허용 안 됨, 모델 92개). OpenCode 무료 모델(`opencode/nemotron-3-ultra-free`)로 작업 채팅 → OpenCode 검증 pass 17초 → OpenCode 교훈 정제 53초, 판정은 409, 세션 정리 확인. verify-b 24 PASS / 1 FAIL(기존). **남은 서버 확인**: OpenCode를 허용한 계정에서의 실제 라우팅(작업 순서·한도 인계·복귀)과 화면 — jazzlife의 OpenCode가 잔액 0인 OpenAI 키뿐이라 허용을 켜지 않음(G4-13·G5-15), 설계·지식 점검의 OpenCode 실행, AA 키(G0-09).
 **서버 확인 기록 (2026-10-13, 릴리스 `d41a7f575824`, jazzlife)**: 게이트웨이를 거친 실제 OpenCode 채팅 4종(응답 `SERVER-OK`·토큰 18,779 / aidev-tools 도구 호출 / 전문 agent 지시문 + read 도구 / 이어가기) 통과, 정책 API 통과(설정 불변), `verify-b` 22 PASS · 1 FAIL(분류기 정확도 0.714 — 이번 작업 전부터 같은 수치). 화면은 같은 커밋의 로컬 플랫폼에서 확인(Cursor 없음, OpenCode 탭은 Account·MCP, 「모델·강도 범위」는 Claude·Codex). **확인 못 한 것**: 범위 분할 모드의 실제 명령(운영 계정은 모두 등급표 모드), 사용량 한도 인계·로그인 거절(실제 발생 없음), 작업 순서에 따른 교훈 정제 후보, 운영 화면 직접 조회. **발견**: ① 강제 삭제한 OpenCode 세션이 OpenCode 자체 DB에 남아 있으면 동기화가 다시 목록에 올림(검증 중 1건 재등장 → `opencode session delete`까지 해야 사라짐) — G2 잔여로 수정 ② 다른 두 계정의 런타임은 아직 옛 이미지(opencode 없음) ③ jazzlife의 Codex는 "not configured" ④ OpenCode 로그인은 `openai`(API 키)이고 Go는 아직 아님.
-- [~] 구현·로컬검증(typecheck·lint·server 572(1 skip)·client 645·build·게이트웨이 30 통과(2026-10-13)), 서버 확인 대기 — G6-01 로컬 관문(ship.sh와 같음): `npm run typecheck`, `npm run lint`, `npm test`(server), `npm run test:client`, `npm run build`, 게이트웨이와 runtime-manager `npm test`
-- [~] 구현·로컬검증(로컬 플랫폼 + opencode 1.19.0 + 무료 모델: OpenCode 허용 → 작업 순서 opencode 1순위 → `/route`가 OpenCode·사다리 모델 선택 → 실제 실행 → OpenCode 독립 검증 pass → 실패 run 정제 → 부가 턴 세션 0개 → 강제 삭제가 OpenCode 저장소에서도 삭제, 설정 화면 OpenCode 범위 탭(브라우저) 14/14), 서버 확인 대기 — G6-02 로컬 플랫폼 e2e: `deploy/aidev/release/local-platform.sh`에 opencode를 설치한 런타임으로 라우팅과 opencode 실행을 확인한다(목(mock) Laya).
+- [x] 서버 확인(2026-10-13, `667c7e025e16`: ship 관문 통과 `SHIP_RESULT ok`) — 구현 내용: typecheck·lint·server 572(1 skip)·client 645·build·게이트웨이 30 통과(2026-10-13) — G6-01 로컬 관문(ship.sh와 같음): `npm run typecheck`, `npm run lint`, `npm test`(server), `npm run test:client`, `npm run build`, 게이트웨이와 runtime-manager `npm test`
+- [x] 확인(2026-10-13 로컬 플랫폼) — 구현 내용: 로컬 플랫폼 + opencode 1.19.0 + 무료 모델: OpenCode 허용 → 작업 순서 opencode 1순위 → `/route`가 OpenCode·사다리 모델 선택 → 실제 실행 → OpenCode 독립 검증 pass → 실패 run 정제 → 부가 턴 세션 0개 → 강제 삭제가 OpenCode 저장소에서도 삭제, 설정 화면 OpenCode 범위 탭(브라우저) 14/14 — G6-02 로컬 플랫폼 e2e: `deploy/aidev/release/local-platform.sh`에 opencode를 설치한 런타임으로 라우팅과 opencode 실행을 확인한다(목(mock) Laya).
 - [ ] G6-03 **배포 순서**
   - 릴리스 ①
     - 서버 `.env`에 `OPENCODE_VERSION`을 넣고 `runtime-image.sh build`를 실행한다. ship은 이미지를 빌드하지 않는다.
     - push한 뒤 `relay.sh ship jazzlife`를 실행한다.
     - 런타임을 재생성한다. 멈춘 런타임만 자동 재생성되므로(`runtime-manager.ts:98-100` stale 검사), 실행 중인 런타임은 하나씩 stop → rm → 로그인으로 재기동한다.
   - 릴리스 ② ~ ⑤: ship만 한다.
-- [~] 구현·로컬검증(`verify-b.sh`: 런타임 OpenCode 설치, `/engines`의 opencode, 공급자별 D0~D4 미리보기), 서버 확인 대기 — G6-04 `verify-b.sh` 항목 추가
+- [x] 서버 확인(2026-10-13, `667c7e025e16`: 서버 사본 동기화 후 실행) — 구현 내용: `verify-b.sh`: 런타임 OpenCode 설치, `/engines`의 opencode, 공급자별 D0~D4 미리보기 — G6-04 `verify-b.sh` 항목 추가
   - 런타임에 `opencode --version`이 있는지(이미지 반영 확인)
   - `/engines`에 opencode가 있는지
   - (G5) 정책이 빈 계정의 동등성 표본
   - 검증 후보 순서
   - 서버의 verify-b는 별도 사본이므로 scripts로 동기화한다(메모리: ship 후 검증 함정).
-- [ ] G6-05 판정 평가 회귀: `POST /api/aidev/route/eval-judge`의 기존 기준(agent ≥0.85, level ≥0.8, D4 ≥2/3, 핸드오프 ≥0.85)이 유지되는지 확인한다.
+- [x] 서버 확인(2026-10-13, `667c7e025e16`: verify-b의 판정 4항목 PASS — 등급·D4·agent·인계, p90 4.6초) — G6-05 판정 평가 회귀: `POST /api/aidev/route/eval-judge`의 기존 기준(agent ≥0.85, level ≥0.8, D4 ≥2/3, 핸드오프 ≥0.85)이 유지되는지 확인한다.
 - [ ] G6-06 문서
   - IMPLEMENTATION-PLAN.md를 갱신한다.
     - §0 확정된 결정: 실행 엔진에 OpenCode 추가, 원칙 4 허용 지점
