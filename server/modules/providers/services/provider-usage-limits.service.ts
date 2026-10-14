@@ -28,12 +28,26 @@ const CODEX_USAGE_CACHE_MS = 60_000;
 const CODEX_USAGE_TIMEOUT_MS = 8_000;
 const codexAuthFile = () => path.join(process.env.CODEX_HOME || path.join(os.homedir(), '.codex'), 'auth.json');
 
+/**
+ * Claude's turn events are its only report, so a drawer opened (or a sign-in made) before the next turn showed the
+ * picture of a day ago, or none. The platform's 1-year token cannot read `/api/oauth/usage` (scope user:profile), but
+ * any Messages reply carries the account's windows in `anthropic-ratelimit-unified-*` headers (measured 2026-10-14):
+ * the smallest request — one output token of Haiku, about 23 tokens of the subscription — is sent at most every ten
+ * minutes while a drawer is open, and at once after a sign-in.
+ */
+const CLAUDE_USAGE_URL = 'https://api.anthropic.com/v1/messages';
+const CLAUDE_USAGE_MODEL = 'claude-haiku-4-5';
+const CLAUDE_USAGE_CACHE_MS = 10 * 60_000;
+/** The unified headers' window names → the windows the turn events use. */
+const CLAUDE_HEADER_WINDOWS: Record<string, string> = { '5h': 'five_hour', '7d': 'seven_day' };
+
 /** The engines the drawers show; only the signed-in ones are reported (2026-10-13). */
 const USAGE_ENGINES: LLMProvider[] = ['claude', 'codex', 'opencode'];
 const SIGNED_IN_CACHE_MS = 60_000;
 
 let store: Store | null = null;
 let codexFetchedAt = 0;
+let claudeFetchedAt = 0;
 let signedIn: Set<LLMProvider> | null = null;
 let signedInAt = 0;
 
@@ -104,6 +118,48 @@ async function refreshCodexUsage(now: number) {
   const blockedUntil = limitReached ? (resets.length ? Math.min(...resets) : 0) : null;
   load().codex = { provider: 'codex', observedAt: now, windows, blockedUntil };
   save();
+}
+
+/**
+ * The `anthropic-ratelimit-unified-*` headers of a Messages reply as a `rate_limit_event` (the form recordClaude
+ * reads): the representative window with the overall status, and every window the headers name. Exported for the test.
+ */
+export function claudeUsageFromHeaders(headers: Headers): Record<string, unknown> | null {
+  const get = (name: string) => headers.get(`anthropic-ratelimit-unified-${name}`);
+  const unifiedWindows: Record<string, { utilization: number; resetsAt: number }> = {};
+  for (const [short, type] of Object.entries(CLAUDE_HEADER_WINDOWS)) {
+    const utilization = Number(get(`${short}-utilization`));
+    const resetsAt = Number(get(`${short}-reset`));
+    if (Number.isFinite(utilization) && get(`${short}-utilization`) !== null) unifiedWindows[type] = { utilization, resetsAt: Number.isFinite(resetsAt) ? resetsAt : 0 };
+  }
+  if (!Object.keys(unifiedWindows).length) return null;
+  const claim = get('representative-claim');
+  const representative = claim && unifiedWindows[claim] ? claim : Object.keys(unifiedWindows)[0];
+  return {
+    status: get('status') ?? 'allowed',
+    rateLimitType: representative,
+    utilization: unifiedWindows[representative].utilization,
+    resetsAt: Number(get('reset')) || unifiedWindows[representative].resetsAt,
+    overageStatus: get('overage-status'),
+    unifiedWindows,
+  };
+}
+
+/** Asks Claude for the account's windows with the platform token; leaves the picture alone when it cannot. */
+async function refreshClaudeUsage() {
+  const token = process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim();
+  if (!token) return;
+  const response = await fetch(CLAUDE_USAGE_URL, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${token}`, 'anthropic-beta': 'oauth-2025-04-20', 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
+    // a subscription token answers requests that present themselves as Claude Code
+    body: JSON.stringify({ model: CLAUDE_USAGE_MODEL, max_tokens: 1, system: "You are Claude Code, Anthropic's official CLI for Claude.", messages: [{ role: 'user', content: 'hi' }] }),
+    signal: AbortSignal.timeout(CODEX_USAGE_TIMEOUT_MS),
+  });
+  // a refusal on a limit still carries the headers; anything else (a sign-in problem) says nothing about usage
+  if (!response.ok && response.status !== 429) return;
+  const info = claudeUsageFromHeaders(response.headers);
+  if (info) providerUsageLimitsService.recordClaude(info);
 }
 
 function current(provider: LLMProvider): ProviderUsageLimitsSnapshot {
@@ -194,7 +250,7 @@ export const providerUsageLimitsService = {
    */
   async snapshotLive(isSignedIn: (provider: LLMProvider) => Promise<boolean | null>, now = Date.now(), refresh = false): Promise<Partial<Record<LLMProvider, ProviderUsageLimitsSnapshot>>> {
     // `refresh`: a sign-in just changed (the apps say so) — ask about the sign-ins and Codex's account now
-    if (refresh) { signedInAt = 0; codexFetchedAt = 0; }
+    if (refresh) { signedInAt = 0; codexFetchedAt = 0; claudeFetchedAt = 0; }
     if (!signedIn || now - signedInAt >= SIGNED_IN_CACHE_MS) {
       const previous = signedIn;
       const next = new Set<LLMProvider>();
@@ -213,6 +269,10 @@ export const providerUsageLimitsService = {
       codexFetchedAt = now;
       await refreshCodexUsage(now).catch(() => undefined);
     }
+    if (signedIn.has('claude') && now - claudeFetchedAt >= CLAUDE_USAGE_CACHE_MS) {
+      claudeFetchedAt = now;
+      await refreshClaudeUsage().catch(() => undefined);
+    }
     const all = providerUsageLimitsService.snapshot(now);
     const out: Partial<Record<LLMProvider, ProviderUsageLimitsSnapshot>> = {};
     for (const provider of signedIn) out[provider] = all[provider] ?? { provider, observedAt: 0, windows: [], blockedUntil: null };
@@ -227,6 +287,7 @@ export const providerUsageLimitsService = {
     signedIn?.delete(provider);
     signedInAt = 0;
     codexFetchedAt = 0;
+    claudeFetchedAt = 0;
     if (!load()[provider]) return;
     delete load()[provider];
     save();
@@ -236,6 +297,7 @@ export const providerUsageLimitsService = {
   reset() {
     store = {};
     codexFetchedAt = 0;
+    claudeFetchedAt = 0;
     signedIn = null;
     signedInAt = 0;
     try { fs.unlinkSync(file()); } catch { /* none */ }

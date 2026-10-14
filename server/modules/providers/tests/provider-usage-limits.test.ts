@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 
-import { providerUsageLimitsService } from '@/modules/providers/services/provider-usage-limits.service.js';
+import { claudeUsageFromHeaders, providerUsageLimitsService } from '@/modules/providers/services/provider-usage-limits.service.js';
 
 const service = providerUsageLimitsService;
 
@@ -161,4 +161,44 @@ test('an OpenCode Go refusal is recorded with its window and reset', () => {
   assert.equal(opencode.blockedUntil, 1791507200000);
   assert.deepEqual(opencode.windows, [{ type: 'go:5-hour', utilization: 1, resetsAt: 1791507200000, blocked: true }]);
   service.reset();
+});
+
+test('Claude: the drawer read asks Claude with the platform token; the reply headers become the windows', async () => {
+  service.reset();
+  const previousFetch = globalThis.fetch;
+  const previousToken = process.env.CLAUDE_CODE_OAUTH_TOKEN;
+  process.env.CLAUDE_CODE_OAUTH_TOKEN = 'sk-ant-oat01-test';
+  let calls = 0;
+  // the headers of a real reply (2026-10-14), utilization changed
+  globalThis.fetch = (async (_url: string, init: RequestInit) => {
+    calls += 1;
+    assert.equal(JSON.parse(String(init.body)).max_tokens, 1);
+    return new Response('{}', { status: 200, headers: {
+      'anthropic-ratelimit-unified-5h-reset': '1791990000', 'anthropic-ratelimit-unified-5h-status': 'allowed', 'anthropic-ratelimit-unified-5h-utilization': '0.25',
+      'anthropic-ratelimit-unified-7d-reset': '1792533600', 'anthropic-ratelimit-unified-7d-status': 'allowed', 'anthropic-ratelimit-unified-7d-utilization': '0.04',
+      'anthropic-ratelimit-unified-overage-status': 'rejected', 'anthropic-ratelimit-unified-representative-claim': 'five_hour', 'anthropic-ratelimit-unified-reset': '1791990000', 'anthropic-ratelimit-unified-status': 'allowed',
+    } });
+  }) as typeof fetch;
+  try {
+    const now = 1791980000000;
+    const first = await service.snapshotLive(async (provider) => provider === 'claude', now);
+    assert.deepEqual(first.claude!.windows, [
+      { type: 'five_hour', utilization: 0.25, resetsAt: 1791990000000, blocked: false },
+      { type: 'seven_day', utilization: 0.04, resetsAt: 1792533600000, blocked: false },
+    ]);
+    // within ten minutes the drawer is answered from the picture; a sign-in asks again at once
+    await service.snapshotLive(async (provider) => provider === 'claude', now + 60_000);
+    assert.equal(calls, 1);
+    await service.snapshotLive(async (provider) => provider === 'claude', now + 120_000, true);
+    assert.equal(calls, 2);
+    // no platform token (an API key login): nothing is sent
+    delete process.env.CLAUDE_CODE_OAUTH_TOKEN;
+    await service.snapshotLive(async (provider) => provider === 'claude', now + 3_600_000, true);
+    assert.equal(calls, 2);
+    assert.equal(claudeUsageFromHeaders(new Headers({ 'x-other': '1' })), null);
+  } finally {
+    globalThis.fetch = previousFetch;
+    if (previousToken === undefined) delete process.env.CLAUDE_CODE_OAUTH_TOKEN; else process.env.CLAUDE_CODE_OAUTH_TOKEN = previousToken;
+    service.reset();
+  }
 });
