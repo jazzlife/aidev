@@ -192,7 +192,8 @@ export function createAidevApi(deps: AidevDeps) {
       return [engine, { allowed: allowed.includes(engine), mode: policy.ladder ? 'split' : 'tier', tier_table: hasTable, own_ladder: Boolean(store.modelLadder(uid)[engine]), ladder: policy.ladder, floor: policy.floor, ceiling: policy.ceiling, effort_floor: policy.effortFloor, effort_cap: policy.effortCap, effort_ladder: EFFORT_LADDER[engine], preview, catalog }];
     }));
     const synced = Number(store.kvGet('aa.synced_at') ?? 0);
-    return { providers, work_priority: store.enginePriority(uid), verify_priority: store.verifyPriority(uid), score_index: index,
+    // an administrator may switch the account's providers on and off from the settings (the CLI's `engines`)
+    return { providers, is_admin: store.accountEngines(uid).role === 'admin', work_priority: store.enginePriority(uid), verify_priority: store.verifyPriority(uid), score_index: index,
       scores_source: { name: 'Artificial Analysis', url: 'https://artificialanalysis.ai', version: store.kvGet('aa.index_version'), synced_at: synced || null } };
   }
 
@@ -713,8 +714,9 @@ export function createAidevApi(deps: AidevDeps) {
       }
       // ---- provider policy (PROVIDER-ENGINE-PLAN §3.2): one provider's range, the verification order, the score index
       if (rest === '/settings/provider-policy' && m === 'GET') {
-        // OpenCode's models as its CLI lists them now, so the range card offers what the account can run
-        await Promise.all(ENGINES.map((engine) => refreshEngineModels(session, engine)));
+        // OpenCode's models as its CLI lists them now, so the range card offers what the account can run — not the list of
+        // up to a minute ago: a key saved a moment before brings its models (the runtime keeps its own list per sign-in)
+        await Promise.all(ENGINES.map((engine) => refreshEngineModels(session, engine, true)));
         return json(res, 200, policyView(uid)), true;
       }
       if (rest === '/settings/provider-policy' && m === 'PUT') {
@@ -726,6 +728,20 @@ export function createAidevApi(deps: AidevDeps) {
           if (b.reset === true) store.setProviderPolicy(uid, engine, { ladder: null, ceiling: null, effortFloor: null, ...(TIER_TABLE[0][engine] ? {} : { floor: null }) });
           else store.setProviderPolicy(uid, engine, { ladder: b.ladder === undefined ? undefined : b.ladder === null ? null : b.ladder as string[], floor: field(b.floor), ceiling: field(b.ceiling), effortFloor: field(b.effort_floor), effortCap: field(b.effort_cap) });
         } catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid policy'); }
+        return json(res, 200, policyView(uid)), true;
+      }
+      // which providers this account routes to (administrators, their own account): OpenCode is off until turned on
+      if (rest === '/settings/account-engines' && m === 'PUT') {
+        requireAdmin(session);
+        const b = await readJson(req);
+        const engine = str(b.engine, 'engine', 20) as Engine;
+        if (!ENGINES.includes(engine) || typeof b.enabled !== 'boolean') throw new HttpError(400, `engine must be one of ${ENGINES.join('|')} and enabled true|false`);
+        const current = store.accountEngines(uid).engines;
+        const next = b.enabled ? [...new Set([...current, engine])] : current.filter((e) => e !== engine);
+        try { store.setAccountEngines(session.user.username, ENGINES.filter((e) => next.includes(e))); }
+        catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'invalid engines'); }
+        // the next route sees the change: the availability cache is per account
+        await engineAvailability(session, true).catch(() => undefined);
         return json(res, 200, policyView(uid)), true;
       }
       if (rest === '/settings/verify-priority' && m === 'PUT') {

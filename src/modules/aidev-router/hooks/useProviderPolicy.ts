@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { aidevApi, type Engine, type ProviderPolicyPatch, type ProviderPolicyView, type RouteResult, type ScoreIndex } from '@/modules/aidev-router/api';
-import { ENGINE_LABELS } from '@/shared/constants';
+import { ENGINE_LABELS, PROVIDER_MODELS_CHANGED_EVENT } from '@/shared/constants';
 import { isAidevEngine } from '@/shared/utils';
 
 /**
@@ -33,7 +33,13 @@ export function useProviderPolicy() {
   /** The verification order; [] = the worker's other provider first. */
   const setVerifyPriority = useCallback((order: Engine[]) => apply(() => aidevApi.setVerifyPriority(order.length ? order : null)), [apply]);
   const setScoreIndex = useCallback((index: ScoreIndex) => apply(() => aidevApi.setScoreIndex(index)), [apply]);
-  return { view, error, saving, setProvider, setWorkPriority, setVerifyPriority, setScoreIndex };
+  /** Administrators: switch a provider on or off for this account; the composer's lists follow on the next load. */
+  const setAccountEngine = useCallback((engine: Engine, enabled: boolean) => apply(async () => {
+    const next = await aidevApi.setAccountEngine(engine, enabled);
+    window.dispatchEvent(new Event(PROVIDER_MODELS_CHANGED_EVENT));
+    return next;
+  }), [apply]);
+  return { view, error, saving, setProvider, setWorkPriority, setVerifyPriority, setScoreIndex, setAccountEngine };
 }
 
 /** Providers that have a policy (a range tab in the settings): the engines routing picks between. */

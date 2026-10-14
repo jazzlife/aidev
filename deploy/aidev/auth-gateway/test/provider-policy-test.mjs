@@ -273,6 +273,20 @@ res = await call('GET', '/api/aidev/engines');
 assert.deepEqual([res.body.engines.opencode.allowed, res.body.engines.opencode.authenticated], [true, true]);
 res = await call('PUT', '/api/aidev/engine-models', { engine: 'opencode', model: GLM, level: 3 });
 assert.equal(res.status, 403, 'model levels: administrators');
+// an administrator switches the account's providers in the settings; others may not
+res = await call('PUT', '/api/aidev/settings/account-engines', { engine: 'opencode', enabled: false });
+assert.equal(res.status, 403, 'account providers: administrators');
+assert.equal(res.body?.is_admin, undefined);
+store.setRole('alice', 'admin');
+res = await call('PUT', '/api/aidev/settings/account-engines', { engine: 'opencode', enabled: false });
+assert.deepEqual([res.status, res.body.is_admin, res.body.providers.opencode.allowed], [200, true, false]);
+assert.deepEqual(store.accountEngines(uid).engines, ['claude', 'codex']);
+res = await call('PUT', '/api/aidev/settings/account-engines', { engine: 'opencode', enabled: true });
+assert.equal(res.body.providers.opencode.allowed, true);
+store.setAccountEngines('alice', ['claude']);
+res = await call('PUT', '/api/aidev/settings/account-engines', { engine: 'claude', enabled: false });
+assert.equal(res.status, 400, 'an account keeps at least one provider');
+store.setAccountEngines('alice', ['claude', 'codex', 'opencode']); store.setRole('alice', 'user');
 console.log('PASS OpenCode: split over the account\'s models, Q1 with three providers');
 
 console.log('provider policy: all checks passed');

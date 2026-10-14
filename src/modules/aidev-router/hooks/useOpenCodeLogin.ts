@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { aidevApi } from '@/modules/aidev-router/api';
+import { PROVIDER_MODELS_CHANGED_EVENT } from '@/shared/constants';
 
 /**
  * What OpenCode can be signed in to with an API key, as its own provider ids. OpenCode Go (the subscription) and
@@ -48,8 +49,9 @@ export function useOpenCodeLogin(onDone?: () => void) {
     try {
       const result = await aidevApi.openCodeLoginKey(providerId, key.trim());
       setConnected(result.providers); setSaved(result.provider); setKey('');
-      // the gateway routes by its own cached sign-in state: it learns of the new one now
+      // the gateway routes by its own cached sign-in state: it learns of the new one now; the composer reloads its models
       void aidevApi.engines(true).catch(() => undefined);
+      window.dispatchEvent(new Event(PROVIDER_MODELS_CHANGED_EVENT));
       onDone?.();
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : String(failure));

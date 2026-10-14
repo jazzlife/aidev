@@ -192,10 +192,20 @@ export function ProviderPolicyCard({ engine }: { engine: Engine }) {
   return (
     <section className="space-y-2 text-sm" data-testid="provider-policy-card">
       <div className="text-xs text-muted-foreground">이 공급자 안에서 쓸 모델과 추론 강도의 범위입니다. 「범위 설정」을 누르면 정한 범위를 명령 난이도 D0~D4에 맞춰 나눠 고르고(지능 점수가 있으면 점수로), 상한 모델이 그 난이도에 못 미치면 상한 모델을 최대 강도로 씁니다. 높을수록 구독 사용량이 많이 듭니다.</div>
-      {entry?.allowed === false ? <div className="rounded-md border border-border p-2.5 text-xs text-muted-foreground">이 계정은 아직 {ENGINE_LABELS[engine]}(으)로 작업을 보내도록 켜져 있지 않습니다. 관리자가 켜면 작업·검증 우선순위에 넣을 수 있고, 아래 범위가 적용됩니다. 그 전에도 {ENGINE_LABELS[engine]} 채팅을 직접 열어 쓰는 것은 됩니다.</div> : null}
+      {entry?.allowed === false ? (
+        <div className="rounded-md border border-border p-2.5 text-xs text-muted-foreground">
+          이 계정은 아직 {ENGINE_LABELS[engine]}(으)로 작업을 보내도록 켜져 있지 않습니다. 켜면 라우터가 {ENGINE_LABELS[engine]} 모델을 고를 수 있고, 작업·검증 우선순위에 넣을 수 있으며, 아래 범위가 적용됩니다.
+          {policy.view?.is_admin
+            ? <div className="mt-2"><button type="button" className={smallButton} disabled={policy.saving} onClick={() => { void policy.setAccountEngine(engine, true); }}>이 계정에서 {ENGINE_LABELS[engine]} 사용 켜기</button></div>
+            : ' 관리자에게 켜 달라고 요청해 주세요. 그 전에도 채팅을 직접 열어 쓰는 것은 됩니다.'}
+        </div>
+      ) : null}
       {entry ? <ProviderCard engine={engine} entry={entry} disabled={policy.saving} onChange={(patch) => { void policy.setProvider({ engine, ...patch }); }} />
         : <div className="text-xs text-muted-foreground">{policy.error ?? '불러오는 중…'}</div>}
       {entry && policy.error ? <div className="text-xs text-red-600">{policy.error}</div> : null}
+      {entry?.allowed && policy.view?.is_admin && entry.tier_table === false ? (
+        <button type="button" className="text-xs text-muted-foreground underline" disabled={policy.saving} onClick={() => { void policy.setAccountEngine(engine, false); }}>이 계정에서 {ENGINE_LABELS[engine]} 사용 끄기</button>
+      ) : null}
     </section>
   );
 }

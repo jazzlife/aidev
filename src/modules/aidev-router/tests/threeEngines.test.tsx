@@ -92,3 +92,18 @@ test('a provider the account does not route to says so on its range tab', async 
   await waitFor(() => screen.getByText(/아직 OpenCode\(으\)로 작업을 보내도록 켜져 있지 않습니다/));
   assert.ok(screen.getByText(/OpenCode에 로그인하면 쓸 수 있는 모델이 여기에 나타납니다/));
 });
+
+test('an administrator switches OpenCode on for the account from its range tab', async () => {
+  const off = { allowed: false, mode: 'tier', tier_table: false, own_ladder: false, ladder: null, floor: null, ceiling: null, effort_floor: null, effort_cap: 'xhigh', effort_ladder: [], preview: [], catalog: [] };
+  const base = { work_priority: [], verify_priority: [], score_index: 'coding', scores_source: { name: 'Artificial Analysis', url: 'https://artificialanalysis.ai', version: null, synced_at: null } };
+  vi.spyOn(aidevApi, 'providerPolicy').mockResolvedValue({ ...base, is_admin: true, providers: { opencode: off } } as never);
+  const toggle = vi.spyOn(aidevApi, 'setAccountEngine').mockResolvedValue({ ...base, is_admin: true, providers: { opencode: { ...off, allowed: true } } } as never);
+  const reloaded = vi.fn(); window.addEventListener('nadovibe:provider-models-changed', reloaded);
+  render(<ProviderPolicyCard engine="opencode" />);
+  const enable = await screen.findByRole('button', { name: '이 계정에서 OpenCode 사용 켜기' });
+  await act(async () => { enable.click(); });
+  assert.deepEqual(toggle.mock.calls[0], ['opencode', true]);
+  await waitFor(() => screen.getByRole('button', { name: '이 계정에서 OpenCode 사용 끄기' }));
+  assert.equal(reloaded.mock.calls.length, 1, 'the composer reloads its model lists');
+  window.removeEventListener('nadovibe:provider-models-changed', reloaded);
+});

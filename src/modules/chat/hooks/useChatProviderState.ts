@@ -10,7 +10,7 @@ import type { PendingPermissionRequest, PermissionMode,
   ProviderModelOption,
   ProviderModelsDefinition } from '@/shared/types';
 import { readDefaultPermissionMode } from '@/shared/userSettings';
-import { DEFAULT_EFFORT_VALUE } from '@/shared/constants';
+import { DEFAULT_EFFORT_VALUE, PROVIDER_MODELS_CHANGED_EVENT } from '@/shared/constants';
 import { readSelectedProvider, writeSelectedProvider } from '@/shared/selectedProvider';
 
 const FALLBACK_PROVIDER_EFFORT_VALUES: Partial<Record<LLMProvider, readonly string[]>> = {
@@ -233,6 +233,10 @@ export function useChatProviderState({ selectedSession, selectedProject: _select
 
   useEffect(() => {
     void loadProviderModels();
+    // a new sign-in (an OpenCode key) or a provider switched on brings models the first load did not have
+    const reload = () => { void loadProviderModels(); };
+    window.addEventListener(PROVIDER_MODELS_CHANGED_EVENT, reload);
+    return () => window.removeEventListener(PROVIDER_MODELS_CHANGED_EVENT, reload);
   }, [loadProviderModels]);
 
   useEffect(() => {

@@ -112,6 +112,8 @@ export type ProviderPolicyEntry = {
 };
 export type ProviderPolicyView = {
   providers: Partial<Record<Engine, ProviderPolicyEntry>>;
+  /** an administrator may switch this account's providers on and off (setAccountEngine) */
+  is_admin?: boolean;
   /** the work order ([] = the learned weights) and the verification order ([] = the worker's other provider first) */
   work_priority: Engine[]; verify_priority: Engine[];
   score_index: ScoreIndex;
@@ -442,6 +444,8 @@ export const aidevApi = {
   /** Provider policy: the whole view, one provider's range, the verification order, the score index. */
   providerPolicy: () => authenticatedFetch('/api/aidev/settings/provider-policy').then((response) => readJson<ProviderPolicyView>(response)),
   setProviderPolicy: (patch: ProviderPolicyPatch) => post('/api/aidev/settings/provider-policy', patch, 'PUT').then((response) => readJson<ProviderPolicyView>(response)),
+  /** Administrators: whether this account routes to `engine` at all (OpenCode is off until switched on). */
+  setAccountEngine: (engine: Engine, enabled: boolean) => post('/api/aidev/settings/account-engines', { engine, enabled }, 'PUT').then((response) => readJson<ProviderPolicyView>(response)),
   setVerifyPriority: (order: Engine[] | null) => post('/api/aidev/settings/verify-priority', { order }, 'PUT').then((response) => readJson<ProviderPolicyView>(response)),
   setScoreIndex: (index: ScoreIndex) => post('/api/aidev/settings/score-index', { index }, 'PUT').then((response) => readJson<ProviderPolicyView>(response)),
   /** The order engines are used in; null → the learned weights decide. */

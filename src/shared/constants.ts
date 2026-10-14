@@ -124,6 +124,13 @@ export const AIDEV_ENGINES: readonly AidevEngine[] = ['claude', 'codex', 'openco
 /** Display name of each offered provider (chips, notes, hand-off cards). */
 export const ENGINE_LABELS: Record<AidevEngine, string> = { claude: 'Claude', codex: 'Codex', opencode: 'OpenCode' };
 
+/**
+ * Window event: a provider's sign-in or this account's providers changed, so the model lists the composer loaded at
+ * start are out of date (a new OpenCode key brings its models). Sent by the OpenCode login and the provider switch
+ * in the settings; the chat's provider state reloads its lists on it.
+ */
+export const PROVIDER_MODELS_CHANGED_EVENT = 'nadovibe:provider-models-changed';
+
 // ---------------------------
 
 //----------------- MCP SERVER CAPABILITIES ------------
