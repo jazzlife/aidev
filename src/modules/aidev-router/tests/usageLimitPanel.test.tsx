@@ -34,3 +34,19 @@ test('figures read a while ago say when: today by time, yesterday, else the date
   assert.equal(formatObservedAt(new Date(2026, 9, 13, 23, 16).getTime(), now), '어제 23:16');
   assert.equal(formatObservedAt(new Date(2026, 9, 11, 7, 0).getTime(), now), '10/11 07:00');
 });
+
+test('a connected engine with no figures is green with "한도 여유"; a refusal is red with its reset', async () => {
+  providers = {
+    opencode: { provider: 'opencode', observedAt: 0, windows: [], blockedUntil: null },
+    codex: { provider: 'codex', observedAt: Date.now(), windows: [{ type: 'five_hour', utilization: 1, resetsAt: Date.now() + 3_600_000, blocked: true }], blockedUntil: Date.now() + 3_600_000 },
+  };
+  framed();
+  await waitFor(() => screen.getByTestId('usage-opencode'));
+  const opencode = screen.getByTestId('usage-opencode');
+  assert.match(opencode.textContent ?? '', /OpenCode한도 여유/);
+  assert.ok(opencode.querySelector('.bg-emerald-500'), 'green: connected');
+  assert.doesNotMatch(opencode.textContent ?? '', /정보 없음|0$/);
+  const codex = screen.getByTestId('usage-codex');
+  assert.match(codex.textContent ?? '', /한도 도달 · 해제까지/);
+  assert.ok(codex.querySelector('.bg-red-500'));
+});

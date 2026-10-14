@@ -9,9 +9,9 @@ import { ENGINE_LABELS } from '@/shared/constants';
  * tokens (and its CSS only carries classes used under src-mobile plus this file). So the compact (mobile)
  * variant draws with the mobile tokens and the workbench variant with its own.
  */
-type Palette = { muted: string; track: string; ok: string; warn: string; bad: string; unknownDot: string };
-const WORKBENCH: Palette = { muted: 'text-muted-foreground', track: 'bg-muted', ok: 'bg-emerald-500', warn: 'bg-amber-500', bad: 'bg-red-500', unknownDot: 'bg-muted-foreground/40' };
-const MOBILE: Palette = { muted: 'text-muted', track: 'bg-line', ok: 'bg-ok', warn: 'bg-warn', bad: 'bg-danger', unknownDot: 'bg-muted/40' };
+type Palette = { muted: string; track: string; ok: string; warn: string; bad: string };
+const WORKBENCH: Palette = { muted: 'text-muted-foreground', track: 'bg-muted', ok: 'bg-emerald-500', warn: 'bg-amber-500', bad: 'bg-red-500' };
+const MOBILE: Palette = { muted: 'text-muted', track: 'bg-line', ok: 'bg-ok', warn: 'bg-warn', bad: 'bg-danger' };
 
 /** Bar colour by how full the window is. */
 const tone = (palette: Palette, percent: number | null, blocked: boolean) => (blocked || (percent ?? 0) >= 90 ? palette.bad : (percent ?? 0) >= 70 ? palette.warn : palette.ok);
@@ -35,16 +35,18 @@ function EngineUsage({ view, compact, now }: { view: UsageLimitView; compact: bo
   return (
     <div className={compact ? 'px-3 py-2' : 'px-2.5 py-1.5'} data-testid={`usage-${view.engine}`} data-blocked={blocked || undefined}>
       <div className="flex items-center gap-2">
-        <span className={`h-2 w-2 shrink-0 rounded-full ${view.unknown ? palette.unknownDot : blocked ? palette.bad : palette.ok}`} />
+        {/* the runtime reports signed-in engines only: green is connected and not refusing, red a limit in force */}
+        <span className={`h-2 w-2 shrink-0 rounded-full ${blocked ? palette.bad : palette.ok}`} />
         <span className={`${compact ? 'text-[14px]' : 'text-xs'} font-medium`}>{ENGINE_LABELS[view.engine] ?? view.engine}</span>
         {/* a status only when there is something to say: no picture yet, or a refusal in force; otherwise how old the
             figures are when they are not fresh — Claude's come with its runs only, so they can be a day old */}
-        {!view.unknown && !blocked && view.observedAt && now - view.observedAt > STALE_AFTER_MS ? (
+        {view.windows.length > 0 && !blocked && view.observedAt && now - view.observedAt > STALE_AFTER_MS ? (
           <span className={`ml-auto ${small} ${palette.muted}`} data-testid={`usage-age-${view.engine}`}>{formatObservedAt(view.observedAt, now)} 기준</span>
         ) : null}
-        {view.unknown || blocked ? (
+        {/* no figures (OpenCode reports only a refusal; Claude before its first read): no limit is known to hold */}
+        {!view.windows.length || blocked ? (
           <span className={`ml-auto ${small} ${palette.muted}`}>
-            {view.unknown ? '아직 정보 없음' : `한도 도달 · ${view.blockedUntil ? `해제까지 ${formatTimeLeft(view.blockedUntil, now)}` : '해제 시각 미정'}`}
+            {!blocked ? '한도 여유' : `한도 도달 · ${view.blockedUntil ? `해제까지 ${formatTimeLeft(view.blockedUntil, now)}` : '해제 시각 미정'}`}
           </span>
         ) : null}
       </div>
@@ -61,7 +63,7 @@ function EngineUsage({ view, compact, now }: { view: UsageLimitView; compact: bo
             </li>
           ))}
         </ul>
-      ) : view.unknown ? null : <div className={`mt-1 ${small} ${palette.muted}`}>사용량 수치 없음</div>}
+      ) : null}
     </div>
   );
 }
