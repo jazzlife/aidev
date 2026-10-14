@@ -376,7 +376,8 @@ export const api = {
     logout: (provider: string) =>
       post(`/api/providers/${encodeURIComponent(provider)}/auth/logout`),
     /** Account usage limits per engine as the runtime last saw them (the drawers' usage panel). */
-    usageLimits: () => get('/api/providers/usage-limits'),
+    // refresh: a sign-in just changed — the runtime asks who is signed in instead of answering from its cache
+    usageLimits: (refresh = false) => get(`/api/providers/usage-limits${refresh ? '?refresh=1' : ''}`),
 
     models: (provider: string) => get(`/api/providers/${provider}/models`),
     createModel: (provider: string, input: unknown) =>

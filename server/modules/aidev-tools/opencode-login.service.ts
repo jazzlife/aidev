@@ -38,7 +38,7 @@ export const openCodeLoginService = {
    * Stores `key` as the API key of `provider`, replacing an earlier credential of that provider and leaving the
    * others as they are. A sign-in failure recorded for OpenCode ends here: the auth store is newer than it.
    */
-  saveApiKey(provider: string, key: string): { provider: string; providers: string[] } {
+  async saveApiKey(provider: string, key: string): Promise<{ provider: string; providers: string[] }> {
     const id = provider.trim().toLowerCase();
     if (!PROVIDER_ID.test(id)) throw new Error('공급자 id 형식이 올바르지 않습니다 (예: opencode-go, openai).');
     const trimmed = key.trim();
@@ -49,6 +49,9 @@ export const openCodeLoginService = {
     fs.writeFileSync(temp, `${JSON.stringify({ ...readAuth(), [id]: { type: 'api', key: trimmed } }, null, 2)}\n`, { mode: 0o600 });
     fs.renameSync(temp, file);
     clearOpenCodeAuthFailure();
+    // a new sign-in: a refusal remembered under the earlier one does not carry over. Lazy: providers imports this
+    // module's barrel (see lesson-curator.service.ts).
+    (await import('@/modules/providers/index.js')).providerUsageLimitsService.forget('opencode');
     console.log(`[aidev-tools] OpenCode API key stored for ${id}`);
     return { provider: id, providers: openCodeLoginService.providers() };
   },

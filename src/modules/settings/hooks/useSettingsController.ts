@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useTheme } from '@/shared/context/ThemeContext';
 import { api } from '@/shared/api';
 import { setNotificationSoundEnabled } from '@/shared/utils';
+import { PROVIDER_MODELS_CHANGED_EVENT } from '@/shared/constants';
 import {
   readCodeEditorSettings,
   writeCodeEditorSettings,
@@ -211,6 +212,8 @@ export function useSettingsController({ isOpen, initialTab }: UseSettingsControl
 
     void (async () => {
       const authStatus = await checkProviderAuthStatus(loginProvider);
+      // a terminal login (Codex, OpenCode accounts): the drawer's usage and the composer's models follow it now
+      window.dispatchEvent(new Event(PROVIDER_MODELS_CHANGED_EVENT));
 
       if (exitCode !== 0) {
         console.warn(`Login process exited with code ${exitCode}; refreshing auth status before setting save status.`);

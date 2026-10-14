@@ -2,7 +2,7 @@ import { useCallback, useState } from 'react';
 
 import { aidevApi, claudeAuth } from '@/modules/aidev-router';
 import { api } from '@/shared/api';
-import { AIDEV_ENGINES } from '@/shared/constants';
+import { AIDEV_ENGINES, PROVIDER_MODELS_CHANGED_EVENT } from '@/shared/constants';
 import type { LLMProvider, ProviderAuthStatus, ProviderAuthStatusMap } from '@/shared/types';
 
 // the providers whose sign-in is probed by default (Cursor is hidden: no probe unless asked for by name)
@@ -131,6 +131,8 @@ export function useProviderAuthStatus(
       // of the sign-out now (outside the platform these calls fail quietly)
       void aidevApi.engines(true).catch(() => undefined);
       if (provider === 'claude') void claudeAuth.refresh();
+      // the drawer's usage and the composer's models drop the signed-out provider now
+      window.dispatchEvent(new Event(PROVIDER_MODELS_CHANGED_EVENT));
     }
   }, [checkProviderAuthStatus, setProviderLoading, setProviderStatus]);
 

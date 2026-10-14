@@ -2,11 +2,20 @@ import { useEffect, useState } from 'react';
 
 import { api } from '@/shared/api';
 import type { Engine } from '@/modules/aidev-router/api';
-import { AIDEV_ENGINES } from '@/shared/constants';
+import { AIDEV_ENGINES, PROVIDER_MODELS_CHANGED_EVENT } from '@/shared/constants';
 import type { ProviderUsageLimitsSnapshot, ProviderUsageWindow } from '@/shared/types';
 
 /** Korean names of the usage windows the engines report. */
-const WINDOW_LABEL: Record<string, string> = { five_hour: '5시간', seven_day: '주간', seven_day_opus: '주간 Opus', seven_day_sonnet: '주간 Sonnet', overage: '추가 사용', unknown: '한도' };
+const WINDOW_LABEL: Record<string, string> = {
+  five_hour: '5시간', seven_day: '주간', seven_day_opus: '주간 Opus', seven_day_sonnet: '주간 Sonnet', overage: '추가 사용', unknown: '한도',
+  // Claude: a weekly bucket of its own for the models the plan's extra usage covers (the CLI calls it "per-model
+  // bucket, present only for accounts whose responses carry that window")
+  seven_day_overage_included: '주간 · 별도 모델',
+  // OpenCode: its free tier, and OpenCode Go's limits by the name its gateway gives them (`go:<name>`)
+  free: '무료 한도', go: 'Go 한도',
+};
+/** A window's label: the names above, OpenCode Go's own window names, else the type itself. */
+const windowLabel = (type: string) => WINDOW_LABEL[type] ?? (type.startsWith('go:') ? `Go ${type.slice(3)}` : type);
 /** The drawer asks again this often while open (the server reads the Codex account at most that often too). */
 const POLL_MS = 60_000;
 
@@ -36,7 +45,7 @@ export function usageLimitView(engine: Engine, snapshot: ProviderUsageLimitsSnap
   if (!snapshot || !snapshot.observedAt) return { engine, unknown: true, blockedUntil: null, observedAt: null, windows: [] };
   const windows = snapshot.windows
     .filter((window: ProviderUsageWindow) => window.type !== 'unknown' || window.blocked)
-    .map((window) => ({ type: window.type, label: WINDOW_LABEL[window.type] ?? window.type, percent: window.utilization === null ? null : Math.round(window.utilization * 100), resetsAt: window.resetsAt, blocked: window.blocked }));
+    .map((window) => ({ type: window.type, label: windowLabel(window.type), percent: window.utilization === null ? null : Math.round(window.utilization * 100), resetsAt: window.resetsAt, blocked: window.blocked }));
   return { engine, unknown: false, blockedUntil: snapshot.blockedUntil, observedAt: snapshot.observedAt, windows };
 }
 
@@ -51,17 +60,20 @@ export function useUsageLimits(enabled = true): { views: UsageLimitView[]; loade
   useEffect(() => {
     if (!enabled) return undefined;
     let alive = true;
-    const poll = () => {
+    const poll = (refresh = false) => {
       // a partial api (a test double) means "unknown", not an error
       if (typeof api.providers?.usageLimits !== 'function') return;
-      api.providers.usageLimits().then(async (response) => {
+      api.providers.usageLimits(refresh).then(async (response) => {
         const body = await response.json() as { success?: boolean; data?: { providers?: Partial<Record<Engine, ProviderUsageLimitsSnapshot>> } };
         if (alive && body.success) setSnapshots(body.data?.providers ?? {});
       }).catch(() => undefined);
     };
     poll();
     const timer = window.setInterval(() => { if (document.visibilityState !== 'hidden') poll(); }, POLL_MS);
-    return () => { alive = false; window.clearInterval(timer); };
+    // a sign-in or sign-out (another account, a new provider): asked now, not at the next minute
+    const changed = () => poll(true);
+    window.addEventListener(PROVIDER_MODELS_CHANGED_EVENT, changed);
+    return () => { alive = false; window.clearInterval(timer); window.removeEventListener(PROVIDER_MODELS_CHANGED_EVENT, changed); };
   }, [enabled]);
   return { views: AIDEV_ENGINES.filter((engine) => snapshots?.[engine]).map((engine) => usageLimitView(engine, snapshots?.[engine])), loaded: snapshots !== null };
 }

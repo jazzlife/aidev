@@ -1089,9 +1089,23 @@ export function describeOpenCodeError(error: unknown): OpenCodeRunError {
           : typeof record?._tag === 'string' ? record._tag
             : 'Unknown OpenCode error';
   const statusCode = typeof data?.statusCode === 'number' ? data.statusCode : typeof record?.statusCode === 'number' ? record.statusCode : null;
-  const kind: OpenCodeRunError['kind'] = statusCode === 429 || OPENCODE_USAGE_LIMIT.test(text) ? 'usage_limit'
+  // OpenCode's own gateway names the limit in the response body and the wait in `retry-after` (seconds) — measured in
+  // the opencode 1.19.0 bundle, which reads them the same way for its "Go limit reached" message
+  const body = typeof data?.responseBody === 'string' ? data.responseBody : '';
+  const headers = data?.responseHeaders && typeof data.responseHeaders === 'object' ? data.responseHeaders as Record<string, unknown> : {};
+  const goLimit = body.includes('GoUsageLimitError');
+  const freeLimit = body.includes('FreeUsageLimitError');
+  let limitType: string | null = freeLimit ? 'free' : null;
+  if (goLimit) {
+    let limitName: unknown = null;
+    try { limitName = (JSON.parse(body) as { metadata?: { limitName?: unknown } }).metadata?.limitName; } catch { /* not JSON: the window stays unnamed */ }
+    limitType = typeof limitName === 'string' && limitName.trim() ? `go:${limitName.trim().slice(0, 40)}` : 'go';
+  }
+  const retryAfter = Number.parseFloat(String(headers['retry-after'] ?? ''));
+  const resetsAt = (goLimit || freeLimit || statusCode === 429) && Number.isFinite(retryAfter) && retryAfter > 0 ? Date.now() + Math.ceil(retryAfter * 1000) : null;
+  const kind: OpenCodeRunError['kind'] = goLimit || freeLimit || statusCode === 429 || OPENCODE_USAGE_LIMIT.test(text) ? 'usage_limit'
     : statusCode === 401 || OPENCODE_AUTH_FAILURE.test(text) ? 'auth' : 'other';
-  return { message: `${text.slice(0, 600)}${statusCode ? ` (HTTP ${statusCode})` : ''}`, statusCode, kind };
+  return { message: `${text.slice(0, 600)}${statusCode ? ` (HTTP ${statusCode})` : ''}`, statusCode, kind, ...(limitType ? { limitType } : {}), ...(resetsAt ? { resetsAt } : {}) };
 }
 
 /**

@@ -168,7 +168,8 @@ async function spawnOpenCode(command, options = {}, ws, context) {
     // (close and error handlers can both fire for spawn failures).
     let completeSent = false;
     // the run's own account of how it ended: a usage-limit refusal (handed on by the apps) and the last step's tokens
-    let usageLimited = false;
+    // (the limit's window and reset when OpenCode named them — OpenCode Go does)
+    let usageLimited = null;
     let stepTokens = null;
 
     const notifyTerminalState = ({ code = null, error = null } = {}) => {
@@ -254,7 +255,7 @@ async function spawnOpenCode(command, options = {}, ws, context) {
           // a refusal on a usage limit ends the run for the apps to hand on; a rejected sign-in marks OpenCode signed out
           const failure = describeOpenCodeError(response.error ?? response.message);
           noteOpenCodeRunError(failure);
-          if (failure.kind === 'usage_limit') usageLimited = true;
+          if (failure.kind === 'usage_limit') usageLimited = { type: failure.limitType || 'unknown', resetsAt: failure.resetsAt ?? null };
         }
         stepTokens = readOpenCodeStepTokens(response) ?? stepTokens;
         const normalized = context.normalizeMessage(response, capturedSessionId || sessionId || null);
@@ -385,9 +386,9 @@ async function spawnOpenCode(command, options = {}, ws, context) {
         // already sent the aborted complete on this run's behalf).
         if (!completeSent && !opencodeProcess.aborted) {
           completeSent = true;
-          // the drawers' usage picture: a refusal is remembered, a run that went through lifts it. OpenCode reports no
-          // reset time, so the window is 'unknown' (the gateway holds it for five hours)
-          const usageLimit = usageLimited ? { type: 'unknown', resetsAt: null } : null;
+          // the drawers' usage picture: a refusal is remembered, a run that went through lifts it. OpenCode Go names its
+          // window and reset; other refusals carry none, so the window is 'unknown' (the gateway holds it five hours)
+          const usageLimit = usageLimited;
           if (usageLimit) providerUsageLimitsService.recordBlock('opencode', usageLimit); else if (code === 0) providerUsageLimitsService.recordClear('opencode');
           ws.send(createCompleteMessage({ provider: 'opencode', sessionId: finalSessionId, exitCode: code, usageLimit }));
         }

@@ -31,3 +31,10 @@ test('time left until a reset reads as days and hours, hours and minutes, or min
   assert.equal(formatTimeLeft(new Date('2026-10-09T10:12:00').getTime(), now), '12분 남음');
   assert.equal(formatTimeLeft(now - 1000, now), '곧 초기화');
 });
+
+test('window names: Claude\'s separate weekly model bucket and OpenCode Go\'s windows', () => {
+  const view = usageLimitView('opencode', { provider: 'opencode', observedAt: 1, blockedUntil: 2, windows: [{ type: 'go:5-hour', utilization: 1, resetsAt: 2, blocked: true }] });
+  assert.equal(view.windows[0].label, 'Go 5-hour');
+  const claude = usageLimitView('claude', { provider: 'claude', observedAt: 1, blockedUntil: null, windows: [{ type: 'seven_day_overage_included', utilization: 0.03, resetsAt: 2, blocked: false }, { type: 'go', utilization: null, resetsAt: null, blocked: true }] });
+  assert.deepEqual(claude.windows.map((w) => w.label), ['주간 · 별도 모델', 'Go 한도']);
+});

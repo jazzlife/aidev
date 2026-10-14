@@ -2,6 +2,7 @@ import { useEffect, useSyncExternalStore } from 'react';
 
 import { aidevApi, type ClaudeLoginStatus } from '@/modules/aidev-router/api';
 import { routingStore } from '@/modules/aidev-router/store';
+import { PROVIDER_MODELS_CHANGED_EVENT } from '@/shared/constants';
 
 /**
  * Claude subscription login state shared by the workbench router bar, the settings login modal and
@@ -32,6 +33,8 @@ export const claudeAuth = {
   closeDialog() { patch({ dialogOpen: false }); },
   /** After a successful login: new status, fresh engine probe at the gateway, stale warnings cleared. */
   async completed() {
+    // the drawer's usage and the composer's models follow the new sign-in now
+    window.dispatchEvent(new Event(PROVIDER_MODELS_CHANGED_EVENT));
     await claudeAuth.refresh();
     await aidevApi.engines(true).catch(() => undefined);
     const last = routingStore.get().last;

@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import { api } from '@/shared/api';
 import { aidevApi, claudeAuth, routingStore, useClaudeAuth, useRoutingState, type EnginesResult, type RoutingMode } from '@/modules/aidev-router';
 import { OpenCodeLoginSheet } from '@m/components/OpenCodeLoginSheet';
-import { AIDEV_ENGINES, ENGINE_LABELS } from '@/shared/constants';
+import { AIDEV_ENGINES, ENGINE_LABELS, PROVIDER_MODELS_CHANGED_EVENT } from '@/shared/constants';
 import type { AidevEngine } from '@/shared/types';
 import { ProviderPolicySection } from '@m/components/ProviderPolicySection';
 import { ClaudeLoginSheet } from '@m/components/ClaudeLoginSheet';
@@ -51,6 +51,8 @@ export function SettingsScreen() {
       setLoggingOut(null);
       if (engine === 'claude') void claudeAuth.refresh();
       aidevApi.engines(true).then(setEngines).catch(() => setEngines(null));
+      // the drawer's usage drops the signed-out engine now
+      window.dispatchEvent(new Event(PROVIDER_MODELS_CHANGED_EVENT));
     }
   };
   useEffect(() => { void pushState().then(setPush).catch(() => setPush('unsupported')); }, []);

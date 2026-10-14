@@ -37,7 +37,7 @@ function EngineUsage({ view, compact, now }: { view: UsageLimitView; compact: bo
           {/* one line per window: "name (time left until reset)", the bar, how much is used — the grid keeps the bars aligned */}
           {view.windows.map((window) => (
             <li key={window.type} className="contents">
-              <span className="whitespace-nowrap tabular-nums">{window.label}{window.resetsAt ? <span className="opacity-80"> ({formatTimeLeft(window.resetsAt, now)})</span> : null}</span>
+              <span className="whitespace-nowrap tabular-nums">{window.label}{window.resetsAt ? <span className="opacity-80"> ({window.resetsAt <= now ? '초기화됨 · 다음 실행 때 갱신' : formatTimeLeft(window.resetsAt, now)})</span> : null}</span>
               <div className={`h-1.5 overflow-hidden rounded-full ${palette.track}`}>
                 {window.percent !== null ? <div className={`h-full rounded-full ${tone(palette, window.percent, window.blocked)}`} style={{ width: `${Math.min(100, window.percent)}%` }} /> : null}
               </div>

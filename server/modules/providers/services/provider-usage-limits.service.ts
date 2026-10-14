@@ -177,7 +177,9 @@ export const providerUsageLimitsService = {
       if (!entry) continue;
       const holdUntil = entry.blockedUntil === null ? null : (entry.blockedUntil > 0 ? entry.blockedUntil : entry.observedAt + UNKNOWN_RESET_HOLD_MS);
       const lifted = holdUntil !== null && holdUntil <= now;
-      const windows = entry.windows.map((window) => (window.blocked && (lifted || (window.resetsAt !== null && window.resetsAt <= now)) ? { ...window, blocked: false } : window));
+      // a window past its reset: its old figure no longer holds (Claude's next turn reports the new one)
+      const windows = entry.windows.map((window) => (window.resetsAt !== null && window.resetsAt <= now ? { ...window, utilization: null, blocked: false }
+        : window.blocked && lifted ? { ...window, blocked: false } : window));
       out[entry.provider] = lifted ? { ...entry, blockedUntil: null, windows } : { ...entry, blockedUntil: holdUntil, windows };
     }
     return out;
@@ -190,7 +192,9 @@ export const providerUsageLimitsService = {
    * out loses its stored picture, so a later sign-in — perhaps another account — starts blank.
    * `isSignedIn` answers null when it cannot tell; the engine then keeps its last standing.
    */
-  async snapshotLive(isSignedIn: (provider: LLMProvider) => Promise<boolean | null>, now = Date.now()): Promise<Partial<Record<LLMProvider, ProviderUsageLimitsSnapshot>>> {
+  async snapshotLive(isSignedIn: (provider: LLMProvider) => Promise<boolean | null>, now = Date.now(), refresh = false): Promise<Partial<Record<LLMProvider, ProviderUsageLimitsSnapshot>>> {
+    // `refresh`: a sign-in just changed (the apps say so) — ask about the sign-ins and Codex's account now
+    if (refresh) { signedInAt = 0; codexFetchedAt = 0; }
     if (!signedIn || now - signedInAt >= SIGNED_IN_CACHE_MS) {
       const previous = signedIn;
       const next = new Set<LLMProvider>();
@@ -215,7 +219,10 @@ export const providerUsageLimitsService = {
     return out;
   },
 
-  /** A sign-out (the providers route): drop the engine and its picture, and ask about the sign-ins afresh. */
+  /**
+   * A sign-out (the providers route) or a new sign-in (the in-app Claude and OpenCode logins — perhaps another
+   * account): drop the engine and its picture, and ask about the sign-ins afresh.
+   */
   forget(provider: LLMProvider) {
     signedIn?.delete(provider);
     signedInAt = 0;

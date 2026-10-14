@@ -712,9 +712,10 @@ router.post(
 // Account usage limits per signed-in engine (the drawers show them): Claude's from its turn events, Codex's from the ChatGPT account.
 router.get(
   '/usage-limits',
-  asyncHandler(async (_req: Request, res: Response) => {
+  asyncHandler(async (req: Request, res: Response) => {
     const isSignedIn = async (provider: LLMProvider) => (await providerAuthService.getProviderAuthStatus(provider)).authenticated;
-    res.json(createApiSuccessResponse({ providers: await providerUsageLimitsService.snapshotLive(isSignedIn) }));
+    // ?refresh=1: a sign-in just changed — no cached answer about who is signed in
+    res.json(createApiSuccessResponse({ providers: await providerUsageLimitsService.snapshotLive(isSignedIn, Date.now(), req.query.refresh === '1') }));
   }),
 );
 

@@ -118,6 +118,8 @@ export const claudeLoginService = {
       refusal.catch(() => undefined);
       const match = await Promise.race([token, refusal]);
       const saved = (await loadAuthStore()).save(match[0]);
+      // perhaps another account: the drawer's numbers of the one before do not carry over
+      (await import('@/modules/providers/index.js')).providerUsageLimitsService.forget('claude');
       console.log(`[aidev-tools] Claude subscription token stored (expires ${new Date(saved.expiresAt).toISOString().slice(0, 10)})${nudged ? ' — after a second Enter' : ''}`);
       void aidevToolsService.reportClaudeAuth({ expires_at: saved.expiresAt });
       return saved;

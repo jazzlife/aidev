@@ -232,7 +232,7 @@ router.post('/opencode-login', asyncHandler(async (req: Request, res: Response) 
     return;
   }
   try {
-    res.json(createApiSuccessResponse(openCodeLoginService.saveApiKey(provider, key)));
+    res.json(createApiSuccessResponse(await openCodeLoginService.saveApiKey(provider, key)));
   } catch (error) {
     res.status(400).json({ success: false, error: error instanceof Error ? error.message : String(error) });
   }

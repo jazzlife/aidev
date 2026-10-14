@@ -136,3 +136,29 @@ test('only signed-in engines are reported; a signed-out one loses its picture, a
     service.reset();
   }
 });
+
+test('a window past its reset loses its old figure; a refresh asks about the sign-ins at once', async () => {
+  service.reset();
+  service.recordClaude({ status: 'allowed', rateLimitType: 'five_hour', utilization: 0.23, resetsAt: 1791503600, unifiedWindows: { seven_day: { utilization: 0.11, resetsAt: 1791900000 } } });
+  const after = service.snapshot(1791503600001).claude!;
+  assert.deepEqual(after.windows.find((w) => w.type === 'five_hour'), { type: 'five_hour', utilization: null, resetsAt: 1791503600000, blocked: false }, 'reset: not the 23% of before');
+  assert.equal(after.windows.find((w) => w.type === 'seven_day')!.utilization, 0.11, 'not reset yet: kept');
+  // the signed-in answer is cached a minute — unless the apps say a sign-in changed
+  const now = 1791500000000;
+  let asked = 0;
+  await service.snapshotLive(async () => { asked += 1; return false; }, now);
+  await service.snapshotLive(async () => { asked += 1; return true; }, now + 1000);
+  assert.equal(asked, 3, 'claude, codex, opencode asked once; the second read answered from the cache');
+  const fresh = await service.snapshotLive(async (provider) => provider === 'opencode', now + 2000, true);
+  assert.deepEqual(Object.keys(fresh), ['opencode'], 'refresh: asked again');
+  service.reset();
+});
+
+test('an OpenCode Go refusal is recorded with its window and reset', () => {
+  service.reset();
+  service.recordBlock('opencode', { type: 'go:5-hour', resetsAt: 1791507200000 });
+  const opencode = service.snapshot(1791500000000).opencode!;
+  assert.equal(opencode.blockedUntil, 1791507200000);
+  assert.deepEqual(opencode.windows, [{ type: 'go:5-hour', utilization: 1, resetsAt: 1791507200000, blocked: true }]);
+  service.reset();
+});

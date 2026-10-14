@@ -308,6 +308,13 @@ export type OpenCodeRunError = {
   message: string;
   statusCode: number | null;
   kind: 'usage_limit' | 'auth' | 'other';
+  /**
+   * A usage limit the provider named (OpenCode Go's `GoUsageLimitError` carries `metadata.limitName`; its free tier
+   * `FreeUsageLimitError`): the window as a usage-window type (`go:<name>`, `free`), else null.
+   */
+  limitType?: string | null;
+  /** When that limit resets (epoch ms, from the response's `retry-after`), else null. */
+  resetsAt?: number | null;
 };
 
 export type NormalizedMessage = {
