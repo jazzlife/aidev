@@ -16,6 +16,18 @@ const MOBILE: Palette = { muted: 'text-muted', track: 'bg-line', ok: 'bg-ok', wa
 /** Bar colour by how full the window is. */
 const tone = (palette: Palette, percent: number | null, blocked: boolean) => (blocked || (percent ?? 0) >= 90 ? palette.bad : (percent ?? 0) >= 70 ? palette.warn : palette.ok);
 
+/** Figures older than this say when they were read. */
+const STALE_AFTER_MS = 10 * 60_000;
+
+/** "14:16" today, "어제 14:16", else "10/12 14:16" — when the runtime last heard the engine's figures. */
+export function formatObservedAt(observedAt: number, now = Date.now()): string {
+  const at = new Date(observedAt);
+  const time = `${String(at.getHours()).padStart(2, '0')}:${String(at.getMinutes()).padStart(2, '0')}`;
+  const day = (date: Date) => new Date(date.getFullYear(), date.getMonth(), date.getDate()).getTime();
+  const daysAgo = Math.round((day(new Date(now)) - day(at)) / 86_400_000);
+  return daysAgo <= 0 ? time : daysAgo === 1 ? `어제 ${time}` : `${at.getMonth() + 1}/${at.getDate()} ${time}`;
+}
+
 function EngineUsage({ view, compact, now }: { view: UsageLimitView; compact: boolean; now: number }) {
   const palette = compact ? MOBILE : WORKBENCH;
   const blocked = view.blockedUntil !== null;
@@ -25,7 +37,11 @@ function EngineUsage({ view, compact, now }: { view: UsageLimitView; compact: bo
       <div className="flex items-center gap-2">
         <span className={`h-2 w-2 shrink-0 rounded-full ${view.unknown ? palette.unknownDot : blocked ? palette.bad : palette.ok}`} />
         <span className={`${compact ? 'text-[14px]' : 'text-xs'} font-medium`}>{ENGINE_LABELS[view.engine] ?? view.engine}</span>
-        {/* a status only when there is something to say: no picture yet, or a refusal in force */}
+        {/* a status only when there is something to say: no picture yet, or a refusal in force; otherwise how old the
+            figures are when they are not fresh — Claude's come with its runs only, so they can be a day old */}
+        {!view.unknown && !blocked && view.observedAt && now - view.observedAt > STALE_AFTER_MS ? (
+          <span className={`ml-auto ${small} ${palette.muted}`} data-testid={`usage-age-${view.engine}`}>{formatObservedAt(view.observedAt, now)} 기준</span>
+        ) : null}
         {view.unknown || blocked ? (
           <span className={`ml-auto ${small} ${palette.muted}`}>
             {view.unknown ? '아직 정보 없음' : `한도 도달 · ${view.blockedUntil ? `해제까지 ${formatTimeLeft(view.blockedUntil, now)}` : '해제 시각 미정'}`}
