@@ -146,16 +146,13 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
   const handoffOnUsageLimit = useCallback(async (args: { sessionId: string; blockedEngine: Engine; reason: string }): Promise<{ status: 'handed-off' | 'blocked' | 'skipped'; otherEngine: Engine | null }> => {
     if (busy || handedOffSessions.current.has(args.sessionId)) return { status: 'skipped', otherEngine: null };
 
-    // the next provider of the user's work order that can run now; the gateway out of reach: the runtime's own sign-in
-    // check on the other of Claude and Codex, as before the work order existed
+    // the next provider of the user's work order that can run now; with the gateway out of reach nobody knows that
+    // order, so nothing is handed over by guess (the card below says why)
     let otherEngine: Engine | null = null;
     try {
       otherEngine = nextUsableEngine(args.blockedEngine, await aidevApi.engines());
     } catch {
-      const fallback: Engine = args.blockedEngine === 'claude' ? 'codex' : 'claude';
-      const authResponse = await api.providers.authStatus(fallback);
-      const authBody = authResponse.ok ? await authResponse.json() as { data?: { authenticated?: boolean } } : null;
-      if (authBody?.data?.authenticated) otherEngine = fallback;
+      otherEngine = null;
     }
     if (!otherEngine) {
       // No other provider is usable, so this is a dead end rather than a handoff —

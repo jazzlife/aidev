@@ -198,15 +198,13 @@ export function createAidevApi(deps: AidevDeps) {
   }
 
   /**
-   * The verifier's candidates (PROVIDER-ENGINE-PLAN §2.4) once the account set a verification order or a provider
-   * policy: that order as set (none: the worker's other providers in the work order, then the worker's), each at
-   * max(depth, 3) in its range — on the worker's own provider never below the worker's step. A provider without a
-   * ladder sends no model (the runtime's verifierModel). null = neither is set: the runtime keeps its own order.
+   * The verifier's candidates (PROVIDER-ENGINE-PLAN §2.4), decided here for every account so the verification order
+   * set in the settings is what runs: that order as set (none: the providers of the work order other than the
+   * worker's, then the worker's), each at max(depth, 3) in its range — on the worker's own provider never below the
+   * worker's step. A provider without a ladder sends no model (the runtime's verifierModel for Claude and Codex).
    */
   function verifyCandidates(uid: number, run: RunRow, engines: Engine[]) {
     const verifyOrder = store.verifyPriority(uid);
-    const ladders = store.modelLadder(uid);
-    if (!verifyOrder.length && !engines.some((e) => ladders[e])) return null;
     const worker = ENGINES.includes(run.engine as Engine) ? run.engine as Engine : null;
     const workOrder = [...new Set([...store.enginePriority(uid), ...ENGINES])];
     const order = verifyOrder.length ? verifyOrder.filter((e) => engines.includes(e))
@@ -214,10 +212,10 @@ export function createAidevApi(deps: AidevDeps) {
     const need = Math.max(Math.round(run.depth ?? 0), 3);
     return order.flatMap((engine) => {
       const step = splitTier(store, uid, engine, need, run.session_id);
+      // a range whose ceiling is below the check's depth still checks, at its ceiling and highest effort (Q2): OpenCode's
+      // models are unmeasured (D2) until levelled, and leaving them out sent every check back to the worker's own
+      // provider (2026-10-16: runs #341–#347 were all checked by the Claude model that made them)
       if (!step) return [{ engine, model: null as string | null, effort: null as string | null }];
-      // OpenCode's models are unmeasured until an administrator levels them: a range that cannot carry the check (Q2)
-      // verifies only when the user named the provider in the verification order
-      if (step.q2 && !verifyOrder.length && !TIER_TABLE[0][engine]) return [];
       let pick: { model: string; effort: string | null } = step;
       if (engine === worker) {
         const policy = store.providerPolicy(uid, engine, run.session_id);
@@ -232,8 +230,12 @@ export function createAidevApi(deps: AidevDeps) {
 
   /** The specialist judge runs in the user's runtime (their Claude/Codex login); off when no engine is usable. */
   function judgeFor(session: Session, engines: EngineAvailability, only?: Engine): SpecialistJudge | undefined {
-    // the judge stays on Claude and Codex (PROVIDER-ENGINE-PLAN §9 Q4): an OpenCode-only account routes without it
-    const usable = usableEngines(engines).filter((engine) => JUDGE_ENGINES.includes(engine) && (!only || engine === only));
+    // the judge answers every command, so it stays on Claude and Codex — OpenCode starts a CLI per turn (§9 Q4,
+    // 2026-10-16: OpenCode is for verification and sub-agent work); between the two the work order decides who asks
+    // first, and an OpenCode-only account routes without it
+    const priority = store.enginePriority(session.user.id);
+    const rank = (engine: Engine) => { const index = priority.indexOf(engine); return index < 0 ? priority.length : index; };
+    const usable = usableEngines(engines).filter((engine) => JUDGE_ENGINES.includes(engine) && (!only || engine === only)).sort((a, b) => rank(a) - rank(b));
     if (!usable.length) return undefined;
     return async (payload) => {
       // D-05: the judge turn runs only on engines this account may use (a Codex-only account never gets Claude)
@@ -261,9 +263,12 @@ export function createAidevApi(deps: AidevDeps) {
     const signals = { exit_code: run.exit_code, tool_errors: run.tool_errors, user_feedback: run.user_feedback, reverted: run.reverted, test_result: run.test_result };
     const availability = await engineAvailability(session);
     const engines = usableEngines(availability);
-    // with a work order the curator follows it (Q1; a provider on a usage limit is passed over), each at D0 of its policy
+    // the curator follows the work order (Q1; none set: the session's provider first, then the catalog order), a
+    // provider on a usage limit passed over, each at D0 of its policy (no ladder: the runtime's light model)
     const priority = store.enginePriority(session.user.id);
-    const candidates = priority.length ? priority.filter((e) => engines.includes(e) && !availability[e].limited_until).map((engine) => ({ engine, model: splitTier(store, session.user.id, engine, 0, run.session_id)?.model ?? null })) : null;
+    const sessionEngine = ENGINES.includes(run.engine as Engine) ? [run.engine as Engine] : [];
+    const curateOrder = [...new Set(priority.length ? priority : [...sessionEngine, ...ENGINES])];
+    const candidates = curateOrder.filter((e) => engines.includes(e) && !availability[e].limited_until).map((engine) => ({ engine, model: splitTier(store, session.user.id, engine, 0, run.session_id)?.model ?? null }));
     const response = await deps.runtimeFetch(session, '/api/aidev-tools/curate', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ session_id: run.session_id, run_id: run.id, agent: agent.name, engine: run.engine, engines, ...(candidates ? { candidates } : {}), command: decisionRow?.command ?? null, signals }) }, CURATE_TIMEOUT_MS);   // a headless model turn: well beyond the 10 s status-probe budget
     const body = await response.json() as { data?: { candidate?: { trigger: string; rule: string; engine: string | null; generalizable: boolean } | null } };
     const candidate = body.data?.candidate;

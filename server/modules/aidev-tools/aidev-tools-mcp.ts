@@ -56,11 +56,13 @@ const turnContext = {
   runId: Number.parseInt(process.env.AIDEV_RUN_ID || '', 10) || undefined,
   targetId: Number.parseInt(process.env.AIDEV_TARGET_ID || '', 10) || undefined,
   agent: process.env.AIDEV_AGENT || undefined,
+  // the engine this process serves (set for OpenCode, whose turns must not hand work to OpenCode)
+  engine: process.env.AIDEV_ENGINE || undefined,
   // the engine starts this process in the session's project folder: remote_sync's default source
   cwd: process.cwd(),
 };
 // approvals can take minutes and a build or test run longer: remote tools get their own ceiling
-const LONG_TOOLS = new Set(['platform_ship_status', 'remote_agent', 'remote_agent_result', 'remote_exec', 'remote_logs', 'remote_sync', 'remote_pull', 'remote_debug_start', 'remote_debug_step', 'remote_console_start', 'remote_console_send', 'remote_console_read']);
+const LONG_TOOLS = new Set(['platform_ship_status', 'opencode_task', 'remote_agent', 'remote_agent_result', 'remote_exec', 'remote_logs', 'remote_sync', 'remote_pull', 'remote_debug_start', 'remote_debug_step', 'remote_console_start', 'remote_console_send', 'remote_console_read']);
 const LONG_TIMEOUT_MS = 45 * 60_000;
 
 async function callApi(toolName: string, input: Record<string, unknown>) {
@@ -384,6 +386,26 @@ const tools: ToolDefinition[] = [
         waitSec: { type: 'number', description: 'How long to wait for the first pause/end (0-120, default 60).' },
       },
       required: ['adapter'],
+    },
+  },
+  {
+    name: 'opencode_task',
+    description: [
+      'Hand a self-contained piece of your work to OpenCode as a sub-agent, in this project, and get its report back (you wait for it).',
+      'Good pieces: surveying how something is done across the codebase, writing tests for a module, reviewing a diff or a file for bugs, a bounded edit of files you name, reproducing a failure.',
+      'Not for: the main task itself, anything needing this conversation\'s context you do not write into the task, or work on a user\'s machine (remote_agent).',
+      'Write the task completely: goal, files/paths, constraints, what to report. mode "read" = no edits (plan agent); mode "edit" = may change files in the project.',
+      'It runs on the user\'s OpenCode plan at the model their OpenCode range picks for "depth". If it answers "unavailable", "limited" or "failed", do the piece yourself.',
+    ].join(' '),
+    inputSchema: {
+      type: 'object',
+      properties: {
+        task: { type: 'string', description: 'The whole piece of work, self-contained.' },
+        mode: { type: 'string', enum: ['read', 'edit'], description: 'read (default): no file changes; edit: may change files in the project.' },
+        depth: { type: 'number', description: 'How hard the piece is, 0 (lookup) to 4 (deep design/debugging); default 2.' },
+        timeoutSec: { type: 'number', description: 'Longest wait in seconds (30-2400, default 900).' },
+      },
+      required: ['task'],
     },
   },
   {

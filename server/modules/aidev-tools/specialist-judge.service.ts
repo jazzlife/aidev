@@ -301,17 +301,19 @@ export const specialistJudgeService = {
       current ? `Current agent of this conversation: ${current}` : null,
       input.ask === false ? 'This command continues a conversation: "question" is null.' : 'This command starts a new conversation.',
     ].filter((line) => line !== null).join('\n');
-    // Claude first, Codex when Claude fails — only among the engines the account may use
-    const order = (['claude', 'codex'] as const).filter((e) => !input.engines?.length || input.engines.includes(e));
+    // in the order the gateway sent (the account's work order), the second when the first fails — only among the
+    // engines the account may use; an older gateway sends none: Claude first
+    const order = (input.engines?.length ? [...new Set(input.engines)] : ['claude', 'codex'] as const).filter((e): e is 'claude' | 'codex' => e === 'claude' || e === 'codex');
     if (!order.length) throw new Error('no engine available for the judge');
     let engine: string = order[0];
     let text = '';
+    const ask = (which: 'claude' | 'codex') => (which === 'claude' ? askClaude(prompt) : askCodex(prompt));
     try {
-      text = engine === 'claude' ? await askClaude(prompt) : await askCodex(prompt);
+      text = await ask(order[0]);
     } catch (error) {
       if (order.length < 2) throw error;
       engine = order[1];
-      try { text = await askCodex(prompt); } catch { throw error; }
+      try { text = await ask(order[1]); } catch { throw error; }
     }
     const parsed = parseJudge(text, names, current);
     if (!parsed) throw new Error(`judge answer not understood: ${text.replace(/\s+/g, ' ').slice(0, 200)}`);

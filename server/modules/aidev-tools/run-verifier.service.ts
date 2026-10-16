@@ -259,7 +259,11 @@ export const runVerifierService = {
     // the gateway's candidates (verification order / provider policy) or the worker's other engine first; on the same
     // engine the check runs as a different agent (verifierAgent). This runtime's own knowledge of Codex applies to both.
     const codexState = { signedOut: Boolean(currentCodexAuthFailure()), busy: codexBusyUntil > Date.now() };
-    const order = verifierCandidates(input, codexState);
+    // OpenCode refusing on a usage limit (a chat or an earlier side turn saw it): passed over until its reset instead of
+    // spending the check's budget on the same refusal. Lazy: the providers module imports this module's barrel.
+    const { providerUsageLimitsService } = await import('@/modules/providers/index.js');
+    const openCodeHeld = providerUsageLimitsService.snapshot().opencode?.blockedUntil;
+    const order = verifierCandidates(input, codexState).filter((candidate) => candidate.engine !== 'opencode' || openCodeHeld === null || openCodeHeld === undefined);
     const systemPrompt = verifierSystemPrompt(input.verifierAgent);
     let lastError: unknown = null;
     const deadline = Date.now() + VERIFY_BUDGET_MS;

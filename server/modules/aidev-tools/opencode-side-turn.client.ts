@@ -93,6 +93,12 @@ export function askOpenCodeSideTurn(turn: OpenCodeSideTurn, spawnFn: typeof spaw
       else if (event.type === 'error') {
         const described = describeOpenCodeError(event.error ?? event.message);
         noteOpenCodeRunError(described);
+        // a refusal on a usage limit holds for every OpenCode turn until its reset: the drawer shows it and the next
+        // side turn passes OpenCode over instead of waiting for the same refusal. Lazy: providers imports this module's
+        // barrel (see lesson-curator.service.ts).
+        if (described.kind === 'usage_limit') {
+          void import('@/modules/providers/index.js').then(({ providerUsageLimitsService }) => providerUsageLimitsService.recordBlock('opencode', { type: described.limitType ?? 'unknown', resetsAt: described.resetsAt ?? null })).catch(() => undefined);
+        }
         failure ??= new Error(`OpenCode: ${described.message}`);
       }
     });

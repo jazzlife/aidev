@@ -383,7 +383,7 @@ export function buildOpenCodeAidevConfig(rawAidev: unknown, opts: { planMode?: b
   const mcp: Record<string, Record<string, unknown>> = {};
   const platformMcp = aidevToolsService.getMcpServerConfig(aidev ? { runId: aidev.runId, targetId: aidev.target?.id ?? null, agent: aidev.agent.name } : undefined);
   if (platformMcp) {
-    mcp['aidev-tools'] = { type: 'local', command: [platformMcp.command, ...platformMcp.args], environment: platformMcp.env, enabled: true, timeout: OPENCODE_PLATFORM_MCP_TIMEOUT_MS };
+    mcp['aidev-tools'] = { type: 'local', command: [platformMcp.command, ...platformMcp.args], environment: { ...platformMcp.env, AIDEV_ENGINE: 'opencode' }, enabled: true, timeout: OPENCODE_PLATFORM_MCP_TIMEOUT_MS };
   }
   let agent: string | null = null;
   const agents: Record<string, Record<string, unknown>> = {};

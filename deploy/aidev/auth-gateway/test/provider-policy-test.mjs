@@ -289,4 +289,20 @@ assert.equal(res.status, 400, 'an account keeps at least one provider');
 store.setAccountEngines('alice', ['claude', 'codex', 'opencode']); store.setRole('alice', 'user');
 console.log('PASS OpenCode: split over the account\'s models, Q1 with three providers');
 
+// verification follows the work order when no verification order is set — OpenCode included even though its unmeasured
+// models sit below a D4 check (it checks at its range top); before 2026-10-16 it was left out and the worker's own
+// provider checked every run
+store.setVerifyPriority(uid, null);
+store.setEnginePriority(uid, ['claude', 'opencode']);
+store.setProviderPolicy(uid, 'opencode', { ladder: [GLM] });
+store.setModelLevel('opencode', GLM, null);
+// the usage-limit run of the escalation check above still holds OpenCode: that window is over here
+store.db.prepare("UPDATE runs SET usage_limit_resets_at=NULL WHERE engine='opencode'").run();
+verifyBody = null;
+const deepRun = store.addRun({ userId: uid, sessionId: 'v-oc', agentId: store.agent(uid, 'frontend-react').id, engine: 'claude', model: 'best', effort: 'high', depth: 4, taskKind: 'implement' });
+await call('PATCH', `/api/aidev/runs/${deepRun}/outcome`, { exit_code: 0 }); await settle();
+assert.equal(verifyBody?.candidates?.[0]?.engine, 'opencode', JSON.stringify(verifyBody?.candidates));
+assert.deepEqual([verifyBody.candidates[0].model, verifyBody.candidates.at(-1).engine], [GLM, 'claude'], 'OpenCode at its top, the worker\'s own provider last');
+console.log('PASS verification follows the work order, OpenCode included');
+
 console.log('provider policy: all checks passed');

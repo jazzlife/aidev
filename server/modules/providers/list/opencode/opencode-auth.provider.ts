@@ -23,14 +23,22 @@ const OPENCODE_ENV_CREDENTIAL_KEYS = [
   'OPENROUTER_API_KEY',
 ];
 
+/** Set once `opencode --version` answered (see checkInstalled). */
+let openCodeInstalled = false;
+
 export class OpenCodeProviderAuth implements IProviderAuth {
   /**
    * Checks whether the OpenCode CLI is available to the server process.
    */
   private checkInstalled(): boolean {
+    // The CLI comes with the runtime image and does not change while this process runs; starting its large binary
+    // synchronously on every sign-in probe (the gateway's, the drawers', the settings') held the server's event loop
+    // each time. A missing CLI is asked again: it may be installed later.
+    if (openCodeInstalled) return true;
     try {
       const result = spawn.sync('opencode', ['--version'], { stdio: 'ignore', timeout: 5000 });
-      return !result.error && result.status === 0;
+      openCodeInstalled = !result.error && result.status === 0;
+      return openCodeInstalled;
     } catch {
       return false;
     }

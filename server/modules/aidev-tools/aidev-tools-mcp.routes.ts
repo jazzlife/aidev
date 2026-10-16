@@ -4,6 +4,7 @@ import { aidevToolsService, DEBUG_ADAPTERS } from '@/modules/aidev-tools/aidev-t
 import { remotePull, remoteSync } from '@/modules/aidev-tools/remote-sync.service.js';
 import { appSettingsGet, appSettingsSet, appShow } from '@/modules/aidev-tools/app-control.service.js';
 import { platformShip, platformShipStatus } from '@/modules/aidev-tools/platform-ship.service.js';
+import { runOpenCodeTask } from '@/modules/aidev-tools/opencode-subagent.service.js';
 
 /**
  * Local HTTP endpoint used only by the aidev-tools stdio MCP process
@@ -207,6 +208,20 @@ router.post('/tools/:toolName', async (req, res) => {
           arch: input.arch === 'x86' || input.arch === 'x64' ? input.arch : undefined,
           waitSec: typeof input.waitSec === 'number' ? input.waitSec : undefined,
         }, readTurn(input));
+        break;
+      }
+      case 'opencode_task': {
+        const task = typeof input.task === 'string' ? input.task.trim() : '';
+        if (!task) throw new Error('task is required.');
+        if (task.length > 60_000) throw new Error('task is too long (≤ 60000 chars).');
+        const turn = readTurn(input);
+        // OpenCode's own turns carry the platform tools too: it does not hand work to itself
+        if (asRecord(input._turn).engine === 'opencode') { result = { status: 'unavailable', message: 'OpenCode 안에서는 opencode_task를 쓰지 않습니다 — 직접 하세요.' }; break; }
+        result = await runOpenCodeTask({
+          task, mode: input.mode === 'edit' ? 'edit' : 'read',
+          depth: typeof input.depth === 'number' ? input.depth : undefined,
+          timeoutSec: typeof input.timeoutSec === 'number' ? input.timeoutSec : undefined,
+        }, { cwd: turn.cwd, agent: turn.agent });
         break;
       }
       case 'remote_agent': {
