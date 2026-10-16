@@ -581,6 +581,7 @@ async function callTool(name: string, args: Record<string, unknown>) {
     case 'remote_console_send':
     case 'remote_console_read':
     case 'remote_console_stop':
+    case 'opencode_task':
     case 'remote_agent':
     case 'remote_agent_result':
       return jsonResponse(await callApi(name, args));
