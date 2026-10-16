@@ -92,3 +92,14 @@ test('verifierCandidates follows the gateway\'s order with its models and effort
   assert.deepEqual(verifierCandidates({ ...base, candidates: [{ engine: 'opencode', model: 'opencode-go/glm-5.3', effort: 'high' }] }), [{ engine: 'opencode', model: 'opencode-go/glm-5.3', effort: 'high' }]);
   assert.deepEqual(verifierCandidates({ ...base, engine: 'opencode', engines: ['opencode'], candidates: null }), [{ engine: 'opencode', model: null, effort: null }]);
 });
+
+test('buildVerificationBrief carries the platform tools the worker used and what they returned', () => {
+  const brief = buildVerificationBrief([
+    { kind: 'text', role: 'user', content: 'OpenCode에게 notes.txt를 읽게 해' },
+    { kind: 'tool_use', toolName: 'mcp__aidev-tools__opencode_task', toolInput: { task: 'read notes.txt', mode: 'read' }, toolResult: { content: '{"status":"done","model":"opencode-go/kimi-k3","report":"KIWI"}' } },
+    { kind: 'tool_use', toolName: 'Read', toolInput: { file_path: 'notes.txt' }, toolResult: { content: 'KIWI' } },
+    { kind: 'text', role: 'assistant', content: 'KIWI (opencode-go/kimi-k3)' },
+  ], { command: null, agent: 'generalist', engine: 'claude', model: 'sonnet' });
+  assert.match(brief.text, /## 작업자가 쓴 플랫폼 도구와 그 결과[^\n]*\n- opencode_task \{"task":"read notes.txt","mode":"read"\} → \{"status":"done","model":"opencode-go\/kimi-k3","report":"KIWI"\}/);
+  assert.doesNotMatch(brief.text, /- Read /, 'ordinary tools are not listed there');
+});

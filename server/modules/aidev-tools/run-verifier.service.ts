@@ -122,6 +122,9 @@ function verifierSystemPrompt(agent: VerifyInput['verifierAgent']): string {
   return `${VERIFIER_PROMPT}\n## 검증자의 전문 분야 배경 ('${agent.name}' agent — 참고용이며 위 절차·규칙이 우선한다)\n${agent.prompt.slice(0, 8000)}`;
 }
 
+/** The platform's tools as each engine names them: Claude `mcp__aidev-tools__x`, OpenCode `aidev-tools_x`, Codex `aidev-tools.x`. */
+const PLATFORM_TOOL = /^(mcp__aidev-tools__|aidev-tools[._])/;
+
 const FILE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'apply_patch', 'edit', 'write']);
 // Claude (Bash), Codex (shell, exec_command, local_shell) and OpenCode (bash; its file tools take `filePath`)
 const COMMAND_TOOLS = new Set(['Bash', 'shell', 'exec_command', 'local_shell', 'bash']);
@@ -151,10 +154,18 @@ export function buildVerificationBrief(messages: HistoryMessage[], input: { comm
   }
   const turn = messages.slice(start);
   const files = new Set<string>(); const commands: string[] = []; const errors: string[] = []; const reports: string[] = [];
+  // the platform's own tools (a piece handed to OpenCode, a command on a user's PC): their results are claims' evidence
+  // the verifier cannot reproduce from the repository, so it gets them as recorded (2026-10-16: a run that used
+  // opencode_task was failed for "no record of the call")
+  const platformCalls: string[] = [];
   for (const message of turn) {
     if (message.kind === 'text' && message.role === 'assistant' && message.content) reports.push(message.content);
     else if (message.kind === 'tool_use' && message.toolName) {
       const args = inputOf(message.toolInput);
+      if (PLATFORM_TOOL.test(message.toolName)) {
+        const result = message.toolResult ? `${message.toolResult.isError ? '오류: ' : ''}${clip(message.toolResult.content, 600)}` : '(결과 없음)';
+        platformCalls.push(`${message.toolName.replace(PLATFORM_TOOL, '')} ${clip(args, 300)} → ${result}`);
+      }
       if (FILE_TOOLS.has(message.toolName) && typeof (args.file_path ?? args.filePath ?? args.path) === 'string') files.add(String(args.file_path ?? args.filePath ?? args.path));
       if (COMMAND_TOOLS.has(message.toolName) && (typeof args.command === 'string' || Array.isArray(args.command))) commands.push(clip(Array.isArray(args.command) ? args.command.join(' ') : args.command, 200));
     } else if ((message.kind === 'tool_result' && message.toolResult?.isError) || message.kind === 'error') {
@@ -169,6 +180,7 @@ export function buildVerificationBrief(messages: HistoryMessage[], input: { comm
     `## 작업자\nagent ${input.agent ?? '(없음)'} · ${input.engine ?? '?'} ${input.model ?? ''}`.trim(),
     files.size ? `## 작업자가 수정했다고 기록된 파일\n${[...files].slice(-40).map((file) => `- ${file}`).join('\n')}` : '## 작업자가 수정했다고 기록된 파일\n(도구 기록 없음)',
     commands.length ? `## 작업자가 실행한 명령(최근)\n${commands.slice(-12).map((command) => `- ${command}`).join('\n')}` : null,
+    platformCalls.length ? `## 작업자가 쓴 플랫폼 도구와 그 결과(최근 — 저장소로는 재현할 수 없는 근거: 서브에이전트 보고, 원격 PC 실행 등)\n${platformCalls.slice(-8).map((call) => `- ${call}`).join('\n')}` : null,
     errors.length ? `## 작업 중 보인 오류\n${errors.slice(-5).map((error) => `- ${error}`).join('\n')}` : null,
     `## 작업자의 최종 보고 (검증할 주장)\n${claims || '(보고 없음 — 명령의 요구가 저장소에 반영됐는지 직접 확인)'}`,
     '위 보고의 주장을 하나씩 실제로 확인하고 <aidev-verify> 블록을 출력하라.',
