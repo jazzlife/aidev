@@ -7,6 +7,7 @@
 ```
 aidev-runner pair <코드> [--gateway https://dev.nado.work] [--name 이름]   # 작업대 "원격 대상"에서 받은 10분짜리 코드
 aidev-runner                              # 포그라운드 실행 (Ctrl+C 종료; = start). 미등록이면 페어링 코드를 물어봄, Windows는 더블클릭으로도
+                                          #   (macOS·Linux 터미널에서 서비스가 이미 설치돼 있으면 관리 메뉴 — `menu`)
 aidev-runner install [--print]            # 서비스 설치: 자신을 ~/.aidev/bin에 복사해 그 파일을 등록(받은 파일은 지워도 됨), 바로 시작, 재부팅 후에도 자동 실행. 기본은 강한 설정:
                                           #   부팅 직후부터 — Windows 부팅 작업(S4U)·macOS LaunchDaemon이 로그인 전 연결을 맡고, 로그인하면 사용자 세션의
                                           #   러너(화면·GUI·상태 아이콘)가 넘겨받음; Linux는 systemd 사용자 서비스(linger)가 부팅 때부터 맡고 데스크탑
@@ -21,7 +22,18 @@ aidev-runner caps                         # 보고할 capabilities(JSON)
 aidev-runner roots list|add <폴더>|remove <폴더>   # 기본 ~/aidev-work. / 와 홈 전체는 거부
 aidev-runner consent screen on|off        # 화면 보기·원격 제어 — 첫 실행에서 켜짐(macOS는 화면 기록·손쉬운 사용 요청을 그때 한 번), off로 끔
 aidev-runner unpair                       # 토큰 삭제
+aidev-runner menu                         # 터미널 관리 메뉴 (화면 없는 기기: 상태·권한·페어링·서비스·로그·업데이트)
+aidev-runner perms [--fix] [--json]       # 권한 확인·획득: 관리자(root/sudo), 부팅 실행, 장치 그룹(dialout·gpio·i2c·video …)
+aidev-runner service start|stop|restart|status
 ```
+
+- 임베디드 Linux(0.19.0): root이거나 systemd가 아니면 `install`이 시스템 서비스로 등록 — systemd 시스템 유닛, OpenRC, OpenWrt procd,
+  SysV/BusyBox init(update-rc.d·chkconfig·rcN.d·rcS의 S99), 없으면 cron `@reboot`. 시스템 서비스는 설치한 계정으로 `aidev-runner supervise`
+  (숨은 명령: `start --service --boot`를 띄우고 실패하면 5초 뒤 다시, 0·3 종료는 그대로)를 실행. 정적 musl 빌드 `linux-{x64,arm64,armv7}-musl`
+  (glibc 없음·2.28 미만 시스템; install-linux.sh가 고름). 러너는 SIGTERM에 실행 중인 명령을 정리하고 0으로 끝남.
+  `~/.aidev/state`("connected <pid>" 등)를 다른 프로세스(메뉴, Android 앱)가 읽음.
+- Android(0.19.0): `deploy/aidev/android` 앱이 러너를 포그라운드 서비스로 실행(`scripts/build-android.sh` → `dist/aidev-runner-<버전>-android.apk`).
+  러너는 `target_os = "android"`에서 상태 아이콘·화면·입력 없이 빌드(셸 `/system/bin/sh`, 업데이트·서비스 등록은 앱이 맡음).
 
 - 상태 아이콘(화면이 있는 OS: Windows 알림 영역, macOS 메뉴 막대, Linux StatusNotifier — KDE·XFCE·GNOME+AppIndicator 확장):
   NadoVibe 로고 + 점 (초록 연결됨 / 주황 연결 중 / 빨강 정지됨), 메뉴 **시작 · 정지 · 종료**. 정지는 `~/.aidev/paused`로 이 PC의 모든 러너
@@ -75,7 +87,9 @@ aidev-runner unpair                       # 토큰 삭제
 | Linux (x64, ARM64, ARMv7 — 라즈베리 파이 등 SBC 포함) | `scripts/build-linux.sh [--install --code <코드>]` | `scripts/install-linux.sh` — systemd 사용자 서비스(+linger), 없으면 백그라운드 + cron @reboot |
 | macOS (Apple Silicon·Intel, universal) | `scripts/build-macos.sh [--install] [--cross]` | `scripts/install-macos.sh` — LaunchAgent (ops: `./runner/build.sh mac` → `./runner/install.sh`) |
 | Windows (x64, ARM64) | `scripts\build-windows.ps1 [-InstallTools] [-Install -Code <코드>]` — ARM64는 MSVC ARM64 빌드 도구와 clang 필요(x64 PC에서 `-Arch arm64`로 교차 빌드 가능) | `scripts\install-windows.ps1` — 로그온 작업, 콘솔 창 없이(`start --hidden`), 로그 `%USERPROFILE%\.aidev\runner.log` |
-| Android · iPhone | 러너가 돌지 않음 — 연결된 PC의 러너가 adb / Xcode(simctl)로 다룸 | |
+| 임베디드 Linux (musl 정적, x64·ARM64·ARMv7) | `./build.sh linux-arm64-musl` (zig) 또는 Alpine에서 `cargo build --release` | `scripts/install-linux.sh` — 러너의 `install`이 OpenRC·procd·SysV·systemd 시스템 서비스·cron 중 맞는 것 |
+| Android (arm64-v8a·armeabi-v7a·x86_64, 7.0+) | `scripts/build-android.sh` (NDK + Gradle) | NadoVibe 러너 앱(APK) — 포그라운드 서비스, 부팅 시 자동 시작, 권한 화면 (`deploy/aidev/android/README.md`) |
+| iPhone | 러너가 돌지 않음 — 연결된 Mac의 러너가 Xcode(simctl)로 다룸 | |
 
 - 설치 스크립트는 `--file`/`--dist`(직접 빌드한 것) 또는 게이트웨이에서 내려받기(SHA-256 확인)를 쓰고, `--code`면 페어링, 이전 러너를 멈추고 교체한 뒤 **연결까지 확인**한다.
 - 게이트웨이가 스크립트와 소스를 제공: `/_runner/scripts/<이름>`, `/_runner/source/aidev-runner-src.tar.gz`(릴리스에 이 OS·CPU의 바이너리가 없을 때 그 PC에서 빌드). 예:

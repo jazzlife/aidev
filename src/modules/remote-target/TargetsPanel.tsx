@@ -74,9 +74,12 @@ function PairingCard({ target, files, onRefresh }: { target: Target; files: Runn
         </select>
       </label>
       {steps.prerequisite ? <div className="mt-1 text-[10px] text-amber-700 dark:text-amber-300">{steps.prerequisite}</div> : null}
-      <div className="mt-1 text-[10px] text-muted-foreground">{steps.shell}에 붙여 넣기 · 설치 위치 {platform.startsWith('win') ? '%USERPROFILE%\\.aidev\\bin' : '~/.aidev/bin'} · 서비스로 등록돼 로그인 때마다 실행</div>
+      <div className="mt-1 text-[10px] text-muted-foreground">{platform === 'android'
+        ? 'Android 기기에서 · NadoVibe 러너 앱이 포그라운드 서비스로 상시 실행, 부팅 때 자동 시작'
+        : `${steps.shell}에 붙여 넣기 · 설치 위치 ${platform.startsWith('win') ? '%USERPROFILE%\\.aidev\\bin' : '~/.aidev/bin'} · 서비스로 등록돼 부팅 때부터 실행 · 관리 메뉴: aidev-runner menu`}</div>
       <pre className="aidev-selectable mt-1 whitespace-pre-wrap break-all rounded bg-muted/60 p-1.5 font-mono text-[11px]">{commands}</pre>
       {file?.sha256 ? <div className="aidev-selectable break-all text-[10px] text-muted-foreground">sha256 {file.sha256}</div> : null}
+      {steps.links.length ? <div className="mt-1 flex flex-wrap gap-2">{steps.links.map((link) => <a key={link.href} href={link.href} className="text-[11px] text-primary underline">{link.label}</a>)}</div> : null}
       <div className="mt-1 flex gap-1.5">
         <button type="button" onClick={() => { void copy(); }} className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 hover:bg-accent">{copied === 'ok' ? <><Check size={11} /> 복사됨</> : <><Copy size={11} /> 명령 복사</>}</button>
         <button type="button" onClick={onRefresh} className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 hover:bg-accent"><RefreshCw size={11} /> 새 코드</button>

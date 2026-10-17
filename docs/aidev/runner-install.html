@@ -138,7 +138,8 @@
     <div class="note">
       <span><b>sudo 비밀번호</b>를 한 번 묻습니다. 로그인하지 않아도 부팅 때 실행(linger)과 관리자 권한 설정에 씁니다.</span>
       <span>데스크톱에 로그인하면 세션 러너가 연결을 넘겨받아 화면·원격 제어·트레이 아이콘까지 동작합니다(KDE, XFCE, GNOME + AppIndicator 확장).</span>
-      <span>systemd가 없는 환경(컨테이너, WSL)은 백그라운드 실행 + cron <code>@reboot</code>로 등록됩니다.</span>
+      <span>root로 설치하거나 systemd가 없는 기기(임베디드: OpenRC·OpenWrt procd·SysV/BusyBox init)는 그 init의 시스템 서비스로, 등록할 곳이 없으면 cron <code>@reboot</code>로 등록됩니다. glibc가 없거나 오래된 시스템은 정적 musl 빌드를 받습니다.</span>
+      <span>화면 없는 기기의 관리(권한 확인·얻기, 시작·정지, 로그, 업데이트): <code>aidev-runner menu</code></span>
     </div>
     <div class="step">
       <h3>이 CPU용 바이너리가 없을 때: 그 PC에서 소스로 빌드</h3>
@@ -150,9 +151,33 @@
     </div>
   </section>
 
-  <div class="note warn">
-    <span><b>Android · iPhone</b>에는 러너를 설치하지 않습니다. 휴대폰이나 에뮬레이터를 연결한 PC의 러너가 adb·Xcode로 다룹니다.</span>
-  </div>
+  <hr>
+
+  <section id="embedded">
+    <h2>임베디드 Linux (bash·curl이 없는 BusyBox 기기)</h2>
+    <div class="step">
+      <h3>받아서 메뉴로 페어링·설치 (<code>&lt;파일&gt;</code>: 작업대 페어링 카드에서 linux-…-musl)</h3>
+      <div class="shell">SSH 또는 시리얼 콘솔 (sh)</div>
+      <div class="cmd"><pre>mkdir -p ~/.aidev/bin &amp;&amp; wget -qO ~/.aidev/bin/aidev-runner https://dev.nado.work/_runner/download/&lt;파일&gt; &amp;&amp; chmod +x ~/.aidev/bin/aidev-runner &amp;&amp; ~/.aidev/bin/aidev-runner menu</pre><button type="button">복사</button></div>
+    </div>
+    <div class="note">
+      <span>메뉴: 1 페어링 → 서비스 설치 → 6 권한 확인·얻기(관리자 권한, 부팅 실행, 시리얼·GPIO·I²C·카메라 등 장치 그룹).</span>
+    </div>
+  </section>
+
+  <hr>
+
+  <section id="android">
+    <h2>Android (7.0 이상 — 휴대폰·태블릿·TV 박스·산업용 패널)</h2>
+    <div class="step">
+      <h3>NadoVibe 러너 앱 설치 → 페어링 → 권한 허용</h3>
+      <p class="hint">작업대 원격 대상 → 등록에서 OS를 <b>Android</b>로 고르면 APK 주소와 <b>앱에서 페어링 열기</b> 링크가 나옵니다. 그 기기의 브라우저로 APK를 받아 설치하고, 앱에 코드를 넣어 페어링한 뒤 권한 목록의 ✗ 항목(알림, 배터리 최적화 제외, 백그라운드 데이터, 저장소)을 <b>허용</b>하세요.</p>
+    </div>
+    <div class="note">
+      <span>포그라운드 서비스로 상시 실행되고 부팅 때 자동으로 다시 연결합니다. 알림에서 상태와 정지.</span>
+      <span><b>iPhone</b>에는 러너를 설치하지 않습니다. 연결한 Mac의 러너가 Xcode로 다룹니다.</span>
+    </div>
+  </section>
 
   <hr>
 

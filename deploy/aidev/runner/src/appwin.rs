@@ -107,6 +107,7 @@ pub fn activate(w: &WinInfo) {
     }
 }
 
+#[cfg_attr(not(any(target_os = "macos", windows, target_os = "linux")), allow(dead_code))]
 fn display_info(index: u32, name: String, x: i32, y: i32, width: u32, height: u32, primary: bool) -> WinInfo {
     WinInfo { id: DISPLAY_BASE + index, pid: 0, app: "전체 화면".into(), title: if primary { format!("{name} (주 화면)") } else { name }, x, y, width, height, minimized: false, focused: true }
 }

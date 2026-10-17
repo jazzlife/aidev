@@ -19,7 +19,7 @@ set +e; timeout 30 $BIN start > "$AIDEV_RUNNER_HOME/runner.log" 2>&1; code=$?; s
 grep -q "ping result {\"pong\":true" "$AIDEV_RUNNER_HOME/mock.log" && ok "runner.ping answered" || no "runner.ping"
 grep -q 'fs.resolve {"code":-32001' "$AIDEV_RUNNER_HOME/mock.log" && ok "path outside allowed_roots refused" || no "fs.resolve"
 [ "$(grep -c '^\[mock\] connected' "$AIDEV_RUNNER_HOME/mock.log")" -ge 2 ] && ok "reconnected after close" || no "reconnect"
-grep -q '"os":"linux"' "$AIDEV_RUNNER_HOME/mock.log" && grep -q '"roots":1' "$AIDEV_RUNNER_HOME/mock.log" && ok "capabilities reported" || no "capabilities"
+grep -q '"os":"linux"' "$AIDEV_RUNNER_HOME/mock.log" && grep -q '"roots":2' "$AIDEV_RUNNER_HOME/mock.log" && ok "capabilities reported" || no "capabilities"
 sed -i 's/^token = .*/token = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"/' "$AIDEV_RUNNER_HOME/runner.toml"
 set +e; timeout 20 $BIN start >/dev/null 2>&1; code=$?; set -e
 [ $code -eq 3 ] && ok "wrong token rejected at the handshake (401) stops with exit 3" || no "handshake 401 exit $code"

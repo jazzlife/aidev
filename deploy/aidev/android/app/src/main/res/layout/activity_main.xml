@@ -1,0 +1,104 @@
+<?xml version="1.0" encoding="utf-8"?>
+<ScrollView xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/scroll"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent"
+    android:clipToPadding="false"
+    android:fillViewport="true"
+    android:fitsSystemWindows="true">
+
+    <LinearLayout
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:focusableInTouchMode="true"
+        android:orientation="vertical"
+        android:padding="16dp">
+
+        <!-- state -->
+        <LinearLayout style="@style/Card">
+            <TextView style="@style/Caption" android:text="상태" />
+            <TextView
+                android:id="@+id/state"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:textSize="22sp"
+                android:textStyle="bold" />
+            <TextView android:id="@+id/target" style="@style/Body" />
+            <TextView android:id="@+id/problem" style="@style/Body" android:textColor="@color/warn" android:visibility="gone" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:layout_marginTop="8dp"
+                android:orientation="horizontal">
+                <Button android:id="@+id/start" style="@style/Action" android:text="시작" />
+                <Button android:id="@+id/stop" style="@style/Action" android:text="정지" />
+                <Button android:id="@+id/restart" style="@style/Action" android:text="다시 시작" />
+            </LinearLayout>
+        </LinearLayout>
+
+        <!-- permissions -->
+        <LinearLayout style="@style/Card">
+            <TextView style="@style/Caption" android:text="권한 — 상시 실행에 필요한 것" />
+            <LinearLayout
+                android:id="@+id/perms"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="vertical" />
+            <Switch android:id="@+id/boot" style="@style/Toggle" android:text="부팅 시 자동 시작" />
+            <Switch android:id="@+id/awake" style="@style/Toggle" android:text="화면이 꺼져도 CPU·Wi-Fi 깨어 있기" />
+            <Button
+                android:id="@+id/appinfo"
+                style="@style/Link"
+                android:text="앱 정보 열기 (제조사 자동 실행·절전 예외 설정)" />
+        </LinearLayout>
+
+        <!-- pairing -->
+        <LinearLayout style="@style/Card">
+            <TextView style="@style/Caption" android:text="페어링 — 작업대 &quot;원격 대상 → 등록&quot;의 코드 (10분, 1회용)" />
+            <EditText
+                android:id="@+id/code"
+                style="@style/Field"
+                android:hint="페어링 코드"
+                android:inputType="textCapCharacters|textNoSuggestions"
+                android:textSize="20sp" />
+            <EditText
+                android:id="@+id/gateway"
+                style="@style/Field"
+                android:hint="게이트웨이 (https://dev.nado.work)"
+                android:inputType="textUri" />
+            <EditText
+                android:id="@+id/name"
+                style="@style/Field"
+                android:hint="표시 이름 (비우면 등록할 때 정한 이름)"
+                android:inputType="text" />
+            <LinearLayout
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:orientation="horizontal">
+                <Button android:id="@+id/pair" style="@style/Action" android:text="페어링" />
+                <Button android:id="@+id/unpair" style="@style/Action" android:text="페어링 해제" />
+            </LinearLayout>
+            <TextView android:id="@+id/pairResult" style="@style/Body" />
+        </LinearLayout>
+
+        <!-- update -->
+        <LinearLayout style="@style/Card">
+            <TextView style="@style/Caption" android:text="업데이트" />
+            <TextView android:id="@+id/version" style="@style/Body" />
+            <Button android:id="@+id/update" style="@style/Link" android:text="새 버전 확인" />
+        </LinearLayout>
+
+        <!-- log -->
+        <LinearLayout style="@style/Card">
+            <TextView style="@style/Caption" android:text="러너 로그" />
+            <TextView
+                android:id="@+id/log"
+                android:layout_width="match_parent"
+                android:layout_height="wrap_content"
+                android:fontFamily="monospace"
+                android:textIsSelectable="true"
+                android:textSize="11sp" />
+            <Button android:id="@+id/reloadLog" style="@style/Link" android:text="새로고침" />
+        </LinearLayout>
+    </LinearLayout>
+</ScrollView>

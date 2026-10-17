@@ -203,9 +203,12 @@ fn add_to_path(env: &mut Vec<(String, String)>, dirs: &[std::path::PathBuf]) {
     }
 }
 
+/// The POSIX shell: Android has no /bin.
+pub const SH: &str = if cfg!(target_os = "android") { "/system/bin/sh" } else { "/bin/sh" };
+
 fn user_shell() -> String {
     std::env::var("SHELL").ok().filter(|s| std::path::Path::new(s).exists()).unwrap_or_else(|| {
-        ["/bin/zsh", "/bin/bash", "/bin/sh"].iter().find(|s| std::path::Path::new(s).exists()).unwrap_or(&"/bin/sh").to_string()
+        ["/bin/zsh", "/bin/bash", SH].iter().find(|s| std::path::Path::new(s).exists()).unwrap_or(&SH).to_string()
     })
 }
 
@@ -303,7 +306,7 @@ fn named_shell_argv(shell: &str, cmd: &str, pty: bool) -> Result<Vec<String>, St
         "cmd" => Err("cmd는 Windows에서만 씁니다".into()),
         "bash" if cfg!(windows) => git_bash().map(|b| vec![b.display().to_string(), "-lc".into(), cmd.into()]).ok_or_else(|| "bash(Git for Windows)가 이 PC에 없습니다".into()),
         "bash" => Ok(vec![found("bash").unwrap_or_else(|| "/bin/bash".into()), "-lc".into(), cmd.into()]),
-        "sh" if !cfg!(windows) => Ok(vec!["/bin/sh".into(), "-c".into(), cmd.into()]),
+        "sh" if !cfg!(windows) => Ok(vec![SH.into(), "-c".into(), cmd.into()]),
         other => Err(format!("지원하지 않는 shell: {other} (powershell|pwsh|cmd|bash|sh)")),
     }
 }

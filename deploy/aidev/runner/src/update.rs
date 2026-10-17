@@ -60,9 +60,14 @@ fn platforms() -> &'static str {
         ("windows", "aarch64") => "win-arm64",
         ("macos", "aarch64") => "mac-arm64,mac-universal",
         ("macos", "x86_64") => "mac-x64,mac-universal",
+        // a static musl build (embedded Linux: Alpine, Buildroot, OpenWrt …) stays musl; it runs on glibc systems too
+        ("linux", "x86_64") if cfg!(target_env = "musl") => "linux-x64-musl,linux-x64",
+        ("linux", "aarch64") if cfg!(target_env = "musl") => "linux-arm64-musl,linux-arm64",
+        ("linux", "arm") if cfg!(target_env = "musl") => "linux-armv7-musl,linux-armv7",
         ("linux", "x86_64") => "linux-x64",
         ("linux", "aarch64") => "linux-arm64",
         ("linux", "arm") => "linux-armv7",
+        // Android: the NadoVibe app is updated (its APK), not the runner file inside it
         _ => "",
     }
 }
@@ -98,6 +103,7 @@ pub fn versions(gateway: &str) -> Result<Vec<Version>, String> {
 }
 
 /// The newest offered version, when it is newer than this runner (or this PC's own build of it: `emulated`).
+#[cfg_attr(target_os = "android", allow(dead_code))]
 pub fn newer(list: &[Version]) -> Option<&Version> {
     list.first().filter(|v| match cmp(&v.version, CURRENT) {
         Ordering::Greater => true,

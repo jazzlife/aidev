@@ -2,6 +2,7 @@
 # Release builds of aidev-runner → dist/aidev-runner-<version>-<target>[.exe] + SHA256SUMS.
 #   build.sh                 # every target whose Rust std is installed (rustup target add …)
 #   build.sh linux-x64 win-x64 mac   # a subset
+#   build.sh linux-arm64-musl        # static musl builds for embedded Linux (Alpine, Buildroot, OpenWrt, old glibc)
 # Linux builds link against glibc 2.28 through zig (cargo-zigbuild) so they run on older distros;
 # Windows (x86_64-pc-windows-gnu) also goes through zig. macOS targets need a Mac (Apple SDK):
 # run this script there (ops/runner/build.sh wraps it) — `mac` makes a universal arm64+x86_64 binary.
@@ -29,7 +30,8 @@ build() {   # label rust-target [zig-suffix]
   fi
   # Linux: VP9 through a static libvpx (F-18 — the remote screen's software encoder; AIDEV_VP9=0 leaves it out)
   local features=()
-  if [[ $target == *linux* && ${AIDEV_VP9:-1} != 0 ]]; then scripts/build-libvpx.sh "$target"; features=(--features vpx); fi
+  # (the musl builds go without it: embedded boards seldom show a desktop, and H.264 stays)
+  if [[ $target == *linux-gnu* && ${AIDEV_VP9:-1} != 0 ]]; then scripts/build-libvpx.sh "$target"; features=(--features vpx); fi
   if [[ $target == *apple* ]]; then cargo build --release --target "$target"
   elif zig_ok; then cargo zigbuild --release --target "$target$suffix" "${features[@]}"
   elif [ "$target" = "$(rustc -vV | sed -n 's/host: //p')" ]; then cargo build --release --target "$target" "${features[@]}"
@@ -42,6 +44,9 @@ for w in $want; do
     linux-x64)   build linux-x64 x86_64-unknown-linux-gnu .2.28 ;;
     linux-arm64) build linux-arm64 aarch64-unknown-linux-gnu .2.28 ;;
     linux-armv7) build linux-armv7 armv7-unknown-linux-gnueabihf .2.28 ;;   # 32-bit Raspberry Pi OS and other ARMv7 SBCs
+    linux-x64-musl)   build linux-x64-musl x86_64-unknown-linux-musl ;;      # static: no glibc needed
+    linux-arm64-musl) build linux-arm64-musl aarch64-unknown-linux-musl ;;
+    linux-armv7-musl) build linux-armv7-musl armv7-unknown-linux-musleabihf ;;
     win-x64)     build win-x64 x86_64-pc-windows-gnu ;;
     mac)
       if [ "$(uname -s)" != Darwin ]; then echo "skip mac: build on a Mac"; continue; fi

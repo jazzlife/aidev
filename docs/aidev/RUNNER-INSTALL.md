@@ -65,7 +65,69 @@ curl -fsSL https://dev.nado.work/_runner/source/aidev-runner-src.tar.gz | tar -x
 curl -fsSL https://dev.nado.work/_runner/scripts/install-linux.sh | bash -s -- --code <코드> --limited --logon-only
 ```
 
-> **Android · iPhone**에는 러너를 설치하지 않습니다. 휴대폰이나 에뮬레이터를 연결한 PC의 러너가 adb·Xcode로 다룹니다.
+## 임베디드 Linux (Alpine, Buildroot, OpenWrt, Yocto, 라즈베리 파이 등)
+
+위 Linux 설치 줄이 그대로 동작합니다. 설치 스크립트가 glibc가 없거나(musl) 2.28보다 오래된 시스템이면 **정적 musl 빌드**
+(`linux-x64-musl` · `linux-arm64-musl` · `linux-armv7-musl`)를 고르고, 러너의 `install`이 그 기기의 init에 맞춰 서비스로 등록합니다.
+
+| 환경 | 등록되는 것 (부팅 때부터, 죽으면 다시 실행) |
+|---|---|
+| 데스크톱·서버 (일반 사용자 + systemd) | systemd 사용자 서비스 + linger (기존과 같음) |
+| root로 설치 + systemd | `/etc/systemd/system/aidev-runner.service` |
+| OpenRC (Alpine 등) | `/etc/init.d/aidev-runner` (`rc-update add … default`) |
+| OpenWrt (procd) | `/etc/init.d/aidev-runner` (`enable`) |
+| SysV · BusyBox init | `/etc/init.d/aidev-runner` (update-rc.d·chkconfig·rcN.d) 또는 BusyBox rcS의 `/etc/init.d/S99aidev-runner` |
+| init에 등록할 수 없을 때 | cron `@reboot` + 지금 바로 실행 |
+
+시스템 서비스는 설치한 계정으로 `aidev-runner supervise`를 실행합니다(러너가 비정상 종료하면 5초 뒤 다시 시작, 토큰 거부면 멈춤). 로그 `~/.aidev/runner.log`.
+
+bash·curl이 없는 기기(BusyBox): 작업대 페어링 카드에서 OS를 `linux-…-musl`로 고르면 wget 줄이 나옵니다. 또는
+
+```sh
+mkdir -p ~/.aidev/bin && wget -qO ~/.aidev/bin/aidev-runner https://dev.nado.work/_runner/download/<파일 이름> && chmod +x ~/.aidev/bin/aidev-runner
+~/.aidev/bin/aidev-runner menu        # 1) 페어링 → 서비스 설치 → 6) 권한
+```
+
+## 터미널 관리 메뉴 (화면이 없는 기기)
+
+SSH나 시리얼 콘솔에서 `aidev-runner menu` — 서비스가 이미 설치된 기기에서는 `aidev-runner`만 쳐도 메뉴가 열립니다.
+
+```
+━━ NadoVibe 러너 0.19.0 · 관리 메뉴 (linux aarch64, board-01) ━━
+  페어링     #42 board-01 → https://dev.nado.work
+  서비스     OpenRC 서비스 · 연결됨 (pid 126)
+  권한       빠짐 1개 — 장치: 시리얼 포트 (/dev/ttyUSB*, ttyACM*)
+  …
+  1) 페어링 (코드 입력)          2) 서비스 설치·다시 설치
+  3) 시작                        4) 정지 (연결 끊기)
+  5) 다시 시작                   6) 권한 확인·얻기
+  7) 로그 보기                   8) 허용 폴더
+  9) 화면 보기·원격 제어        10) 업데이트
+ 11) 서비스 제거                12) 페어링 해제
+```
+
+**권한 확인·얻기**(메뉴 6, 또는 `aidev-runner perms [--fix] [--json]`):
+
+- **관리자 권한** — root이거나 비밀번호 없는 sudo(`/etc/sudoers.d/aidev-runner`). 얻기: sudo 비밀번호 한 번.
+- **부팅 때 실행** — 시스템 서비스, 또는 systemd 사용자 서비스의 linger. 얻기: linger 켜기 / 서비스 설치.
+- **장치 그룹** — 이 시스템에 있는 `dialout`·`tty`·`uucp`(시리얼), `plugdev`(USB), `gpio`·`i2c`·`spi`, `video`·`render`·`input`·`audio` 중
+  빠진 것. 얻기: `usermod -aG`(BusyBox는 `adduser`/`addgroup`), 그다음 서비스를 다시 시작하면 러너에 적용됩니다.
+
+같은 일을 명령으로: `aidev-runner service start|stop|restart|status`, `aidev-runner perms --fix`.
+
+## Android
+
+**NadoVibe 러너 앱**이 러너를 포그라운드 서비스로 상시 실행합니다 (Android 7.0 이상, 휴대폰·태블릿·TV 박스·산업용 패널).
+
+1. 작업대 원격 대상 → 등록에서 OS를 **Android**로 고르고, 그 기기의 브라우저로 **APK 받기**(`/_runner/download/aidev-runner-<버전>-android.apk`) → 설치.
+2. 앱에 페어링 코드와 게이트웨이를 넣고 **페어링** (그 기기에서 카드의 **앱에서 페어링 열기** 링크를 누르면 채워집니다).
+3. 앱의 **권한** 목록에서 ✗ 항목을 **허용** — 알림, 배터리 최적화 제외, 백그라운드 데이터, 저장소 전체 접근(허용하면 `/storage/emulated/0`을 허용 폴더에 추가).
+   **부팅 시 자동 시작**과 **화면이 꺼져도 깨어 있기**는 기본으로 켜져 있습니다.
+
+알림에 연결 상태와 **정지**가 보입니다. 앱 업데이트는 앱의 **업데이트** 버튼(새 APK 받기 → 설치, 페어링·설정 유지).
+Android에서는 명령 실행·파일 동기화·포트 터널 등이 동작하고, 화면 보기·원격 제어는 제공하지 않습니다.
+
+> **iPhone**에는 러너를 설치하지 않습니다. 연결한 Mac의 러너가 Xcode(simctl)로 다룹니다.
 
 ## 다시 설치 (서비스만 지운 뒤, 페어링은 그대로)
 
@@ -172,7 +234,7 @@ curl -fsSL https://dev.nado.work/_runner/scripts/install-linux.sh | bash
 
 | 명령 | 하는 일 |
 |---|---|
-| `aidev-runner` | 포그라운드 실행. 처음이면 페어링 코드를 묻습니다. Windows는 더블클릭해도 됩니다. |
+| `aidev-runner` | 포그라운드 실행. 처음이면 페어링 코드를 묻습니다. Windows는 더블클릭해도 됩니다. 서비스가 이미 돌고 있는 macOS·Linux 터미널에서는 관리 메뉴가 열립니다. |
 | `aidev-runner install` | 서비스 설치: 부팅 직후부터, 관리자 권한으로 실행. |
 | `aidev-runner install --limited --logon-only` | 일반 사용자 권한, 로그인한 동안만. |
 | `aidev-runner uninstall` | 서비스 제거. |
@@ -181,5 +243,8 @@ curl -fsSL https://dev.nado.work/_runner/scripts/install-linux.sh | bash
 | `aidev-runner consent screen off` | 화면 보기 끄기 (`control off`는 원격 제어만). 처음엔 둘 다 켜져 있습니다. |
 | `aidev-runner pair <코드>` | 다시 페어링. |
 | `aidev-runner unpair` | 이 PC의 토큰 삭제. |
+| `aidev-runner menu` | 터미널 관리 메뉴: 상태·권한·페어링·서비스·로그·업데이트 (서비스가 설치된 기기에서 `aidev-runner`만 쳐도 열림). |
+| `aidev-runner perms [--fix] [--json]` | 권한 확인 (`--fix`: 빠진 관리자 권한·부팅 실행·장치 그룹을 얻음). |
+| `aidev-runner service start\|stop\|restart\|status` | 정지는 연결을 끊고 명령을 멈춤(아이콘의 정지와 같음), 시작은 다시 연결(서비스가 꺼져 있으면 켬). |
 
 화면이 있는 OS에서는 아이콘 메뉴로 **시작 · 정지 · 종료**(새 버전이 있으면 **업데이트**도)를 할 수 있습니다. 정지하면 연결이 끊기고 실행 중인 명령이 멈추며, 종료하면 다시 실행할 때까지 꺼져 있습니다.

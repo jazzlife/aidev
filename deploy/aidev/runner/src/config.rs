@@ -129,6 +129,25 @@ fn write_private(p: &Path, text: &str) -> std::io::Result<()> {
     std::fs::rename(&tmp, p)
 }
 
+/// A folder the platform may use (created when missing, stored as its real path). The home folder is allowed (agents
+/// work with full permissions); the whole disk is not.
+pub fn add_root(cfg: &mut Config, path: &Path) -> Result<(), String> {
+    std::fs::create_dir_all(path).map_err(|e| format!("{}: {e}", path.display()))?;
+    let real = std::fs::canonicalize(path).map_err(|e| e.to_string())?;
+    if real.parent().is_none() {
+        return Err("루트(/) 전체는 허용할 수 없습니다 — 홈 폴더나 작업용 폴더를 지정하세요".into());
+    }
+    if !cfg.allowed_roots.contains(&real) {
+        cfg.allowed_roots.push(real);
+    }
+    Ok(())
+}
+
+pub fn remove_root(cfg: &mut Config, path: &Path) {
+    let real = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    cfg.allowed_roots.retain(|r| r != &real);
+}
+
 /// Short, token-free description for `status`.
 pub fn describe(cfg: &Config) -> String {
     let roots: Vec<String> = cfg.allowed_roots.iter().map(|r| r.display().to_string()).collect();
@@ -179,6 +198,9 @@ pub fn acquire_instance(boot: bool, wait: std::time::Duration) -> Result<Instanc
             if crate::control::update_pending() {
                 return Err("업데이트 중".into());
             }
+            if crate::control::quit_requested() {
+                return Err("종료 중".into());
+            }
             let asked = std::fs::metadata(handoff_path()).ok().and_then(|m| m.modified().ok());
             match asked.map(|t| SystemTime::now().duration_since(t).unwrap_or_default()) {
                 Some(age) if age < Duration::from_secs(120) => pause(1000),
@@ -206,7 +228,7 @@ pub fn acquire_instance(boot: bool, wait: std::time::Duration) -> Result<Instanc
     }
     let _ = std::fs::write(handoff_path(), std::process::id().to_string());
     let deadline = Instant::now() + wait;
-    while Instant::now() < deadline && !crate::control::update_pending() {
+    while Instant::now() < deadline && !crate::control::update_pending() && !crate::control::quit_requested() {
         pause(500);
         if let Ok(lock) = lock_instance() {
             let _ = std::fs::remove_file(handoff_path());
@@ -216,6 +238,23 @@ pub fn acquire_instance(boot: bool, wait: std::time::Duration) -> Result<Instanc
     }
     let _ = std::fs::remove_file(handoff_path());
     Err(busy)
+}
+
+/// The pid of the runner holding the connection lock, if one does — without taking the lock or writing to it
+/// (update.rs reads the pid in it to stop an older runner). Unix only; elsewhere None.
+pub fn lock_holder() -> Option<u32> {
+    #[cfg(unix)]
+    {
+        use std::os::unix::io::AsRawFd;
+        let path = dir().join("runner.lock");
+        let file = std::fs::File::open(&path).ok()?;
+        if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_SH | libc::LOCK_NB) } == 0 {
+            return None;   // nobody holds it (closing the file lets go of this probe)
+        }
+        std::fs::read_to_string(&path).ok()?.trim().parse().ok()
+    }
+    #[cfg(not(unix))]
+    None
 }
 
 pub fn lock_instance() -> Result<InstanceLock, String> {

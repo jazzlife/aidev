@@ -106,7 +106,7 @@ pub fn hostname() -> String {
 }
 
 pub fn shell() -> String {
-    std::env::var("SHELL").or_else(|_| std::env::var("COMSPEC")).unwrap_or_else(|_| if cfg!(windows) { "cmd.exe".into() } else { "/bin/sh".into() })
+    std::env::var("SHELL").or_else(|_| std::env::var("COMSPEC")).unwrap_or_else(|_| if cfg!(windows) { "cmd.exe".into() } else { crate::exec::SH.into() })
 }
 
 pub fn platform() -> &'static str {
@@ -152,6 +152,11 @@ pub async fn collect(cfg: &crate::config::Config) -> Value {
         features.push("p2p");
         features.push("p2p-input");
     }
+    // Android: the runner lives in the NadoVibe app's sandbox — no screen capture or input there (the gateway then
+    // says the PC cannot show its screen instead of trying)
+    if cfg!(target_os = "android") {
+        features.retain(|f| !["screen", "video", "input", "windows", "displays", "acks", "vp9", "p2p", "p2p-input"].contains(f));
+    }
     json!({
         "runner": env!("CARGO_PKG_VERSION"),
         "os": platform(),
@@ -163,8 +168,8 @@ pub async fn collect(cfg: &crate::config::Config) -> Value {
         "tools": tools,
         "devices": { "adb": adb, "sdb": sdb },
         "allowed_roots": cfg.allowed_roots.iter().map(|r| r.display().to_string()).collect::<Vec<_>>(),
-        "screen": crate::config::screen_allowed(cfg),
-        "control": crate::config::control_allowed(cfg),
+        "screen": crate::config::screen_allowed(cfg) && !cfg!(target_os = "android"),
+        "control": crate::config::control_allowed(cfg) && !cfg!(target_os = "android"),
         "features": features,
         "limits": { "exec_running": crate::exec::MAX_RUNNING },
     })

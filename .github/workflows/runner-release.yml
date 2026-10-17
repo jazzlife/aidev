@@ -4,6 +4,8 @@ name: Runner release (all platforms)
 # aidev-runner for every OS/CPU with the per-OS scripts in deploy/aidev/runner/scripts, the platform-built debug
 # adapters (aidev-clrdbg for .NET Framework, netcoredbg for Apple Silicon), and publishes them as a GitHub release:
 #   aidev-runner-<ver>-{linux-x64,linux-arm64,linux-armv7,win-x64,win-arm64,mac-arm64,mac-x64,mac-universal}
+#   aidev-runner-<ver>-linux-{x64,arm64,armv7}-musl (static, embedded Linux) and aidev-runner-<ver>-android.apk (the app;
+#   signed with the ANDROID_KEYSTORE_B64 secret — every release with the same key, or Android refuses the update)
 #   adapters/ (manifest.json + archives), aidev-runner-src.tar.gz, SHA256SUMS
 # deploy/aidev/runner/scripts/fetch-release.sh <tag> puts them in runner/dist for the next platform release.
 # Run by hand (Actions → Run workflow) to build without publishing.
@@ -72,7 +74,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        label: [linux-x64, linux-arm64, linux-armv7]
+        label: [linux-x64, linux-arm64, linux-armv7, linux-x64-musl, linux-arm64-musl, linux-armv7-musl]
     steps:
       - uses: actions/checkout@v5
         with:
@@ -80,7 +82,7 @@ jobs:
       - run: sudo apt-get update -q && sudo apt-get install -y -q nasm qemu-user libc6-arm64-cross libc6-armhf-cross
       - uses: dtolnay/rust-toolchain@stable
         with:
-          targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu,armv7-unknown-linux-gnueabihf
+          targets: x86_64-unknown-linux-gnu,aarch64-unknown-linux-gnu,armv7-unknown-linux-gnueabihf,x86_64-unknown-linux-musl,aarch64-unknown-linux-musl,armv7-unknown-linux-musleabihf
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: ${{ env.RUNNER_DIR }}
@@ -103,6 +105,10 @@ jobs:
               linux-x64) "./$f" --version ;;
               linux-arm64) qemu-aarch64 -L /usr/aarch64-linux-gnu "./$f" --version ;;
               linux-armv7) qemu-arm -L /usr/arm-linux-gnueabihf "./$f" --version ;;
+              # static: no loader or libraries needed
+              linux-x64-musl) "./$f" --version; ! ldd "./$f" 2>/dev/null | grep -q '=>' ;;
+              linux-arm64-musl) qemu-aarch64 "./$f" --version ;;
+              linux-armv7-musl) qemu-arm "./$f" --version ;;
             esac
           done
         env:
@@ -185,6 +191,56 @@ jobs:
           path: ${{ env.RUNNER_DIR }}/dist/aidev-runner-*-mac-*
           if-no-files-found: error
 
+  android:
+    name: Android app (APK)
+    needs: version
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          persist-credentials: false
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: '17'
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-linux-android,armv7-linux-androideabi,x86_64-linux-android
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ${{ env.RUNNER_DIR }}
+          key: android
+      # one key for every release: an APK signed with another one does not install over the app
+      - name: Signing key
+        env:
+          KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
+        run: |
+          if [ -z "$KEYSTORE_B64" ]; then
+            if [ "$GITHUB_REF_TYPE" = tag ]; then echo "::error::ANDROID_KEYSTORE_B64 secret is missing — a release APK must be signed with the app's key (see deploy/aidev/android/README.md)"; exit 1; fi
+            echo "::warning::no ANDROID_KEYSTORE_B64 — the APK is signed with a throwaway debug key"; exit 0
+          fi
+          echo "$KEYSTORE_B64" | base64 -d > "$RUNNER_TEMP/release.jks"
+          echo "AIDEV_ANDROID_KEYSTORE=$RUNNER_TEMP/release.jks" >> "$GITHUB_ENV"
+      # the runner for each ABI with the image's NDK, then the app around it (Gradle)
+      - name: scripts/build-android.sh
+        # the NDK: the image's $ANDROID_NDK_LATEST_HOME (build-android.sh looks there)
+        env:
+          AIDEV_ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          AIDEV_ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
+        run: '"$RUNNER_DIR/scripts/build-android.sh"'
+      - name: The APK carries the runner for every ABI, without libc++_shared
+        working-directory: ${{ env.RUNNER_DIR }}/dist
+        run: |
+          apk=$(ls aidev-runner-*-android.apk)
+          unzip -l "$apk" | grep -E 'lib/(arm64-v8a|armeabi-v7a|x86_64)/libaidevrunner.so' | tee /dev/stderr | [ "$(wc -l)" = 3 ]
+          unzip -o -q "$apk" lib/x86_64/libaidevrunner.so -d /tmp/apk
+          ! readelf -d /tmp/apk/lib/x86_64/libaidevrunner.so | grep -q 'libc++_shared'
+      - uses: actions/upload-artifact@v6
+        with:
+          name: runner-android
+          path: ${{ env.RUNNER_DIR }}/dist/aidev-runner-*-android.apk
+          if-no-files-found: error
+
   clrdbg:
     name: aidev-clrdbg (.NET Framework adapter)
     needs: version
@@ -229,7 +285,7 @@ jobs:
 
   release:
     name: Publish
-    needs: [version, test, linux, windows, macos, clrdbg, netcoredbg-mac]
+    needs: [version, test, linux, windows, macos, android, clrdbg, netcoredbg-mac]
     if: >-
       startsWith(github.ref, 'refs/tags/runner-v') && (github.event_name == 'push' || inputs.publish)
     runs-on: ubuntu-24.04
@@ -254,7 +310,7 @@ jobs:
             [ -f "$d/manifest.json" ] && jq -s '.[0] * .[1]' dist/adapters/manifest.json "$d/manifest.json" > m.json && mv m.json dist/adapters/manifest.json
           done
           # every platform must be there
-          for p in linux-x64 linux-arm64 linux-armv7 win-x64.exe win-arm64.exe mac-arm64 mac-x64 mac-universal; do
+          for p in linux-x64 linux-arm64 linux-armv7 linux-x64-musl linux-arm64-musl linux-armv7-musl win-x64.exe win-arm64.exe mac-arm64 mac-x64 mac-universal android.apk; do
             ls dist/aidev-runner-*-"$p" >/dev/null || { echo "::error::aidev-runner $p missing"; exit 1; }
           done
           jq -e '."clrdbg-win32-x64" and ."netcoredbg-darwin-arm64"' dist/adapters/manifest.json >/dev/null \
@@ -272,7 +328,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           VERSION: ${{ needs.version.outputs.version }}
         run: |
-          notes="aidev-runner $VERSION — Linux (x64, ARM64, ARMv7), Windows (x64, ARM64), macOS (arm64, x64, universal).
+          notes="aidev-runner $VERSION — Linux (x64, ARM64, ARMv7; static musl builds for embedded Linux), Windows (x64, ARM64), macOS (arm64, x64, universal), Android (the NadoVibe 러너 app, android.apk).
           Install: deploy/aidev/runner/scripts/install-{linux,macos}.sh / install-windows.ps1 — or from the platform: <gateway>/_runner/scripts/.
           adapter-*: debug adapters the platform serves at /_runner/adapters/ (manifest.json)."
           gh release create "$GITHUB_REF_NAME" dist/* --title "aidev-runner $VERSION" --notes "$notes" --verify-tag

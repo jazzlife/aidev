@@ -328,7 +328,8 @@ async function runnerFiles() {
   const names = (await fs.promises.readdir(dir).catch(() => [] as string[])).filter((n) => n.startsWith('aidev-runner-')).sort();
   const sums = await fs.promises.readFile(path.join(dir, 'SHA256SUMS'), 'utf8').catch(() => '');
   return Promise.all(names.map(async (name) => {
-    const m = name.match(/^aidev-runner-([0-9.]+)-(.+?)(\.exe)?$/);
+    // aidev-runner-<ver>-<platform>[.exe] — the Android app is aidev-runner-<ver>-android.apk (platform `android`)
+    const m = name.match(/^aidev-runner-([0-9.]+)-(.+?)(\.exe|\.apk)?$/);
     const sha256 = sums.split('\n').find((l) => l.trim().endsWith(` ${name}`) || l.trim().endsWith(`*${name}`))?.split(/\s+/)[0] ?? null;
     return { name, version: m?.[1] ?? null, platform: m?.[2] ?? null, size: (await fs.promises.stat(path.join(dir, name))).size, sha256 };
   }));
@@ -382,7 +383,7 @@ async function runnerVersions(platformParam: string) {
     if (!v || rel.draft || rel.prerelease || (latest && cmpVersion(v, latest) > 0)) continue;
     const known = out.get(v);
     if (known) { known.date ??= rel.published_at; continue; }
-    const asset = prefs.map((p) => rel.assets.find((a) => a.name === `aidev-runner-${v}-${p}` || a.name === `aidev-runner-${v}-${p}.exe`)).find(Boolean);
+    const asset = prefs.map((p) => rel.assets.find((a) => a.name === `aidev-runner-${v}-${p}` || a.name === `aidev-runner-${v}-${p}.exe` || a.name === `aidev-runner-${v}-${p}.apk`)).find(Boolean);
     const sha256 = asset ? await releaseSha(rel, asset) : null;
     if (asset && sha256) out.set(v, { version: v, url: asset.browser_download_url, sha256, size: asset.size, date: rel.published_at });
   }
@@ -424,7 +425,8 @@ const server = http.createServer(async (req, res) => {
       const file = path.join(runnerDir(), dl[1]);
       const stat = await fs.promises.stat(file).catch(() => null);
       if (!stat?.isFile()) return json(res, 404, { error: 'Not found' });
-      res.writeHead(200, { 'content-type': dl[1] === 'SHA256SUMS' ? 'text/plain; charset=utf-8' : 'application/octet-stream', 'content-length': String(stat.size), 'content-disposition': `attachment; filename="${dl[1].endsWith('.exe') ? 'aidev-runner.exe' : dl[1] === 'SHA256SUMS' ? 'SHA256SUMS' : 'aidev-runner'}"`, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
+      const apk = dl[1].endsWith('.apk');   // the Android app: its type lets the phone's browser offer to install it
+      res.writeHead(200, { 'content-type': dl[1] === 'SHA256SUMS' ? 'text/plain; charset=utf-8' : apk ? 'application/vnd.android.package-archive' : 'application/octet-stream', 'content-length': String(stat.size), 'content-disposition': `attachment; filename="${dl[1].endsWith('.exe') ? 'aidev-runner.exe' : apk ? dl[1] : dl[1] === 'SHA256SUMS' ? 'SHA256SUMS' : 'aidev-runner'}"`, 'cache-control': 'no-store', 'x-content-type-options': 'nosniff' });
       if (req.method === 'HEAD') return res.end();
       return fs.createReadStream(file).pipe(res);
     }

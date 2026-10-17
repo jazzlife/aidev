@@ -18,6 +18,7 @@ type Target = {
 const OS_CHOICES: Array<{ id: string; label: string }> = [
   { id: 'win-x64', label: 'Windows' }, { id: 'mac-universal', label: 'macOS' }, { id: 'linux-x64', label: 'Linux' },
   { id: 'linux-arm64', label: 'Linux ARM64' }, { id: 'linux-armv7', label: '라즈베리 파이' },
+  { id: 'linux-arm64-musl', label: '임베디드 Linux' }, { id: 'android', label: 'Android' },
 ];
 const POLL_MS = 5000;
 
@@ -45,9 +46,11 @@ function PairingCard({ target, files, onRefresh }: { target: Target; files: Runn
           <button key={os.id} type="button" onClick={() => setPlatform(os.id)} aria-pressed={platform === os.id} className={`m-touch rounded-full px-3 text-[13px] ${platform === os.id ? 'bg-ink text-bg' : 'border border-line'}`}>{os.label}</button>
         ))}
       </div>
-      <div className="mt-2 text-[12px] text-muted">그 PC의 {steps.shell}에 붙여 넣으세요 — 설치·페어링·서비스 등록까지 합니다</div>
+      <div className="mt-2 text-[12px] text-muted">{platform === 'android' ? 'Android 기기에서 차례로 — 앱이 상시 실행·부팅 때 자동 시작을 맡습니다' : `그 PC의 ${steps.shell}에 붙여 넣으세요 — 설치·페어링·서비스 등록까지 합니다`}</div>
       {steps.prerequisite ? <div className="mt-1 text-[12px] text-warn">{steps.prerequisite}</div> : null}
       <pre className="mt-1 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-lg bg-elevated p-2 font-mono text-[11px] select-all">{steps.commands}</pre>
+      {/* Android: this phone may be the device — the APK and the app with the code filled in, one tap each */}
+      {steps.links.length ? <div className="mt-2 grid grid-cols-2 gap-2">{steps.links.map((link) => <a key={link.href} href={link.href} className="m-touch flex items-center justify-center rounded-xl border border-line text-[13px]">{link.label}</a>)}</div> : null}
       <div className="mt-2 grid grid-cols-3 gap-2">
         <button type="button" onClick={() => { void copy(); }} className="m-touch flex items-center justify-center gap-1 rounded-xl border border-line text-[13px]">{copied ? <><Check size={14} /> 복사됨</> : <><Copy size={14} /> 복사</>}</button>
         {share ? <button type="button" onClick={share} className="m-touch flex items-center justify-center gap-1 rounded-xl border border-line text-[13px]"><Share2 size={14} /> 보내기</button> : <span />}

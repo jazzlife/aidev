@@ -27,6 +27,8 @@ mod rtc;
 mod screen;
 mod service;
 mod sync;
+// the status icon and its popups: desktop OSes (Android's runner lives in the NadoVibe app, which shows its state)
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 mod tray;
 mod tunnel;
 mod update;
@@ -34,7 +36,10 @@ mod update;
 mod vp9;
 #[cfg(feature = "vpx")]
 mod vpx_ffi;
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
 mod dialog;
+mod menu;
+mod perms;
 
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
@@ -128,6 +133,24 @@ enum Cmd {
         #[arg(long)]
         vp9_check: Option<PathBuf>,
     },
+    /// 관리 메뉴 (터미널): 상태·권한 확인과 획득, 페어링, 서비스 설치·시작·정지, 로그, 업데이트, 제거
+    Menu,
+    /// 권한 확인 (`--fix`: 빠진 것을 얻음 — 관리자 권한, 부팅 실행, 장치 그룹)
+    Perms {
+        #[arg(long)]
+        fix: bool,
+        /// 기계가 읽는 JSON으로
+        #[arg(long)]
+        json: bool,
+    },
+    /// 서비스 시작 · 정지(연결 끊기) · 다시 시작 · 상태
+    Service {
+        /// start | stop | restart | status
+        action: String,
+    },
+    /// 시스템 서비스(OpenRC·procd·SysV·cron)가 실행: `start`를 띄우고 실패하면 다시 띄움 (0 종료·3 토큰 거부는 그대로 끝냄)
+    #[command(hide = true)]
+    Supervise,
     /// 업데이트: 받을 수 있는 버전(최신·이전)을 보여 주고 고른 버전으로 교체 — 서비스·권한·설정은 그대로
     Update {
         /// 이 버전으로 바로 (`latest`: 최신) — 없으면 목록에서 고름
@@ -191,6 +214,9 @@ fn pair_interactively() -> Result<(), String> {
 /// chosen installed.
 fn update_console(version: Option<String>, gateway: Option<String>) -> Result<String, String> {
     use std::io::{IsTerminal, Write};
+    if cfg!(target_os = "android") {
+        return Err("Android에서는 NadoVibe 러너 앱을 업데이트하세요 (앱 → 업데이트, 또는 게이트웨이의 /_runner/download에서 새 APK)".into());
+    }
     let gateway = gateway.or_else(|| config::load().ok().map(|c| c.gateway)).unwrap_or_else(|| "https://dev.nado.work".into());
     let list = update::versions(&gateway)?;
     let newest = list.first().ok_or("받을 수 있는 버전이 없습니다")?.version.clone();
@@ -228,6 +254,15 @@ fn update_console(version: Option<String>, gateway: Option<String>) -> Result<St
 /// shutdown (exit 0) or a refused token (exit 3).
 fn serve(cfg: config::Config, boot: bool) -> Result<i32, String> {
     let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
+    // a service manager's stop (SIGTERM; Android's Process.destroy): end like 종료 — the commands stopped — but not
+    // paused. Without this the runner died at once and left its commands running.
+    #[cfg(unix)]
+    rt.spawn(async {
+        if let Ok(mut term) = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
+            term.recv().await;
+            control::terminate();
+        }
+    });
     if update::emulated() {
         eprintln!("! 이 PC는 ARM64인데 x64 러너가 에뮬레이션으로 돌고 있습니다 — 원격 화면 등이 몇 배 느립니다: 상태 아이콘의 \"업데이트\" 또는 `aidev-runner update latest`로 ARM64 빌드로 바꾸세요");
     }
@@ -270,6 +305,7 @@ fn serve(cfg: config::Config, boot: bool) -> Result<i32, String> {
         // the boot-time runner hands over to a sign-in's runner and takes over again when it ends
         let lock = match config::acquire_instance(boot, std::time::Duration::from_secs(60)) {
             Ok(lock) => lock,
+            Err(_) if control::quit_requested() => return Ok(0),
             Err(_) if control::update_pending() => continue,
             Err(e) => return Err(e),
         };
@@ -297,6 +333,9 @@ fn serve(cfg: config::Config, boot: bool) -> Result<i32, String> {
 fn run(cli: Cli) -> Result<ExitCode, String> {
     let cmd = match cli.cmd {
         Some(cmd) => cmd,
+        // a terminal on a PC whose service already runs the runner (an SSH session, a board's serial console): a
+        // foreground runner would only find the connection taken — the menu instead
+        None if !cfg!(windows) && menu::interactive() && config::path().exists() && service::installed().is_some() => Cmd::Menu,
         None => {
             pair_interactively()?;
             Cmd::Start { log: None, hidden: false, boot: false, service: false }
@@ -356,19 +395,8 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             let mut cfg = config::load()?;
             match action {
                 RootsCmd::List => {}
-                RootsCmd::Add { path } => {
-                    std::fs::create_dir_all(&path).map_err(|e| format!("{}: {e}", path.display()))?;
-                    let real = std::fs::canonicalize(&path).map_err(|e| e.to_string())?;
-                    // the home folder is allowed (agents work with full permissions); the whole disk is not
-                    if real.parent().is_none() {
-                        return Err("루트(/) 전체는 허용할 수 없습니다 — 홈 폴더나 작업용 폴더를 지정하세요".into());
-                    }
-                    if !cfg.allowed_roots.contains(&real) { cfg.allowed_roots.push(real); }
-                }
-                RootsCmd::Remove { path } => {
-                    let real = std::fs::canonicalize(&path).unwrap_or(path);
-                    cfg.allowed_roots.retain(|r| r != &real);
-                }
+                RootsCmd::Add { path } => config::add_root(&mut cfg, &path)?,
+                RootsCmd::Remove { path } => config::remove_root(&mut cfg, &path),
             }
             config::save(&cfg)?;
             for r in &cfg.allowed_roots { println!("{}", r.display()); }
@@ -404,6 +432,16 @@ fn run(cli: Cli) -> Result<ExitCode, String> {
             }
         }
         Cmd::Update { version, gateway } => println!("{}", update_console(version, gateway)?),
+        Cmd::Menu => menu::run(),
+        Cmd::Perms { fix, json } => {
+            if fix {
+                for line in perms::fix_all() { println!("{line}"); }
+            }
+            let list = perms::check();
+            if json { println!("{}", serde_json::to_string_pretty(&list).unwrap_or_default()); } else { print!("{}", perms::render(&list)); }
+        }
+        Cmd::Service { action } => println!("{}", service::control(&action)?),
+        Cmd::Supervise => return Ok(ExitCode::from(service::supervise()? as u8)),
         Cmd::Unpair => {
             let p = config::path();
             if p.exists() { std::fs::remove_file(&p).map_err(|e| e.to_string())?; }

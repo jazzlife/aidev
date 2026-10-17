@@ -106,7 +106,11 @@ fn register_path(bin: &std::path::Path) -> String {
             }
         }
         let exe = bin.join("aidev-runner").display().to_string();
-        let linked = quiet("sudo", &["-n", "mkdir", "-p", "/usr/local/bin"]) && quiet("sudo", &["-n", "ln", "-sf", &exe, "/usr/local/bin/aidev-runner"]);
+        let linked = if crate::proc_util::is_elevated() {
+            quiet("mkdir", &["-p", "/usr/local/bin"]) && quiet("ln", &["-sf", &exe, "/usr/local/bin/aidev-runner"])
+        } else {
+            quiet("sudo", &["-n", "mkdir", "-p", "/usr/local/bin"]) && quiet("sudo", &["-n", "ln", "-sf", &exe, "/usr/local/bin/aidev-runner"])
+        };
         return format!(
             "PATH 등록: {bin_s} ({}){} — 새로 연 터미널에서 `aidev-runner`",
             done.join(", "),
@@ -194,7 +198,7 @@ fn powershell(script: &str, limit: std::time::Duration) -> Result<(), String> {
 }
 
 /// The same, quietly (expected failures such as "not loaded").
-fn quiet(cmd: &str, args: &[&str]) -> bool {
+pub(crate) fn quiet(cmd: &str, args: &[&str]) -> bool {
     Command::new(cmd).args(args).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success())
 }
 
@@ -232,8 +236,20 @@ const SUDOERS: &str = "/etc/sudoers.d/aidev-runner";
 const BOOT_LABEL: &str = "work.nado.aidev-runner-boot";
 const BOOT_PLIST: &str = "/Library/LaunchDaemons/work.nado.aidev-runner-boot.plist";
 
-fn user_name() -> String {
-    std::env::var("USER").or_else(|_| std::env::var("LOGNAME")).unwrap_or_default()
+pub(crate) fn user_name() -> String {
+    let env = std::env::var("USER").or_else(|_| std::env::var("LOGNAME")).unwrap_or_default();
+    if !env.is_empty() {
+        return env;
+    }
+    // no USER (a container, an init script, cron): the account of this process
+    #[cfg(unix)]
+    unsafe {
+        let pw = libc::getpwuid(libc::geteuid());
+        if !pw.is_null() && !(*pw).pw_name.is_null() {
+            return std::ffi::CStr::from_ptr((*pw).pw_name).to_string_lossy().into_owned();
+        }
+    }
+    env
 }
 
 /// `sudo` for one administrative step; asks for the password on the terminal (once — sudo caches it).
@@ -257,13 +273,14 @@ pub fn sudoers_text(user: &str) -> String {
 }
 
 /// Unix administrator rights: passwordless sudo for this user (checked with visudo before it is put in place).
-fn grant_sudo(user: &str) -> Result<(), String> {
+pub(crate) fn grant_sudo(user: &str) -> Result<(), String> {
     if user.is_empty() || user == "root" {
         return Ok(());
     }
     let tmp = std::env::temp_dir().join(format!("aidev-sudoers-{}", std::process::id()));
     std::fs::write(&tmp, sudoers_text(user)).map_err(|e| e.to_string())?;
-    let ok = quiet("visudo", &["-cf", &tmp.display().to_string()]);
+    // visudo lives in /usr/sbin, often not on a normal user's PATH (Debian); BusyBox systems have none — the text is fixed
+    let ok = which("visudo").map_or(true, |visudo| quiet(&visudo, &["-cf", &tmp.display().to_string()]));
     let _ = std::fs::remove_file(&tmp);
     if !ok {
         return Err("sudoers 문법 확인 실패".into());
@@ -407,6 +424,9 @@ fn run_elevated(exe: &str, args: &str) -> Result<(), String> {
 }
 
 pub fn install(print_only: bool, limited: bool, logon_only: bool, for_user: Option<String>) -> Result<String, String> {
+    if cfg!(target_os = "android") {
+        return Err("Android에서는 NadoVibe 러너 앱이 서비스를 맡습니다 (앱 → 시작, 부팅 때 자동 시작)".into());
+    }
     config::load()?; // must be paired first
     // the service always runs the copy in ~/.aidev/bin — except on Windows before the UAC re-run, which places it itself
     #[cfg(windows)]
@@ -420,14 +440,25 @@ pub fn install(print_only: bool, limited: bool, logon_only: bool, for_user: Opti
     let bin = installed_path().parent().map(|p| p.to_path_buf()).unwrap_or_default();
     match std::env::consts::OS {
         "linux" => {
+            let user = user_name();
+            // root (an embedded board, a container) or an init system other than systemd (OpenRC, OpenWrt's procd,
+            // SysV / BusyBox init): a system service — the user service and its linger are systemd's alone
+            if crate::proc_util::is_elevated() || init_system() != Init::Systemd || which("systemctl").is_none() {
+                if print_only { return Ok(system_service_text(init_system(), &exe_s, &user)); }
+                let mut notes = install_system(&exe_s, &user)?;
+                if logon_only { notes.push("--logon-only는 systemd 사용자 서비스에만 해당합니다 — 부팅 때부터 실행합니다".into()); }
+                if !crate::proc_util::is_elevated() { notes.push(admin_rights(limited, &user)); }
+                notes.push(register_path(&bin));
+                return Ok(format!("{}{placed}", notes.join("\n")));
+            }
+            // an earlier install as a system service (root, before this PC had a user manager): one runner only
+            let mut notes = remove_system();
             let dir = home.join(".config/systemd/user");
             let unit = dir.join("aidev-runner.service");
             let text = unit_text(&exe_s);
             let autostart = home.join(".config/autostart/aidev-runner.desktop");
             let desktop = autostart_text(&exe_s, &config::dir().join("runner.log").display().to_string());
             if print_only { return Ok(format!("# {}\n{text}\n# {}\n{desktop}", unit.display(), autostart.display())); }
-            let user = user_name();
-            let mut notes = Vec::new();
             if !logon_only {
                 // from boot, without a login: the user's services keep running (linger) — first, as it also starts the
                 // user's service manager on a machine nobody is logged in to
@@ -556,14 +587,22 @@ pub fn uninstall() -> Result<String, String> {
     let home = config::home();
     match std::env::consts::OS {
         "linux" => {
-            let _ = systemctl_user(&["disable", "--now", "aidev-runner.service"]);
-            let _ = std::fs::remove_file(home.join(".config/systemd/user/aidev-runner.service"));
+            let user_unit = home.join(".config/systemd/user/aidev-runner.service").exists();
+            if user_unit {
+                let _ = systemctl_user(&["disable", "--now", "aidev-runner.service"]);
+                let _ = std::fs::remove_file(home.join(".config/systemd/user/aidev-runner.service"));
+                let _ = systemctl_user(&["daemon-reload"]);
+            }
             let _ = std::fs::remove_file(home.join(".config/autostart/aidev-runner.desktop"));
-            let _ = systemctl_user(&["daemon-reload"]);
             // the desktop session's runner (autostart) is not the unit's: stop it too
             quiet("pkill", &["-u", &unsafe_uid(), "-f", &format!("{} start", exe()?.display())]);
+            let system = remove_system();
             let sudo_note = revoke_sudo().err().map(|e| format!("\n! 관리자 권한 설정({SUDOERS})을 지우지 못했습니다: {e}")).unwrap_or_default();
-            Ok(format!("systemd 사용자 서비스를 제거했습니다{sudo_note}"))
+            let mut what = system;
+            if user_unit { what.insert(0, "systemd 사용자 서비스를 제거했습니다".into()); }
+            if what.is_empty() { what.push("등록된 서비스가 없습니다".into()); }
+            let what = what.join("\n");
+            Ok(format!("{what}{sudo_note}"))
         }
         "macos" => {
             let plist = home.join("Library/LaunchAgents/work.nado.aidev-runner.plist");
@@ -612,6 +651,531 @@ pub fn uninstall() -> Result<String, String> {
     }
 }
 
+// ---- Linux system services: root, OpenRC, procd, SysV / BusyBox init, cron (embedded boards, containers) ---------
+// They run `aidev-runner supervise` (systemd: `start` itself, it restarts on failure), as the installing user, from boot.
+// Writing them needs root: as root directly, else through sudo (the password asked once). With no init system to
+// register with — or no way to become root — cron @reboot, and the runner started now.
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum Init {
+    Systemd,
+    OpenRc,
+    Procd,
+    SysV,
+    Cron,
+}
+
+const SYSTEM_UNIT: &str = "/etc/systemd/system/aidev-runner.service";
+const INIT_SCRIPT: &str = "/etc/init.d/aidev-runner";
+/// BusyBox / Buildroot init: its rcS runs /etc/init.d/S??* in order
+const RCS_SCRIPT: &str = "/etc/init.d/S99aidev-runner";
+/// Our crontab line: `@reboot '<…>/aidev-runner' supervise …` (the path quoted).
+fn cron_ours(line: &str) -> bool {
+    line.contains("aidev-runner") && line.contains(" supervise")
+}
+
+pub fn init_system() -> Init {
+    let p = |s: &str| std::path::Path::new(s).exists();
+    if p("/run/systemd/system") {
+        Init::Systemd
+    } else if p("/sbin/procd") && p("/etc/rc.common") {
+        Init::Procd
+    } else if (p("/sbin/openrc-run") || p("/usr/sbin/openrc-run")) && p("/run/openrc/softlevel") {
+        // installed and booted (a container with OpenRC's files but no OpenRC running falls through)
+        Init::OpenRc
+    } else if p("/etc/init.d") {
+        Init::SysV
+    } else {
+        Init::Cron
+    }
+}
+
+pub fn init_label(init: Init) -> &'static str {
+    match init {
+        Init::Systemd => "systemd 시스템 서비스",
+        Init::OpenRc => "OpenRC 서비스",
+        Init::Procd => "procd 서비스 (OpenWrt)",
+        Init::SysV => "SysV init 스크립트",
+        Init::Cron => "cron @reboot",
+    }
+}
+
+/// A program on PATH or in the sbin folders (a normal user's PATH often lacks them).
+pub fn which(cmd: &str) -> Option<String> {
+    let path = std::env::var("PATH").unwrap_or_default();
+    let found = path.split(':').chain(["/usr/local/sbin", "/usr/sbin", "/sbin", "/usr/bin", "/bin"]).map(|d| std::path::Path::new(d).join(cmd)).find(|p| p.is_file());
+    found.map(|p| p.display().to_string())
+}
+
+/// sh single quotes.
+fn sq(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\\''"))
+}
+
+/// The variables the service gives the runner: the user's HOME (and USER), and a moved config folder.
+fn service_env(user: &str) -> Vec<(String, String)> {
+    let mut env = vec![("HOME".to_string(), config::home().display().to_string()), ("USER".into(), user.into()), ("LOGNAME".into(), user.into())];
+    if let Some(dir) = std::env::var_os("AIDEV_RUNNER_HOME") {
+        env.push(("AIDEV_RUNNER_HOME".into(), PathBuf::from(dir).display().to_string()));
+    }
+    env
+}
+
+pub fn system_unit_text(exe: &str, user: &str, env: &[(String, String)], log: &str) -> String {
+    let env: String = env.iter().map(|(k, v)| format!("Environment=\"{k}={v}\"\n")).collect();
+    format!(
+        "[Unit]\nDescription=NadoVibe runner\nWants=network-online.target\nAfter=network-online.target\n\n[Service]\nUser={user}\n{env}ExecStart=\"{exe}\" start --service --boot --log \"{log}\"\nRestart=on-failure\nRestartSec=5\nRestartPreventExitStatus=3\n\n[Install]\nWantedBy=multi-user.target\n"
+    )
+}
+
+pub fn openrc_text(exe: &str, user: &str, env: &[(String, String)]) -> String {
+    let env: String = env.iter().map(|(k, v)| format!("export {k}={}\n", sq(v))).collect();
+    format!(
+        "#!/sbin/openrc-run\n# NadoVibe runner (`aidev-runner install`; `aidev-runner uninstall` removes it)\ndescription=\"NadoVibe runner\"\ncommand={}\ncommand_args=\"supervise\"\ncommand_user={}\ncommand_background=true\npidfile=\"/run/aidev-runner.pid\"\nretry=\"TERM/15/KILL/5\"\n{env}\ndepend() {{\n\tuse net dns\n\tafter net\n}}\n",
+        sq(exe), sq(user)
+    )
+}
+
+pub fn procd_text(exe: &str, user: &str, env: &[(String, String)]) -> String {
+    let env: String = env.iter().map(|(k, v)| format!(" {}", sq(&format!("{k}={v}")))).collect();
+    format!(
+        "#!/bin/sh /etc/rc.common\n# NadoVibe runner (`aidev-runner install`; `aidev-runner uninstall` removes it)\nSTART=99\nSTOP=10\nUSE_PROCD=1\n\nstart_service() {{\n\tprocd_open_instance\n\tprocd_set_param command {} supervise\n\tprocd_set_param env{env}\n\tprocd_set_param user {}\n\tprocd_set_param stdout 1\n\tprocd_set_param stderr 1\n\tprocd_close_instance\n}}\n",
+        sq(exe), sq(user)
+    )
+}
+
+pub fn sysv_text(exe: &str, user: &str, env: &[(String, String)], pidfile: &str) -> String {
+    let env: String = env.iter().map(|(k, v)| format!("{k}={}; export {k}\n", sq(v))).collect();
+    format!(
+        r#"#!/bin/sh
+### BEGIN INIT INFO
+# Provides:          aidev-runner
+# Required-Start:    $network $remote_fs
+# Required-Stop:     $network $remote_fs
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: NadoVibe runner
+### END INIT INFO
+# NadoVibe runner (`aidev-runner install`; `aidev-runner uninstall` removes it)
+EXE={exe}
+RUN_AS={user}
+PIDFILE={pidfile}
+{env}
+running() {{ [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; }}
+start() {{
+	running && return 0
+	cmd="\"$EXE\" supervise </dev/null >/dev/null 2>&1 &"
+	if [ "$(id -u)" = 0 ] && [ "$RUN_AS" != root ]; then su "$RUN_AS" -s /bin/sh -c "$cmd"; else sh -c "$cmd"; fi
+}}
+stop() {{
+	running || return 0
+	pid=$(cat "$PIDFILE"); kill "$pid" 2>/dev/null
+	i=0; while kill -0 "$pid" 2>/dev/null && [ $i -lt 20 ]; do sleep 1; i=$((i+1)); done
+	kill -9 "$pid" 2>/dev/null; return 0
+}}
+case "$1" in
+	start) start ;;
+	stop) stop ;;
+	restart|reload|force-reload) stop; start ;;
+	status) if running; then echo "aidev-runner: 실행 중 (pid $(cat "$PIDFILE"))"; else echo "aidev-runner: 꺼짐"; exit 3; fi ;;
+	*) echo "usage: $0 {{start|stop|restart|status}}"; exit 2 ;;
+esac
+"#,
+        exe = sq(exe), user = sq(user), pidfile = sq(pidfile)
+    )
+}
+
+fn supervise_pidfile() -> PathBuf {
+    config::dir().join("supervise.pid")
+}
+
+/// What `install --print` shows for a system service.
+fn system_service_text(init: Init, exe: &str, user: &str) -> String {
+    let env = service_env(user);
+    match init {
+        Init::Systemd => format!("# {SYSTEM_UNIT}\n{}", system_unit_text(exe, user, &env, &config::dir().join("runner.log").display().to_string())),
+        Init::OpenRc => format!("# {INIT_SCRIPT}\n{}", openrc_text(exe, user, &env)),
+        Init::Procd => format!("# {INIT_SCRIPT}\n{}", procd_text(exe, user, &env)),
+        Init::SysV => format!("# {INIT_SCRIPT}\n{}", sysv_text(exe, user, &env, &supervise_pidfile().display().to_string())),
+        Init::Cron => format!("# crontab\n@reboot {} supervise >/dev/null 2>&1\n", sq(exe)),
+    }
+}
+
+/// One administrative step: as root directly, else through sudo.
+pub(crate) fn as_root(args: &[&str]) -> Result<(), String> {
+    if crate::proc_util::is_elevated() { run(args[0], &args[1..]) } else { sudo(args) }
+}
+
+fn quiet_root(args: &[&str]) -> bool {
+    if crate::proc_util::is_elevated() { quiet(args[0], &args[1..]) } else { quiet("sudo", &[&["-n"], args].concat()) }
+}
+
+fn write_root(dest: &str, text: &str, mode: &str) -> Result<(), String> {
+    if crate::proc_util::is_elevated() {
+        std::fs::write(dest, text).map_err(|e| format!("{dest}: {e}"))?;
+        return run("chmod", &[mode, dest]);
+    }
+    sudo_write(dest, text, mode)
+}
+
+/// Root is reachable: we are root, sudo needs no password, or there is a terminal to type it in.
+fn can_be_root() -> bool {
+    crate::proc_util::is_elevated() || (which("sudo").is_some() && (quiet("sudo", &["-n", "true"]) || std::io::IsTerminal::is_terminal(&std::io::stdin())))
+}
+
+/// The user's crontab without our line, plus `line` when given.
+fn set_cron(line: Option<&str>) -> Result<(), String> {
+    use std::io::Write;
+    which("crontab").ok_or("crontab이 없습니다")?;
+    let current = Command::new("crontab").arg("-l").stderr(std::process::Stdio::null()).output().map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
+    let mut lines: Vec<&str> = current.lines().filter(|l| !cron_ours(l)).collect();
+    if line.is_none() && lines.len() == current.lines().count() {
+        return Ok(());   // nothing of ours there
+    }
+    if let Some(l) = line { lines.push(l); }
+    let mut child = Command::new("crontab").arg("-").stdin(std::process::Stdio::piped()).spawn().map_err(|e| format!("crontab: {e}"))?;
+    child.stdin.take().map(|mut i| i.write_all(format!("{}\n", lines.join("\n")).as_bytes()));
+    if child.wait().map_err(|e| e.to_string())?.success() { Ok(()) } else { Err("crontab 등록 실패".into()) }
+}
+
+/// `aidev-runner supervise` in the background, out of this terminal's session.
+fn spawn_supervise(exe: &str) -> Result<(), String> {
+    let mut cmd = Command::new(exe);
+    cmd.arg("supervise").stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null());
+    // its own session: closing this terminal leaves it running
+    #[cfg(unix)]
+    unsafe {
+        std::os::unix::process::CommandExt::pre_exec(&mut cmd, || {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    cmd.spawn().map(|_| ()).map_err(|e| format!("{exe} supervise: {e}"))
+}
+
+fn installed_script() -> Option<&'static str> {
+    [INIT_SCRIPT, RCS_SCRIPT].into_iter().find(|p| std::path::Path::new(p).exists())
+}
+
+/// The init system an installed /etc/init.d script is written for.
+fn script_init(path: &str) -> Init {
+    match std::fs::read_to_string(path).unwrap_or_default().lines().next().unwrap_or("") {
+        l if l.contains("openrc-run") => Init::OpenRc,
+        l if l.contains("rc.common") => Init::Procd,
+        _ => Init::SysV,
+    }
+}
+
+/// Registers and starts the system service for `user` (see the section notes); the lines say what was done.
+fn install_system(exe: &str, user: &str) -> Result<Vec<String>, String> {
+    let mut notes = Vec::new();
+    // one runner per PC: a user service from an earlier install goes
+    if config::home().join(".config/systemd/user/aidev-runner.service").exists() {
+        let _ = systemctl_user(&["disable", "--now", "aidev-runner.service"]);
+        let _ = std::fs::remove_file(config::home().join(".config/systemd/user/aidev-runner.service"));
+        notes.push("이전 systemd 사용자 서비스를 지웠습니다".to_string());
+    }
+    let log = config::dir().join("runner.log").display().to_string();
+    let env = service_env(user);
+    let mut init = init_system();
+    if init != Init::Cron && !can_be_root() {
+        notes.push(format!("! 관리자 권한(root·sudo)이 없어 {}로 등록하지 못합니다 — cron @reboot으로 대신합니다", init_label(init)));
+        init = Init::Cron;
+    }
+    let registered: Result<(), String> = match init {
+        Init::Systemd => write_root(SYSTEM_UNIT, &system_unit_text(exe, user, &env, &log), "0644").and_then(|_| {
+            as_root(&["systemctl", "daemon-reload"])?;
+            as_root(&["systemctl", "enable", "aidev-runner.service"])?;
+            as_root(&["systemctl", "restart", "aidev-runner.service"])
+        }),
+        Init::OpenRc => write_root(INIT_SCRIPT, &openrc_text(exe, user, &env), "0755").and_then(|_| {
+            quiet_root(&["rc-update", "add", "aidev-runner", "default"]);
+            as_root(&["rc-service", "aidev-runner", "restart"])
+        }),
+        Init::Procd => write_root(INIT_SCRIPT, &procd_text(exe, user, &env), "0755").and_then(|_| {
+            as_root(&[INIT_SCRIPT, "enable"])?;
+            quiet_root(&[INIT_SCRIPT, "stop"]);   // procd's restart complains when it was not running
+            as_root(&[INIT_SCRIPT, "start"])
+        }),
+        Init::SysV => {
+            let text = sysv_text(exe, user, &env, &supervise_pidfile().display().to_string());
+            let script = if which("update-rc.d").is_none() && which("chkconfig").is_none() && std::path::Path::new("/etc/init.d/rcS").exists() { RCS_SCRIPT } else { INIT_SCRIPT };
+            write_root(script, &text, "0755").and_then(|_| {
+                if script == INIT_SCRIPT {
+                    if which("update-rc.d").is_some() {
+                        as_root(&["update-rc.d", "aidev-runner", "defaults"])?;
+                    } else if which("chkconfig").is_some() {
+                        as_root(&["chkconfig", "--add", "aidev-runner"])?;
+                    } else {
+                        let linked: Vec<_> = (2..=5).map(|n| format!("/etc/rc{n}.d")).filter(|d| std::path::Path::new(d).is_dir())
+                            .filter(|d| quiet_root(&["ln", "-sf", "../init.d/aidev-runner", &format!("{d}/S99aidev-runner")])).collect();
+                        if linked.is_empty() {
+                            return Err("부팅 때 실행할 runlevel 폴더(/etc/rc2.d …)가 없습니다".into());
+                        }
+                    }
+                }
+                as_root(&[script, "restart"])
+            })
+        }
+        Init::Cron => {
+            let r = set_cron(Some(&format!("@reboot {} supervise >/dev/null 2>&1", sq(exe))));
+            if let Err(e) = &r {
+                notes.push(format!("! 부팅 때 실행을 등록하지 못했습니다 ({e}) — 재부팅 후에는 `aidev-runner service start`"));
+            }
+            if runner_pid().is_none() { spawn_supervise(exe)?; }
+            r.or(Ok(()))
+        }
+    };
+    if let Err(e) = registered {
+        // what could not be registered goes (no half-made service), and the runner runs now and from cron at boot
+        remove_system();
+        notes.push(format!("! {}로 등록하지 못했습니다: {e} — cron @reboot으로 대신합니다", init_label(init)));
+        let _ = set_cron(Some(&format!("@reboot {} supervise >/dev/null 2>&1", sq(exe))));
+        if runner_pid().is_none() { spawn_supervise(exe)?; }
+        notes.insert(0, format!("서비스: {} (로그: {log})", init_label(Init::Cron)));
+        return Ok(notes);
+    }
+    if init != Init::Cron {
+        let _ = set_cron(None);   // an earlier cron fallback
+    }
+    notes.insert(0, format!("서비스 등록: {} — 부팅 때부터 {user} 계정으로 실행 (로그: {log})", init_label(init)));
+    if init == Init::Cron && which("crond").is_none() && which("cron").is_none() {
+        notes.push("! cron 데몬이 보이지 않습니다 — 부팅 때 crond가 실행되는지 확인하세요".into());
+    }
+    Ok(notes)
+}
+
+/// Removes every system-service form of the runner (and its cron line) and stops it; the lines say what went.
+fn remove_system() -> Vec<String> {
+    let mut notes = Vec::new();
+    if std::path::Path::new(SYSTEM_UNIT).exists() {
+        quiet_root(&["systemctl", "disable", "--now", "aidev-runner.service"]);
+        notes.push(match as_root(&["rm", "-f", SYSTEM_UNIT]) {
+            Ok(()) => { quiet_root(&["systemctl", "daemon-reload"]); "systemd 시스템 서비스를 제거했습니다".to_string() }
+            Err(e) => format!("! {SYSTEM_UNIT}을(를) 지우지 못했습니다: {e}"),
+        });
+    }
+    for script in [INIT_SCRIPT, RCS_SCRIPT] {
+        if !std::path::Path::new(script).exists() {
+            continue;
+        }
+        let init = script_init(script);
+        quiet_root(&[script, "stop"]);
+        match init {
+            Init::OpenRc => { quiet_root(&["rc-update", "del", "aidev-runner", "default"]); }
+            Init::Procd => { quiet_root(&[script, "disable"]); }
+            _ if script == INIT_SCRIPT => {
+                if which("update-rc.d").is_some() { quiet_root(&["update-rc.d", "-f", "aidev-runner", "remove"]); }
+                else if which("chkconfig").is_some() { quiet_root(&["chkconfig", "--del", "aidev-runner"]); }
+                for n in 2..=5 { quiet_root(&["rm", "-f", &format!("/etc/rc{n}.d/S99aidev-runner")]); }
+            }
+            _ => {}
+        }
+        notes.push(match as_root(&["rm", "-f", script]) {
+            Ok(()) => format!("{}를 제거했습니다 ({script})", init_label(init)),
+            Err(e) => format!("! {script}을(를) 지우지 못했습니다: {e}"),
+        });
+    }
+    if Command::new("crontab").arg("-l").output().is_ok_and(|o| String::from_utf8_lossy(&o.stdout).lines().any(cron_ours)) {
+        notes.push(match set_cron(None) { Ok(()) => "cron @reboot 등록을 지웠습니다".into(), Err(e) => format!("! cron 등록을 지우지 못했습니다: {e}") });
+    }
+    // a supervise started by hand or by cron
+    #[cfg(unix)]
+    if let Some(pid) = std::fs::read_to_string(supervise_pidfile()).ok().and_then(|s| s.trim().parse::<i32>().ok()) {
+        if pid > 1 && unsafe { libc::kill(pid, 0) } == 0 {
+            unsafe { libc::kill(pid, libc::SIGTERM) };
+        }
+    }
+    notes
+}
+
+/// How the runner is kept running on this PC, when it is (the menu, and a bare `aidev-runner` on a terminal).
+pub fn installed() -> Option<String> {
+    let home = config::home();
+    match std::env::consts::OS {
+        "linux" => {
+            if home.join(".config/systemd/user/aidev-runner.service").exists() { return Some("systemd 사용자 서비스".into()); }
+            if std::path::Path::new(SYSTEM_UNIT).exists() { return Some(init_label(Init::Systemd).into()); }
+            if let Some(script) = installed_script() { return Some(init_label(script_init(script)).into()); }
+            Command::new("crontab").arg("-l").stderr(std::process::Stdio::null()).output().ok()
+                .filter(|o| String::from_utf8_lossy(&o.stdout).lines().any(cron_ours)).map(|_| init_label(Init::Cron).into())
+        }
+        "macos" => home.join("Library/LaunchAgents/work.nado.aidev-runner.plist").exists().then(|| {
+            if std::path::Path::new(BOOT_PLIST).exists() { "LaunchAgent + LaunchDaemon(부팅)".into() } else { "LaunchAgent".into() }
+        }),
+        _ => None,
+    }
+}
+
+/// `service start|stop|restart|status`: 정지 drops the connection (the status icon's, for every runner of this PC);
+/// 시작 lifts it and starts the service when nothing runs; 다시 시작 restarts the service.
+pub fn control(action: &str) -> Result<String, String> {
+    if cfg!(target_os = "android") {
+        return Err("Android에서는 NadoVibe 러너 앱이 서비스를 관리합니다".into());
+    }
+    let exe = installed_path().display().to_string();
+    let mode = installed();
+    let kick = |restart: bool| -> Result<(), String> {
+        let verb = if restart { "restart" } else { "start" };
+        let home = config::home();
+        match std::env::consts::OS {
+            "linux" if home.join(".config/systemd/user/aidev-runner.service").exists() => systemctl_user(&[verb, "aidev-runner.service"]),
+            "linux" if std::path::Path::new(SYSTEM_UNIT).exists() => as_root(&["systemctl", verb, "aidev-runner.service"]),
+            "linux" if installed_script().is_some() => {
+                let script = installed_script().unwrap_or(INIT_SCRIPT);
+                if script_init(script) == Init::OpenRc { as_root(&["rc-service", "aidev-runner", verb]) } else { as_root(&[script, verb]) }
+            }
+            "linux" if mode.is_some() => {
+                if restart { remove_supervise_only(); std::thread::sleep(std::time::Duration::from_secs(2)); }
+                spawn_supervise(&exe)
+            }
+            "macos" if mode.is_some() => {
+                let uid = String::from_utf8_lossy(&Command::new("id").arg("-u").output().map_err(|e| e.to_string())?.stdout).trim().to_string();
+                let target = format!("gui/{uid}/work.nado.aidev-runner");
+                if restart { run("launchctl", &["kickstart", "-k", &target]) } else { run("launchctl", &["kickstart", &target]) }
+            }
+            // the sign-in task (MultipleInstances IgnoreNew: running it again is harmless)
+            "windows" => {
+                if restart { quiet("schtasks", &["/End", "/TN", "aidev-runner"]); }
+                run("schtasks", &["/Run", "/TN", "aidev-runner"]).map_err(|_| "작업 스케줄러에 aidev-runner 작업이 없습니다 — 먼저 `aidev-runner install`".to_string())
+            }
+            _ => Err("설치된 서비스가 없습니다 — 먼저 `aidev-runner install`".into()),
+        }
+    };
+    match action {
+        "status" => Ok(status_text()),
+        "stop" => {
+            crate::control::set_paused(true);
+            Ok("정지: 이 PC의 러너가 연결을 끊고 실행 중인 명령을 멈춥니다 (다시 연결: `aidev-runner service start`)".into())
+        }
+        "start" => {
+            crate::control::set_paused(false);
+            if runner_pid().is_none() { kick(false)?; }
+            Ok("시작: 러너가 다시 연결합니다".into())
+        }
+        "restart" => {
+            crate::control::set_paused(false);
+            kick(true)?;
+            Ok("서비스를 다시 시작했습니다".into())
+        }
+        other => Err(format!("{other}: start | stop | restart | status")),
+    }
+}
+
+/// Stops a cron-started supervise (its runner stops with it).
+fn remove_supervise_only() {
+    #[cfg(unix)]
+    if let Some(pid) = std::fs::read_to_string(supervise_pidfile()).ok().and_then(|s| s.trim().parse::<i32>().ok()) {
+        if pid > 1 { unsafe { libc::kill(pid, libc::SIGTERM) }; }
+    }
+}
+
+/// `~/.aidev/state` ("connected <pid>" …) while that runner lives: its word and pid.
+fn live_state() -> Option<(String, u32)> {
+    let text = std::fs::read_to_string(crate::control::state_path()).ok()?;
+    let mut words = text.split_whitespace();
+    let word = words.next()?.to_string();
+    let pid: u32 = words.next()?.parse().ok()?;
+    #[cfg(unix)]
+    if unsafe { libc::kill(pid as i32, 0) } != 0 && std::io::Error::last_os_error().raw_os_error() != Some(libc::EPERM) {
+        return None;
+    }
+    Some((word, pid))
+}
+
+/// A runner process of this config is alive (connected, connecting, or paused without its lock).
+pub fn runner_pid() -> Option<u32> {
+    config::lock_holder().or_else(|| live_state().map(|(_, pid)| pid))
+}
+
+/// The runner's connection as another process sees it.
+pub fn connection() -> &'static str {
+    let paused = crate::control::is_paused();
+    let Some(pid) = runner_pid() else { return if paused { "꺼짐 (정지됨)" } else { "꺼짐" } };
+    if paused {
+        return "정지됨";
+    }
+    match live_state() {
+        Some((word, by)) if word == "connected" && by == pid => "연결됨",
+        _ => "연결 중",
+    }
+}
+
+pub fn status_text() -> String {
+    let pid = runner_pid().map(|p| format!(" (pid {p})")).unwrap_or_default();
+    format!(
+        "서비스: {}\n러너: {}{pid}",
+        installed().unwrap_or_else(|| "설치 안 됨 — `aidev-runner install`".into()),
+        connection(),
+    )
+}
+
+/// `supervise` (OpenRC, procd, SysV, cron): `start --service --boot` as a child, started again 5 s after a failure;
+/// ends with it on 0 (종료) and 3 (the token was refused — restarting would only be refused again). SIGTERM/SIGINT go
+/// on to the child, which stops its commands and ends; then this ends too.
+#[cfg(unix)]
+pub fn supervise() -> Result<i32, String> {
+    use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
+    static CHILD: AtomicI32 = AtomicI32::new(0);
+    static STOP: AtomicBool = AtomicBool::new(false);
+    extern "C" fn on_signal(_: libc::c_int) {
+        STOP.store(true, Ordering::SeqCst);
+        let pid = CHILD.load(Ordering::SeqCst);
+        if pid > 0 {
+            unsafe { libc::kill(pid, libc::SIGTERM) };
+        }
+    }
+    config::load()?;
+    unsafe {
+        // its own session: closing the terminal that started it (cron, an init script run by hand) leaves it alone
+        libc::setsid();
+        libc::signal(libc::SIGTERM, on_signal as *const () as libc::sighandler_t);
+        libc::signal(libc::SIGINT, on_signal as *const () as libc::sighandler_t);
+    }
+    let pidfile = supervise_pidfile();
+    let _ = std::fs::write(&pidfile, std::process::id().to_string());
+    let exe = std::env::current_exe().map_err(|e| e.to_string())?;
+    let log = config::dir().join("runner.log");
+    let code = loop {
+        // the file path, not the open file: after an update the new runner starts
+        let exe = PathBuf::from(exe.display().to_string().trim_end_matches(" (deleted)"));
+        let mut child = match Command::new(&exe).args(["start", "--service", "--boot", "--log"]).arg(&log).stdin(std::process::Stdio::null()).spawn() {
+            Ok(c) => c,
+            Err(e) => {
+                eprintln!("supervise: {} 실행 실패: {e}", exe.display());
+                std::thread::sleep(std::time::Duration::from_secs(5));
+                if STOP.load(Ordering::SeqCst) { break 0; }
+                continue;
+            }
+        };
+        CHILD.store(child.id() as i32, Ordering::SeqCst);
+        if STOP.load(Ordering::SeqCst) {
+            unsafe { libc::kill(child.id() as i32, libc::SIGTERM) };
+        }
+        let status = child.wait();
+        CHILD.store(0, Ordering::SeqCst);
+        let code = status.ok().and_then(|s| s.code());
+        if STOP.load(Ordering::SeqCst) || matches!(code, Some(0) | Some(3)) {
+            break code.unwrap_or(0);
+        }
+        eprintln!("supervise: 러너가 끝났습니다 ({}) — 5초 뒤 다시 시작합니다", code.map(|c| c.to_string()).unwrap_or_else(|| "신호".into()));
+        for _ in 0..10 {
+            if STOP.load(Ordering::SeqCst) { break; }
+            std::thread::sleep(std::time::Duration::from_millis(500));
+        }
+        if STOP.load(Ordering::SeqCst) { break 0; }
+    };
+    if std::fs::read_to_string(&pidfile).ok().as_deref() == Some(&std::process::id().to_string()) {
+        let _ = std::fs::remove_file(&pidfile);
+    }
+    Ok(code)
+}
+
+#[cfg(not(unix))]
+pub fn supervise() -> Result<i32, String> {
+    Err("supervise는 Linux·macOS 전용입니다".into())
+}
+
 #[cfg(test)]
 mod tests {
     #[test]
@@ -637,5 +1201,29 @@ mod tests {
         let boot = super::boot_plist_text("/Users/x/bin/aidev-runner", "x", "/Users/x", "/Users/x/.aidev/runner.log");
         assert!(boot.contains("<key>UserName</key><string>x</string>") && boot.contains("<string>--boot</string>") && boot.contains("<key>HOME</key><string>/Users/x</string>"));
         assert_eq!(super::sudoers_text("dev").lines().last(), Some("dev ALL=(ALL) NOPASSWD: ALL"));
+    }
+
+    /// The system services of embedded Linux: each runs `supervise` as the user with HOME set, quoted for sh, and the
+    /// SysV script is valid sh (`sh -n`).
+    #[test]
+    fn system_services_run_supervise_as_the_user() {
+        let env = vec![("HOME".to_string(), "/home/it's".to_string()), ("USER".into(), "dev".into())];
+        let unit = super::system_unit_text("/opt/a b/aidev-runner", "dev", &env, "/home/x/.aidev/runner.log");
+        assert!(unit.contains("User=dev") && unit.contains("Environment=\"HOME=/home/it's\"") && unit.contains("ExecStart=\"/opt/a b/aidev-runner\" start --service --boot --log") && unit.contains("RestartPreventExitStatus=3") && unit.contains("WantedBy=multi-user.target"));
+        let rc = super::openrc_text("/opt/a b/aidev-runner", "dev", &env);
+        assert!(rc.starts_with("#!/sbin/openrc-run") && rc.contains("command='/opt/a b/aidev-runner'") && rc.contains("command_args=\"supervise\"") && rc.contains("command_user='dev'") && rc.contains("export HOME='/home/it'\\''s'"));
+        let procd = super::procd_text("/opt/a b/aidev-runner", "dev", &env);
+        assert!(procd.starts_with("#!/bin/sh /etc/rc.common") && procd.contains("USE_PROCD=1") && procd.contains("procd_set_param command '/opt/a b/aidev-runner' supervise") && procd.contains("procd_set_param user 'dev'"));
+        let sysv = super::sysv_text("/opt/a b/aidev-runner", "dev", &env, "/home/x/.aidev/supervise.pid");
+        assert!(sysv.contains("EXE='/opt/a b/aidev-runner'") && sysv.contains("RUN_AS='dev'") && sysv.contains("# Provides:          aidev-runner"));
+        #[cfg(unix)]
+        {
+            let path = std::env::temp_dir().join(format!("aidev-sysv-{}", std::process::id()));
+            std::fs::write(&path, &sysv).unwrap();
+            let ok = std::process::Command::new("sh").arg("-n").arg(&path).status().unwrap().success();
+            let _ = std::fs::remove_file(&path);
+            assert!(ok, "the SysV script parses");
+        }
+        assert!(super::cron_ours("@reboot '/root/.aidev/bin/aidev-runner' supervise >/dev/null 2>&1") && !super::cron_ours("@reboot run-parts /etc/periodic"));
     }
 }

@@ -5,6 +5,8 @@
 //!   종료 — paused, and this runner quits (exit 0: service managers do not start it again)
 //! A runner started by hand (`aidev-runner` / `start` without `--service`) clears the pause: starting it is asking
 //! for it to run. Service starts keep it.
+//! `~/.aidev/state` ("connected <pid>" …) carries the state to the terminal menu and the Android app, which run in
+//! other processes; a reader trusts it only while that pid is alive.
 
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 
@@ -15,7 +17,8 @@ pub enum State {
     Paused = 2,
 }
 
-static STATE: AtomicU8 = AtomicU8::new(State::Connecting as u8);
+/// u8::MAX until the first `set_state`: that one is always written (over a file a previous runner left)
+static STATE: AtomicU8 = AtomicU8::new(u8::MAX);
 static QUIT: AtomicBool = AtomicBool::new(false);
 static BOOT: AtomicBool = AtomicBool::new(false);
 
@@ -29,9 +32,17 @@ pub fn is_boot() -> bool {
 }
 
 pub fn set_state(s: State) {
-    STATE.store(s as u8, Ordering::Relaxed);
+    if STATE.swap(s as u8, Ordering::Relaxed) != s as u8 {
+        let word = match s { State::Connecting => "connecting", State::Connected => "connected", State::Paused => "paused" };
+        let _ = std::fs::write(state_path(), format!("{word} {}\n", std::process::id()));
+    }
 }
 
+pub fn state_path() -> std::path::PathBuf {
+    crate::config::dir().join("state")
+}
+
+#[cfg_attr(target_os = "android", allow(dead_code))]
 pub fn state() -> State {
     match STATE.load(Ordering::Relaxed) {
         1 => State::Connected,
@@ -58,8 +69,15 @@ pub fn set_paused(on: bool) {
 }
 
 /// 종료: paused, then this runner ends.
+#[cfg_attr(target_os = "android", allow(dead_code))]
 pub fn quit() {
     set_paused(true);
+    QUIT.store(true, Ordering::Relaxed);
+}
+
+/// SIGTERM (a service manager stopping it): this runner ends like 종료 — its commands stopped — but not paused, so the
+/// service's next start connects again.
+pub fn terminate() {
     QUIT.store(true, Ordering::Relaxed);
 }
 
