@@ -72,10 +72,16 @@ export function compareVersions(a: string, b: string) {
 }
 
 export const hashToken = (token: string) => crypto.createHash('sha256').update(token).digest('hex');
-const PING_MS = 20_000;
+/**
+ * A runner that vanished without closing (sleep, a network change, a pulled cable) is dropped once nothing came from it for
+ * SILENCE_MS, checked at every ping. 20 s / 45 s kept such a PC "연결됨" for up to 65 s — the runner had often reconnected
+ * already ("replacing" in the log, 2026-10-17). A live runner answers each ping and sends its own every 15 s (conn.rs
+ * HEARTBEAT), so 25 s is five missed pongs and still above its heartbeat when our pings queue behind a busy download.
+ */
+const PING_MS = 5_000;
 /** pings between repeats of `runner.realtime`: a runner that found the CDN-free address down ignores it for 10 min (conn.rs REALTIME_RETRY) and is only told at hello, so it would otherwise stay on the CDN until its next reconnect */
-const REALTIME_REPEAT_PINGS = 33;   // 11 min
-const SILENCE_MS = 45_000;
+const REALTIME_REPEAT_PINGS = 132;   // 11 min
+const SILENCE_MS = 25_000;
 const CALL_TIMEOUT_MS = 30_000;
 const MAX_FRAME = 16 * 1024 * 1024;   // JSON-RPC text frames (a sync manifest of a large project is several MB)
 const RING_BYTES = 256 * 1024;
@@ -473,7 +479,7 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
         console.log(`[runner] target #${target.id} ${target.name} connected (runner ${version}${previous ? `, replacing ${previous.version}` : ''})`);
         let pings = 0;
         const timer = setInterval(() => {
-          if (Date.now() - conn.lastFrame > SILENCE_MS) { ws.terminate(); return; }
+          if (Date.now() - conn.lastFrame > SILENCE_MS) { console.log(`[runner] target #${conn.targetId} silent for ${Math.round((Date.now() - conn.lastFrame) / 1000)}s — dropped`); ws.terminate(); return; }
           if (ws.readyState !== WebSocket.OPEN) return;
           ws.ping();
           if (conn.moveTo && conn.hello && ++pings % REALTIME_REPEAT_PINGS === 0) ws.send(JSON.stringify({ jsonrpc: '2.0', method: 'runner.realtime', params: { url: conn.moveTo } }));

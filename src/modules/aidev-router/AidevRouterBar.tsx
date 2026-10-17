@@ -103,7 +103,7 @@ export function AidevRouterBar({ sessionId = null }: { sessionId?: string | null
           <span className="relative">
             <button type="button" className={`${chip} text-foreground`} onClick={(event) => { event.stopPropagation(); setOpen(open === 'engine' ? null : 'engine', event); }} title={last.plan.reason.join('\n')}>
               <span>{engineName(state.overrides.engine ?? last.plan.engine)}</span>{state.overrides.engine || last.plan.engine_pinned ? <span className="text-muted-foreground">· 고정</span> : null}
-              {last.plan.model ? <span className="text-muted-foreground">· {last.plan.model}/{last.plan.effort}</span> : null}
+              {last.plan.model && state.runSessionId === sessionId ? <span className="text-muted-foreground">· {last.plan.model}/{last.plan.effort}</span> : null}
               <ChevronDown size={11} />
             </button>
             {open === 'engine' ? (

@@ -24,7 +24,9 @@ export function RouterChip({ sessionId = null }: { sessionId?: string | null }) 
   const needsLogin = (last?.plan.engine_error && last.plan.engine === 'claude') || auth.expired;
   const loginNotice = needsLogin ? 'Claude 로그인 만료 · 다시 로그인' : auth.renewSoon ? `Claude 로그인 D-${auth.daysLeft} · 갱신` : null;
   if (state.mode === 'off') return <ClaudeLoginSheet />;
-  const label = state.busy ? '판정 중…' : last ? `${last.agent.name} · ${last.plan.engine ?? '-'} ${last.plan.model ?? ''} · D${last.scope.depth}${last.plan.target ? ` · ⇢ ${last.plan.target.name}` : ''}` : '자동 라우팅';
+  // the last plan's model is shown only in the chat it was routed for
+  const ownPlan = state.runSessionId === sessionId;
+  const label = state.busy ? '판정 중…' : last ? `${last.agent.name} · ${last.plan.engine ?? '-'} ${ownPlan ? last.plan.model ?? '' : ''} · D${last.scope.depth}${last.plan.target ? ` · ⇢ ${last.plan.target.name}` : ''}` : '자동 라우팅';
   return (
     <>
       <ClaudeLoginSheet />
@@ -86,7 +88,7 @@ export function RouterChip({ sessionId = null }: { sessionId?: string | null }) 
                   자동으로 되돌리기 <span className="text-[11px] text-muted">· 이 채팅은 엔진이 고정되어 있습니다</span>
                 </button>
               ) : null}
-              <div className="text-[12px] text-muted mt-2">{last.plan.model ? `${last.plan.model} / ${last.plan.effort ?? "-"}` : "모델 미정 (사용 가능한 엔진 없음)"}{last.plan.engine_locked ? ' · 세션은 엔진에 묶여 있고, 우선순위가 더 높은 엔진이 쓸 수 있게 되면 다음 메시지부터 그쪽으로 이어갑니다' : ''}</div>
+              <div className="text-[12px] text-muted mt-2">{!ownPlan ? "모델: 이 채팅의 다음 명령에서 정합니다" : last.plan.model ? `${last.plan.model} / ${last.plan.effort ?? "-"}` : "모델 미정 (사용 가능한 엔진 없음)"}{last.plan.engine_locked ? ' · 세션은 엔진에 묶여 있고, 우선순위가 더 높은 엔진이 쓸 수 있게 되면 다음 메시지부터 그쪽으로 이어갑니다' : ''}</div>
               {policyNote(last) ? <div className="text-[12px] mt-1" data-testid="router-policy-note">{policyNote(last)}</div> : null}
               <ul className="text-[11px] text-muted mt-1 list-disc pl-4">{last.plan.reason.map((reason) => <li key={reason}>{reason}</li>)}</ul>
             </div>

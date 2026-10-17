@@ -245,6 +245,8 @@ export function ChatScreen() {
         target = { id: body.data.sessionId, provider: engine, projectId: project.projectId, projectPath: project.fullPath, projectName: project.displayName, title: (text || attachmentLabel(attachments.map((a) => a.name ?? '파일'))).slice(0, 60) };
         try { localStorage.setItem(PROVIDER_KEY, engine); } catch { /* ignore */ }
         adoptDraftPermissionMode(target.id);
+        // the conversation goes on there, so the model/effort/agent picked for it go along
+        routingStore.adoptSession(target.id);
         setMeta(target);
         navigate(`/session/${encodeURIComponent(target.id)}`);
       } catch (error) {
@@ -405,13 +407,16 @@ export function ChatScreen() {
   // and its brief is sent there once the screen has resolved that session.
   const escalation = useEscalation({
     resend: (text) => sendRef.current(text),
-    openSession: (id) => navigate(`/session/${encodeURIComponent(id)}`),
+    openSession: (id) => { routingStore.adoptSession(id); navigate(`/session/${encodeURIComponent(id)}`); },
     getProjectPath: () => meta?.projectPath || project?.fullPath || null,
   });
   const takeHandoffRef = useRef(escalation.takeHandoff);
   useEffect(() => { takeHandoffRef.current = escalation.takeHandoff; switchBackRef.current = escalation.switchBack ?? null; });
   // a chat handed off on a usage limit offers the way back once the engine it left is usable again
-  const returnFromHandoff = useReturnFromHandoff(sessionId, (id) => navigate(`/session/${encodeURIComponent(id)}`));
+  const returnFromHandoff = useReturnFromHandoff(sessionId, (id) => { routingStore.adoptSession(id); navigate(`/session/${encodeURIComponent(id)}`); });
+  // a model, effort, engine or agent picked by hand holds for its chat only: another chat is routed afresh (the route's id,
+  // not meta's: meta is empty while a chat loads, which would drop the picks of the chat being reopened)
+  useEffect(() => { routingStore.followSession(routeSessionId ?? null); }, [routeSessionId]);
   useEffect(() => {
     if (!meta?.id || meta.id !== routeSessionId) return;
     const brief = takeHandoffRef.current(meta.id);

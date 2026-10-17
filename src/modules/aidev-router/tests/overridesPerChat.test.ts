@@ -35,3 +35,13 @@ test('a new chat that gets its id, or a handoff session, carries them over', () 
   routingStore.followSession('handoff-2');
   assert.deepEqual(routingStore.get().overrides, { effort: 'high' });
 });
+
+test('a new chat\'s last route becomes the chat\'s once it has an id; another chat\'s stays its own', () => {
+  routingStore.followSession(null);
+  routingStore.patch({ last: { decision_id: 1 } as never, runSessionId: null });
+  routingStore.adoptSession('new-2');
+  assert.equal(routingStore.get().runSessionId, 'new-2');
+  routingStore.adoptSession('handoff-3');
+  assert.equal(routingStore.get().runSessionId, 'new-2');
+  routingStore.patch({ last: null, runSessionId: null });
+});

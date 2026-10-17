@@ -495,7 +495,8 @@ function ChatInterface({
   const routingOn = routingState.mode !== 'off' && routedProvider;
   const pinnedModel = routingState.overrides.model;
   const pinnedEffort = routingState.overrides.effort;
-  const lastPlan = routingState.last?.plan;
+  // the last plan is shown only in the chat it was routed for: another chat has not been routed yet ("자동")
+  const lastPlan = routingState.runSessionId === (selectedSession?.id ?? null) ? routingState.last?.plan : undefined;
   const composerEngine: AidevEngine = isAidevEngine(provider) ? provider : 'claude';
   const routedEngine = routingState.overrides.engine ?? composerEngine;
   const routedEffortOptions = useMemo(() => (effortLadder?.[routedEngine] ?? []).map((value) => ({ value })), [effortLadder, routedEngine]);

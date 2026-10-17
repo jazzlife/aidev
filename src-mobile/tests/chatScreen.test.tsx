@@ -70,7 +70,7 @@ vi.mock('@/modules/chat-core', async () => {
 vi.mock('@/modules/aidev-router', () => ({
   AgentCreateCard: () => null,
   aidevApi: { notifySeen: () => Promise.resolve() },
-  routingStore: { patch: vi.fn() },
+  routingStore: { patch: vi.fn(), followSession: vi.fn(), adoptSession: vi.fn() },
   shouldAskClarify: () => false,
   useAidevRouting: () => ({ beforeSend: vi.fn(async () => null), reportOutcome: vi.fn(async () => undefined) }),
   useAgentCreation: () => ({ pending: null, onRunComplete: vi.fn(), approve: vi.fn(), runSelfCheck: vi.fn(), dismiss: vi.fn() }),

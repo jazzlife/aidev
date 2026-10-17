@@ -129,9 +129,12 @@ export const routingStore = {
     const { targetId } = state.overrides;
     routingStore.patch({ overridesSessionId: sessionId, overrides: targetId === undefined ? {} : { targetId } });
   },
-  /** The conversation continues in `sessionId` (a new chat's id, a handoff, the way back): the overrides go with it. */
+  /**
+   * The conversation continues in `sessionId` (a new chat's id, a handoff, the way back): the overrides go with it, and
+   * a new chat's last route (sent before its id existed) becomes that chat's.
+   */
   adoptSession(sessionId: string) {
-    routingStore.patch({ overridesSessionId: sessionId });
+    routingStore.patch({ overridesSessionId: sessionId, ...(state.last && state.runSessionId === null ? { runSessionId: sessionId } : {}) });
   },
   /** Drops one override (the engine chip's "자동": back to priority / routing for the next sends). */
   clearOverride(key: keyof RoutingOverrides) {
