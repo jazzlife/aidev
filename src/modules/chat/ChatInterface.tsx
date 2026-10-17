@@ -215,6 +215,8 @@ function ChatInterface({
   // the session gateway before the first send. Record it locally and put it
   // in the URL — this id never changes again, so there is no later handoff.
   const handleSessionEstablished = useCallback<NonNullable<ChatInterfaceProps['onSessionEstablished']>>((sessionId, context) => {
+    // the conversation goes on there, so the model/effort/agent picked for it go along
+    routingStore.adoptSession(sessionId);
     setCurrentSessionId(sessionId);
     onSessionEstablished?.(sessionId, context);
     onNavigateToSession?.(sessionId);
@@ -481,6 +483,8 @@ function ChatInterface({
   // shows that (last plan, or "자동") instead of the provider default it would ignore; picking a model or
   // effort there pins it for the router (engine = this composer's provider) until reset to 자동.
   const routingState = useRoutingState();
+  // a model, effort, engine or agent picked by hand holds for its chat only: another chat is routed afresh
+  useEffect(() => { routingStore.followSession(selectedSession?.id ?? null); }, [selectedSession?.id]);
   // the router's effort levels are the pinned engine's (the session's last model may accept none, e.g. haiku); the
   // ladder lists the engines this account routes to
   const { ladder: effortLadder } = useEffortCap();

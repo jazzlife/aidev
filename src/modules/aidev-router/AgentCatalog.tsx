@@ -114,7 +114,7 @@ export function AgentCatalog() {
         <button type="button" onClick={() => setSelected(null)} aria-label="목록" className="rounded p-1 hover:bg-accent"><ChevronLeft size={14} /></button>
         <span className="truncate font-medium">{agent?.name ?? '…'}</span>
         {agent ? <span className="text-muted-foreground">v{agent.version}</span> : null}
-        {agent && agent.domain !== 'meta' ? <button type="button" title="다음 명령을 이 agent로 보내기" onClick={() => routingStore.setOverrides({ agent: agent.name })} className="ml-auto inline-flex h-6 items-center gap-1 rounded border border-border px-2 hover:bg-accent"><Sparkles size={11} /> 다음 명령에 사용</button> : null}
+        {agent && agent.domain !== 'meta' ? <button type="button" title="다음 명령을 이 agent로 보내기" onClick={() => routingStore.patch({ oneShotAgent: agent.name })} className="ml-auto inline-flex h-6 items-center gap-1 rounded border border-border px-2 hover:bg-accent"><Sparkles size={11} /> 다음 명령에 사용</button> : null}
       </div>
       {error ? <div className="px-3 py-2 text-red-600">{error}</div> : null}
       {!detail ? <div className="p-3 text-muted-foreground">불러오는 중…</div> : (

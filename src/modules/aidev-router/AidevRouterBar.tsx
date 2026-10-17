@@ -78,7 +78,7 @@ export function AidevRouterBar({ sessionId = null }: { sessionId?: string | null
           </span>
           <span className="relative">
             <button type="button" className={`${chip} text-foreground`} onClick={(event) => { event.stopPropagation(); setOpen(open === 'agent' ? null : 'agent', event); }} title={last.agent.description}>
-              <span className="font-medium">{state.overrides.agent ?? last.agent.name}</span>
+              <span className="font-medium">{state.overrides.agent ?? state.oneShotAgent ?? last.agent.name}</span>
               <span className="text-muted-foreground">{Math.round(last.agent.probability * 100)}%</span>
               {last.fallback ? <span className="text-amber-600">fallback</span> : null}
               <ChevronDown size={11} />

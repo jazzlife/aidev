@@ -47,6 +47,12 @@ export type RoutingState = {
   lastText: string | null;
   error: string | null;
   overrides: RoutingOverrides;
+  /**
+   * The chat `overrides` were picked in (null = a new chat without an id). Another chat starts on automatic routing
+   * again (2026-10-17: a model picked once used to pin every later chat of the page); a chat the app continues in —
+   * a new chat's id, a handoff — keeps them (adoptSession).
+   */
+  overridesSessionId: string | null;
   /** run id the gateway allocated for the send currently in flight or last sent */
   runId: number | null;
   /** when the last routed run completed (null while running / before any run) */
@@ -83,7 +89,7 @@ function readMode(): RoutingMode {
   }
 }
 
-let state: RoutingState = { mode: readMode(), pendingCreate: null, oneShotAgent: null, oneShotCreate: null, busy: false, last: null, lastText: null, error: null, overrides: {}, runId: null, runSessionId: null, runFinishedAt: null, runFeedback: null, oneShotPlan: null, escalation: null, pendingHandoff: null, chatCap: { sessionId: null, cap: null }, chatFloor: { sessionId: null, floor: null }, verification: null };
+let state: RoutingState = { mode: readMode(), pendingCreate: null, oneShotAgent: null, oneShotCreate: null, busy: false, last: null, lastText: null, error: null, overrides: {}, overridesSessionId: null, runId: null, runSessionId: null, runFinishedAt: null, runFeedback: null, oneShotPlan: null, escalation: null, pendingHandoff: null, chatCap: { sessionId: null, cap: null }, chatFloor: { sessionId: null, floor: null }, verification: null };
 const listeners = new Set<() => void>();
 
 function emit() {
@@ -116,6 +122,16 @@ export const routingStore = {
   },
   clearOverrides() {
     routingStore.patch({ overrides: {} });
+  },
+  /** The open chat became `sessionId`: overrides picked in another chat are dropped (the PC pick follows useTargetChoice). */
+  followSession(sessionId: string | null) {
+    if (state.overridesSessionId === sessionId) return;
+    const { targetId } = state.overrides;
+    routingStore.patch({ overridesSessionId: sessionId, overrides: targetId === undefined ? {} : { targetId } });
+  },
+  /** The conversation continues in `sessionId` (a new chat's id, a handoff, the way back): the overrides go with it. */
+  adoptSession(sessionId: string) {
+    routingStore.patch({ overridesSessionId: sessionId });
   },
   /** Drops one override (the engine chip's "자동": back to priority / routing for the next sends). */
   clearOverride(key: keyof RoutingOverrides) {
