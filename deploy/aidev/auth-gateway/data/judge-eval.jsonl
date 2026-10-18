@@ -41,3 +41,4 @@
 {"text":"범용 서버가 그렇게 하듯이 프로토콜 메시지를 만들어서 처리하도록 해. 함수를 추가하지 마","current":"game-loop-player","handoff":true}
 {"text":"커밋하고 태그푸시해서 빌드해","current":"game-loop-player","handoff":false}
 {"text":"진행해","current":"game-loop-player","handoff":false}
+{"text":"ftp 계정은 user / pass 고 홈디렉터리를 사용하면 돼.","current":"game-loop-player","handoff":false}
