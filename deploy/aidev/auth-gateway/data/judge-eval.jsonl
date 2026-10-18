@@ -36,3 +36,8 @@
 {"text":"SwiftUI로 iOS 홈 화면 위젯을 만들어줘","create":true}
 {"text":"m4pro에서 sw_vers 실행해서 결과 알려줘","agent":["generalist"]}
 {"text":"src 폴더 전체를 읽고 구조를 요약해줘","agent":["generalist"]}
+{"text":"oneshot signalr은 제거하고 signalr_net10linux를 사용하도록 해","current":"game-loop-player","handoff":true}
+{"text":"데이터베이스 저장을 안해? 재시작하면 삭제되는거야?","current":"game-loop-player","handoff":true}
+{"text":"범용 서버가 그렇게 하듯이 프로토콜 메시지를 만들어서 처리하도록 해. 함수를 추가하지 마","current":"game-loop-player","handoff":true}
+{"text":"커밋하고 태그푸시해서 빌드해","current":"game-loop-player","handoff":false}
+{"text":"진행해","current":"game-loop-player","handoff":false}

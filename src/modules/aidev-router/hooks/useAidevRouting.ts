@@ -128,12 +128,17 @@ export function useAidevRouting() {
     routingStore.patch({ busy: true, error: null, escalation: null, verification: null });
     try {
       const overrides = current.overrides;
+      // A retry's plan and agent belong to the retry's own command (the composer may put a draft before it). Another
+      // command sent first is routed as itself: server run #398 — "진행해" (D1) ran on a failed run's opus/xhigh D4 retry plan.
+      const forText = current.oneShotPlan?.forText;
+      const staleRetry = Boolean(forText && !text.trim().endsWith(forText.trim()));
       // A self-check turn or an explicit agent pick bypasses Laya's agent choice (§3.7, C-07).
-      const forceAgent = current.oneShotAgent || overrides.agent || null;
+      const oneShotAgent = staleRetry ? null : current.oneShotAgent;
+      const forceAgent = oneShotAgent || overrides.agent || null;
       if (current.oneShotAgent) routingStore.patch({ oneShotAgent: null });
       // E-03: an escalated retry / handoff pins engine, model and effort for this one send.
-      const oneShot = current.oneShotPlan;
-      if (oneShot) routingStore.patch({ oneShotPlan: null });
+      const oneShot = staleRetry ? null : current.oneShotPlan;
+      if (current.oneShotPlan) routingStore.patch({ oneShotPlan: null });
       // D-04: an accepted create-queue proposal
       const createProposal = current.oneShotCreate;
       if (createProposal) routingStore.patch({ oneShotCreate: null });
@@ -214,7 +219,7 @@ export function useAidevRouting() {
         effort: applyPlan ? route.plan.effort : null,
         route,
         runId,
-        appResend: Boolean(current.oneShotAgent || oneShot || createProposal),
+        appResend: Boolean(oneShotAgent || oneShot || createProposal),
         switchBack: pinnedElsewhere ? { engine: pinnedElsewhere, reason: `the user pinned this chat to ${pinnedElsewhere}` }
           : route.plan.switch_back && !manualEngine && !context.isNewSession ? route.plan.switch_back : null,
       };

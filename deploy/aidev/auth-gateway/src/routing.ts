@@ -421,8 +421,9 @@ function dismissedDomain(store: Store, userId: number, p: { name: string; domain
  *  4: the closest agent with a graded fit instead of a yes/no "true specialist"; 5: a proposal below 0.6, not 0.4 (2026-10-10);
  *  6: `current_fit` of the chat's current agent (2026-10-13);
  *  7: `level`, the model tier that carries the command out comfortably (2026-10-13); 8: sonnet, tier anchors, current_fit required;
- *  9: fit = whether the agent carries the command out with expertise, not the closest domain (2026-10-13). */
-const JUDGE_VERSION = 9;
+ *  9: fit = whether the agent carries the command out with expertise, not the closest domain (2026-10-13);
+ *  10: only a content-free follow-up keeps the chat's agent — a command with its own technology is scored on its domain (2026-10-18). */
+const JUDGE_VERSION = 10;
 /**
  * How long a send waits for the judge (env AIDEV_JUDGE_WAIT_MS). A verdict takes 1.5–4 s (a warm sonnet process,
  * 2026-10-13) and the typing-time pre-judge usually has it ready; past this the generalist starts the work — never a

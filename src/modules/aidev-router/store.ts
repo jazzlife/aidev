@@ -61,8 +61,12 @@ export type RoutingState = {
   runSessionId: string | null;
   /** feedback already given for the finished run */
   runFeedback: 'up' | 'down' | null;
-  /** E-03: settings forced for exactly the next send (escalated retry or engine handoff); consumed by beforeSend. */
-  oneShotPlan: { engine?: Engine; model?: string | null; effort?: string | null; depth?: number | null; escalatedFromRun?: number } | null;
+  /**
+   * E-03: settings forced for exactly the next send (escalated retry or engine handoff); consumed by beforeSend.
+   * `forText`: the retry command they were made for — a command sent before it (the retry was queued behind a running
+   * turn, or dropped while busy) runs routed instead, and the plan and its agent are dropped.
+   */
+  oneShotPlan: { engine?: Engine; model?: string | null; effort?: string | null; depth?: number | null; escalatedFromRun?: number; forText?: string } | null;
   /** E-03: the proposal for the last failed run, shown as a card until acted on or dismissed. */
   escalation: { next: NextAction; text: string; sessionId: string | null } | null;
   /** E-03: a handoff brief waiting to be sent once the new session (other engine) is open. */

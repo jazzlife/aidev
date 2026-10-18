@@ -101,7 +101,7 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
     setError(null);
     if (next.action === 'retry_same' || next.action === 'retry_worker' || next.action === 'escalate_tier') {
       if (!text.trim()) { setError('다시 보낼 명령을 찾지 못했습니다'); return; }
-      routingStore.patch({ oneShotPlan: plan, oneShotAgent, escalation: null });
+      routingStore.patch({ oneShotPlan: { ...plan, forText: text }, oneShotAgent, escalation: null });
       resend(text);
       return;
     }
