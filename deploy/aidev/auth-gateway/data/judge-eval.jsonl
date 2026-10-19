@@ -42,3 +42,11 @@
 {"text":"커밋하고 태그푸시해서 빌드해","current":"game-loop-player","handoff":false}
 {"text":"진행해","current":"game-loop-player","handoff":false}
 {"text":"ftp 계정은 user / pass 고 홈디렉터리를 사용하면 돼.","current":"game-loop-player","handoff":false}
+{"text": "검증이 실패하는 이유", "agent": ["generalist"], "continues": true}
+{"text": "다시 에뮬레이터 테스트 해봐", "agent": ["generalist"], "continues": true}
+{"text": "응답 명령이 폴링 방식이야?", "agent": ["generalist"], "continues": true}
+{"text": "니가 추가한 터널을 제거해.", "agent": ["generalist"], "continues": true}
+{"text": "같은 ap에 wifi로 연결되어있다는 것이 사실인데 그 전체를 바꿔서 문제를 흐리지 마", "agent": ["generalist"], "continues": true}
+{"text": "나머지 진행해 모두 구현한 뒤에 실제 검증, 커스터마이징, 성능 개선 작업, 안정화 작업을 진행할거야.", "agent": ["generalist"], "continues": true}
+{"text": "ally 적용한 터널과 네트워크 설정이 ip를 제대로 받지 않게 방해하고 있어", "agent": ["devops"], "continues": true}
+{"text": "React 컴포넌트에 다크모드 토글 훅을 추가해줘", "agent": ["frontend-react"], "continues": true}

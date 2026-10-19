@@ -155,13 +155,17 @@ export function applyModelFloor(engine: Engine, tier: { model: string | null; ef
 }
 
 /**
- * Whether a successful run teaches its agent the command (aidev-api: a 'run' routing example). Not when the chat simply
- * continued with its agent (`agent_source` 'session'): follow-ups such as "진행해봐" or a ComfyUI setup step in a chat
- * that had become security-review's taught the lexical prior those commands as that agent's domain (server
- * 2026-10-13: ComfyUI commands → remote-display-sync at 1.00). Older decisions without the field still teach.
+ * Whether a successful run teaches its agent the command (aidev-api: a 'run' routing example). Only a chat's first command
+ * (`chat_start`) names its domain: follow-ups such as "진행해봐", a ComfyUI setup step in a chat that had become
+ * security-review's (2026-10-13: ComfyUI commands → remote-display-sync at 1.00) or an objection in a network chat
+ * (2026-10-19: "같은 ap에 wifi로…" → remote-display-sync) taught the lexical prior words of other domains. Decisions from
+ * before `chat_start` still teach unless the chat simply continued with its agent (`agent_source` 'session').
  */
 export function runTeachesAgent(answer: string | null | undefined): boolean {
-  try { return (JSON.parse(answer ?? '{}') as { agent_source?: string }).agent_source !== 'session'; } catch { return true; }
+  try {
+    const a = JSON.parse(answer ?? '{}') as { agent_source?: string; chat_start?: boolean };
+    return typeof a.chat_start === 'boolean' ? a.chat_start : a.agent_source !== 'session';
+  } catch { return true; }
 }
 
 /**
@@ -301,7 +305,7 @@ export async function evaluateRouting(store: Store, laya: LayaClient, userId: nu
  * strongest-model cases from the server), and score a chat's agent low exactly when the chat should be handed off. The unit tests use a stand-in judge, so only
  * this says whether the model itself judges as intended.
  */
-export async function evaluateJudge(store: Store, userId: number, judge: SpecialistJudge, rows: Array<{ text: string; level?: [number, number]; current?: string; handoff?: boolean; agent?: string[]; create?: boolean }>, concurrency = 3) {
+export async function evaluateJudge(store: Store, userId: number, judge: SpecialistJudge, rows: Array<{ text: string; level?: [number, number]; current?: string; handoff?: boolean; agent?: string[]; create?: boolean; /** the command continues a chat (without `current`: the generalist's) */ continues?: boolean }>, concurrency = 3) {
   const specialists = store.agents(userId).filter((a) => a.domain !== 'meta' && a.name !== 'generalist');
   const names = new Set(specialists.map((a) => a.name));
   // a row about an agent this catalog lacks says nothing here
@@ -312,7 +316,7 @@ export async function evaluateJudge(store: Store, userId: number, judge: Special
     while (next < usable.length) {
       const row = usable[next++];
       let verdict: JudgeVerdict | null = null; let error: string | undefined;
-      try { verdict = await judge({ command: row.text, candidates: specialists.map((a) => ({ name: a.name, description: a.description })), current: row.current ?? null }); } catch (e) { error = e instanceof Error ? e.message : String(e); }
+      try { verdict = await judge({ command: row.text, candidates: specialists.map((a) => ({ name: a.name, description: a.description })), current: row.current ?? null, ...(row.continues ? { ask: false } : {}) }); } catch (e) { error = e instanceof Error ? e.message : String(e); }
       const level = typeof verdict?.level === 'number' ? verdict.level : null;
       const currentFit = typeof verdict?.current_fit === 'number' ? verdict.current_fit : null;
       const fit = typeof verdict?.fit === 'number' ? verdict.fit : null;
@@ -422,8 +426,9 @@ function dismissedDomain(store: Store, userId: number, p: { name: string; domain
  *  6: `current_fit` of the chat's current agent (2026-10-13);
  *  7: `level`, the model tier that carries the command out comfortably (2026-10-13); 8: sonnet, tier anchors, current_fit required;
  *  9: fit = whether the agent carries the command out with expertise, not the closest domain (2026-10-13);
- *  10: only a content-free follow-up keeps the chat's agent — a command with its own technology is scored on its domain (2026-10-18). */
-const JUDGE_VERSION = 10;
+ *  10: only a content-free follow-up keeps the chat's agent — a command with its own technology is scored on its domain (2026-10-18);
+ *  11: a follow-up in a chat without a current agent (the generalist's) is the generalist's — no guessed specialist (2026-10-19). */
+const JUDGE_VERSION = 11;
 /**
  * How long a send waits for the judge (env AIDEV_JUDGE_WAIT_MS). A verdict takes 1.5–4 s (a warm sonnet process,
  * 2026-10-13) and the typing-time pre-judge usually has it ready; past this the generalist starts the work — never a
@@ -578,7 +583,8 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   // ---- specialist judge: cached verdict, else an LLM turn (runs alongside Laya)
   // inside a chat the judge also scores the chat's agent (a forced agent or a queued design keeps no chat agent); with a
   // forced agent the judge still runs: its level sets the model tier, its agent is not used
-  const jctx = judgeContext(store, userId, text, input.forceAgent || input.createProposal ? null : chatAgent(store, userId, input.sessionId), startsChat(store, userId, input.sessionId));
+  const chatStart = startsChat(store, userId, input.sessionId);
+  const jctx = judgeContext(store, userId, text, input.forceAgent || input.createProposal ? null : chatAgent(store, userId, input.sessionId), chatStart);
   let verdict: JudgeVerdict | null = jctx.known;
   const judgeT0 = Date.now();
   let judgeTimedOut = false;
@@ -640,9 +646,9 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     if (judged && judged.domain !== 'meta' && verdict.fit >= JUDGE_USE_FIT) {
       agentName = judged.name; decision = 'use';
       reason.push(`specialist judge: ${judged.name} (fit ${verdict.fit.toFixed(2)}, ${verdict.source}${verdict.reason ? `: ${verdict.reason}` : ''})${agentTop.choice !== judged.name ? ` — ranker had ${agentTop.choice} ${agentTop.probability.toFixed(2)}` : ''}`);
-      // a confirmed command becomes an example of that specialist: the lexical prior learns from the judge — not when it
-      // is the chat's own agent, whose fit a follow-up ("진행해봐") lifts without saying anything about its domain
-      if (verdict.source === 'llm' && verdict.fit >= JUDGE_EXAMPLE_FIT && judged.name !== jctx.current) store.addExamples(judged.id, [{ text, source: 'judge', taskKind: null }]);
+      // a confirmed command becomes an example of that specialist: the lexical prior learns from the judge — only from a
+      // chat's first command, which names its domain; inside a chat a follow-up or an objection says nothing about it
+      if (verdict.source === 'llm' && verdict.fit >= JUDGE_EXAMPLE_FIT && chatStart) store.addExamples(judged.id, [{ text, source: 'judge', taskKind: null }]);
     } else if (verdict.agent === 'generalist') {
       agentName = 'generalist'; decision = 'generalist';
       reason.push(`specialist judge: general request → generalist${verdict.reason ? ` (${verdict.reason})` : ''}`);
@@ -953,7 +959,7 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   const decisionId = store.logDecision({ userId, command: text, agent: agentName, probability: agentTop.probability, confidence: agentTop.confidence, needsNew, risk, decision, probabilities, latencyMs: latency ?? undefined, device: device ?? undefined });
   store.db.prepare('UPDATE decision_log SET kind=?, fallback=?, answer=?, state=? WHERE id=?').run('route', fallback ? 1 : 0,
     JSON.stringify({ agent: agentName, engine, model: tier.model, effort: tier.effort, depth, task_kind: taskKind, remote_action: remoteAction, target: target?.name ?? null, target_source: targetSource, device: targetDevice?.serial ?? null,
-      agent_source: priorAgent && agentName === priorAgent ? 'session' : 'routed', judge_level: judgedLevel, laya_depth: layaDepth,
+      agent_source: priorAgent && agentName === priorAgent ? 'session' : 'routed', chat_start: chatStart, judge_level: judgedLevel, laya_depth: layaDepth,
       step: step ? { index: step.index, total: step.total, mode: step.mode, q2: step.q2, score: step.score } : null, providers: Object.fromEntries(ENGINES.map((e) => [e, scores[e].score === null ? scores[e].parts.slice(-1)[0] ?? 'unusable' : 'usable'])) }), JSON.stringify(state).slice(0, 8000), decisionId);
   store.recordInjectedLessons(decisionId, lessons.map((l) => ({ id: l.id, trial: l === trial })));
 

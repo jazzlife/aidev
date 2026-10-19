@@ -110,6 +110,12 @@ const judgedOf = (name) => store.db.prepare("SELECT count(*) n FROM agent_exampl
 const before = judgedOf('security-review');
 await route(store, laya(), uid, claudeOnly, { text: '그 작업 계속 이어서 해', sessionId: sid, sessionEngine: 'claude' }, { judge: inChat({ agent: 'security-review', fit: 0.85, current_fit: 0.85, level: 2 }) });
 assert.equal(judgedOf('security-review'), before);
+// …nor any other command inside a chat: an objection the judge gave to another specialist teaches nothing (2026-10-19)
+const dbBefore = judgedOf('database');
+r = await route(store, laya(), uid, claudeOnly, { text: '같은 ap에 wifi로 연결되어있다는 것이 사실이야', sessionId: sid, sessionEngine: 'claude' }, { judge: inChat({ agent: 'database', fit: 0.85, current_fit: 0.2, level: 1 }) });
+assert.equal(judgedOf('database'), dbBefore);
+assert.equal(JSON.parse(answerOf(r.decision_id)).chat_start, false);
+assert.equal(runTeachesAgent(answerOf(r.decision_id)), false, 'a command inside a chat is no routing example');
 console.log('PASS routing examples come only from commands routed to their agent, not from a chat that continued');
 
 console.log('capability routing: all checks passed');
