@@ -1,4 +1,4 @@
-import { useLayoutEffect, useMemo, useRef, useState } from 'react';
+import { memo, useLayoutEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 
 import type { NormalizedMessage } from '@/modules/chat-core';
@@ -25,9 +25,9 @@ type MessageListProps = {
 /**
  * Used by ChatScreen: the transcript, auto-following the bottom while the user has not scrolled up. Long conversations
  * load the latest page first; scrolling to the top (or "이전 메시지 보기") prepends the earlier one and keeps the
- * message the user was looking at in place.
+ * message the user was looking at in place. Memoized: typing in the composer re-renders ChatScreen, not the transcript.
  */
-export function MessageList({ messages, loading, onMessageLongPress, footer, onPeekFile, onPeekDiff, projectPath, hasMore, onLoadOlder }: MessageListProps) {
+export const MessageList = memo(function MessageList({ messages, loading, onMessageLongPress, footer, onPeekFile, onPeekDiff, projectPath, hasMore, onLoadOlder }: MessageListProps) {
   const ref = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   // the distance from the bottom to keep while an earlier page is prepended
@@ -74,4 +74,4 @@ export function MessageList({ messages, loading, onMessageLongPress, footer, onP
       {footer}
     </div>
   );
-}
+});

@@ -18,6 +18,8 @@ const ConversationSearch = lazy(() => import('@m/components/ConversationSearch')
 type Conversation = { sessionId: string; provider?: string; projectId?: string | null; projectDisplayName?: string; sessionTitle?: string; lastActivity?: string | null };
 type View = 'active' | 'hidden';
 type Toast = { text: string; undo?: () => void };
+/** How often the open list re-reads which conversations have news (a read elsewhere clears them). */
+const UNREAD_POLL_MS = 10_000;
 
 async function readList(response: Response, key: 'conversations' | 'sessions') {
   const payload = await response.json() as { data?: Record<string, Conversation[] | undefined> };
@@ -77,14 +79,22 @@ export function SessionsScreen() {
     request.then(setItems).catch((err: Error) => setError(err.message));
   }, []);
   useEffect(() => { load(view); }, [load, view]);
+  // polled while the list is open and refreshed on coming back, so a chat read on the workbench meanwhile loses its dot
   useEffect(() => {
-    if (view !== 'active') return;
-    aidevApi.notifyUnread().then((r) => {
+    if (view !== 'active') return undefined;
+    let alive = true;
+    const poll = () => aidevApi.notifyUnread().then((r) => {
+      if (!alive) return;
       setUnread(new Map(r.sessions.map((s) => [s.session_id, s])));
       // the home-screen icon shows how many conversations have news (installed app, where supported)
       const nav = navigator as Navigator & { setAppBadge?: (n: number) => Promise<void>; clearAppBadge?: () => Promise<void> };
       void (r.sessions.length ? nav.setAppBadge?.(r.sessions.length) : nav.clearAppBadge?.())?.catch(() => undefined);
     }).catch(() => undefined);
+    void poll();
+    const timer = window.setInterval(() => { if (document.visibilityState !== 'hidden') void poll(); }, UNREAD_POLL_MS);
+    const onVisible = () => { if (document.visibilityState === 'visible') void poll(); };
+    document.addEventListener('visibilitychange', onVisible);
+    return () => { alive = false; window.clearInterval(timer); document.removeEventListener('visibilitychange', onVisible); };
   }, [view]);
 
   const showToast = (next: Toast) => {

@@ -137,7 +137,8 @@ export function ChatScreen() {
   const provider: LLMProvider = meta?.provider ?? readProvider();
   const caps = useCapsMap();
   const permission = usePermissionMode(sessionId, provider, caps);
-  const selectedSession: ProjectSession | null = meta ? { id: meta.id, provider: meta.provider, __provider: meta.provider } : null;
+  // stable across renders (typing re-renders this screen): the realtime handlers re-subscribe when it changes
+  const selectedSession: ProjectSession | null = useMemo(() => (meta ? { id: meta.id, provider: meta.provider, __provider: meta.provider } : null), [meta]);
 
   // ---- resolve the session named in the URL ------------------------------------------------
   useEffect(() => {
@@ -205,12 +206,12 @@ export function ChatScreen() {
   }, [sessionId, ws, isConnected, sendMessage]);
 
   const requestLatestMessages = useCallback(async (id: string) => { await sessionStore.refreshLatestFromServer(id); }, [sessionStore]);
+  const onSessionProcessing = useCallback((id?: string | null) => { if (!id || id === sessionId) setBusy(true); }, [sessionId]);
+  const onSessionIdle = useCallback((id?: string | null) => { if (!id || id === sessionId) setBusy(false); }, [sessionId]);
   useChatRealtimeHandlers({
     isActive: true, subscribe, provider, selectedSession, currentSessionId: sessionId, setTokenBudget,
     pendingPermissionRequests, setPendingPermissionRequests, streamTimerRef, accumulatedStreamRef, lastSeqRef, statusCheckSentAtRef,
-    onSessionProcessing: (id) => { if (!id || id === sessionId) setBusy(true); },
-    onSessionIdle: (id) => { if (!id || id === sessionId) setBusy(false); },
-    requestLatestMessages, sessionStore,
+    onSessionProcessing, onSessionIdle, requestLatestMessages, sessionStore,
   });
   // Agent creation flow (§3.7): the architect's draft is read from the newest assistant message.
   const sendRef = useRef<(text: string) => void>(() => undefined);
@@ -502,7 +503,12 @@ export function ChatScreen() {
   }, []);
   const slot = sessionId ? sessionStore.getSessionSlot(sessionId) : undefined;
   const peekProject = meta?.projectId ? { projectId: meta.projectId, projectPath: meta.projectPath } : !meta && project ? { projectId: project.projectId, projectPath: project.fullPath } : null;
-  const openFile = (file: FileRef | null) => { setDiffPeek(null); setFilePeek({ open: true, file, fromSearch: false }); };
+  // the transcript's props stay the same while typing, so the memoized list does not re-render (and re-parse every
+  // message's markdown) on each keystroke
+  const openFile = useCallback((file: FileRef | null) => { setDiffPeek(null); setFilePeek({ open: true, file, fromSearch: false }); }, []);
+  const loadOlder = useCallback(() => (sessionId ? sessionStore.fetchMore(sessionId) : Promise.resolve()), [sessionId, sessionStore]);
+  const openMessageActions = useCallback((text: string, message: NormalizedMessage) => setMessageTarget({ text, message }), []);
+  const transcriptFooter = useMemo(() => (sessionId ? <SessionResults sessionId={sessionId} refreshKey={lastRunFinished ?? 0} /> : null), [sessionId, lastRunFinished]);
   const title = meta?.title || (routeSessionId ? '대화' : '새 대화');
   // up = the conversation's project (its list of conversations); a new chat without a project yet: home
   const projectId = meta?.projectId || (!meta ? project?.projectId : '') || '';
@@ -529,7 +535,7 @@ export function ChatScreen() {
       ) : null}
       {loadError ? <div className="px-4 py-2 text-danger text-sm">{loadError}</div> : null}
       {!isConnected ? <div className="px-4 py-1 text-[12px] text-warn bg-warn/10">연결 중…</div> : null}
-      <MessageList messages={messages} projectPath={peekProject?.projectPath ?? null} loading={slot?.status === 'loading'} hasMore={Boolean(slot?.hasMore)} onLoadOlder={() => (sessionId ? sessionStore.fetchMore(sessionId) : Promise.resolve())} onMessageLongPress={(text, message) => setMessageTarget({ text, message })} onPeekFile={openFile} onPeekDiff={setDiffPeek} footer={sessionId ? <SessionResults sessionId={sessionId} refreshKey={lastRunFinished ?? 0} /> : null} />
+      <MessageList messages={messages} projectPath={peekProject?.projectPath ?? null} loading={slot?.status === 'loading'} hasMore={Boolean(slot?.hasMore)} onLoadOlder={loadOlder} onMessageLongPress={openMessageActions} onPeekFile={openFile} onPeekDiff={setDiffPeek} footer={transcriptFooter} />
       <MessageActions target={messageTarget} onClose={() => setMessageTarget(null)}
         canEdit={canRewind(messageTarget) && Boolean(messageTarget?.text) && Boolean(providerCaps?.supportsMessageEditing) && !busy}
         canFork={canRewind(messageTarget) && Boolean(providerCaps?.supportsSessionForking)}

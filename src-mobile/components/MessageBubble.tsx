@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { memo, useEffect, useState } from 'react';
 import { AlertTriangle, ChevronDown, ChevronRight, FileDiff, FileText, Paperclip, Wrench } from 'lucide-react';
 
 import { api, parseToolPayload, type NormalizedMessage } from '@/modules/chat-core';
@@ -51,8 +51,11 @@ export type PeekHandlers = {
   projectPath?: string | null;
 };
 
-/** Used by MessageList: one transcript row — user bubble, assistant prose, or a collapsible tool/thinking card. */
-export function MessageBubble({ message, result, onLongPress, onPeekFile, onPeekDiff, projectPath }: { message: NormalizedMessage; result?: NormalizedMessage | null; /** text messages: long-press opens the copy sheet (text selection is off in the app) */ onLongPress?: (text: string, message: NormalizedMessage) => void } & PeekHandlers) {
+/**
+ * Used by MessageList and ToolRunRow: one transcript row — user bubble, assistant prose, or a collapsible tool/thinking card.
+ * Memoized: while an answer streams, only the rows that changed re-parse their markdown.
+ */
+export const MessageBubble = memo(function MessageBubble({ message, result, onLongPress, onPeekFile, onPeekDiff, projectPath }: { message: NormalizedMessage; result?: NormalizedMessage | null; /** text messages: long-press opens the copy sheet (text selection is off in the app) */ onLongPress?: (text: string, message: NormalizedMessage) => void } & PeekHandlers) {
   const [open, setOpen] = useState(false);
   const text = message.kind === 'text' || message.kind === 'stream_delta' ? String((message.role === 'user' ? message.displayText || message.content : message.content) ?? '') : '';
   const hasAttachments = Boolean(message.images?.length || message.files?.length);
@@ -124,4 +127,4 @@ export function MessageBubble({ message, result, onLongPress, onPeekFile, onPeek
     );
   }
   return null;
-}
+});

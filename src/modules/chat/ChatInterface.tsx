@@ -29,7 +29,7 @@ import {
 } from '@/shared/context/SessionProtectionContext';
 import ChatMessagesPane from '@/modules/chat/transcript/ChatMessagesPane';
 import ChatComposer from '@/modules/chat/composer/ChatComposer';
-import { AgentCreateCard, AidevRouterBar, isPolicyProvider, ClarifyPrompt, COMPOSE_EVENT, announceRunComplete, changedFilesSince, EscalationCard, routingStore, useAgentCreation, useAidevRouting, useEffortCap, useEscalation, useReturnFromHandoff, useRoutingState, ReturnCard, VerificationCard } from '@/modules/aidev-router';
+import { AgentCreateCard, AidevRouterBar, aidevApi, isPolicyProvider, ClarifyPrompt, COMPOSE_EVENT, announceRunComplete, changedFilesSince, EscalationCard, routingStore, useAgentCreation, useAidevRouting, useEffortCap, useEscalation, useReturnFromHandoff, useRoutingState, ReturnCard, VerificationCard } from '@/modules/aidev-router';
 import CommandResultModal from '@/modules/chat/modals/CommandResultModal';
 
 type ChatInterfaceProps = {
@@ -90,9 +90,27 @@ function ChatInterface({
   const handoffOnUsageLimitRef = useRef<((args: { sessionId: string; blockedEngine: AidevEngine; reason: string }) => Promise<unknown>) | null>(null);
   const agentCreationRef = useRef(agentCreation);
   useEffect(() => { agentCreationRef.current = agentCreation; });
+  // C-06: the chat on show here has no unread news on the phone either — on open, on coming back to the window,
+  // on leaving, and shortly after a run here ends (the runtime's event reaches the gateway around the `complete`)
+  const seenSessionId = isActive ? selectedSession?.id ?? null : null;
+  const seenSessionIdRef = useRef(seenSessionId);
+  useEffect(() => { seenSessionIdRef.current = seenSessionId; });
+  useEffect(() => {
+    if (!seenSessionId) return undefined;
+    const seen = () => { if (document.visibilityState === 'visible') void aidevApi.notifySeen(seenSessionId).catch(() => undefined); };
+    seen();
+    document.addEventListener('visibilitychange', seen);
+    return () => { document.removeEventListener('visibilitychange', seen); seen(); };
+  }, [seenSessionId]);
   useEffect(() => subscribe((event) => {
     if (event.kind !== 'complete') return;
     if (event.sessionId && selectedSession?.id && event.sessionId !== selectedSession.id) return;
+    const finishedId = event.sessionId ?? selectedSession?.id ?? null;
+    if (finishedId && finishedId === seenSessionIdRef.current) {
+      setTimeout(() => {
+        if (seenSessionIdRef.current === finishedId && document.visibilityState === 'visible') void aidevApi.notifySeen(finishedId).catch(() => undefined);
+      }, 3000);
+    }
     const exitCode = typeof event.exitCode === 'number' ? event.exitCode : (event.isError ? 1 : 0);
     const usageLimit = parseProviderUsageLimit(event.usageLimit);
     // a limit refusal is reported as such: the gateway skips the engine until the reset, and holds nothing else against it
