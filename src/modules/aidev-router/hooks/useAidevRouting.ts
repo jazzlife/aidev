@@ -32,6 +32,8 @@ export type BeforeSendContext = {
   provider: string;
   isNewSession: boolean;
   projectHint?: string | null;
+  /** The project folder in the runtime (the judge reads a new chat's technology from it). */
+  projectPath?: string | null;
   /** Whether the composer's model is an explicit user choice rather than the provider default. */
   userPinnedModel: boolean;
 };
@@ -149,6 +151,7 @@ export function useAidevRouting() {
         preferEngine: oneShot?.engine ?? overrides.engine ?? (context.isNewSession ? null : asEngine(context.provider)),
         targetId: overrides.targetId ?? null,
         projectHint: context.projectHint ?? null,
+        projectPath: context.projectPath ?? null,
         model: oneShot?.model ?? overrides.model ?? null,
         effort: oneShot?.effort ?? overrides.effort ?? null,
         forceAgent,

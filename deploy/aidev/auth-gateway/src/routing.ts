@@ -95,7 +95,7 @@ export const alphaFor = (name: string) => (nb.count(name) >= MIN_EXAMPLES ? LAYA
  */
 type Store = ReturnType<typeof openStore>;
 export type EngineAvailability = Record<Engine, { allowed: boolean; authenticated: boolean; error?: string | null; /** epoch ms until which the engine refuses on a usage limit (2026-10-09); absent/null = not limited */ limited_until?: number | null }>;
-export type RouteInput = { text: string; sessionId?: string | null; sessionEngine?: Engine | null; preferEngine?: Engine | null; targetId?: number | null; projectHint?: string | null; recentFiles?: string[] | null; model?: string | null; effort?: string | null; /** user override: use this agent regardless of Laya's pick */ forceAgent?: string | null; /** D-04: create the specialist of this create-queue entry (the architect turn) */ createProposal?: number | null;
+export type RouteInput = { text: string; sessionId?: string | null; sessionEngine?: Engine | null; preferEngine?: Engine | null; targetId?: number | null; projectHint?: string | null; /** the project folder in the runtime: the judge reads its technology (a new chat; a chat's own project wins) */ projectPath?: string | null; recentFiles?: string[] | null; model?: string | null; effort?: string | null; /** user override: use this agent regardless of Laya's pick */ forceAgent?: string | null; /** D-04: create the specialist of this create-queue entry (the architect turn) */ createProposal?: number | null;
   /** this chat's own ceiling (a new chat sends it with its first message; later it is stored per session) */ effortCap?: Partial<Record<Engine, string>> | null;
   /** this chat's own model floor (same lifecycle as effortCap) */ modelFloor?: Partial<Record<Engine, string>> | null };
 
@@ -305,7 +305,8 @@ export async function evaluateRouting(store: Store, laya: LayaClient, userId: nu
  * strongest-model cases from the server), and score a chat's agent low exactly when the chat should be handed off. The unit tests use a stand-in judge, so only
  * this says whether the model itself judges as intended.
  */
-export async function evaluateJudge(store: Store, userId: number, judge: SpecialistJudge, rows: Array<{ text: string; level?: [number, number]; current?: string; handoff?: boolean; agent?: string[]; create?: boolean; /** the command continues a chat (without `current`: the generalist's) */ continues?: boolean }>, concurrency = 3) {
+export async function evaluateJudge(store: Store, userId: number, judge: SpecialistJudge, rows: Array<{ text: string; level?: [number, number]; current?: string; handoff?: boolean; agent?: string[]; create?: boolean; /** the command continues a chat (without `current`: the generalist's) */ continues?: boolean;
+  /** the chat as the judge would read it from the transcript (goal, latest requests, last answer, project technology) */ context?: JudgeChatContext }>, concurrency = 3) {
   const specialists = store.agents(userId).filter((a) => a.domain !== 'meta' && a.name !== 'generalist');
   const names = new Set(specialists.map((a) => a.name));
   // a row about an agent this catalog lacks says nothing here
@@ -316,12 +317,14 @@ export async function evaluateJudge(store: Store, userId: number, judge: Special
     while (next < usable.length) {
       const row = usable[next++];
       let verdict: JudgeVerdict | null = null; let error: string | undefined;
-      try { verdict = await judge({ command: row.text, candidates: specialists.map((a) => ({ name: a.name, description: a.description })), current: row.current ?? null, ...(row.continues ? { ask: false } : {}) }); } catch (e) { error = e instanceof Error ? e.message : String(e); }
+      try { verdict = await judge({ command: row.text, candidates: specialists.map((a) => ({ name: a.name, description: a.description })), current: row.current ?? null, ...(row.continues || row.current ? { ask: false } : {}), ...(row.context ? { context: row.context } : {}) }); } catch (e) { error = e instanceof Error ? e.message : String(e); }
       const level = typeof verdict?.level === 'number' ? verdict.level : null;
       const currentFit = typeof verdict?.current_fit === 'number' ? verdict.current_fit : null;
       const fit = typeof verdict?.fit === 'number' ? verdict.fit : null;
+      // as route() uses it: a command that continues a generalist's chat stays the generalist's
+      const used = row.continues && !row.current && verdict?.continues ? 'generalist' : verdict?.agent ?? null;
       const okAgent = row.create ? Boolean(verdict?.new) && (fit === null || fit < JUDGE_USE_FIT || !verdict?.agent)
-        : row.agent ? Boolean(verdict?.agent && row.agent.includes(verdict.agent) && (verdict.agent === 'generalist' || (fit ?? 0) >= JUDGE_USE_FIT)) : null;
+        : row.agent ? Boolean(used && row.agent.includes(used) && (used === 'generalist' || (fit ?? 0) >= JUDGE_USE_FIT)) : null;
       results.push({ text: row.text, ms: typeof verdict?.ms === 'number' ? verdict.ms : null, agent: verdict?.agent ?? null, fit, proposal: verdict?.new?.name ?? null, expected_agent: row.agent ?? null, create_expected: row.create ?? null, ok_agent: okAgent, level, expected_level: row.level ?? null, current: row.current ?? null, current_fit: currentFit, handoff_expected: row.handoff ?? null,
         ok_level: row.level ? level !== null && level >= row.level[0] && level <= row.level[1] : null,
         ok_handoff: typeof row.handoff === 'boolean' ? currentFit !== null && (currentFit < JUDGE_USE_FIT) === row.handoff : null, ...(error ? { error } : {}) });
@@ -353,8 +356,13 @@ export async function evaluateJudge(store: Store, userId: number, judge: Special
 export type JudgeVerdict = { agent: string | null; fit: number; reason: string; new: { name: string; domain: string; description: string; technologies: string[] } | null; /** the judge's wording of the clarifying question (used only when Laya's clarify asks) */ question?: string | null;
   /** inside a chat: how well the chat's current agent carries the command as its next turn (absent: not asked, or the judge left it out) */ current_fit?: number | null;
   /** the model tier (0–4) that carries the command out comfortably (absent: an older cached verdict) — the depth the command runs at */ level?: number | null;
+  /** in a chat: the command goes on with the chat's work, read from the chat (2026-10-19) — the chat keeps its agent */ continues?: boolean | null;
   engine?: string; ms?: number; source?: 'llm' | 'cache' };
-export type SpecialistJudge = (input: { command: string; candidates: Array<{ name: string; description: string }>; project?: string | null; /** the chat's current agent */ current?: string | null;
+/** What the judge reads besides the command (the runtime's JudgeChatContext): the chat and the project's technology. */
+export type JudgeChatContext = { goal: string | null; recent: string[]; lastReply: string | null; stack: string | null };
+export type SpecialistJudge = (input: { command: string; candidates: Array<{ name: string; description: string }>; /** the chat's current agent */ current?: string | null;
+  /** the chat whose transcript and project the judge reads (runtime) */ sessionId?: string | null; /** a new chat's project folder, for its technology */ projectPath?: string | null;
+  /** the chat context as given (the judge eval's rows); the runtime builds it from sessionId otherwise */ context?: JudgeChatContext;
   /** the command starts a new conversation: the judge words a clarifying question (shown only there) */ ask?: boolean }) => Promise<JudgeVerdict | null>;
 const normText = (text: string) => text.toLowerCase().replace(/\s+/g, ' ').trim().slice(0, 500);
 function cosine(a: string[], b: string[]) {
@@ -427,8 +435,9 @@ function dismissedDomain(store: Store, userId: number, p: { name: string; domain
  *  7: `level`, the model tier that carries the command out comfortably (2026-10-13); 8: sonnet, tier anchors, current_fit required;
  *  9: fit = whether the agent carries the command out with expertise, not the closest domain (2026-10-13);
  *  10: only a content-free follow-up keeps the chat's agent — a command with its own technology is scored on its domain (2026-10-18);
- *  11: a follow-up in a chat without a current agent (the generalist's) is the generalist's — no guessed specialist (2026-10-19). */
-const JUDGE_VERSION = 11;
+ *  11: a follow-up in a chat without a current agent (the generalist's) is the generalist's — no guessed specialist (2026-10-19);
+ *  12: the judge reads the chat and the project's technology, and says whether the command `continues` the chat (2026-10-19). */
+const JUDGE_VERSION = 12;
 /**
  * How long a send waits for the judge (env AIDEV_JUDGE_WAIT_MS). A verdict takes 1.5–4 s (a warm sonnet process,
  * 2026-10-13) and the typing-time pre-judge usually has it ready; past this the generalist starts the work — never a
@@ -442,6 +451,7 @@ const MAX_PREJUDGE_PER_USER = 3;
 const judging = new Map<string, Promise<JudgeVerdict | null>>();
 
 type JudgeContext = { specialists: ReturnType<Store['agents']>; catalogSig: string; textNorm: string; key: string; known: JudgeVerdict | null; current: string | null; ask: boolean;
+  /** the chat the judge reads (its transcript and project, in the runtime) */ sessionId: string | null;
   /** an in-flight judge call for the same command as typed a moment ago (sameCommand) */ joinable: Promise<JudgeVerdict | null> | null };
 
 /** How far back a draft's verdict stands for the sent command (the typing-time pre-judge, item 2 of 2026-10-13). */
@@ -462,10 +472,12 @@ export function sameCommand(a: string, b: string): boolean {
  *  Inside a chat the verdict also scores the chat's current agent, so the cache keeps one per current agent. There is
  *  no shortcut past the judge: whether an agent can carry a command out with expertise is its call, not a word
  *  statistic's (2026-10-13 — the lexical prior's ≥0.9 plus a similar judged command used to stand in for it). */
-function judgeContext(store: Store, userId: number, text: string, current: string | null = null, ask = true): JudgeContext {
+function judgeContext(store: Store, userId: number, text: string, current: string | null = null, ask = true, sessionId: string | null = null): JudgeContext {
   const specialists = store.agents(userId).filter((a) => a.domain !== 'meta' && a.name !== 'generalist');
   const chatAgent = current && specialists.some((a) => a.name === current) ? current : null;
-  const catalogSig = crypto.createHash('sha1').update(`judge${JUDGE_VERSION}|${specialists.map((a) => `${a.name}@${a.version}`).sort().join(',')}${chatAgent ? `|current:${chatAgent}` : ''}${ask ? '' : '|continues'}`).digest('hex').slice(0, 16);
+  // the judge reads the chat (2026-10-19): its verdict holds for the chat as of its last run, not for the words anywhere
+  const lastRun = sessionId && !ask ? store.lastRunForSession(userId, sessionId) : undefined;
+  const catalogSig = crypto.createHash('sha1').update(`judge${JUDGE_VERSION}|${specialists.map((a) => `${a.name}@${a.version}`).sort().join(',')}${chatAgent ? `|current:${chatAgent}` : ''}${ask ? '' : '|continues'}${lastRun ? `|chat:${sessionId}#${lastRun.id}` : ''}`).digest('hex').slice(0, 16);
   const textNorm = normText(text);
   let known = store.judgeCached(userId, textNorm, catalogSig) as JudgeVerdict | null;
   let joinable: Promise<JudgeVerdict | null> | null = null;
@@ -480,7 +492,7 @@ function judgeContext(store: Store, userId: number, text: string, current: strin
     }
   }
   if (known) known = { ...known, source: 'cache' };
-  return { specialists, catalogSig, textNorm, key: `${userId}|${catalogSig}|${textNorm}`, known, current: chatAgent, ask, joinable };
+  return { specialists, catalogSig, textNorm, key: `${userId}|${catalogSig}|${textNorm}`, known, current: chatAgent, ask, joinable, sessionId };
 }
 
 /** Whether a command starts a conversation (no run in its chat yet): only there is a clarifying question shown. */
@@ -497,14 +509,14 @@ function chatAgent(store: Store, userId: number, sessionId: string | null | unde
 }
 
 /** Start (or join) the judge for this command. The verdict is cached when it arrives, even if nobody waits any more. */
-function startJudge(store: Store, userId: number, ctx: JudgeContext, text: string, projectHint: string | null, judge: SpecialistJudge): Promise<JudgeVerdict | null> {
+function startJudge(store: Store, userId: number, ctx: JudgeContext, text: string, projectPath: string | null, judge: SpecialistJudge): Promise<JudgeVerdict | null> {
   const running = judging.get(ctx.key) ?? ctx.joinable;
   if (running) return running;
-  const promise = judge({ command: text, candidates: ctx.specialists.map((a) => ({ name: a.name, description: a.description })), project: projectHint, current: ctx.current, ask: ctx.ask })
+  const promise = judge({ command: text, candidates: ctx.specialists.map((a) => ({ name: a.name, description: a.description })), current: ctx.current, ask: ctx.ask, sessionId: ctx.sessionId, projectPath })
     .then((v) => (v ? { ...v, source: 'llm' as const } : null))
     .catch(() => null)
     .then((v) => {
-      if (v) store.cacheJudge(userId, ctx.textNorm, ctx.catalogSig, { agent: v.agent, fit: v.fit, reason: v.reason, new: v.new, question: v.question ?? null, current_fit: v.current_fit ?? null, level: v.level ?? null, engine: v.engine });
+      if (v) store.cacheJudge(userId, ctx.textNorm, ctx.catalogSig, { agent: v.agent, fit: v.fit, reason: v.reason, new: v.new, question: v.question ?? null, current_fit: v.current_fit ?? null, level: v.level ?? null, continues: v.continues ?? null, engine: v.engine });
       return v;
     })
     .finally(() => judging.delete(ctx.key));
@@ -521,18 +533,18 @@ const waitAtMost = <T>(promise: Promise<T>, ms: number, onTimeout: T, timedOut?:
  * Typing-time pre-judge (§3.1): the composer calls this when the user pauses typing, so the verdict is usually
  * cached by the time they press send (the judge takes ~3 s; Laya ~0.3 s). Never waits for the verdict.
  */
-export function prejudge(store: Store, userId: number, input: { text: string; projectHint?: string | null; sessionId?: string | null }, judge: SpecialistJudge | undefined) {
+export function prejudge(store: Store, userId: number, input: { text: string; projectPath?: string | null; sessionId?: string | null }, judge: SpecialistJudge | undefined) {
   const text = input.text.trim();
   if (text.length < 4) return { status: 'skipped' as const, reason: 'too short' };
   if (!judge) return { status: 'skipped' as const, reason: 'no engine for the judge' };
   const names = store.agents(userId).filter((a) => a.domain !== 'meta').map((a) => a.name);
-  const ctx = judgeContext(store, userId, text, chatAgent(store, userId, input.sessionId), startsChat(store, userId, input.sessionId));
+  const ctx = judgeContext(store, userId, text, chatAgent(store, userId, input.sessionId), startsChat(store, userId, input.sessionId), input.sessionId ?? null);
   if (!ctx.specialists.length) return { status: 'skipped' as const, reason: 'no specialists' };
   if (ctx.known) return { status: 'cached' as const, agent: ctx.known.agent };
   if (judging.has(ctx.key) || ctx.joinable) return { status: 'running' as const };
   // a fast typist would otherwise start one judge per pause; the latest few are enough
   if ([...judging.keys()].filter((k) => k.startsWith(`${userId}|`)).length >= MAX_PREJUDGE_PER_USER) return { status: 'skipped' as const, reason: 'busy' };
-  void startJudge(store, userId, ctx, text, input.projectHint ?? null, judge);
+  void startJudge(store, userId, ctx, text, input.projectPath ?? null, judge);
   return { status: 'started' as const };
 }
 
@@ -584,14 +596,14 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   // inside a chat the judge also scores the chat's agent (a forced agent or a queued design keeps no chat agent); with a
   // forced agent the judge still runs: its level sets the model tier, its agent is not used
   const chatStart = startsChat(store, userId, input.sessionId);
-  const jctx = judgeContext(store, userId, text, input.forceAgent || input.createProposal ? null : chatAgent(store, userId, input.sessionId), chatStart);
+  const jctx = judgeContext(store, userId, text, input.forceAgent || input.createProposal ? null : chatAgent(store, userId, input.sessionId), chatStart, input.sessionId ?? null);
   let verdict: JudgeVerdict | null = jctx.known;
   const judgeT0 = Date.now();
   let judgeTimedOut = false;
   const joined = !verdict && (judging.has(jctx.key) || Boolean(jctx.joinable));
   const judgePromise: Promise<JudgeVerdict | null> = verdict || !opts.judge || !jctx.specialists.length
     ? Promise.resolve(verdict)
-    : waitAtMost(startJudge(store, userId, jctx, text, input.projectHint ?? null, opts.judge), opts.judgeWaitMs ?? JUDGE_WAIT_MS, null, () => { judgeTimedOut = true; });
+    : waitAtMost(startJudge(store, userId, jctx, text, input.projectPath ?? null, opts.judge), opts.judgeWaitMs ?? JUDGE_WAIT_MS, null, () => { judgeTimedOut = true; });
   try {
     const r = await laya.predict(state, questions);
     latency = r.latency_ms ?? null; device = r.device ?? null;
@@ -692,6 +704,15 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   const prior = input.sessionId && !input.forceAgent && !fromQueue ? store.lastRunForSession(userId, input.sessionId) : undefined;
   const sessionFloor = prior && prior.depth !== null && prior.agent_domain !== 'meta' ? clampDepth(prior.depth) : 0;
   const priorAgent = prior ? chatAgent(store, userId, input.sessionId) : null;
+  // The judge read the chat (2026-10-19): a command that continues its work stays with the chat's agent — a generalist's
+  // chat with the generalist (its follow-ups went to whichever specialist their words resembled: "같은 ap에 wifi로…" →
+  // remote-display-sync), a specialist's chat with it unless the work has left its domain (current_fit, the handoff
+  // below). Only different work picks another agent. The agent-architect's turn is no chat agent.
+  const continuesChat = Boolean(prior && (prior.agent_name === 'generalist' || prior.agent_domain !== 'meta') && verdict?.continues === true);
+  if (continuesChat && !priorAgent && (agentName !== 'generalist' || decision === 'create')) {
+    reason.push(`judge: continues the generalist's chat → generalist (closest ${verdict?.agent ?? '-'} ${verdict ? verdict.fit.toFixed(2) : '-'} not used)`);
+    agentName = 'generalist'; decision = 'generalist'; proposal = null;
+  }
   // The judge's score of the chat's own agent for this command (asked with it as the chat's current agent). Under
   // JUDGE_USE_FIT that agent does not carry the command and the chat is handed off to what the judge found: a specialist
   // that fits (at least JUDGE_USE_FIT), a new specialist (designed in the background below — the generalist runs this
@@ -703,12 +724,12 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
   } else if (priorAgent && agentName !== priorAgent) {
     const other = verdict?.agent && verdict.agent === agentName && verdict.agent !== 'generalist' && decision === 'use' ? verdict : null;
     const currentFit = typeof other?.current_fit === 'number' ? other.current_fit : null;
-    const judgedOther = Boolean(other && (currentFit !== null
+    const judgedOther = !continuesChat && Boolean(other && (currentFit !== null
       ? other.fit >= JUDGE_USE_FIT && other.fit - currentFit >= SESSION_SWITCH_MARGIN
       : other.fit >= SESSION_SWITCH_FIT_UNSCORED));
     const scores = other ? ` — judge ${agentName} ${other.fit.toFixed(2)}${currentFit !== null ? ` vs ${priorAgent} ${currentFit.toFixed(2)}` : ''}` : '';
     if (!judgedOther) {
-      reason.push(`session agent ${priorAgent} kept (follow-up; router had ${agentName}${decision !== 'use' ? `, ${decision}` : ''}${scores})`);
+      reason.push(`session agent ${priorAgent} kept (${continuesChat ? 'judge: continues the chat' : 'follow-up'}; router had ${agentName}${decision !== 'use' ? `, ${decision}` : ''}${scores})`);
       agentName = priorAgent; decision = 'use'; proposal = null;
     } else reason.push(`session agent ${priorAgent} → ${agentName}${scores}`);
   }

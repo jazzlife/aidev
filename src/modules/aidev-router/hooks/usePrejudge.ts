@@ -12,9 +12,9 @@ const MIN_CHARS = 8;
  * (existing specialist / generalist / create a new one) is usually cached and routing does not wait
  * for it. Fire-and-forget; slash commands and short drafts are skipped. Used by both composers. `sessionId` is the
  * chat the draft continues (null for a new one): inside a chat the judge also scores the chat's own agent, so the
- * pre-judge must ask the same question the send will.
+ * pre-judge must ask the same question the send will. `projectPath` lets the judge read a new chat's technology.
  */
-export function usePrejudge(draft: string, projectHint: string | null | undefined, sessionId: string | null | undefined) {
+export function usePrejudge(draft: string, projectPath: string | null | undefined, sessionId: string | null | undefined) {
   const lastSent = useRef('');
   useEffect(() => {
     const text = draft.trim();
@@ -24,8 +24,8 @@ export function usePrejudge(draft: string, projectHint: string | null | undefine
     if (routingStore.get().mode === 'off') return undefined;
     const timer = window.setTimeout(() => {
       lastSent.current = key;
-      void aidevApi.prejudge({ text, projectHint: projectHint ?? null, sessionId: sessionId ?? null }).catch(() => undefined);
+      void aidevApi.prejudge({ text, projectPath: projectPath ?? null, sessionId: sessionId ?? null }).catch(() => undefined);
     }, PAUSE_MS);
     return () => window.clearTimeout(timer);
-  }, [draft, projectHint, sessionId]);
+  }, [draft, projectPath, sessionId]);
 }

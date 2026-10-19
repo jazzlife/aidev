@@ -133,7 +133,7 @@ export function ChatScreen() {
   const statusCheckSentAtRef = useRef(new Map<string, number>());
 
   const sessionId = meta?.id ?? null;
-  usePrejudge(draft, meta?.projectName || project?.displayName || null, sessionId);
+  usePrejudge(draft, meta?.projectPath || project?.fullPath || null, sessionId);
   const provider: LLMProvider = meta?.provider ?? readProvider();
   const caps = useCapsMap();
   const permission = usePermissionMode(sessionId, provider, caps);
@@ -312,7 +312,7 @@ export function ChatScreen() {
         previews = files.map((file) => (file.type.startsWith('image/') ? URL.createObjectURL(file) : ''));
         for (const url of previews) if (url) pendingPreviewsRef.current.add(url);
       }
-      const decoration = await beforeSend(routed, { sessionId: meta?.id ?? null, provider, isNewSession: !meta, projectHint: (meta?.projectName || project?.displayName) ?? null, userPinnedModel: false });
+      const decoration = await beforeSend(routed, { sessionId: meta?.id ?? null, provider, isNewSession: !meta, projectHint: (meta?.projectName || project?.displayName) ?? null, projectPath: (meta?.projectPath || project?.fullPath) ?? null, userPinnedModel: false });
       // read before the clarify guard: its type predicate narrows `decoration` to null afterwards
       const switchBack = decoration?.switchBack ?? null;
       // §3.1: essential detail missing from a deeper command → ask once (not for agent creation or the app's re-sends)
@@ -388,7 +388,7 @@ export function ChatScreen() {
     sendingRef.current = true;
     setSending(routed);
     try {
-      const decoration = await beforeSend(routed, { sessionId, provider, isNewSession: false, projectHint: meta?.projectName ?? null, userPinnedModel: false });
+      const decoration = await beforeSend(routed, { sessionId, provider, isNewSession: false, projectHint: meta?.projectName ?? null, projectPath: meta?.projectPath ?? null, userPinnedModel: false });
       await dispatch(turn.content, decoration, attachments, [], { interrupt: busy, options: turn.options, queuedId: id });
     } finally {
       sendingRef.current = false;

@@ -36,6 +36,14 @@ export function sideEngines<E extends AidevSideEngine = AidevSideEngine>(value: 
 }
 const NO_SIDE_ENGINE = 'none of the account\'s engines can run this side turn in the runtime';
 
+/** A chat context the gateway passes as is (its judge eval rows); null when absent or malformed. */
+function judgeContextOf(value: unknown): { goal: string | null; recent: string[]; lastReply: string | null; stack: string | null } | null {
+  if (!value || typeof value !== 'object') return null;
+  const v = value as Record<string, unknown>;
+  const text = (x: unknown) => (typeof x === 'string' && x.trim() ? x.slice(0, 4000) : null);
+  return { goal: text(v.goal), recent: Array.isArray(v.recent) ? v.recent.filter((r): r is string => typeof r === 'string').slice(-6).map((r) => r.slice(0, 2000)) : [], lastReply: text(v.lastReply), stack: text(v.stack) };
+}
+
 /** Gateway → runtime: is one of the existing agents a true specialist for this command? (routing) */
 router.post('/specialist-judge', asyncHandler(async (req: Request, res: Response) => {
   const body = (req.body && typeof req.body === 'object' ? req.body : {}) as Record<string, unknown>;
@@ -50,7 +58,9 @@ router.post('/specialist-judge', asyncHandler(async (req: Request, res: Response
   try {
     const { engines, none } = sideEngines(body.engines, JUDGE_ENGINES);
     if (none) { res.status(409).json({ success: false, error: NO_SIDE_ENGINE }); return; }
-    res.json(createApiSuccessResponse(await specialistJudgeService.judge({ command, candidates, project: typeof body.project === 'string' ? body.project : null, engines, current: typeof body.current === 'string' ? body.current : null, ask: body.ask !== false })));
+    res.json(createApiSuccessResponse(await specialistJudgeService.judge({ command, candidates, engines, current: typeof body.current === 'string' ? body.current : null, ask: body.ask !== false,
+      sessionId: typeof body.sessionId === 'string' && body.sessionId ? body.sessionId : null, projectPath: typeof body.projectPath === 'string' && body.projectPath ? body.projectPath : null,
+      ...(judgeContextOf(body.context) ? { context: judgeContextOf(body.context) } : {}) })));
   } catch (error) {
     res.status(502).json({ success: false, error: error instanceof Error ? error.message : 'judge failed' });
   }

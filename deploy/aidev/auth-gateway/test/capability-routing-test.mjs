@@ -118,4 +118,28 @@ assert.equal(JSON.parse(answerOf(r.decision_id)).chat_start, false);
 assert.equal(runTeachesAgent(answerOf(r.decision_id)), false, 'a command inside a chat is no routing example');
 console.log('PASS routing examples come only from commands routed to their agent, not from a chat that continued');
 
+// ---- 4. the judge reads the chat (2026-10-19): a command that continues the chat's work keeps the chat's agent
+const sent = [];
+const reads = (verdict) => async (input) => { sent.push(input); return { reason: 'r', new: null, question: null, source: 'llm', current_fit: null, ...verdict }; };
+const gsid = 'sess-network';
+store.addRun({ userId: uid, sessionId: gsid, agentId: store.agent(uid, 'generalist').id, engine: 'claude', model: 'opus', effort: 'high', depth: 1 });
+r = await route(store, laya(), uid, claudeOnly, { text: '같은 ap에 wifi로 연결되어있다는 것이 사실인데 그 전체를 바꿔서 문제를 흐리지 마', sessionId: gsid, sessionEngine: 'claude' },
+  { judge: reads({ continues: true, agent: 'remote-display-sync', fit: 0.85, level: 1 }) });
+assert.equal(r.agent.name, 'generalist', r.plan.reason.join(' | '));
+assert.equal(sent.at(-1).sessionId, gsid, 'the judge is told which chat to read');
+// different work in that chat picks its specialist
+r = await route(store, laya(), uid, claudeOnly, { text: '주문 테이블에 인덱스 추가해줘 (네트워크 채팅)', sessionId: gsid, sessionEngine: 'claude' },
+  { judge: reads({ continues: false, agent: 'database', fit: 0.9, level: 2 }) });
+assert.equal(r.agent.name, 'database', r.plan.reason.join(' | '));
+// a specialist's chat that continues keeps it, even when another agent scores higher for the words
+const dsid = 'sess-db';
+store.addRun({ userId: uid, sessionId: dsid, agentId: store.agent(uid, 'database').id, engine: 'claude', model: 'opus', effort: 'high', depth: 2 });
+r = await route(store, laya(), uid, claudeOnly, { text: '그 인덱스 배포 전에 다시 확인해봐', sessionId: dsid, sessionEngine: 'claude' },
+  { judge: reads({ continues: true, agent: 'devops', fit: 0.95, current_fit: 0.85, level: 1 }) });
+assert.equal(r.agent.name, 'database', r.plan.reason.join(' | '));
+// a new chat never continues; its project folder goes to the judge
+r = await route(store, laya(), uid, claudeOnly, { text: '주문 테이블에 인덱스 추가해줘 (새 채팅)', projectPath: '/workspace/shop' }, { judge: reads({ continues: true, agent: 'database', fit: 0.9, level: 2 }) });
+assert.equal(r.agent.name, 'database'); assert.equal(sent.at(-1).projectPath, '/workspace/shop');
+console.log('PASS a command that continues the chat\'s work keeps the chat\'s agent (the generalist\'s chat its generalist); other work picks its own');
+
 console.log('capability routing: all checks passed');

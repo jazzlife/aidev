@@ -667,7 +667,7 @@ export function useChatComposerState({
   const sendingRef = useRef(false);
   const [sending, setSending] = useState<string | null>(null);
   // …and while the user is still typing, the specialist judge already looks at the draft
-  usePrejudge(input, typeof selectedProject?.displayName === 'string' ? selectedProject.displayName : (typeof selectedProject?.name === 'string' ? selectedProject.name : null), selectedSession?.id || currentSessionId || null);
+  usePrejudge(input, selectedProject?.fullPath || selectedProject?.path || null, selectedSession?.id || currentSessionId || null);
 
   const handleSubmit = useCallback(
     async (
@@ -839,6 +839,7 @@ export function useChatComposerState({
         provider,
         isNewSession: !targetSessionId,
         projectHint: typeof selectedProject?.displayName === 'string' ? selectedProject.displayName : (typeof selectedProject?.name === 'string' ? selectedProject.name : null),
+        projectPath: resolvedProjectPath || null,
         userPinnedModel: false,
       });
       // a new send supersedes a hold; a command missing essential detail waits for one line (ClarifyPrompt)

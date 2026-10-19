@@ -476,13 +476,13 @@ export function createAidevApi(deps: AidevDeps) {
       if (rest === '/route/prejudge' && m === 'POST') {
         const b = await readJson(req);
         const engines = await engineAvailability(session);
-        return json(res, 202, prejudge(store, uid, { text: str(b.text, 'text', 32000), projectHint: optStr(b.projectHint, 400), sessionId: optStr(b.sessionId, 200) ?? null }, judgeFor(session, engines))), true;
+        return json(res, 202, prejudge(store, uid, { text: str(b.text, 'text', 32000), projectPath: optStr(b.projectPath, 1000) ?? null, sessionId: optStr(b.sessionId, 200) ?? null }, judgeFor(session, engines))), true;
       }
       if (rest === '/route' && m === 'POST') {
         const b = await readJson(req);
         const input: RouteInput = { text: str(b.text, 'text', 32000), sessionId: optStr(b.sessionId, 200), sessionEngine: ENGINES.includes(b.sessionEngine as Engine) ? b.sessionEngine as Engine : null,
           preferEngine: ENGINES.includes(b.preferEngine as Engine) ? b.preferEngine as Engine : null, targetId: b.targetId === undefined || b.targetId === null ? null : num(b.targetId, 'targetId'),
-          forceAgent: optStr(b.forceAgent, 41) ?? null, createProposal: b.createProposal === undefined || b.createProposal === null ? null : num(b.createProposal, 'createProposal'), projectHint: optStr(b.projectHint, 400), recentFiles: Array.isArray(b.recentFiles) ? (b.recentFiles as unknown[]).map(String).slice(0, 10) : null, model: optStr(b.model, 100), effort: optStr(b.effort, 20),
+          forceAgent: optStr(b.forceAgent, 41) ?? null, createProposal: b.createProposal === undefined || b.createProposal === null ? null : num(b.createProposal, 'createProposal'), projectHint: optStr(b.projectHint, 400), projectPath: optStr(b.projectPath, 1000) ?? null, recentFiles: Array.isArray(b.recentFiles) ? (b.recentFiles as unknown[]).map(String).slice(0, 10) : null, model: optStr(b.model, 100), effort: optStr(b.effort, 20),
           effortCap: b.effortCap && typeof b.effortCap === 'object' ? perEngine(b.effortCap, 20) as Partial<Record<Engine, string>> : null,
           modelFloor: b.modelFloor && typeof b.modelFloor === 'object' ? perEngine(b.modelFloor, 100) as Partial<Record<Engine, string>> : null };
         const engines = await engineAvailability(session);
