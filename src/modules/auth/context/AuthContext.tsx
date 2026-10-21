@@ -1,4 +1,4 @@
-import { createContext, useCallback, useContext, useEffect, useMemo, useState } from 'react';
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import type { ReactNode } from 'react';
 
@@ -251,7 +251,16 @@ export function AuthProvider({ children }: AuthProviderProps) {
     }
   }, [checkOnboardingStatus, clearSession, t, token]);
 
+  // The session is checked once, when the app opens. checkAuthStatus is rebuilt whenever the token is refreshed
+  // (every 4 h with the gateway's 8 h token) or the language changes; running it again set isLoading, which swaps the
+  // whole app for the loading screen and remounts it — the workbench and the phone app "closed and reopened".
+  const initialCheckStarted = useRef(false);
   useEffect(() => {
+    if (initialCheckStarted.current) {
+      return;
+    }
+    initialCheckStarted.current = true;
+
     if (IS_PLATFORM) {
       setUser({ username: 'platform-user' });
       setNeedsSetup(false);
