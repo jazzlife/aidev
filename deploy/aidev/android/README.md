@@ -40,12 +40,20 @@ deploy/aidev/runner/scripts/build-android.sh --abi arm64-v8a   # 빠른 시험 �
 
 Android는 **같은 키로 서명한 APK만** 설치된 앱 위로 업데이트합니다. 릴리스는 항상 같은 키로 서명해야 합니다.
 
+앱의 키는 2026-10-21에 만들었습니다 — 인증서 SHA-256 `54a11621e5226e51052b5e0b1a069b9e7f9f527b9b4465ac980bee2a63e0d6b6`
+(`CN=NadoVibe Runner, O=NadoVibe`, RSA 4096, alias `nadovibe`, 100년). 릴리스 키로 빌드했는데 APK의 인증서가 이 값이 아니면
+`build-android.sh`가 APK를 지우고 실패합니다(`release_cert` — 키 파일이 없으면 Gradle은 조용히 debug 키로 서명합니다).
+
+- 로컬: `~/.nadovibe/android-signing/`(`nadovibe-runner.jks`, `password`, `alias`, 권한 600)을 `build-android.sh`가 기본으로 씁니다.
+  `AIDEV_ANDROID_KEYSTORE`(+ `_PASSWORD`, `_KEY_ALIAS`)가 있으면 그것이 우선. 둘 다 없으면 debug 키로 서명합니다(시험용).
+- CI: GitHub secret `ANDROID_KEYSTORE_B64`·`ANDROID_KEYSTORE_PASSWORD`·`ANDROID_KEY_ALIAS`. `runner-v*` 태그 빌드는 secret이 없으면 멈춥니다.
+
+secret은 다시 읽을 수 없으므로 원본은 `~/.nadovibe/android-signing/`뿐입니다 — **잃어버리면 설치된 앱을 지우고 다시 깔아야** 합니다.
+따로 백업하고, 키 파일은 저장소에 넣지 마세요. secret을 다시 넣을 때:
+
 ```bash
-keytool -genkeypair -v -keystore nadovibe-runner.jks -alias nadovibe -keyalg RSA -keysize 4096 -validity 36500
-base64 -i nadovibe-runner.jks | gh secret set ANDROID_KEYSTORE_B64
-gh secret set ANDROID_KEYSTORE_PASSWORD     # 키 저장소 비밀번호
+d=~/.nadovibe/android-signing
+base64 -i $d/nadovibe-runner.jks | tr -d '\n' | gh secret set ANDROID_KEYSTORE_B64
+tr -d '\n' < $d/password | gh secret set ANDROID_KEYSTORE_PASSWORD
 gh secret set ANDROID_KEY_ALIAS --body nadovibe
 ```
-
-로컬 빌드는 `AIDEV_ANDROID_KEYSTORE=<jks 경로> AIDEV_ANDROID_KEYSTORE_PASSWORD=… build-android.sh`. 없으면 debug 키로 서명합니다(시험용).
-`runner-v*` 태그의 CI 릴리스는 이 secret이 없으면 멈춥니다. 키 파일은 저장소에 넣지 마세요(`.gitignore`).

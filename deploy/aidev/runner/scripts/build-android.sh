@@ -8,8 +8,17 @@
 #   scripts/build-android.sh --check                 # only check the tools
 # Needs: Rust (+ rustup targets, added here), the Android NDK (ANDROID_NDK_HOME, or the newest under
 # $ANDROID_HOME/ndk), the Android SDK (ANDROID_HOME) and JDK 17+ for Gradle. Release signing: AIDEV_ANDROID_KEYSTORE
-# (+ AIDEV_ANDROID_KEYSTORE_PASSWORD, AIDEV_ANDROID_KEY_ALIAS) — see deploy/aidev/android/app/build.gradle.kts.
+# (+ AIDEV_ANDROID_KEYSTORE_PASSWORD, AIDEV_ANDROID_KEY_ALIAS) — see deploy/aidev/android/app/build.gradle.kts —
+# or, when unset, ~/.nadovibe/android-signing (nadovibe-runner.jks, password, alias). A release-signed APK must carry
+# the app's certificate (release_cert below), or the build fails: Android refuses an update signed with another key.
 set -euo pipefail
+release_cert=54a11621e5226e51052b5e0b1a069b9e7f9f527b9b4465ac980bee2a63e0d6b6
+keys="$HOME/.nadovibe/android-signing"
+if [ -z "${AIDEV_ANDROID_KEYSTORE:-}" ] && [ -f "$keys/nadovibe-runner.jks" ]; then
+  export AIDEV_ANDROID_KEYSTORE="$keys/nadovibe-runner.jks"
+  AIDEV_ANDROID_KEYSTORE_PASSWORD=$(cat "$keys/password"); export AIDEV_ANDROID_KEYSTORE_PASSWORD
+  AIDEV_ANDROID_KEY_ALIAS=$(cat "$keys/alias" 2>/dev/null || echo nadovibe); export AIDEV_ANDROID_KEY_ALIAS
+fi
 here=$(cd "$(dirname "$0")" && pwd); src=$(cd "$here/.." && pwd); app=$(cd "$src/../android" && pwd)
 abis="arm64-v8a armeabi-v7a x86_64"; apk=1; check=0
 while [ $# -gt 0 ]; do
@@ -17,7 +26,7 @@ while [ $# -gt 0 ]; do
     --abi) abis=${2:?}; abis=${abis//,/ }; shift ;;
     --no-apk) apk=0 ;;
     --check) check=1 ;;
-    -h|--help) sed -n '2,12p' "$0"; exit 0 ;;
+    -h|--help) sed -n '2,13p' "$0"; exit 0 ;;
     *) echo "unknown option $1"; exit 2 ;;
   esac
   shift
@@ -68,6 +77,15 @@ find "$app/app/build/jni" -mindepth 1 -maxdepth 1 -type d | while read -r d; do 
 mkdir -p dist
 out="dist/aidev-runner-$ver-android.apk"
 cp "$app/app/build/outputs/apk/release/app-release.apk" "$out"
+if [ -n "${AIDEV_ANDROID_KEYSTORE:-}" ]; then
+  # Gradle signs with the debug key when the keystore file is missing — check the certificate the APK carries
+  apksigner="$(ls -d "$sdk"/build-tools/*/ | sort -V | tail -1)apksigner"
+  cert=$("$apksigner" verify --print-certs "$out" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
+  [ "$cert" = "$release_cert" ] || { rm -f "$out"; echo "APK가 앱의 릴리스 키로 서명되지 않았습니다: 인증서 ${cert:-없음}, 기대 $release_cert"; exit 1; }
+  echo "==> 릴리스 키로 서명됨 ($release_cert)"
+else
+  echo "경고: 릴리스 키 없음 — debug 키로 서명 (시험용, 설치된 앱 위로 업데이트되지 않음)"
+fi
 name=$(basename "$out")
 sums() { if command -v sha256sum >/dev/null; then sha256sum "$@"; else shasum -a 256 "$@"; fi; }
 (cd dist && { grep -v "  $name\$" SHA256SUMS 2>/dev/null || true; sums "$name"; } | sort -k2 > SHA256SUMS.new && mv SHA256SUMS.new SHA256SUMS)

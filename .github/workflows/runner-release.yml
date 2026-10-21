@@ -211,6 +211,7 @@ jobs:
           workspaces: ${{ env.RUNNER_DIR }}
           key: android
       # one key for every release: an APK signed with another one does not install over the app
+      # (build-android.sh fails unless the APK carries that key's certificate, release_cert)
       - name: Signing key
         env:
           KEYSTORE_B64: ${{ secrets.ANDROID_KEYSTORE_B64 }}
