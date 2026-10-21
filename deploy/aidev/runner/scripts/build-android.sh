@@ -80,8 +80,10 @@ cp "$app/app/build/outputs/apk/release/app-release.apk" "$out"
 if [ -n "${AIDEV_ANDROID_KEYSTORE:-}" ]; then
   # Gradle signs with the debug key when the keystore file is missing — check the certificate the APK carries
   apksigner="$(ls -d "$sdk"/build-tools/*/ | sort -V | tail -1)apksigner"
-  cert=$("$apksigner" verify --print-certs "$out" | sed -n 's/^Signer #1 certificate SHA-256 digest: //p')
-  [ "$cert" = "$release_cert" ] || { rm -f "$out"; echo "APK가 앱의 릴리스 키로 서명되지 않았습니다: 인증서 ${cert:-없음}, 기대 $release_cert"; exit 1; }
+  # every signer line ("Signer #1 certificate …" up to build-tools 36, "V2 Signer: certificate …" from 37) — one key only
+  certs=$("$apksigner" verify --print-certs "$out")
+  cert=$(echo "$certs" | sed -n 's/.*certificate SHA-256 digest: //p' | sort -u | tr '\n' ' ' | sed 's/ $//')
+  [ "$cert" = "$release_cert" ] || { rm -f "$out"; echo "$certs"; echo "APK가 앱의 릴리스 키로 서명되지 않았습니다: 인증서 ${cert:-없음}, 기대 $release_cert"; exit 1; }
   echo "==> 릴리스 키로 서명됨 ($release_cert)"
 else
   echo "경고: 릴리스 키 없음 — debug 키로 서명 (시험용, 설치된 앱 위로 업데이트되지 않음)"
