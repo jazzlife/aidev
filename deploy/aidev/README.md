@@ -222,3 +222,33 @@ is `control/laya/app.py` in the release volume, so it updates like everything el
 `aidev_models` volume (`laya-image.sh models`, once). The service is on `aidev-control-net` only; the
 gateway exposes it to signed-in users as `POST /api/aidev/route`, `POST /api/aidev/decide`,
 `GET /api/aidev/laya/health`. First-time: `release/laya-image.sh setup`.
+
+### Scoped API keys (a game or tool that only needs decisions)
+
+A session token lives 8 hours, which is useless for a program that must keep deciding — a game asking
+Laya what an NPC should do, a tool, a device. `api-keys.ts` adds a long-lived credential for exactly
+that, and for nothing else:
+
+- `aidk_` + 32 random bytes; shown once, stored only as a SHA-256 hash (lookup is by hash, so there is
+  no secret to compare). `Authorization: Bearer aidk_…` only — never `?token=`, which would land in logs.
+- **Scope `decide`** reaches `POST /api/aidev/decide` (raw typed questions), `POST /api/aidev/decide/<kind>`
+  and `GET /api/aidev/laya/health`. Nothing else: a key is resolved in its own branch of the gateway and
+  never becomes a `Session`, so the runtime proxy, the chat/shell sockets, the agent catalog and key
+  management itself are all out of reach (403). The allowlist in `allows()` is positive — a new route
+  stays unreachable with a key until it is named there.
+- Minting and revoking are administrator-only and need a real session: `POST /api/aidev/keys`
+  `{name, scope?, days?}` (omit `days` for a key that does not expire), `GET /api/aidev/keys`,
+  `DELETE /api/aidev/keys/:id`. Revoking takes effect on the next request; disabling the account or
+  letting the key expire does the same.
+- Per key: `API_KEY_RPM` requests/minute (default 600) → 429, and a 32 KB body cap on the key path
+  (a decision state is ~1 KB; Laya truncates at 1024 tokens anyway).
+
+On the AI-PC, without a browser:
+```bash
+MU="docker exec aidev-auth-gateway node /srv/app/current/control/gateway/dist/manage-users.js"
+$MU api-key turtlelab 'mission possible'       # or 'name:365' for a key that expires in a year
+$MU api-keys turtlelab                         # prefix, scope, state, uses, last use
+$MU revoke-key turtlelab 3
+```
+The token goes to stdout and the description to stderr, so `$MU api-key user name 2>/dev/null` gives
+the bare token for a script.

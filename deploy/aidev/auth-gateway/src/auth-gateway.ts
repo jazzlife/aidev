@@ -21,6 +21,7 @@ import { seedAgents } from './seed-agents.js';
 import { createPlatformShip } from './platform-ship.js';
 import { createGithubOauth } from './github-oauth.js';
 import { createAdmin, INITIAL_PASSWORD } from './admin.js';
+import { allows as apiKeyAllows, isApiKey, rateOk, MAX_BODY_BYTES } from './api-keys.js';
 
 const port = Number(process.env.PORT ?? 8080);
 // The release this process was started from; differs from /srv/app/current/RELEASE until restarted.
@@ -503,6 +504,22 @@ const server = http.createServer(async (req, res) => {
       if (user.must_change_password) return json(res, 403, { error: '처음 로그인하거나 비밀번호가 초기화된 계정입니다 — 새 비밀번호를 정하세요', code: 'password_change_required' });
       limits.delete(key);
       return await signIn(res, user);
+    }
+    // Scoped API keys (api-keys.ts): the long-lived credential for a program that only needs Laya
+    // decisions — a game, a tool, a device — where an 8-hour session cannot work. Resolved here and
+    // nowhere else, so a key never becomes a Session: the runtime proxy, the chat sockets and the
+    // rest of /api stay out of its reach. Header only — a key in a URL would end up in logs.
+    const presented = req.headers.authorization?.startsWith('Bearer ') ? req.headers.authorization.slice(7) : undefined;
+    if (presented && isApiKey(presented)) {
+      const key = store.useApiKey(presented);
+      if (!key) return json(res, 401, { error: 'Invalid, revoked or expired API key' }, { 'x-auth-error': 'invalid-key' });
+      if (!apiKeyAllows(key.scope, req.method ?? 'GET', url.pathname)) {
+        return json(res, 403, { error: `This API key is scoped to "${key.scope}": ${req.method} ${url.pathname} is not allowed` });
+      }
+      if (Number(req.headers['content-length'] ?? 0) > MAX_BODY_BYTES) return json(res, 413, { error: 'Body too large for an API key request' });
+      if (!rateOk(key.keyId)) return json(res, 429, { error: 'API key rate limit exceeded' }, { 'retry-after': '60' });
+      if (await aidev.handle(req, res, url, { user: key.user, sid: `key:${key.keyId}` })) return;
+      return json(res, 404, { error: 'Not found' });
     }
     const session = authenticate(req);
     if (url.pathname.startsWith('/api/auth/')) {

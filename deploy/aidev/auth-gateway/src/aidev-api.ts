@@ -14,6 +14,7 @@ import { runEngineWeights } from './engine-weights.js';
 import { createKnowledgeRefresher, decideProposal } from './knowledge-refresh.js';
 import { decideNext, type NextAction } from './escalation.js';
 import { decide, listKinds } from './laya-questions.js';
+import { API_KEY_SCOPES, type ApiKeyScope } from './api-keys.js';
 import fs from 'node:fs';
 import type { Preview } from './preview.js';
 import { launchCommand, validateLaunch, type DebugHub } from './debug-hub.js';
@@ -472,6 +473,29 @@ export function createAidevApi(deps: AidevDeps) {
 
       // ---- routing --------------------------------------------------------------------------
       if (rest === '/kinds' && m === 'GET') return json(res, 200, { kinds: listKinds() }), true;
+
+      // ---- scoped API keys ------------------------------------------------------------------
+      // Minted by an administrator for a program that only needs Laya decisions (see api-keys.ts).
+      // Only a real session reaches these routes: a key's own scope does not include them, so a key
+      // can never mint or revoke another key.
+      if (rest === '/keys' && m === 'GET') { requireAdmin(session); return json(res, 200, { keys: store.apiKeys(uid), scopes: API_KEY_SCOPES }), true; }
+      if (rest === '/keys' && m === 'POST') {
+        requireAdmin(session);
+        const b = await readJson(req);
+        const scope = (optStr(b.scope, 20) ?? 'decide') as ApiKeyScope;
+        const days = b.days == null ? null : Number(b.days);
+        try {
+          const key = store.createApiKey({ userId: uid, name: optStr(b.name, 60) ?? 'game', scope, days });
+          // the token is in this response and nowhere else — it is never stored, only its hash
+          return json(res, 200, { ...key, warning: 'Copy the token now; it is not shown again.' }), true;
+        } catch (error) { throw new HttpError(400, error instanceof Error ? error.message : 'Invalid key'); }
+      }
+      const keyMatch = rest.match(/^\/keys\/(\d+)$/);
+      if (keyMatch && m === 'DELETE') {
+        requireAdmin(session);
+        if (!store.revokeApiKey(uid, Number(keyMatch[1]))) throw new HttpError(404, 'Key not found');
+        return json(res, 200, { success: true }), true;
+      }
       // typing-time pre-judge: warm the specialist judge's cache while the user is still typing
       if (rest === '/route/prejudge' && m === 'POST') {
         const b = await readJson(req);

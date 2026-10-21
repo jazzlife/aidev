@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import Database from 'better-sqlite3';
 import { aidevMethods, migrateAidev, agentName, type AgentRow } from './store-aidev.js';
+import { API_KEY_SCOPES, hashApiKey, mintApiKey, type ApiKeyScope } from './api-keys.js';
 
 /** Gateway server and offline administration share this persistent identity store. */
 export function openStore(filename: string) {
@@ -18,6 +19,14 @@ export function openStore(filename: string) {
       active INTEGER NOT NULL DEFAULT 1);
     CREATE TABLE IF NOT EXISTS gateway_sessions (
       sid TEXT PRIMARY KEY, user_id INTEGER NOT NULL REFERENCES accounts(id), expires INTEGER NOT NULL);
+    -- Scoped API keys (api-keys.ts): a long-lived credential for a program that only needs Laya
+    -- decisions. Never a session; only the routes in allows() there are reachable with one.
+    CREATE TABLE IF NOT EXISTS api_keys (
+      id INTEGER PRIMARY KEY AUTOINCREMENT, user_id INTEGER NOT NULL REFERENCES accounts(id),
+      name TEXT NOT NULL, scope TEXT NOT NULL, prefix TEXT NOT NULL, hash TEXT UNIQUE NOT NULL,
+      created_at INTEGER NOT NULL, expires_at INTEGER, last_used_at INTEGER,
+      uses INTEGER NOT NULL DEFAULT 0, revoked_at INTEGER);
+    CREATE INDEX IF NOT EXISTS api_keys_user ON api_keys(user_id, revoked_at);
     -- Specialist agent catalog: one row = one Claude Agent SDK AgentDefinition.
     -- owner_id NULL = global (seeded or admin), otherwise private to that account.
     CREATE TABLE IF NOT EXISTS agents (
@@ -143,6 +152,43 @@ export function openStore(filename: string) {
     /** Pushes a live session's end out to `expires` (a session in use goes on). */
     extend(sid: string, expires: number) { db.prepare('UPDATE gateway_sessions SET expires=? WHERE sid=? AND expires>?').run(expires, sid, Date.now()); },
     revoke(sid: string) { db.prepare('DELETE FROM gateway_sessions WHERE sid=?').run(sid); },
+    // ---- scoped API keys ---------------------------------------------------
+    /** Mints a key for `userId`; the token is returned once and never stored. */
+    createApiKey(a: { userId: number; name: string; scope: ApiKeyScope; days?: number | null }) {
+      const name = a.name.trim();
+      if (name.length < 1 || name.length > 60) throw new Error('Key name must be 1-60 characters');
+      if (!API_KEY_SCOPES.includes(a.scope)) throw new Error(`Unknown scope (use: ${API_KEY_SCOPES.join(', ')})`);
+      if (a.days != null && (!Number.isFinite(a.days) || a.days < 1 || a.days > 3650)) throw new Error('days must be 1-3650, or omitted for a key that does not expire');
+      const { token, hash, prefix } = mintApiKey();
+      const now = Date.now();
+      const expiresAt = a.days == null ? null : now + a.days * 86400_000;
+      const id = Number(db.prepare('INSERT INTO api_keys(user_id,name,scope,prefix,hash,created_at,expires_at) VALUES(?,?,?,?,?,?,?)')
+        .run(a.userId, name, a.scope, prefix, hash, now, expiresAt).lastInsertRowid);
+      return { id, token, prefix, scope: a.scope, name, createdAt: now, expiresAt };
+    },
+    apiKeys(userId: number) {
+      return db.prepare(`SELECT id,name,scope,prefix,created_at,expires_at,last_used_at,uses,revoked_at
+        FROM api_keys WHERE user_id=? ORDER BY id DESC`).all(userId) as Array<{ id: number; name: string; scope: string; prefix: string;
+          created_at: number; expires_at: number | null; last_used_at: number | null; uses: number; revoked_at: number | null }>;
+    },
+    /** Revoking is immediate and permanent; the row stays so the key's history is still readable. */
+    revokeApiKey(userId: number, id: number) {
+      return db.prepare('UPDATE api_keys SET revoked_at=? WHERE id=? AND user_id=? AND revoked_at IS NULL').run(Date.now(), id, userId).changes > 0;
+    },
+    /** Resolves a presented token to its owner, or undefined when it is unknown, revoked, expired or the
+     *  account is disabled. `last_used_at` is written at most once a minute so a busy key is not a write per call. */
+    useApiKey(token: string) {
+      const now = Date.now();
+      const row = db.prepare(`SELECT k.id AS key_id, k.scope AS scope, k.user_id AS user_id, k.last_used_at AS last_used
+        FROM api_keys k JOIN accounts a ON a.id=k.user_id
+        WHERE k.hash=? AND k.revoked_at IS NULL AND (k.expires_at IS NULL OR k.expires_at>?) AND a.active=1`)
+        .get(hashApiKey(token), now) as { key_id: number; scope: string; user_id: number; last_used: number | null } | undefined;
+      if (!row) return undefined;
+      const user = db.prepare('SELECT * FROM accounts WHERE id=?').get(row.user_id) as Account;
+      if (row.last_used == null || now - row.last_used > 60_000) db.prepare('UPDATE api_keys SET last_used_at=?, uses=uses+1 WHERE id=?').run(now, row.key_id);
+      else db.prepare('UPDATE api_keys SET uses=uses+1 WHERE id=?').run(row.key_id);
+      return { keyId: row.key_id, scope: row.scope, user };
+    },
     async check(password: string, encoded: string) {
       const [salt, hash] = encoded.split(':');
       const derived = await derive(password, salt);
