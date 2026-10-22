@@ -203,9 +203,10 @@ export const api = {
     put(`/api/projects/${projectId}/rename`, { displayName }),
   restoreProject: (projectId: string) =>
     post(`/api/projects/${encodeURIComponent(projectId)}/restore`),
-  // `hardDelete` => server `?force=true` (remove DB row + Claude *.jsonl + sessions rows for path).
-  deleteProject: (projectId: string, hardDelete = false) =>
-    del(`/api/projects/${projectId}${query({ force: hardDelete })}`),
+  // `hardDelete` => server `?force=true` (remove DB row + Claude *.jsonl + sessions rows for path; the folder stays).
+  // `deleteFolder` (with `hardDelete`) => also delete the project folder from disk.
+  deleteProject: (projectId: string, hardDelete = false, deleteFolder = false) =>
+    del(`/api/projects/${projectId}${query({ force: hardDelete, deleteFolder: hardDelete && deleteFolder })}`),
   createProject: (projectData: unknown) => post('/api/projects/create-project', projectData),
   migrateLegacyProjectStars: (projectIds: string[]) =>
     post('/api/projects/migrate-legacy-stars', { projectIds }),

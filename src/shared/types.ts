@@ -1438,6 +1438,14 @@ export type PendingSidebarDeletion =
   | { kind: 'project'; project: Project; sessionCount: number }
   | { kind: 'session'; sessionId: string; sessionTitle: string; isArchived: boolean };
 
+/**
+ * What removing a project from the sidebar does, as chosen in its dialog:
+ * `archive` hides it (restorable from the archive view), `bookmark` drops it and
+ * its conversation records but leaves the folder and repository on disk, and
+ * `folder` also deletes the project folder.
+ */
+export type ProjectRemovalMode = 'archive' | 'bookmark' | 'folder';
+
 /** Whether a TaskMaster MCP server is present and configured for a project, or null while that status is still unknown. */
 export type MCPServerStatus = {
   hasMCPServer?: boolean;

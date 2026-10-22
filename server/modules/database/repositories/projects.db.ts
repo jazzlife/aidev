@@ -21,11 +21,15 @@ export const projectsDb = {
         const normalizedProjectPath = normalizeProjectPath(projectPath);
         const normalizedProjectName = normalizeProjectDisplayName(normalizedProjectPath, customProjectName);
         const attemptedId = randomUUID();
+        // An archived row stays archived: every session upsert passes through
+        // here, so un-archiving brought a hidden project back on its next
+        // transcript write. Only an explicit restore re-activates it. The
+        // no-op update exists so RETURNING still reports the archived row.
         const row = db.prepare(`
         INSERT INTO projects (project_id, project_path, custom_project_name, isArchived)
             VALUES (?, ?, ?, 0)
             ON CONFLICT(project_path) DO UPDATE SET
-            isArchived = 0
+            isArchived = 1
             WHERE projects.isArchived = 1
             RETURNING project_id, project_path, custom_project_name, isStarred, isArchived
         `).get(attemptedId, normalizedProjectPath, normalizedProjectName) as ProjectRepositoryRow | undefined;

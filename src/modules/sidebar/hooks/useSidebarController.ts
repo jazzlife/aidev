@@ -5,7 +5,7 @@ import { api } from '@/shared/api';
 import { subscribeToUserPreferences } from '@/shared/userSettings';
 import { takeGithubReturn } from '@/shared/utils';
 import { usePaletteOps } from '@/modules/command-palette';
-import type { ArchivedProjectListItem, ArchivedSessionListItem, ConversationProjectResult, ConversationSearchResults, LLMProvider, Project, ProjectSession, ProjectSortOrder, RecentConversationListItem, SearchProgress, ActiveSidebarRename, PendingSidebarDeletion, SessionTitleSearchResult, SessionWithProvider, SidebarSearchMode } from '@/shared/types';
+import type { ArchivedProjectListItem, ArchivedSessionListItem, ConversationProjectResult, ConversationSearchResults, LLMProvider, Project, ProjectSession, ProjectSortOrder, RecentConversationListItem, SearchProgress, ActiveSidebarRename, PendingSidebarDeletion, ProjectRemovalMode, SessionTitleSearchResult, SessionWithProvider, SidebarSearchMode } from '@/shared/types';
 import {
   filterProjects,
   getAllSessions,
@@ -872,7 +872,7 @@ export function useSidebarController({
     [getProjectSessions],
   );
 
-  const confirmDeleteProject = useCallback(async (deleteData = false) => {
+  const confirmDeleteProject = useCallback(async (mode: ProjectRemovalMode) => {
     if (pendingDeletion?.kind !== 'project') {
       return;
     }
@@ -885,10 +885,14 @@ export function useSidebarController({
     setDeletingProjects((prev) => new Set([...prev, project.projectId]));
 
     try {
-      const response = await api.deleteProject(project.projectId, deleteData);
+      const response = await api.deleteProject(project.projectId, mode !== 'archive', mode === 'folder');
 
       if (response.ok) {
         onProjectDelete?.(project.projectId);
+        // An archived project moves to the archive view, which would otherwise show it only after a refresh.
+        if (mode === 'archive') {
+          await fetchArchivedSessions();
+        }
       } else {
         const data = (await response.json()) as { error?: string | { message?: string } };
         const err = data.error;
@@ -906,7 +910,7 @@ export function useSidebarController({
         return next;
       });
     }
-  }, [pendingDeletion, onProjectDelete, t]);
+  }, [fetchArchivedSessions, pendingDeletion, onProjectDelete, t]);
 
   const handleProjectSelect = useCallback(
     (project: Project) => {

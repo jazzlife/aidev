@@ -21,7 +21,9 @@ const api = {
   ])),
   toggleProjectStar: vi.fn(() => json({ success: true, isStarred: true })),
   renameProject: vi.fn(() => json({ success: true })),
-  deleteProject: vi.fn((_id: string, _hard?: boolean) => json({ success: true })),
+  deleteProject: vi.fn((_id: string, _hard?: boolean, _folder?: boolean) => json({ success: true })),
+  archivedProjects: vi.fn(() => json({ success: true, data: { projects: [{ projectId: 'p7', displayName: 'gamma', fullPath: '/w/gamma', isArchived: true }] } })),
+  restoreProject: vi.fn((_id: string) => json({ success: true })),
   searchConversationsUrl: vi.fn((q: string) => `/search?q=${q}`),
   providers: { capabilities: vi.fn(() => json({ success: true, data: { providers: [
     { provider: 'claude', permissionModes: ['default'], defaultPermissionMode: 'default', supportsSessionForking: caps.forking, supportsMessageEditing: true },
@@ -115,7 +117,7 @@ describe('conversation sheet', () => {
 });
 
 describe('project sheet', () => {
-  it('stars a project (it moves first) and archives one, which stops being the current project', async () => {
+  it('stars a project (it moves first) and hides one, which stops being the current project', async () => {
     localStorage.setItem('m.project', JSON.stringify({ projectId: 'p2', displayName: 'beta', fullPath: '/w/beta' }));
     reloadCurrentForTests();
     at('/projects');
@@ -128,26 +130,49 @@ describe('project sheet', () => {
     expect(screen.getAllByText(/^(alpha|beta)$/).map((n) => n.textContent)).toEqual(['beta', 'alpha']);
     fireEvent.click(screen.getAllByLabelText('프로젝트 메뉴')[0]!);
     await settle();
-    fireEvent.click(screen.getByText('제거'));
-    expect(screen.getByTestId('project-actions').textContent).toContain('폴더와 파일은 그대로 둡니다');
-    fireEvent.click(screen.getByText('목록에서 제거'));
+    fireEvent.click(screen.getByText('숨기기'));
     await settle();
-    expect(api.deleteProject).toHaveBeenCalledWith('p2', false);
+    expect(api.deleteProject).toHaveBeenCalledWith('p2', false, false);
     expect(screen.queryByText('beta')).toBeNull();
     expect(readCurrentProject()).toBeNull();
   });
 
-  it('removing with the history asks once more', async () => {
+  it('deleting asks whether to drop the bookmark only, which leaves the folder', async () => {
     at('/projects');
     await settle();
     fireEvent.click(screen.getAllByLabelText('프로젝트 메뉴')[0]!);
     await settle();
-    fireEvent.click(screen.getByText('제거'));
-    fireEvent.click(screen.getAllByText('대화 기록까지 삭제')[0]!);
-    expect(api.deleteProject).not.toHaveBeenCalled();
-    fireEvent.click(screen.getByRole('button', { name: '대화 기록까지 삭제' }));
+    fireEvent.click(screen.getByText('삭제'));
+    expect(screen.getByTestId('project-actions').textContent).toContain('폴더와 저장소는 그대로 둡니다');
+    fireEvent.click(screen.getByText('북마크만 삭제'));
     await settle();
-    expect(api.deleteProject).toHaveBeenCalledWith('p1', true);
+    expect(api.deleteProject).toHaveBeenCalledWith('p1', true, false);
+  });
+
+  it('deleting the folder too asks once more and names the folder', async () => {
+    at('/projects');
+    await settle();
+    fireEvent.click(screen.getAllByLabelText('프로젝트 메뉴')[0]!);
+    await settle();
+    fireEvent.click(screen.getByText('삭제'));
+    fireEvent.click(screen.getByText('폴더까지 삭제'));
+    expect(api.deleteProject).not.toHaveBeenCalled();
+    expect(screen.getByTestId('project-actions').textContent).toContain('/w/alpha');
+    fireEvent.click(screen.getByRole('button', { name: '폴더 삭제' }));
+    await settle();
+    expect(api.deleteProject).toHaveBeenCalledWith('p1', true, true);
+  });
+
+  it('lists hidden projects and restores one', async () => {
+    at('/projects');
+    await settle();
+    fireEvent.click(screen.getByLabelText('숨긴 프로젝트'));
+    await settle();
+    expect(screen.getByText('gamma')).toBeTruthy();
+    fireEvent.click(screen.getByRole('button', { name: '복원' }));
+    await settle();
+    expect(api.restoreProject).toHaveBeenCalledWith('p7');
+    expect(screen.queryByText('gamma')).toBeNull();
   });
 });
 

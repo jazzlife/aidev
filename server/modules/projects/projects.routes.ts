@@ -275,13 +275,16 @@ router.post(
 /**
  * - `force` not set / false: archive project in DB only (`isArchived` = 1; hidden from active list).
  * - `force=true`: remove DB row, delete session rows for that path, remove all `*.jsonl` under the Claude project dir.
+ *   The project folder stays on disk.
+ * - `force=true&deleteFolder=true`: also delete the project folder (refused for anything but the project's own folder).
  */
 router.delete(
   '/:projectId',
   asyncHandler(async (req, res) => {
     const projectId = typeof req.params.projectId === 'string' ? req.params.projectId : '';
     const force = req.query.force === 'true';
-    await deleteOrArchiveProject(projectId, force);
+    const deleteFolder = force && req.query.deleteFolder === 'true';
+    await deleteOrArchiveProject(projectId, force, deleteFolder);
     res.json({ success: true });
   }),
 );

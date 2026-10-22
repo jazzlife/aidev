@@ -53,6 +53,17 @@ test('session archive queries hide archived rows from active project views', asy
   });
 });
 
+test('a session written into an archived project leaves the project archived', async () => {
+  await withIsolatedDatabase(() => {
+    sessionsDb.createSession('session-before', 'claude', '/workspace/hidden-project', 'Before');
+    projectsDb.updateProjectIsArchived('/workspace/hidden-project', true);
+
+    sessionsDb.createSession('session-after', 'claude', '/workspace/hidden-project', 'After');
+
+    assert.equal(projectsDb.getProjectPath('/workspace/hidden-project')?.isArchived, 1);
+  });
+});
+
 test('createSession reactivates archived rows when the session becomes active again', async () => {
   await withIsolatedDatabase(() => {
     sessionsDb.createSession('session-reused', 'claude', '/workspace/demo-project', 'First Name');

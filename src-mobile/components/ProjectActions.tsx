@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Archive, Pencil, Star, Trash2 } from 'lucide-react';
+import { Archive, BookmarkMinus, FolderX, Pencil, Star, Trash2 } from 'lucide-react';
 
 import { api } from '@/modules/chat-core';
 import { BottomSheet } from '@m/components/BottomSheet';
@@ -13,12 +13,12 @@ export type ProjectTarget = { projectId: string; displayName: string; fullPath: 
 /** What changed: the project as it is now, or that it left the list. */
 export type ProjectChange = { kind: 'updated'; project: ProjectTarget } | { kind: 'removed'; projectId: string };
 
-type View = 'menu' | 'rename' | 'remove' | 'purge';
+type View = 'menu' | 'rename' | 'remove' | 'folder';
 
 /**
- * The one project sheet (C-12.3): star, rename (empty = the folder's name), and remove — from the list only (archived;
- * adding the same folder again brings it back) or with its conversation history. Neither deletes the folder: the
- * server's `force` removes the project row, its session rows and Claude's transcript files only.
+ * The one project sheet (C-12.3): star, rename (empty = the folder's name), hide (archived; the projects tab's 보관함
+ * restores it), and delete — the bookmark only (the server's `force`: the project row, its session rows and Claude's
+ * transcript files; the folder and its repository stay) or the folder too (`deleteFolder`, behind a second step).
  */
 export function ProjectActions({ target, onClose, onChange }: { target: ProjectTarget | null; onClose: () => void; onChange: (change: ProjectChange) => void }) {
   // which part of the sheet is shown
@@ -58,8 +58,8 @@ export function ProjectActions({ target, onClose, onChange }: { target: ProjectT
     const folder = target.fullPath.replace(/[\\/]+$/, '').split(/[\\/]/).pop() || target.fullPath;
     return { kind: 'updated', project: { ...target, displayName: typed || folder } };
   });
-  const remove = (purge: boolean) => run(async () => {
-    const response = await api.deleteProject(id, purge);
+  const remove = (mode: 'archive' | 'bookmark' | 'folder') => run(async () => {
+    const response = await api.deleteProject(id, mode !== 'archive', mode === 'folder');
     if (!response.ok) throw new Error(await failureText(response));
     return { kind: 'removed', projectId: id };
   });
@@ -71,7 +71,10 @@ export function ProjectActions({ target, onClose, onChange }: { target: ProjectT
           <div className="space-y-1">
             <button type="button" className={sheetButton} disabled={busy} onClick={() => { void star(); }}><Star size={18} fill={target.isStarred ? 'currentColor' : 'none'} /> {target.isStarred ? '즐겨찾기 해제' : '즐겨찾기'}</button>
             <button type="button" className={sheetButton} disabled={busy} onClick={() => setView('rename')}><Pencil size={18} /> 이름 변경</button>
-            <button type="button" className={`${sheetButton} text-danger`} disabled={busy} onClick={() => setView('remove')}><Trash2 size={18} /> 제거</button>
+            <button type="button" className={sheetButton} disabled={busy} onClick={() => { void remove('archive'); }}>
+              <Archive size={18} /><span className="flex-1">숨기기<span className="block text-[12px] text-muted">보관함에서 언제든 복원합니다</span></span>
+            </button>
+            <button type="button" className={`${sheetButton} text-danger`} disabled={busy} onClick={() => setView('remove')}><Trash2 size={18} /> 삭제</button>
           </div>
         ) : null}
         {view === 'rename' ? (
@@ -85,20 +88,21 @@ export function ProjectActions({ target, onClose, onChange }: { target: ProjectT
         ) : null}
         {view === 'remove' ? (
           <div className="space-y-2">
-            <p className="text-[13px] text-muted">폴더와 파일은 그대로 둡니다.</p>
-            <button type="button" className={sheetButton} disabled={busy} onClick={() => { void remove(false); }}>
-              <Archive size={18} /><span className="flex-1">목록에서 제거<span className="block text-[12px] text-muted">같은 폴더를 다시 추가하면 돌아옵니다</span></span>
+            <p className="text-[13px] text-muted">무엇을 지울까요?</p>
+            <button type="button" className={sheetButton} disabled={busy} onClick={() => { void remove('bookmark'); }}>
+              <BookmarkMinus size={18} /><span className="flex-1">북마크만 삭제<span className="block text-[12px] text-muted">목록과 대화 기록만 지웁니다. 폴더와 저장소는 그대로 둡니다</span></span>
             </button>
-            <button type="button" className={`${sheetButton} text-danger`} disabled={busy} onClick={() => setView('purge')}>
-              <Trash2 size={18} /><span className="flex-1">대화 기록까지 삭제<span className="block text-[12px] text-muted">되돌릴 수 없습니다</span></span>
+            <button type="button" className={`${sheetButton} text-danger`} disabled={busy} onClick={() => setView('folder')}>
+              <FolderX size={18} /><span className="flex-1">폴더까지 삭제<span className="block text-[12px] text-muted">디스크에서 폴더를 지웁니다. 되돌릴 수 없습니다</span></span>
             </button>
             <button type="button" className="w-full h-11 rounded-xl border border-line text-[15px]" onClick={() => setView('menu')}>취소</button>
           </div>
         ) : null}
-        {view === 'purge' ? (
+        {view === 'folder' ? (
           <div className="space-y-3">
-            <p className="text-[14px] text-muted">이 프로젝트의 대화 기록을 모두 영구 삭제합니다. 폴더는 지우지 않습니다.</p>
-            <button type="button" className="w-full h-12 rounded-xl bg-danger text-white text-[15px] font-medium disabled:opacity-50" disabled={busy} onClick={() => { void remove(true); }}>{busy ? '삭제 중…' : '대화 기록까지 삭제'}</button>
+            <p className="text-[14px] text-muted">이 폴더와 그 안의 모든 파일을 디스크에서 영구 삭제합니다. 커밋·푸시하지 않은 변경은 되돌릴 수 없습니다. GitHub 같은 원격 저장소는 지우지 않습니다.</p>
+            <p className="break-all font-mono text-[12px] text-muted">{target.fullPath}</p>
+            <button type="button" className="w-full h-12 rounded-xl bg-danger text-white text-[15px] font-medium disabled:opacity-50" disabled={busy} onClick={() => { void remove('folder'); }}>{busy ? '삭제 중…' : '폴더 삭제'}</button>
             <button type="button" className="w-full h-12 rounded-xl border border-line text-[15px]" onClick={() => setView('remove')}>취소</button>
           </div>
         ) : null}

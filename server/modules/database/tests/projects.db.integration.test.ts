@@ -53,7 +53,8 @@ test('projectsDb.createProjectPath returns reactivated_archived for archived dup
     assert.equal(reused.outcome, 'reactivated_archived');
     assert.ok(reused.project);
     assert.equal(reused.project?.project_id, initial.project?.project_id);
-    assert.equal(reused.project?.isArchived, 0);
+    // Reuse keeps it archived; only an explicit restore brings it back.
+    assert.equal(reused.project?.isArchived, 1);
   });
 });
 

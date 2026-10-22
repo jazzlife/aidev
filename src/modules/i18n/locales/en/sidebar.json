@@ -159,6 +159,15 @@
     "deleteSessionPermanently": "Delete permanently",
     "deleteAllData": "Delete all data permanently",
     "allConversationsDeleted": "The project will be removed from the sidebar. Your files, memories, and session data will be preserved.",
-    "cannotUndo": "You can re-add the project later."
+    "cannotUndo": "You can re-add the project later.",
+    "archiveProjectHint": "Hidden from the list; restore it from the archive any time.",
+    "removeBookmark": "Remove the bookmark only",
+    "removeBookmarkHint": "Removes the project and its conversation history from the app. The folder and its repository stay on disk.",
+    "deleteFolder": "Delete the folder too",
+    "deleteFolderHint": "Also deletes the project folder from disk.",
+    "deleteFolderTitle": "Delete the project folder?",
+    "deleteFolderWarning": "The folder and every file in it are deleted from disk. Changes not committed and pushed cannot be recovered. A remote repository such as GitHub is not deleted.",
+    "deleteFolderConfirm": "Delete the folder",
+    "back": "Back"
   }
 }
