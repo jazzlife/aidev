@@ -246,9 +246,11 @@ that, and for nothing else:
 On the AI-PC, without a browser:
 ```bash
 MU="docker exec aidev-auth-gateway node /srv/app/current/control/gateway/dist/manage-users.js"
-$MU api-key turtlelab 'mission possible'       # or 'name:365' for a key that expires in a year
-$MU api-keys turtlelab                         # prefix, scope, state, uses, last use
-$MU revoke-key turtlelab 3
+$MU list                                       # the account USERNAME and its role ("User not found"
+                                               # below means you used the /admin login, not an account)
+$MU api-key USERNAME 'mission possible'        # or 'mission possible:365' to expire in a year
+$MU api-keys USERNAME                          # prefix, scope, state, uses, last use
+$MU revoke-key USERNAME 3
 ```
 The token goes to stdout and the description to stderr, so `$MU api-key user name 2>/dev/null` gives
 the bare token for a script.
