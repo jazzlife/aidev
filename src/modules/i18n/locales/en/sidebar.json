@@ -53,7 +53,8 @@
     "attentionRequiredIndicator": "Session needs attention",
     "processingSessionIndicator": "Session is processing",
     "runningSessionsIndicator_one": "{{count}} session processing",
-    "runningSessionsIndicator_other": "{{count}} sessions processing"
+    "runningSessionsIndicator_other": "{{count}} sessions processing",
+    "archiveProject": "Archive project (restore it from the archive)"
   },
   "navigation": {
     "chat": "Chat",

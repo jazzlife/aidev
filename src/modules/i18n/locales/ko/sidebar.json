@@ -52,7 +52,8 @@
     "openCommandPalette": "명령 팔레트 열기",
     "attentionRequiredIndicator": "세션에 주의가 필요합니다",
     "processingSessionIndicator": "응답 생성 중인 세션",
-    "runningSessionsIndicator": "진행 중인 세션 {{count}}개"
+    "runningSessionsIndicator": "진행 중인 세션 {{count}}개",
+    "archiveProject": "프로젝트 보관 (보관함에서 언제든 복원)"
   },
   "navigation": {
     "chat": "채팅",

@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef } from 'react';
-import { Check, ChevronDown, ChevronRight, Edit3, Loader2, Star, Trash2, X } from 'lucide-react';
+import { Archive, Check, ChevronDown, ChevronRight, Edit3, Loader2, Star, Trash2, X } from 'lucide-react';
 import type { TFunction } from 'i18next';
 
 import { useWorkspacesRoot } from '@/shared/hooks/useWorkspacesRoot';
@@ -37,7 +37,8 @@ type SidebarProjectItemProps = {
   onStartEditingProject: (project: Project) => void;
   onCancelEditingProject: () => void;
   onSaveProjectName: (projectId: string, nextName: string) => void;
-  onDeleteProject: (project: Project) => void;
+  /** `archiveNow` archives the project at once; without it the archive / bookmark / folder dialog opens. */
+  onDeleteProject: (project: Project, options?: { archiveNow?: boolean }) => void;
   onSessionSelect: (session: SessionWithProvider, projectName: string) => void;
   /** `archiveNow` hides (archives) the session at once; without it the archive-or-delete dialog opens. */
   onDeleteSession: (sessionId: string, sessionTitle: string, options?: { archiveNow?: boolean }) => void;
@@ -285,6 +286,17 @@ function SidebarProjectItem({
                 ) : (
                   <>
                     <button
+                      className="flex h-8 w-8 items-center justify-center rounded-lg border border-border bg-muted/50 active:scale-90"
+                      onClick={(event) => {
+                        event.stopPropagation();
+                        onDeleteProject(project, { archiveNow: true });
+                      }}
+                      aria-label={t('tooltips.archiveProject', 'Archive project (restore it from the archive)')}
+                    >
+                      <Archive className="h-4 w-4 text-muted-foreground" />
+                    </button>
+
+                    <button
                       className="flex h-8 w-8 items-center justify-center rounded-lg border border-red-200 bg-red-500/10 active:scale-90 dark:border-red-800 dark:bg-red-900/30"
                       onClick={(event) => {
                         event.stopPropagation();
@@ -436,6 +448,16 @@ function SidebarProjectItem({
                   title={t('tooltips.renameProject')}
                 >
                   <Edit3 className="h-3 w-3" />
+                </div>
+                <div
+                  className="touch:opacity-100 flex h-6 w-6 cursor-pointer items-center justify-center rounded opacity-0 transition-all duration-200 hover:bg-accent group-hover:opacity-100"
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    onDeleteProject(project, { archiveNow: true });
+                  }}
+                  title={t('tooltips.archiveProject', 'Archive project (restore it from the archive)')}
+                >
+                  <Archive className="h-3 w-3" />
                 </div>
                 <div
                   className="touch:opacity-100 flex h-6 w-6 cursor-pointer items-center justify-center rounded opacity-0 transition-all duration-200 hover:bg-red-50 group-hover:opacity-100 dark:hover:bg-red-900/20"

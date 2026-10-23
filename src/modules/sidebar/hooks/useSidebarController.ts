@@ -861,25 +861,8 @@ export function useSidebarController({
     await removeSession(sessionId, hardDelete);
   }, [pendingDeletion, removeSession]);
 
-  const requestProjectDelete = useCallback(
-    (project: Project) => {
-      setPendingDeletion({
-        kind: 'project',
-        project,
-        sessionCount: getProjectSessions(project).length,
-      });
-    },
-    [getProjectSessions],
-  );
-
-  const confirmDeleteProject = useCallback(async (mode: ProjectRemovalMode) => {
-    if (pendingDeletion?.kind !== 'project') {
-      return;
-    }
-
-    const { project } = pendingDeletion;
-
-    setPendingDeletion(null);
+  // Archive, drop the bookmark, or delete the folder of one project, then drop it from the list.
+  const removeProject = useCallback(async (project: Project, mode: ProjectRemovalMode) => {
     // Track in-flight deletes by projectId so the UI can disable actions
     // even if the project object is rebuilt while the request is flying.
     setDeletingProjects((prev) => new Set([...prev, project.projectId]));
@@ -910,7 +893,32 @@ export function useSidebarController({
         return next;
       });
     }
-  }, [fetchArchivedSessions, pendingDeletion, onProjectDelete, t]);
+  }, [fetchArchivedSessions, onProjectDelete, t]);
+
+  const requestProjectDelete = useCallback(
+    (project: Project, options: { archiveNow?: boolean } = {}) => {
+      // Archiving is reversible (the archive view restores it), so it needs no dialog — as for a session.
+      if (options.archiveNow) {
+        void removeProject(project, 'archive');
+        return;
+      }
+      setPendingDeletion({
+        kind: 'project',
+        project,
+        sessionCount: getProjectSessions(project).length,
+      });
+    },
+    [getProjectSessions, removeProject],
+  );
+
+  const confirmDeleteProject = useCallback(async (mode: ProjectRemovalMode) => {
+    if (pendingDeletion?.kind !== 'project') {
+      return;
+    }
+    const { project } = pendingDeletion;
+    setPendingDeletion(null);
+    await removeProject(project, mode);
+  }, [pendingDeletion, removeProject]);
 
   const handleProjectSelect = useCallback(
     (project: Project) => {

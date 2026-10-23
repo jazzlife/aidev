@@ -1373,7 +1373,8 @@ export type SidebarProjectListProps = SessionRowActions & {
   onStartEditingProject: (project: Project) => void;
   onCancelEditingProject: () => void;
   onSaveProjectName: (projectId: string, nextName: string) => void;
-  onDeleteProject: (project: Project) => void;
+  /** `archiveNow` archives the project at once; without it the archive / bookmark / folder dialog opens. */
+  onDeleteProject: (project: Project, options?: { archiveNow?: boolean }) => void;
   onSessionSelect: (session: SessionWithProvider, projectName: string) => void;
   onNewSession: (project: Project) => void;
   t: TFunction;
