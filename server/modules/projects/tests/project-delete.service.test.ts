@@ -1,13 +1,13 @@
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
 import { mkdir, mkdtemp, rm } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { after, beforeEach, test } from 'node:test';
 
 // The workspace root is read once at module load, so it is set before the
-// modules under test are imported.
-const workspaceRoot = await mkdtemp(path.join(tmpdir(), 'project-delete-'));
+// modules under test are imported. Not under the OS temp directory: on Linux
+// that is /tmp, a system directory the folder deletion rightly refuses.
+const workspaceRoot = await mkdtemp(path.join(process.cwd(), '.project-delete-test-'));
 process.env.WORKSPACES_ROOT = workspaceRoot;
 process.env.PROJECTS_HOME = workspaceRoot;
 
