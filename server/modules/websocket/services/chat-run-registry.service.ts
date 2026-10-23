@@ -67,6 +67,15 @@ const MAX_BUFFERED_EVENTS_PER_RUN = 5000;
 const runs = new Map<string, ChatRun>();
 
 /**
+ * The sockets that have each session open (they sent `chat.subscribe` for it),
+ * by app session id. A run used to stream only to the socket that sent its
+ * turn, so a conversation open on the phone stayed silent while the desktop
+ * asked and got answered in it; every new run now starts with these sockets
+ * in its audience too. Closed sockets are dropped when they disconnect.
+ */
+const sessionWatchers = new Map<string, Set<RealtimeClientConnection>>();
+
+/**
  * Told the moment a run flips to `completed`, with the app session id. The
  * scheduled-messages dispatcher listens so the next queued turn for that
  * session starts right away instead of on its 30-second poll.
@@ -240,8 +249,37 @@ export const chatRunRegistry = {
       decorateOutboundEvent: (message) => decorateAndRecordEvent(run, message),
     });
 
+    // Every other client with this conversation open sees the run live as well.
+    for (const watcher of sessionWatchers.get(input.appSessionId) ?? []) {
+      run.writer.updateWebSocket(watcher);
+    }
+
     runs.set(input.appSessionId, run);
     return run;
+  },
+
+  /**
+   * Records that a socket has a session open, so runs started later — from
+   * another device, or a scheduled message — stream to it too. Called for
+   * every `chat.subscribe`, running or not.
+   */
+  watchSession(appSessionId: string, connection: RealtimeClientConnection): void {
+    let watchers = sessionWatchers.get(appSessionId);
+    if (!watchers) {
+      watchers = new Set();
+      sessionWatchers.set(appSessionId, watchers);
+    }
+    watchers.add(connection);
+  },
+
+  /** Forgets a socket that disconnected, for every session it was watching. */
+  forgetConnection(connection: RealtimeClientConnection): void {
+    for (const [appSessionId, watchers] of sessionWatchers) {
+      watchers.delete(connection);
+      if (watchers.size === 0) {
+        sessionWatchers.delete(appSessionId);
+      }
+    }
   },
 
   getRun(appSessionId: string): ChatRun | undefined {
@@ -355,5 +393,6 @@ export const chatRunRegistry = {
    */
   clearAll(): void {
     runs.clear();
+    sessionWatchers.clear();
   },
 };

@@ -396,3 +396,30 @@ test('an interrupting send ends the old run with a superseded complete; a plain 
     assert.equal('superseded' in (completes[1] ?? {}), false);
   });
 });
+
+test('a run started from one device streams to another device that has the session open', async () => {
+  await withIsolatedDatabase(() => {
+    sessionsDb.createAppSession('app-run-watch', 'claude', '/workspace/demo');
+    const desktop = new FakeConnection();
+    const phone = new FakeConnection();
+    const gone = new FakeConnection();
+    chatRunRegistry.watchSession('app-run-watch', phone);
+    chatRunRegistry.watchSession('app-run-watch', gone);
+    chatRunRegistry.forgetConnection(gone);
+
+    const run = chatRunRegistry.startRun({
+      appSessionId: 'app-run-watch',
+      provider: 'claude',
+      providerSessionId: null,
+      connection: desktop,
+      userId: 'user-1',
+    });
+    assert.ok(run);
+    run.writer.send({ kind: 'stream_delta', provider: 'claude', sessionId: 'provider-id', content: 'hi' });
+
+    assert.equal(desktop.frames.length, 1);
+    assert.equal(phone.frames.length, 1);
+    assert.equal(phone.frames[0]?.sessionId, 'app-run-watch');
+    assert.equal(gone.frames.length, 0);
+  });
+});

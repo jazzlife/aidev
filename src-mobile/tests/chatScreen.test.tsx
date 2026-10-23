@@ -11,8 +11,9 @@ const json = (body: unknown, status = 200) => Promise.resolve(new Response(JSON.
 const hoisted = vi.hoisted(() => ({
   messages: new Map<string, NormalizedMessage[]>(),
   listeners: new Set<() => void>(),
-  realtime: null as null | { onSessionProcessing: (id: string) => void; onSessionIdle: (id: string) => void; setPendingPermissionRequests: (fn: (prev: PendingPermissionRequest[]) => PendingPermissionRequest[]) => void },
+  realtime: null as null | { onSessionProcessing: (id: string) => void; onSessionIdle: (id: string) => void; onWebSocketReconnect?: () => void; setPendingPermissionRequests: (fn: (prev: PendingPermissionRequest[]) => PendingPermissionRequest[]) => void },
   sendMessage: null as unknown as ReturnType<typeof vi.fn>,
+  refreshedLatest: [] as string[],
 }));
 const store = {
   set(id: string, list: NormalizedMessage[]) { hoisted.messages.set(id, list); for (const l of hoisted.listeners) l(); },
@@ -59,7 +60,7 @@ vi.mock('@/modules/chat-core', async () => {
       const [, tick] = useReducer((n: number) => n + 1, 0);
       useEffect(() => { hoisted.listeners.add(tick); return () => { hoisted.listeners.delete(tick); }; }, []);
       return useMemo(() => ({
-        setActiveSession: () => undefined, fetchFromServer: async () => undefined, refreshLatestFromServer: async () => undefined, fetchMore: async () => undefined,
+        setActiveSession: () => undefined, fetchFromServer: async () => undefined, refreshLatestFromServer: async (id: string) => { hoisted.refreshedLatest.push(id); }, fetchMore: async () => undefined,
         getMessages: (id: string) => hoisted.messages.get(id) ?? [],
         getSessionSlot: () => ({ status: 'idle', hasMore: false }),
         appendRealtime: (id: string, message: NormalizedMessage) => { hoisted.messages.set(id, [...(hoisted.messages.get(id) ?? []), message]); for (const l of hoisted.listeners) l(); },
@@ -114,12 +115,22 @@ beforeEach(() => {
   localStorage.clear();
   resetChatDrafts();
   hoisted.messages.clear();
+  hoisted.refreshedLatest = [];
   // jsdom has no object URLs
   let made = 0;
   Object.assign(URL, { createObjectURL: vi.fn(() => `blob:${(made += 1)}`), revokeObjectURL: vi.fn() });
 });
 
 describe('chat screen', () => {
+  it('reads the conversation again after the socket reconnects, so turns another device ran meanwhile show up', async () => {
+    open();
+    await settle();
+    hoisted.refreshedLatest = [];
+    act(() => hoisted.realtime!.onWebSocketReconnect?.());
+    await settle();
+    expect(hoisted.refreshedLatest).toEqual(['s1']);
+  });
+
   it('a send typed while the agent answers joins the session queue the server sends from, with the conversation mode', async () => {
     open();
     await settle();

@@ -206,12 +206,15 @@ export function ChatScreen() {
   }, [sessionId, ws, isConnected, sendMessage]);
 
   const requestLatestMessages = useCallback(async (id: string) => { await sessionStore.refreshLatestFromServer(id); }, [sessionStore]);
+  // Back after the socket dropped (the phone slept): turns that ran meanwhile — from the desktop, say — finished
+  // without this socket, so the conversation is read again; the subscribe effect below re-attaches a run still going.
+  const onWebSocketReconnect = useCallback(() => { if (sessionId) void requestLatestMessages(sessionId); }, [requestLatestMessages, sessionId]);
   const onSessionProcessing = useCallback((id?: string | null) => { if (!id || id === sessionId) setBusy(true); }, [sessionId]);
   const onSessionIdle = useCallback((id?: string | null) => { if (!id || id === sessionId) setBusy(false); }, [sessionId]);
   useChatRealtimeHandlers({
     isActive: true, subscribe, provider, selectedSession, currentSessionId: sessionId, setTokenBudget,
     pendingPermissionRequests, setPendingPermissionRequests, streamTimerRef, accumulatedStreamRef, lastSeqRef, statusCheckSentAtRef,
-    onSessionProcessing, onSessionIdle, requestLatestMessages, sessionStore,
+    onSessionProcessing, onSessionIdle, onWebSocketReconnect, requestLatestMessages, sessionStore,
   });
   // Agent creation flow (§3.7): the architect's draft is read from the newest assistant message.
   const sendRef = useRef<(text: string) => void>(() => undefined);

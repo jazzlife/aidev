@@ -522,6 +522,10 @@ function handleChatSubscribe(
     const run = chatRunRegistry.getRun(sessionId);
     const isProcessing = chatRunRegistry.isProcessing(sessionId);
 
+    // Runs started later for this session — from another device or a
+    // schedule — stream to this socket too, not only to the one that sent them.
+    chatRunRegistry.watchSession(sessionId, ws);
+
     // Future live events for this run should land on the socket that asked —
     // this is what makes mid-stream page refreshes work for all providers.
     if (isProcessing) {
@@ -738,5 +742,6 @@ export function handleChatConnection(
   ws.on('close', () => {
     console.log('[INFO] Chat client disconnected');
     connectedClients.delete(ws);
+    chatRunRegistry.forgetConnection(ws);
   });
 }
