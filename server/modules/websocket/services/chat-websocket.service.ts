@@ -579,11 +579,13 @@ function handlePermissionResponse(data: AnyRecord, dependencies: ChatWebSocketDe
  * - `chat.abort`               { sessionId }
  * - `chat.subscribe`           { sessions: [{ sessionId, lastSeq? }] }
  * - `chat.permission-response` { requestId, allow, updatedInput?, message?, rememberEntry? }
+ * - `ping`                     { id } — answered with `pong` { id } at once
+ * Any frame may carry `frameId`; a second frame with the same id is dropped.
  *
  * Outbound protocol (server to client): every frame is `kind`-based — either
  * a provider `NormalizedMessage` (with `seq`) or a gateway event
  * (`chat_subscribed`, `session_upserted`, `loading_progress`,
- * `protocol_error`).
+ * `protocol_error`, `pong`).
  */
 /**
  * Runs a turn for a session with no client attached.
@@ -644,6 +646,34 @@ export async function runDetachedChatTurn(
   );
 }
 
+/**
+ * Frame ids (`frameId`) already received, oldest first. The client sends a
+ * command again after a reconnect when it could not confirm delivery, so one
+ * that did arrive just before the connection died comes twice; the second copy
+ * is dropped here instead of starting the same turn again. Bounded: a resend
+ * only ever follows within seconds of the original.
+ */
+const receivedFrameIds = new Set<string>();
+const RECEIVED_FRAME_ID_LIMIT = 2000;
+
+/** Records a frame id; false when it was already received. */
+function acceptFrameId(frameId: unknown): boolean {
+  if (typeof frameId !== 'string' || frameId.length === 0) {
+    return true;
+  }
+  if (receivedFrameIds.has(frameId)) {
+    return false;
+  }
+  receivedFrameIds.add(frameId);
+  if (receivedFrameIds.size > RECEIVED_FRAME_ID_LIMIT) {
+    const oldest = receivedFrameIds.values().next().value;
+    if (oldest !== undefined) {
+      receivedFrameIds.delete(oldest);
+    }
+  }
+  return true;
+}
+
 export function handleChatConnection(
   ws: WebSocket,
   request: AuthenticatedWebSocketRequest,
@@ -663,6 +693,20 @@ export function handleChatConnection(
 
       const data = parsed as AnyRecord;
       const messageType = typeof data.type === 'string' ? data.type : '';
+
+      // Browsers cannot answer protocol pings themselves or see a dead
+      // connection, so the client asks with its own ping and treats a missing
+      // pong as a dead socket. Frames arrive in order, so the pong also
+      // confirms every frame the client sent before this ping.
+      if (messageType === 'ping') {
+        sendJson(ws, { kind: 'pong', id: data.id ?? null });
+        return;
+      }
+
+      if (!acceptFrameId(data.frameId)) {
+        console.log(`[INFO] Chat WebSocket dropped a resent ${messageType} (already received)`);
+        return;
+      }
 
       switch (messageType) {
         case 'chat.edit-send':

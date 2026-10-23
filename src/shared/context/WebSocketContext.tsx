@@ -8,6 +8,20 @@ import type { ServerEvent } from '@/shared/types';
 
 type ServerEventListener = (event: ServerEvent) => void;
 
+/** A command waiting to reach the server: sent again after a reconnect until a pong confirms it arrived. */
+type OutgoingFrame = { frameId: string; payload: Record<string, unknown> };
+
+/**
+ * How long a ping may go unanswered before the socket counts as dead. A phone
+ * waking from the background often holds a socket the server closed long ago
+ * (half-open): `readyState` still says OPEN and `send` writes into nothing
+ * until the OS gives up a minute or more later. Generous for a slow mobile
+ * path; a false alarm only reconnects and resends, which the server dedupes.
+ */
+const PONG_TIMEOUT_MS = 8000;
+
+const newFrameId = () => `${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}`;
+
 type WebSocketContextType = {
   ws: WebSocket | null;
   sendMessage: (message: unknown) => void;
@@ -56,7 +70,79 @@ const useWebSocketProviderState = (): WebSocketContextType => {
   const listenersRef = useRef(new Set<ServerEventListener>());
   const [isConnected, setIsConnected] = useState(false);
   const reconnectTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // Commands sent while no socket was open, in order; written as soon as one opens.
+  const outboxRef = useRef<OutgoingFrame[]>([]);
+  // Commands written to the current socket whose arrival no pong has confirmed yet, each with the ping sent after it.
+  const unconfirmedRef = useRef<Array<OutgoingFrame & { pingId: number }>>([]);
+  const pingSeqRef = useRef(0);
+  const pongTimeoutRef = useRef<NodeJS.Timeout | null>(null);
+  // The latest `connect`, for the timers and listeners that outlive a render.
+  const connectRef = useRef<() => void>(() => undefined);
   const { isLoading: isAuthLoading, token, user } = useAuth();
+
+  const clearPongTimeout = useCallback(() => {
+    if (pongTimeoutRef.current) {
+      clearTimeout(pongTimeoutRef.current);
+      pongTimeoutRef.current = null;
+    }
+  }, []);
+
+  // A socket that went away may have taken unconfirmed commands with it: they go back to the front of the outbox.
+  const requeueUnconfirmed = useCallback(() => {
+    clearPongTimeout();
+    if (unconfirmedRef.current.length > 0) {
+      outboxRef.current = [...unconfirmedRef.current.map(({ frameId, payload }) => ({ frameId, payload })), ...outboxRef.current];
+      unconfirmedRef.current = [];
+    }
+  }, [clearPongTimeout]);
+
+  // Gives up on a socket that stopped answering and opens a new one at once.
+  const dropDeadSocket = useCallback((socket: WebSocket) => {
+    if (wsRef.current !== socket) return;
+    console.warn('WebSocket stopped answering; reconnecting');
+    socket.onopen = null;
+    socket.onmessage = null;
+    socket.onclose = null;
+    socket.onerror = null;
+    try { socket.close(); } catch { /* already gone */ }
+    wsRef.current = null;
+    setIsConnected(false);
+    requeueUnconfirmed();
+    if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+    if (!unmountedRef.current) connectRef.current();
+  }, [requeueUnconfirmed]);
+
+  // Asks the server for a pong; none within PONG_TIMEOUT_MS means the socket is dead. Returns the ping's id.
+  const probe = useCallback((socket: WebSocket) => {
+    const pingId = ++pingSeqRef.current;
+    socket.send(JSON.stringify({ type: 'ping', id: pingId }));
+    if (!pongTimeoutRef.current) {
+      pongTimeoutRef.current = setTimeout(() => {
+        pongTimeoutRef.current = null;
+        dropDeadSocket(socket);
+      }, PONG_TIMEOUT_MS);
+    }
+    return pingId;
+  }, [dropDeadSocket]);
+
+  // Frames arrive in order, so the pong for a ping confirms every command written before it.
+  const handlePong = useCallback((socket: WebSocket, pongId: unknown) => {
+    if (typeof pongId !== 'number') return;
+    unconfirmedRef.current = unconfirmedRef.current.filter((frame) => frame.pingId > pongId);
+    clearPongTimeout();
+    if (pongId < pingSeqRef.current) {
+      // later pings are still out: keep watching for their pongs
+      pongTimeoutRef.current = setTimeout(() => {
+        pongTimeoutRef.current = null;
+        dropDeadSocket(socket);
+      }, PONG_TIMEOUT_MS);
+    }
+  }, [clearPongTimeout, dropDeadSocket]);
+
+  const writeFrame = useCallback((socket: WebSocket, frame: OutgoingFrame) => {
+    socket.send(JSON.stringify({ ...frame.payload, frameId: frame.frameId }));
+    unconfirmedRef.current.push({ ...frame, pingId: probe(socket) });
+  }, [probe]);
 
   const dispatch = useCallback((event: ServerEvent) => {
     for (const listener of listenersRef.current) {
@@ -86,6 +172,10 @@ const useWebSocketProviderState = (): WebSocketContextType => {
 
       websocket.onopen = () => {
         setIsConnected(true);
+        // Commands sent while disconnected (or lost with the last socket) go first, in order.
+        const queued = outboxRef.current;
+        outboxRef.current = [];
+        for (const frame of queued) writeFrame(websocket, frame);
         if (hasConnectedRef.current) {
           // This is a reconnect — signal so components can catch up on missed messages
           dispatch({ kind: 'websocket_reconnected', timestamp: Date.now() });
@@ -96,6 +186,11 @@ const useWebSocketProviderState = (): WebSocketContextType => {
       websocket.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data) as ServerEvent;
+          const frame = data as { kind?: unknown; id?: unknown };
+          if (frame.kind === 'pong') {
+            handlePong(websocket, frame.id);
+            return;
+          }
           dispatch(data);
         } catch (error) {
           console.error('Error parsing WebSocket message:', error);
@@ -108,6 +203,7 @@ const useWebSocketProviderState = (): WebSocketContextType => {
         }
         setIsConnected(false);
         wsRef.current = null;
+        requeueUnconfirmed();
 
         // Attempt to reconnect after 3 seconds
         reconnectTimeoutRef.current = setTimeout(() => {
@@ -123,7 +219,11 @@ const useWebSocketProviderState = (): WebSocketContextType => {
     } catch (error) {
       console.error('Error creating WebSocket connection:', error);
     }
-  }, [dispatch, isAuthLoading, token, user]); // reconnect with current authentication state
+  }, [dispatch, handlePong, isAuthLoading, requeueUnconfirmed, token, user, writeFrame]); // reconnect with current authentication state
+
+  useEffect(() => {
+    connectRef.current = connect;
+  }, [connect]);
 
   // Declared after `connect` so the effect body does not reference it before
   // initialization. `connect` is memoized on [dispatch, isAuthLoading, token,
@@ -155,17 +255,53 @@ const useWebSocketProviderState = (): WebSocketContextType => {
         activeSocket.close();
         wsRef.current = null;
       }
+      requeueUnconfirmed();
     };
-  }, [connect, isAuthLoading, user]); // reconnect after authentication or token refresh
+  }, [connect, isAuthLoading, requeueUnconfirmed, user]); // reconnect after authentication or token refresh
 
+  // Coming back to the app (or back online) is when a socket is most likely dead without knowing it: check at once
+  // rather than when the next command vanishes into it, and reconnect now instead of on a timer the OS held back.
+  useEffect(() => {
+    const check = () => {
+      if (document.visibilityState === 'hidden' || unmountedRef.current) return;
+      const socket = wsRef.current;
+      if (socket?.readyState === WebSocket.OPEN) {
+        probe(socket);
+      } else if (!socket) {
+        if (reconnectTimeoutRef.current) clearTimeout(reconnectTimeoutRef.current);
+        connectRef.current();
+      }
+    };
+    document.addEventListener('visibilitychange', check);
+    window.addEventListener('online', check);
+    window.addEventListener('pageshow', check);
+    return () => {
+      document.removeEventListener('visibilitychange', check);
+      window.removeEventListener('online', check);
+      window.removeEventListener('pageshow', check);
+    };
+  }, [probe]);
+
+  useEffect(() => () => clearPongTimeout(), [clearPongTimeout]);
+
+  // Commands are never dropped: without an open socket they wait in the outbox, and once written they are sent again
+  // after a reconnect until a pong confirms them. `chat.subscribe` is the exception — every screen subscribes again
+  // on each (re)connect, so a queued copy would only replay twice.
   const sendMessage = useCallback((message: unknown) => {
     const socket = wsRef.current;
-    if (socket && socket.readyState === WebSocket.OPEN) {
-      socket.send(JSON.stringify(message));
-    } else {
-      console.warn('WebSocket not connected');
+    const payload = message as Record<string, unknown>;
+    if (payload?.type === 'chat.subscribe') {
+      if (socket && socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(message));
+      return;
     }
-  }, []);
+    const frame: OutgoingFrame = { frameId: newFrameId(), payload };
+    if (socket && socket.readyState === WebSocket.OPEN) {
+      writeFrame(socket, frame);
+    } else {
+      console.warn('WebSocket not connected; the command is sent when it reconnects');
+      outboxRef.current.push(frame);
+    }
+  }, [writeFrame]);
 
   const subscribe = useCallback((listener: ServerEventListener) => {
     listenersRef.current.add(listener);

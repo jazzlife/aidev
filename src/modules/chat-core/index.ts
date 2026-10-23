@@ -9,6 +9,7 @@
  *   chat.send {sessionId, content, options}          → stream_delta*, stream_end, tool_use/tool_result, complete
  *   chat.abort {sessionId}
  *   chat.permission-response {requestId, allow, ...}  ← permission_request
+ *   ping {id}                                         → pong {id} (delivery check; commands carry a frameId)
  */
 // Deliberate deep imports: the chat barrel also exports ChatInterface, whose import graph is the
 // whole workbench (CodeMirror, mermaid, katex …). Pointing at the implementation files keeps the
