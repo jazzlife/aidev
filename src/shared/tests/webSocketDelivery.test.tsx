@@ -107,3 +107,18 @@ test('coming back to the app checks the socket and replaces a dead one', () => {
   act(() => { vi.advanceTimersByTime(8000); });
   assert.notEqual(latest(), first);
 });
+
+test('a server that does not know ping still confirms with its error, so the socket is kept', () => {
+  const first = latest();
+  act(() => first.open());
+  act(() => send({ type: 'chat.send', sessionId: 's1', content: 'hi' }));
+  act(() => first.receive({ kind: 'protocol_error', code: 'UNKNOWN_MESSAGE_TYPE', error: 'Unknown message type "ping".', sessionId: null }));
+
+  act(() => { vi.advanceTimersByTime(8000); });
+  assert.equal(latest(), first);
+
+  act(() => { first.readyState = 3; first.onclose?.(); });
+  act(() => { vi.advanceTimersByTime(3000); });
+  act(() => latest().open());
+  assert.deepEqual(latest().commands(), []);
+});

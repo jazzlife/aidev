@@ -75,6 +75,8 @@ const useWebSocketProviderState = (): WebSocketContextType => {
   // Commands written to the current socket whose arrival no pong has confirmed yet, each with the ping sent after it.
   const unconfirmedRef = useRef<Array<OutgoingFrame & { pingId: number }>>([]);
   const pingSeqRef = useRef(0);
+  // Ids of the pings the current socket has not answered yet, oldest first (the server answers in order).
+  const outstandingPingsRef = useRef<number[]>([]);
   const pongTimeoutRef = useRef<NodeJS.Timeout | null>(null);
   // The latest `connect`, for the timers and listeners that outlive a render.
   const connectRef = useRef<() => void>(() => undefined);
@@ -90,6 +92,7 @@ const useWebSocketProviderState = (): WebSocketContextType => {
   // A socket that went away may have taken unconfirmed commands with it: they go back to the front of the outbox.
   const requeueUnconfirmed = useCallback(() => {
     clearPongTimeout();
+    outstandingPingsRef.current = [];
     if (unconfirmedRef.current.length > 0) {
       outboxRef.current = [...unconfirmedRef.current.map(({ frameId, payload }) => ({ frameId, payload })), ...outboxRef.current];
       unconfirmedRef.current = [];
@@ -116,6 +119,7 @@ const useWebSocketProviderState = (): WebSocketContextType => {
   const probe = useCallback((socket: WebSocket) => {
     const pingId = ++pingSeqRef.current;
     socket.send(JSON.stringify({ type: 'ping', id: pingId }));
+    outstandingPingsRef.current.push(pingId);
     if (!pongTimeoutRef.current) {
       pongTimeoutRef.current = setTimeout(() => {
         pongTimeoutRef.current = null;
@@ -128,6 +132,7 @@ const useWebSocketProviderState = (): WebSocketContextType => {
   // Frames arrive in order, so the pong for a ping confirms every command written before it.
   const handlePong = useCallback((socket: WebSocket, pongId: unknown) => {
     if (typeof pongId !== 'number') return;
+    outstandingPingsRef.current = outstandingPingsRef.current.filter((id) => id > pongId);
     unconfirmedRef.current = unconfirmedRef.current.filter((frame) => frame.pingId > pongId);
     clearPongTimeout();
     if (pongId < pingSeqRef.current) {
@@ -186,9 +191,16 @@ const useWebSocketProviderState = (): WebSocketContextType => {
       websocket.onmessage = (event) => {
         try {
           const data = JSON.parse(event.data) as ServerEvent;
-          const frame = data as { kind?: unknown; id?: unknown };
+          const frame = data as { kind?: unknown; id?: unknown; code?: unknown; error?: unknown };
           if (frame.kind === 'pong') {
             handlePong(websocket, frame.id);
+            return;
+          }
+          // A runtime still on the previous release (a deploy defers restarting one with live sessions) does not know
+          // `ping` and says so — which equally proves the ping, and every frame before it, arrived. Without this the
+          // socket counted as dead every 8 s and reconnected in a loop until that runtime restarted.
+          if (frame.kind === 'protocol_error' && frame.code === 'UNKNOWN_MESSAGE_TYPE' && typeof frame.error === 'string' && frame.error.includes('"ping"')) {
+            handlePong(websocket, outstandingPingsRef.current[0]);
             return;
           }
           dispatch(data);
