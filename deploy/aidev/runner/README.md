@@ -62,7 +62,7 @@ aidev-runner service start|stop|restart|status
 - 설정: `~/.aidev/runner.toml`(Unix 0600) — gateway, token, target_id, name, allowed_roots, screen_consent, inherit_env.
   `AIDEV_RUNNER_HOME`으로 위치 변경.
 - 연결: Bearer 토큰, 접속 즉시 `runner.hello{capabilities}`(OS·아키텍처·호스트·셸·도구 버전·adb/sdb 기기·allowed_roots·화면 동의),
-  15초 heartbeat, 45초 무응답이면 재연결(1초→60초 지수 backoff + jitter). 핸드셰이크 401/403 또는 close 4401이면
+  15초 heartbeat, 45초 무응답이면 재연결, 연결 수립(DNS·TCP·TLS·업그레이드)은 30초 제한(0.19.1)(1초→60초 지수 backoff + jitter). 핸드셰이크 401/403 또는 close 4401이면
   토큰 폐기로 보고 종료(exit 3) → 다시 페어링.
 - 프로토콜: JSON-RPC 2.0 텍스트 프레임 + 바이너리 스트림 `[streamId u32 BE][payload]`. 현재 메서드:
   `runner.ping`, `runner.capabilities`, `fs.resolve{path}`(allowed_roots 검사),

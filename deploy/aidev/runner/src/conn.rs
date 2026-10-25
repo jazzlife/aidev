@@ -19,6 +19,8 @@ use tokio_tungstenite::tungstenite::{client::IntoClientRequest, http::HeaderValu
 
 const HEARTBEAT: Duration = Duration::from_secs(15);
 const SILENCE_LIMIT: Duration = Duration::from_secs(45);
+/// DNS + TCP + TLS + the WebSocket upgrade: a handshake stalled on a lossy route (right after boot) must not wait forever
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 const BACKOFF_MAX: Duration = Duration::from_secs(60);
 const REALTIME_RETRY: Duration = Duration::from_secs(600);
 
@@ -178,7 +180,9 @@ async fn session(cfg: &Config, hub: &ExecHub) -> Result<(), SessionError> {
     let auth = HeaderValue::from_str(&format!("Bearer {}", cfg.token)).map_err(|e| SessionError::Other(e.to_string()))?;
     request.headers_mut().insert("authorization", auth);
     request.headers_mut().insert("x-aidev-runner", HeaderValue::from_static(env!("CARGO_PKG_VERSION")));
-    let (ws, _) = match tokio_tungstenite::connect_async(request).await {
+    let connect = tokio::time::timeout(CONNECT_TIMEOUT, tokio_tungstenite::connect_async(request)).await
+        .unwrap_or_else(|_| Err(WsError::Io(std::io::Error::new(std::io::ErrorKind::TimedOut, "연결 시간 초과(30초)"))));
+    let (ws, _) = match connect {
         Ok(ok) => ok,
         // the CDN-free address failing (also with 401/403 from a proxy in front of it) never unpairs: the gateway address next
         Err(e) if realtime.is_some() => {
