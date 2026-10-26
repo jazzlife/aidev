@@ -219,6 +219,17 @@ function matchesToolPermission(entry, toolName, input) {
   return false;
 }
 
+// The mode a turn that started in plan works in once its plan is approved: the user's own (2026-10-26, maptest01).
+// The CLI drops to `default` on its own, so with skip-permissions on every command after Build waited 55 s for a
+// prompt nobody expected and came back "Permission request timed out" — the agent could not run anything.
+export function modeAfterPlan(toolsSettings) {
+  const mode = toolsSettings?.defaultPermissionMode;
+  if (toolsSettings?.skipPermissions || mode === 'bypassPermissions') {
+    return 'bypassPermissions';
+  }
+  return mode === 'acceptEdits' || mode === 'auto' ? mode : 'default';
+}
+
 /**
  * Nado AI Dev routing (IMPLEMENTATION-PLAN §3.5): the specialist agent chosen for this turn
  * is applied as an *append* to the Claude Code preset system prompt (not `sdkOptions.agent`,
@@ -1106,6 +1117,18 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
           }
           if (Array.isArray(sdkOptions.disallowedTools)) {
             sdkOptions.disallowedTools = sdkOptions.disallowedTools.filter(entry => entry !== decision.rememberEntry);
+          }
+        }
+        if (toolName === 'ExitPlanMode' && sdkOptions.permissionMode === 'plan') {
+          sdkOptions.permissionMode = modeAfterPlan(options.toolsSettings);
+          // bypass is this callback's own answer from here on (the check at its top): the CLI was started in plan,
+          // without allowDangerouslySkipPermissions, so it cannot be switched into bypassPermissions itself
+          if (sdkOptions.permissionMode !== 'bypassPermissions') {
+            return {
+              behavior: 'allow',
+              updatedInput: decision.updatedInput ?? input,
+              updatedPermissions: [{ type: 'setMode', mode: sdkOptions.permissionMode, destination: 'session' }],
+            };
           }
         }
         return { behavior: 'allow', updatedInput: decision.updatedInput ?? input };
