@@ -9,7 +9,9 @@
 
 use serde::Deserialize;
 use sha2::{Digest, Sha256};
+use serde_json::{json, Value};
 use std::cmp::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering as AtomicOrdering};
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
@@ -289,6 +291,45 @@ pub fn install(v: &Version, step: &dyn Fn(&str)) -> Result<String, String> {
         return Err(format!("교체하지 못했습니다: {e}"));
     }
     Ok(format!("{} 설치 완료 ({}) — 이 PC의 러너가 새 버전으로 다시 시작합니다 (이전 파일: {})", v.version, target.display(), prev_path(&target).display()))
+}
+
+/// A `runner.update` in progress.
+static REMOTE: AtomicBool = AtomicBool::new(false);
+
+/// `runner.update {version}` from the workbench (0.21.0; "latest" or x.y.z): answered at once, then — off the
+/// connection — that version is fetched from the gateway and installed as `update` does (this PC's runners stop, the
+/// file is replaced, they start again from it). The new version's hello is the success; a failure while still
+/// connected is told with `runner.update.failed {version, error}`.
+pub fn remote(cfg: &crate::config::Config, version: &str) -> Result<Value, String> {
+    if platforms().is_empty() {
+        return Err("Android에서는 NadoVibe 러너 앱을 업데이트하세요".into());
+    }
+    if version != "latest" && version.split('.').filter(|p| p.parse::<u64>().is_ok()).count() != 3 {
+        return Err(format!("{version}: 버전은 latest 또는 x.y.z"));
+    }
+    if REMOTE.swap(true, AtomicOrdering::SeqCst) {
+        return Err("업데이트가 이미 진행 중입니다".into());
+    }
+    let (gateway, wanted) = (cfg.gateway.clone(), version.to_string());
+    std::thread::spawn(move || {
+        let result = versions(&gateway).and_then(|list| {
+            let v = if wanted == "latest" { list.first() } else { list.iter().find(|v| v.version == wanted) };
+            let v = v.ok_or_else(|| format!("{wanted}: 받을 수 있는 버전이 아닙니다"))?;
+            if v.version == CURRENT && !emulated() {
+                return Err(format!("이미 {CURRENT}입니다"));
+            }
+            install(v, &|s| eprintln!("원격 업데이트: {s}"))
+        });
+        match result {
+            Ok(done) => eprintln!("원격 업데이트: {done}"),
+            Err(e) => {
+                eprintln!("원격 업데이트 실패: {e}");
+                crate::conn::notify("runner.update.failed", json!({ "version": wanted, "error": e }));
+            }
+        }
+        REMOTE.store(false, AtomicOrdering::SeqCst);
+    });
+    Ok(json!({ "from": CURRENT, "to": version }))
 }
 
 #[cfg(test)]

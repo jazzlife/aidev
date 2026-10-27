@@ -156,6 +156,9 @@ pub async fn collect(cfg: &crate::config::Config) -> Value {
     // says the PC cannot show its screen instead of trying)
     if cfg!(target_os = "android") {
         features.retain(|f| !["screen", "video", "input", "windows", "displays", "acks", "vp9", "p2p", "p2p-input"].contains(f));
+    } else {
+        // the workbench updates the runner (runner.update); Android's runner comes with the app
+        features.push("update");
     }
     json!({
         "runner": env!("CARGO_PKG_VERSION"),

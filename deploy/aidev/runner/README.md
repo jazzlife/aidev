@@ -45,6 +45,11 @@ aidev-runner service start|stop|restart|status
   교체: 받고 SHA-256·`--version` 확인(macOS는 이 Mac의 고정 서명) → `~/.aidev/updating`으로 이 PC의 러너가 모두 연결·명령을 멈춤(정지와 같음)
   → 연결 잠금이 풀리면 파일 교체(이전 파일 `aidev-runner.prev`) → 각 러너가 자기 인자 그대로 새 파일로 다시 시작(Unix exec: 같은 pid라
   서비스 관계·sudo·세션 유지, Windows: 같은 토큰으로 새 프로세스). 그 사이 대기 중이라 표시를 놓친 러너도 실행 파일이 바뀐 것을 보고 다시 시작.
+- 작업대에서 업데이트(0.21.0): "원격 대상"의 **러너 업데이트**(PC별)·**모두 업데이트** → 게이트웨이 `POST /targets/:id/update {version}`.
+  0.21.0+는 RPC `runner.update{version: latest|x.y.z}`에 바로 답하고 연결과 따로 위의 교체를 함(실패는 연결 중이면
+  `runner.update.failed{version, error}` 알림). 그보다 오래된 러너(0.14.0+)에는 게이트웨이가 원격 실행으로 그 러너의 `update <버전>`을
+  러너와 떨어뜨려 띄움(sh `nohup … &` → `~/.aidev/update.log`, PowerShell `Start-Process` → `~/.aidev/update.{out,err}.log`) —
+  러너를 멈춰도 업데이트는 계속됨. 끝은 러너가 새 버전으로 hello할 때(5분 안에 안 오면 작업대에 실패로 표시). Android는 앱 업데이트.
 - 원격 화면 지연(0.15.0, F-18): `screen.start{acks}`면 프레임에 번호(flags bit 1 + u32)를 붙이고, 게이트웨이의 `screen.ack{seq}`
   (화면에 그려진 가장 새 프레임)로 흐름을 맞춤 — 가장 오래된 미표시 프레임이 최근 최단 왕복 + 150ms를 넘으면 새 프레임을 만들지
   않고 비트레이트를 낮춤(6초 조용하면 다시 올림). 1초마다 `screen.stats`. `aidev-runner bench [--window id] [--frames N] [--max-width W]`:

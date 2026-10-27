@@ -30,11 +30,31 @@ type Target = {
     runner?: string; os?: string; arch?: string; hostname?: string; shell?: string;
     tools?: Record<string, string>; devices?: { adb?: string[]; sdb?: string[] }; screen?: boolean; features?: string[];
   } | null;
+  /** a runner update asked from here, until the runner reconnects with the new version (or it failed) */
+  update?: { from: string; to: string; at: number; error: string | null } | null;
 };
 
 // full: agents never wait (the default) — every command is still recorded, pushed to the user and stoppable
 const POLICY_LABEL: Record<Target['policy'], string> = { full: '전체 권한 (확인 없음)', auto: '위험 명령만 확인', ask: '변경 명령은 확인', deny: '실행 금지' };
 const POLL_MS = 5000;
+
+/** a > b for runner versions ("0.20.0" > "0.9.3"). */
+function versionAbove(a: string, b: string) {
+  const x = a.split('.').map(Number); const y = b.split('.').map(Number);
+  for (let i = 0; i < Math.max(x.length, y.length); i++) { const d = (x[i] || 0) - (y[i] || 0); if (d) return d > 0; }
+  return false;
+}
+
+/** The newest runner this release serves to PCs (the Android app updates itself). */
+function servedVersion(files: RunnerFile[]) {
+  return files.filter((f) => f.platform !== 'android' && f.version).map((f) => f.version!).reduce<string | null>((best, v) => (!best || versionAbove(v, best) ? v : best), null);
+}
+
+/** The owner's online PC runs an older runner than the one served, and no update is under way. */
+function updatable(target: Target, latest: string | null) {
+  const runner = target.capabilities?.runner;
+  return Boolean(!target.shared_by && target.online && latest && runner && target.capabilities?.os !== 'android' && versionAbove(latest, runner) && (!target.update || target.update.error));
+}
 
 function ago(at: number | null) {
   if (!at) return '없음';
@@ -122,7 +142,7 @@ function SharesSection({ targetId, setNote }: { targetId: number; setNote: (note
 }
 
 /** One target row: status, platform, and (expanded) capabilities and actions (managing it: the owner only). */
-function TargetRow({ target, files, reload, setNote }: { target: Target; files: RunnerFile[]; reload: () => void; setNote: (note: string | null) => void }) {
+function TargetRow({ target, files, latest, reload, setNote }: { target: Target; files: RunnerFile[]; latest: string | null; reload: () => void; setNote: (note: string | null) => void }) {
   // expanded: details (tools, devices, roots) and actions are shown on demand to keep the list short
   const [open, setOpen] = useState(false);
   // confirmDelete: deleting disconnects the runner immediately, so it takes a second click
@@ -149,6 +169,8 @@ function TargetRow({ target, files, reload, setNote }: { target: Target; files: 
         <span className="font-medium">{target.name}</span>
         {shared ? <span title={`${target.shared_by} 님이 공유한 PC — 설정은 소유자만 바꿀 수 있습니다`} className="inline-flex items-center gap-0.5 rounded bg-sky-500/15 px-1 text-[10px] text-sky-700 dark:text-sky-300"><Users size={9} /> {target.shared_by} 공유</span> : null}
         {target.is_default ? <span title="기본 PC — 명령이 PC를 지정하지 않으면 여기서 실행" className="inline-flex items-center gap-0.5 rounded bg-amber-500/15 px-1 text-[10px] text-amber-700 dark:text-amber-400"><Star size={9} className="fill-current" /> 기본</span> : null}
+        {target.update && !target.update.error ? <span className="inline-flex items-center gap-0.5 rounded bg-sky-500/15 px-1 text-[10px] text-sky-700 dark:text-sky-300"><RefreshCw size={9} className="animate-spin" /> {target.update.to === 'latest' ? '업데이트 중' : `${target.update.to}로 업데이트 중`}</span>
+          : updatable(target, latest) ? <span title={`러너 ${caps?.runner} → ${latest}`} className="rounded bg-amber-500/15 px-1 text-[10px] text-amber-700 dark:text-amber-400">업데이트 가능</span> : null}
         <span className="truncate text-muted-foreground">{[caps?.os ?? target.platform, caps?.arch ?? target.arch, caps?.hostname].filter(Boolean).join(' · ')}</span>
         <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{state.text}</span>
       </button>
@@ -166,6 +188,7 @@ function TargetRow({ target, files, reload, setNote }: { target: Target; files: 
               <div className="aidev-selectable text-[10px] text-muted-foreground">러너 {caps.runner ?? '?'} · 셸 {caps.shell ?? '?'} · 화면 캡처 {caps.screen ? '허용' : '꺼짐'}</div>
             </>
           ) : <div className="text-muted-foreground">러너가 아직 연결된 적이 없습니다.</div>}
+          {target.update?.error ? <div className="text-rose-600">러너 업데이트 실패 ({target.update.from} → {target.update.to}): {target.update.error}</div> : null}
           {shared ? <div className="text-muted-foreground">원격 실행: {POLICY_LABEL[target.policy]} · {target.shared_by} 님이 관리</div> : (
             <>
               <label className="flex items-center gap-1.5">
@@ -184,6 +207,7 @@ function TargetRow({ target, files, reload, setNote }: { target: Target; files: 
           <div className="flex flex-wrap gap-1.5">
             <button type="button" disabled={!target.online} onClick={() => { void act(() => api.targets.ping(target.id), (b) => (b.ok ? `응답 ${String(b.rtt_ms)}ms` : `응답 없음: ${String(b.error)}`)); }} className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 hover:bg-accent disabled:opacity-50"><Wifi size={11} /> 연결 확인</button>
             <button type="button" disabled={!target.online} onClick={() => { void act(() => api.targets.refreshCapabilities(target.id), () => '정보를 새로 받았습니다'); }} className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 hover:bg-accent disabled:opacity-50"><RefreshCw size={11} /> 정보 새로고침</button>
+            {updatable(target, latest) ? <button type="button" onClick={() => { void act(() => api.targets.updateRunner(target.id, latest!), () => `${target.name}: 러너 ${caps?.runner} → ${latest!} 업데이트를 시작했습니다 — 다시 연결되면 끝`); }} className="inline-flex h-6 items-center gap-1 rounded border border-amber-500/60 px-2 text-amber-700 hover:bg-accent dark:text-amber-400"><RefreshCw size={11} /> 러너 업데이트 {caps?.runner} → {latest}</button> : null}
             {!shared && target.paired && !target.pairing_code ? <button type="button" onClick={() => { void act(() => api.targets.refreshPairing(target.id), () => '새 코드로 다시 페어링하면 기존 러너 연결은 끊어집니다'); }} className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 hover:bg-accent">다시 페어링</button> : null}
             {shared ? null : confirmDelete
               ? <button type="button" title={removesItself ? 'PC에서 러너 서비스와 파일(설정·토큰·로그)까지 지웁니다 — 오프라인이면 다음에 연결될 때' : '이 러너는 0.20.0 미만이라 PC에 남습니다 — PC에서 aidev-runner uninstall'} onClick={() => { void act(() => api.targets.remove(target.id), () => (removesItself ? `${target.name} 삭제 — PC에서 러너를 제거합니다${target.online ? '' : ' (다음에 연결될 때)'}` : `${target.name} 삭제 — 러너 연결을 끊었습니다 (러너 0.20.0 미만이라 PC에 남습니다: PC에서 aidev-runner uninstall)`)); }} className="inline-flex h-6 items-center gap-1 rounded bg-red-600 px-2 text-white"><Trash2 size={11} /> {removesItself ? 'PC에서도 제거' : '삭제 확인'}</button>
@@ -221,6 +245,21 @@ export function TargetsPanel() {
     return () => window.clearInterval(timer);
   }, [reload]);
 
+  const latest = servedVersion(files);
+  const outdated = targets?.filter((t) => updatable(t, latest)) ?? [];
+  // every outdated PC (8 requests at a time; each PC replaces its own runner and reconnects)
+  const updateAll = async () => {
+    setNote(null);
+    const failed: string[] = [];
+    for (let i = 0; i < outdated.length; i += 8) {
+      await Promise.all(outdated.slice(i, i + 8).map(async (t) => {
+        try { await readApiJson(await api.targets.updateRunner(t.id, latest!)); } catch (error) { failed.push(`${t.name}: ${error instanceof Error ? error.message : '실패'}`); }
+      }));
+    }
+    setNote(`러너 ${latest} 업데이트 시작 ${outdated.length - failed.length}대${failed.length ? ` · 실패 ${failed.length}대 — ${failed.join(' / ')}` : ''}`);
+    reload();
+  };
+
   const register = async () => {
     if (!form) return;
     setNote(null);
@@ -236,6 +275,7 @@ export function TargetsPanel() {
       <div className="flex h-8 items-center gap-2 border-b border-border px-3 text-muted-foreground">
         <Laptop size={12} />
         <span>{targets ? `${targets.length}대 · 연결 ${targets.filter((t) => t.online).length}` : '불러오는 중…'}</span>
+        {outdated.length ? <button type="button" onClick={() => { void updateAll(); }} title={`연결된 PC 중 러너가 ${latest}보다 오래된 ${outdated.length}대를 업데이트합니다`} className="inline-flex h-6 items-center gap-1 rounded border border-amber-500/60 px-2 text-amber-700 hover:bg-accent dark:text-amber-400"><RefreshCw size={11} /> 모두 업데이트 ({outdated.length})</button> : null}
         <button type="button" onClick={reload} aria-label="새로고침" className="ml-auto rounded p-1 hover:bg-accent"><RefreshCw size={12} /></button>
         <button type="button" onClick={() => setForm(form ? null : { name: '', description: '', policy: 'full' })} className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 text-foreground hover:bg-accent"><Plus size={11} /> 등록</button>
       </div>
@@ -257,7 +297,7 @@ export function TargetsPanel() {
         </div>
       ) : null}
       <ul className="flex-1 overflow-auto">
-        {targets?.map((target) => <TargetRow key={target.id} target={target} files={files} reload={reload} setNote={setNote} />)}
+        {targets?.map((target) => <TargetRow key={target.id} target={target} files={files} latest={latest} reload={reload} setNote={setNote} />)}
       </ul>
       {targets && targets.length === 0 && !form ? (
         <div className="px-3 py-4 text-muted-foreground">

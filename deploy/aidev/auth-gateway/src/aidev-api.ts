@@ -982,6 +982,7 @@ export function createAidevApi(deps: AidevDeps) {
         tags: t.tags ? JSON.parse(t.tags) : [], capabilities: t.capabilities ? JSON.parse(t.capabilities) : null,
         allowed_roots: t.allowed_roots ? JSON.parse(t.allowed_roots) : [],
         online: deps.runners?.online(t.id) ?? false, connection: deps.runners?.connection(t.id) ?? null,
+        update: deps.runners?.updateState(t.id) ?? null,
       });
       if (rest === '/targets' && m === 'GET') return json(res, 200, { targets: store.targets(uid).map(targetView) }), true;
       if (rest === '/targets' && m === 'POST') {
@@ -1501,7 +1502,7 @@ export function createAidevApi(deps: AidevDeps) {
         // their open screens and terminals close within 5 s (the sockets re-check access)
         if (shareMatch[2] && m === 'DELETE') { store.unshareTarget(uid, id, Number(shareMatch[2])); return json(res, 200, { shares: store.targetShares(uid, id) }), true; }
       }
-      const targetMatch = rest.match(/^\/targets\/(\d+)(\/pair\/refresh|\/ping|\/refresh-caps|\/consent)?$/);
+      const targetMatch = rest.match(/^\/targets\/(\d+)(\/pair\/refresh|\/ping|\/refresh-caps|\/consent|\/update)?$/);
       if (targetMatch) {
         const id = Number(targetMatch[1]);
         const access = store.targetAccess(uid, id);
@@ -1525,6 +1526,13 @@ export function createAidevApi(deps: AidevDeps) {
             console.log(`[runner] target #${id} consent by ${session.sid.startsWith('runtime:') ? 'agent' : 'user'}: screen=${r.screen} control=${r.control}`);
             return json(res, 200, { consent: r, target: targetView(store.target(uid, id)!) }), true;
           } catch (error) { throw new HttpError(error instanceof RpcError && error.code === -32021 ? 426 : 409, error instanceof Error ? error.message : 'runner unavailable'); }
+        }
+        // the PC's runner to another version, from here (2026-10-27): "latest" or x.y.z
+        if (targetMatch[2] === '/update' && m === 'POST') {
+          const b = await readJson(req);
+          const version = typeof b.version === 'string' && /^\d+\.\d+\.\d+$/.test(b.version) ? b.version : 'latest';
+          try { return json(res, 200, { update: await deps.runners!.update(id, uid, version) }), true; }
+          catch (error) { throw new HttpError(error instanceof RpcError && error.code === -32021 ? 426 : 409, error instanceof Error ? error.message : 'update failed'); }
         }
         if (targetMatch[2] === '/refresh-caps' && m === 'POST') {
           try {

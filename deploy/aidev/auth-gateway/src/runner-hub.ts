@@ -170,6 +170,11 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
     controlOff: (message: string | null) => void; move: (sc: ScreenStream) => void };
   /** One person controls a PC at a time (2026-10-11): the holder, and who asked for it, in order. */
   type ControlLock = { holder: ScreenPeer; requests: ScreenPeer[] };
+  /** Runner updates asked from the workbench (2026-10-27), per target, until its runner says hello with another
+   *  version — or failed (runner.update.failed, or no new version within UPDATE_WAIT_MS). In memory only. */
+  type RunnerUpdate = { from: string; to: string; at: number; error: string | null };
+  const updates = new Map<number, RunnerUpdate>();
+  const UPDATE_WAIT_MS = 5 * 60_000;
   const peers = new Map<number, Set<ScreenPeer>>();         // targetId → its screen sockets
   const locks = new Map<number, ControlLock>();             // targetId → who controls it
   let nextPeer = 1;
@@ -537,6 +542,11 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
               platform: typeof caps.os === 'string' ? caps.os.slice(0, 20) : t.platform, arch: typeof caps.arch === 'string' ? caps.arch.slice(0, 20) : t.arch,
               allowedRoots: Array.isArray(caps.allowed_roots) ? (caps.allowed_roots as unknown[]).map(String).slice(0, 50) : null,
             });
+            const update = updates.get(conn.targetId);
+            if (update && typeof caps.runner === 'string' && caps.runner !== update.from) {
+              updates.delete(conn.targetId);
+              console.log(`[runner] target #${conn.targetId} updated ${update.from} → ${caps.runner}`);
+            }
             emit(conn.targetId, { type: 'online' });
             if (conn.moveTo) ws.send(JSON.stringify({ jsonrpc: '2.0', method: 'runner.realtime', params: { url: conn.moveTo } }));
             if (Array.isArray(caps.features) && caps.features.includes('exec')) void reconcile(conn.targetId);
@@ -568,6 +578,13 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
             for (const v of sc.viewers.keys()) if (v.readyState === WebSocket.OPEN) v.send(JSON.stringify(out));
             // the runner ended that stream (window closed, capture refused): the next viewer starts a new one
             if (msg.method === 'screen.error') stopScreen(sc, false);
+            return;
+          }
+          if (msg.method === 'runner.update.failed' && msg.params && typeof msg.params === 'object') {
+            const error = String((msg.params as { error?: string }).error ?? '업데이트 실패').slice(0, 500);
+            const update = updates.get(conn.targetId);
+            if (update) update.error = error;
+            console.log(`[runner] target #${conn.targetId} update failed: ${error}`);
             return;
           }
           if (msg.method === 'input.error' && msg.params && typeof msg.params === 'object') {
@@ -931,6 +948,42 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
         const t = setTimeout(() => { off(); resolve(info(st)); }, timeoutMs);
         off = hub.onFinish((s) => { if (s.remoteRunId === remoteRunId) { clearTimeout(t); off(); resolve(s); } });
       });
+    },
+    /** Updates the PC's runner to `version` ("latest" or x.y.z) from the workbench (2026-10-27): 0.21.0+ runners do it
+     *  themselves (runner.update); older ones (0.14.0+) through their own `update` command, started apart from the
+     *  runner (nohup / Start-Process) so that stopping the runners for the swap does not stop it — its output in
+     *  ~/.aidev/update*.log on the PC. Done when the runner says hello with another version (updateState). */
+    async update(targetId: number, userId: number, version: string) {
+      const conn = conns.get(targetId);
+      if (!conn || !hub.online(targetId)) throw new RpcError(-32010, 'target is offline');
+      const caps = screenCaps(targetId) as ReturnType<typeof screenCaps> & { os?: string };
+      const from = caps.runner ?? conn.version;
+      if (caps.os === 'android') throw new RpcError(-32021, 'Android 기기는 NadoVibe 러너 앱을 업데이트하세요 (앱 → 업데이트)');
+      if (caps.features?.includes('update')) {
+        await hub.call(targetId, 'runner.update', { version }, 15_000);
+      } else {
+        if (compareVersions(from, '0.14.0') < 0) throw new RpcError(-32021, tooOld(caps, '원격 업데이트', '0.14.0'));
+        const windows = caps.os === 'windows';
+        const cmd = windows
+          ? `$exe = Join-Path $env:USERPROFILE '.aidev\\bin\\aidev-runner.exe'; if (-not (Test-Path $exe)) { Write-Output "설치된 러너가 없습니다: $exe"; exit 2 }; $log = Join-Path $env:USERPROFILE '.aidev\\update'; Start-Process -FilePath $exe -ArgumentList 'update','${version}' -WindowStyle Hidden -RedirectStandardOutput "$log.out.log" -RedirectStandardError "$log.err.log"`
+          : `exe="$HOME/.aidev/bin/aidev-runner"; [ -x "$exe" ] || { echo "설치된 러너가 없습니다: $exe"; exit 2; }; nohup "$exe" update ${version} >"$HOME/.aidev/update.log" 2>&1 </dev/null &`;
+        const st = await hub.exec(targetId, userId, { cmd, shell: windows ? 'powershell' : 'sh', timeoutSec: 60 }, { approvedBy: 'user (runner update)' });
+        const done = await hub.waitRun(st.remoteRunId, 30_000);
+        if (done?.code !== 0) {
+          const said = hub.tail(targetId, st.streamId)?.toString('utf8').trim().slice(-300) ?? '';
+          throw new RpcError(-32000, `업데이트를 시작하지 못했습니다 (exit ${done?.code ?? '-'})${said ? `: ${said}` : ''}`);
+        }
+      }
+      const update: RunnerUpdate = { from, to: version, at: Date.now(), error: null };
+      updates.set(targetId, update);
+      console.log(`[runner] target #${targetId} update ${from} → ${version} asked (${caps.features?.includes('update') ? 'runner.update' : 'update command'})`);
+      return update;
+    },
+    /** The update asked for this PC while it is under way or failed (null: none, or done). */
+    updateState(targetId: number): RunnerUpdate | null {
+      const update = updates.get(targetId);
+      if (update && !update.error && Date.now() - update.at > UPDATE_WAIT_MS) update.error = '5분 안에 새 버전으로 다시 연결되지 않았습니다 — PC의 ~/.aidev/runner.log, update*.log를 확인하세요';
+      return update ?? null;
     },
     /** exec.write / exec.resize / exec.signal on a stream of this target. */
     async control(targetId: number, streamId: number, op: 'write' | 'resize' | 'signal', params: Record<string, unknown>) {

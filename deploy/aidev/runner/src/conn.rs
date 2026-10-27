@@ -37,6 +37,15 @@ static REALTIME: Mutex<Option<Realtime>> = Mutex::new(None);
 static CURRENT: Mutex<String> = Mutex::new(String::new());
 /// `runner.realtime` named another address: end this session and reconnect
 static MOVE: AtomicBool = AtomicBool::new(false);
+/// This session's outgoing queue, for what ends after its request was answered (`runner.update`)
+static OUT: Mutex<Option<mpsc::Sender<Message>>> = Mutex::new(None);
+
+/// A notification to the gateway while connected (dropped when not).
+pub fn notify(method: &str, params: Value) {
+    if let Some(out) = OUT.lock().unwrap().as_ref() {
+        let _ = out.try_send(Message::Text(json!({ "jsonrpc": "2.0", "method": method, "params": params }).to_string()));
+    }
+}
 
 /// `runner.realtime {url}` (a notification): use that address from the next connect.
 fn realtime_named(params: &Value) {
@@ -231,6 +240,7 @@ async fn session(cfg: &Config, hub: &ExecHub) -> Result<(), SessionError> {
     crate::screen::attach(out.clone());
     crate::input::attach(out.clone());
     crate::dap::attach(out.clone());
+    *OUT.lock().unwrap() = Some(out.clone());
     // also when this future is dropped mid-way (정지, a hand-over): otherwise the writer task and the modules' copies
     // of `out` keep the socket open and the target stays online
     let _guard = SessionGuard { hub: hub.clone(), writer };
@@ -252,6 +262,7 @@ impl Drop for SessionGuard {
         crate::screen::detach();
         crate::input::detach();
         crate::dap::detach();
+        *OUT.lock().unwrap() = None;
         self.writer.abort();
     }
 }
@@ -361,6 +372,7 @@ pub async fn handle(cfg: &Config, hub: &ExecHub, text: &str) -> Option<Value> {
     let result = match method {
         "runner.ping" => Ok(json!({ "pong": true, "time": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0) })),
         "runner.capabilities" => Ok(caps::collect(cfg).await),
+        "runner.update" => crate::update::remote(cfg, msg.pointer("/params/version").and_then(Value::as_str).unwrap_or("latest")).map_err(|e| (-32000, e)),
         "fs.resolve" => {
             // lets the gateway check a path against allowed_roots (used by later file/sync methods)
             let path = msg.pointer("/params/path").and_then(Value::as_str).unwrap_or("");

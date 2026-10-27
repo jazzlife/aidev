@@ -579,6 +579,8 @@ export const api = {
     refreshPairing: (targetId: number) => post(`/api/aidev/targets/${targetId}/pair/refresh`),
     ping: (targetId: number) => post(`/api/aidev/targets/${targetId}/ping`),
     refreshCapabilities: (targetId: number) => post(`/api/aidev/targets/${targetId}/refresh-caps`),
+    /** The PC's runner to `version` (default: the newest the gateway serves) — done when it reconnects with it. */
+    updateRunner: (targetId: number, version?: string) => post(`/api/aidev/targets/${targetId}/update`, { version }),
     /** Accounts the owner shared the PC with (they watch, run and control it; only the owner manages it). */
     shares: (targetId: number) => get(`/api/aidev/targets/${targetId}/shares`),
     share: (targetId: number, username: string) => post(`/api/aidev/targets/${targetId}/shares`, { username }),
