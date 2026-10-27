@@ -47,7 +47,18 @@ cmd_install() {
   # Read the release id from the RELEASE file inside the archive. (Never `tar tzf | head`:
   # head exits early, tar dies with SIGPIPE and `pipefail` turns that into a silent exit.)
   local sha; sha=$(tar xzOf "$tgz" --wildcards '*/RELEASE' 2>/dev/null | tr -d '[:space:]'); [ -n "$sha" ] || fail "bad archive: no RELEASE file"
-  if vol "test -f releases/$sha/RELEASE"; then ok "release $sha already installed"; else
+  if vol "test -f releases/$sha/RELEASE"; then
+    ok "release $sha already installed"
+    # the same commit shipped again after a runner release (ship.sh fetched the newer binaries): only the runner
+    # files change — the gateway reads them per request, so the active release serves them at once
+    local sums; sums=$(tar xzOf "$tgz" "$sha/control/runner/SHA256SUMS" 2>/dev/null || true)
+    if [ -n "$sums" ] && [ "$sums" != "$(vol "cat releases/$sha/control/runner/SHA256SUMS 2>/dev/null || true")" ]; then
+      log "release $sha: new runner binaries"
+      volin "rm -rf releases/$sha/control/runner.new && mkdir releases/$sha/control/runner.new \
+             && tar xzf - -C releases/$sha/control/runner.new --strip-components=3 $sha/control/runner" < "$tgz"
+      vol "cd releases/$sha/control && rm -rf runner.old && mv runner runner.old && mv runner.new runner && rm -rf runner.old"
+    fi
+  else
     log "installing release $sha"
     volin "rm -rf releases/$sha.partial && mkdir releases/$sha.partial && tar xzf - -C releases/$sha.partial --strip-components=1" < "$tgz"
     vol "mv releases/$sha.partial releases/$sha"
