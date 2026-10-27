@@ -372,7 +372,7 @@ pub async fn handle(cfg: &Config, hub: &ExecHub, text: &str) -> Option<Value> {
     let result = match method {
         "runner.ping" => Ok(json!({ "pong": true, "time": std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0) })),
         "runner.capabilities" => Ok(caps::collect(cfg).await),
-        "runner.update" => crate::update::remote(cfg, msg.pointer("/params/version").and_then(Value::as_str).unwrap_or("latest")).map_err(|e| (-32000, e)),
+        "runner.update" => crate::update::remote(cfg, msg.pointer("/params/version").and_then(Value::as_str).unwrap_or("latest"), msg.pointer("/params/gateway").and_then(Value::as_str)).map_err(|e| (-32000, e)),
         "fs.resolve" => {
             // lets the gateway check a path against allowed_roots (used by later file/sync methods)
             let path = msg.pointer("/params/path").and_then(Value::as_str).unwrap_or("");

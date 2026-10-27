@@ -63,7 +63,8 @@ import type { TargetRow } from './store-aidev.js';
 type Store = ReturnType<typeof openStore>;
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
 type Conn = { ws: WebSocket; targetId: number; userId: number; connectedAt: number; lastFrame: number; pending: Map<number, Pending>; nextId: number; hello: boolean; version: string;
-  /** came in through the CDN while a CDN-free address exists: the runner is told to move there (F-18) */ moveTo: string | null };
+  /** came in through the CDN while a CDN-free address exists: the runner is told to move there (F-18) */ moveTo: string | null;
+  /** came in through the CDN-free address: it is reachable from this PC (runner updates download from it) */ direct: boolean };
 
 /** The first runner that removes itself from its PC when its target is deleted (4410 / 410). */
 const REMOVES_ITSELF = '0.20.0';
@@ -489,7 +490,8 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
       wss.handleUpgrade(req, socket, head, (ws) => {
         const previous = conns.get(target.id);
         if (previous) { try { previous.ws.close(4000, 'replaced by a new connection'); } catch { /* ignore */ } drop(previous, 'replaced'); }
-        const conn: Conn = { ws, targetId: target.id, userId: target.user_id, connectedAt: Date.now(), lastFrame: Date.now(), pending: new Map(), nextId: 1, hello: false, version, moveTo };
+        const direct = Boolean(opts.realtimeOrigin && new URL(opts.realtimeOrigin).hostname === viaHost);
+        const conn: Conn = { ws, targetId: target.id, userId: target.user_id, connectedAt: Date.now(), lastFrame: Date.now(), pending: new Map(), nextId: 1, hello: false, version, moveTo, direct };
         conns.set(target.id, conn);
         setStatus(target, { status: 'online', lastSeen: Date.now() });
         console.log(`[runner] target #${target.id} ${target.name} connected (runner ${version}${previous ? `, replacing ${previous.version}` : ''})`);
@@ -952,21 +954,24 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
     /** Updates the PC's runner to `version` ("latest" or x.y.z) from the workbench (2026-10-27): 0.21.0+ runners do it
      *  themselves (runner.update); older ones (0.14.0+) through their own `update` command, started apart from the
      *  runner (nohup / Start-Process) so that stopping the runners for the swap does not stop it — its output in
-     *  ~/.aidev/update*.log on the PC. Done when the runner says hello with another version (updateState). */
+     *  ~/.aidev/update*.log on the PC. Done when the runner says hello with another version (updateState).
+     *  A runner connected through the CDN-free address downloads from it too: through the CDN some PCs got ~45 KB/s
+     *  (ally, 2026-10-27: 4.5 minutes for 8.9 MB that the direct address serves in under a second). */
     async update(targetId: number, userId: number, version: string) {
       const conn = conns.get(targetId);
       if (!conn || !hub.online(targetId)) throw new RpcError(-32010, 'target is offline');
       const caps = screenCaps(targetId) as ReturnType<typeof screenCaps> & { os?: string };
       const from = caps.runner ?? conn.version;
       if (caps.os === 'android') throw new RpcError(-32021, 'Android 기기는 NadoVibe 러너 앱을 업데이트하세요 (앱 → 업데이트)');
+      const viaDirect = conn.direct && opts.realtimeOrigin ? opts.realtimeOrigin : null;
       if (caps.features?.includes('update')) {
-        await hub.call(targetId, 'runner.update', { version }, 15_000);
+        await hub.call(targetId, 'runner.update', { version, ...(viaDirect ? { gateway: viaDirect } : {}) }, 15_000);
       } else {
         if (compareVersions(from, '0.14.0') < 0) throw new RpcError(-32021, tooOld(caps, '원격 업데이트', '0.14.0'));
         const windows = caps.os === 'windows';
         const cmd = windows
-          ? `$exe = Join-Path $env:USERPROFILE '.aidev\\bin\\aidev-runner.exe'; if (-not (Test-Path $exe)) { Write-Output "설치된 러너가 없습니다: $exe"; exit 2 }; $log = Join-Path $env:USERPROFILE '.aidev\\update'; Start-Process -FilePath $exe -ArgumentList 'update','${version}' -WindowStyle Hidden -RedirectStandardOutput "$log.out.log" -RedirectStandardError "$log.err.log"`
-          : `exe="$HOME/.aidev/bin/aidev-runner"; [ -x "$exe" ] || { echo "설치된 러너가 없습니다: $exe"; exit 2; }; nohup "$exe" update ${version} >"$HOME/.aidev/update.log" 2>&1 </dev/null &`;
+          ? `$exe = Join-Path $env:USERPROFILE '.aidev\\bin\\aidev-runner.exe'; if (-not (Test-Path $exe)) { Write-Output "설치된 러너가 없습니다: $exe"; exit 2 }; $log = Join-Path $env:USERPROFILE '.aidev\\update'; Start-Process -FilePath $exe -ArgumentList ${viaDirect ? `'update','${version}','--gateway','${viaDirect}'` : `'update','${version}'`} -WindowStyle Hidden -RedirectStandardOutput "$log.out.log" -RedirectStandardError "$log.err.log"`
+          : `exe="$HOME/.aidev/bin/aidev-runner"; [ -x "$exe" ] || { echo "설치된 러너가 없습니다: $exe"; exit 2; }; nohup "$exe" update ${version}${viaDirect ? ` --gateway '${viaDirect}'` : ''} >"$HOME/.aidev/update.log" 2>&1 </dev/null &`;
         const st = await hub.exec(targetId, userId, { cmd, shell: windows ? 'powershell' : 'sh', timeoutSec: 60 }, { approvedBy: 'user (runner update)' });
         const done = await hub.waitRun(st.remoteRunId, 30_000);
         if (done?.code !== 0) {

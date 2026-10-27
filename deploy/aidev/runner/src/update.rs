@@ -299,8 +299,9 @@ static REMOTE: AtomicBool = AtomicBool::new(false);
 /// `runner.update {version}` from the workbench (0.21.0; "latest" or x.y.z): answered at once, then — off the
 /// connection — that version is fetched from the gateway and installed as `update` does (this PC's runners stop, the
 /// file is replaced, they start again from it). The new version's hello is the success; a failure while still
-/// connected is told with `runner.update.failed {version, error}`.
-pub fn remote(cfg: &crate::config::Config, version: &str) -> Result<Value, String> {
+/// connected is told with `runner.update.failed {version, error}`. `from`: the gateway's CDN-free address this runner is
+/// connected through — the download comes from there (through the CDN some PCs got ~45 KB/s), else from its own gateway.
+pub fn remote(cfg: &crate::config::Config, version: &str, from: Option<&str>) -> Result<Value, String> {
     if platforms().is_empty() {
         return Err("Android에서는 NadoVibe 러너 앱을 업데이트하세요".into());
     }
@@ -311,8 +312,9 @@ pub fn remote(cfg: &crate::config::Config, version: &str) -> Result<Value, Strin
         return Err("업데이트가 이미 진행 중입니다".into());
     }
     let (gateway, wanted) = (cfg.gateway.clone(), version.to_string());
+    let direct = from.and_then(|u| crate::pair::check_gateway(u).ok()).filter(|u| *u != gateway);
     std::thread::spawn(move || {
-        let result = versions(&gateway).and_then(|list| {
+        let from = |base: &str| versions(base).and_then(|list| {
             let v = if wanted == "latest" { list.first() } else { list.iter().find(|v| v.version == wanted) };
             let v = v.ok_or_else(|| format!("{wanted}: 받을 수 있는 버전이 아닙니다"))?;
             if v.version == CURRENT && !emulated() {
@@ -320,6 +322,13 @@ pub fn remote(cfg: &crate::config::Config, version: &str) -> Result<Value, Strin
             }
             install(v, &|s| eprintln!("원격 업데이트: {s}"))
         });
+        let result = match &direct {
+            Some(url) => from(url).or_else(|e| {
+                eprintln!("원격 업데이트: {url}에서 실패({e}) — {gateway}에서 다시 받습니다");
+                from(&gateway)
+            }),
+            None => from(&gateway),
+        };
         match result {
             Ok(done) => eprintln!("원격 업데이트: {done}"),
             Err(e) => {

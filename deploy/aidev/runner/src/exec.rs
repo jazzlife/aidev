@@ -841,7 +841,8 @@ mod tests {
     async fn collect(rx: &mut mpsc::Receiver<Message>, id: u32) -> (String, Value) {
         let mut out = Vec::new();
         loop {
-            match tokio::time::timeout(Duration::from_secs(10), rx.recv()).await.expect("timeout").expect("closed") {
+            // 30 s: a cold first PowerShell start on a CI runner took over 10 s (runner releases 0.20.0 and 0.21.0)
+            match tokio::time::timeout(Duration::from_secs(30), rx.recv()).await.expect("timeout").expect("closed") {
                 Message::Binary(b) => {
                     assert_eq!(u32::from_be_bytes([b[0], b[1], b[2], b[3]]), id);
                     out.extend_from_slice(&b[4..]);

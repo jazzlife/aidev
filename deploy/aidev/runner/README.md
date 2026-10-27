@@ -50,6 +50,8 @@ aidev-runner service start|stop|restart|status
   `runner.update.failed{version, error}` 알림). 그보다 오래된 러너(0.14.0+)에는 게이트웨이가 원격 실행으로 그 러너의 `update <버전>`을
   러너와 떨어뜨려 띄움(sh `nohup … &` → `~/.aidev/update.log`, PowerShell `Start-Process` → `~/.aidev/update.{out,err}.log`) —
   러너를 멈춰도 업데이트는 계속됨. 끝은 러너가 새 버전으로 hello할 때(5분 안에 안 오면 작업대에 실패로 표시). Android는 앱 업데이트.
+  러너가 CDN을 거치지 않는 주소로 연결돼 있으면 파일도 그 주소에서 받음(`runner.update{gateway}` / `update --gateway`, 0.21.1) —
+  CDN 경로는 일부 PC에서 초당 수십 KB(ally: 8.9MB에 4분 반). 실패하면 원래 게이트웨이 주소로 한 번 더.
 - 원격 화면 지연(0.15.0, F-18): `screen.start{acks}`면 프레임에 번호(flags bit 1 + u32)를 붙이고, 게이트웨이의 `screen.ack{seq}`
   (화면에 그려진 가장 새 프레임)로 흐름을 맞춤 — 가장 오래된 미표시 프레임이 최근 최단 왕복 + 150ms를 넘으면 새 프레임을 만들지
   않고 비트레이트를 낮춤(6초 조용하면 다시 올림). 1초마다 `screen.stats`. `aidev-runner bench [--window id] [--frames N] [--max-width W]`:
