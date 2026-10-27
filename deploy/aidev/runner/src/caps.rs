@@ -142,7 +142,7 @@ pub async fn collect(cfg: &crate::config::Config) -> Value {
         async { match &sdb_bin { Some(b) => devices(b).await, None => vec![] } },
         admin()
     );
-    let mut features = vec!["ping", "exec", "sync", "tunnel", "screen", "video", "input", "windows", "dev", "dap", "stdin", "device", "shell", "pull", "displays", "consent", "acks"];
+    let mut features = vec!["ping", "exec", "sync", "tunnel", "screen", "video", "input", "windows", "dev", "dap", "stdin", "device", "shell", "pull", "displays", "consent", "acks", "remove"];
     // VP9 frames from the CPU path (libvpx, F-18)
     if cfg!(feature = "vpx") {
         features.push("vp9");

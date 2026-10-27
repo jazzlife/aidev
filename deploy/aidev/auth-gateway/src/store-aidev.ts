@@ -164,6 +164,9 @@ export function migrateAidev(db: Database.Database) {
       user_id INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
       created_at INTEGER NOT NULL, PRIMARY KEY(target_id, user_id));
     CREATE INDEX IF NOT EXISTS target_shares_user ON target_shares(user_id);
+    -- a deleted PC's token (runner 0.20.0+): its runner, away when the PC was deleted, learns at its next connect that
+    -- it is to remove itself from the PC
+    CREATE TABLE IF NOT EXISTS removed_runner_tokens (token_hash TEXT PRIMARY KEY, removed_at INTEGER NOT NULL);
   `);
   // 2026-10-01 (user decision): agents get full permissions — every PC registered so far moves to policy
   // `full` once; new PCs start there (the user can still pick ask / auto / deny per PC).
@@ -1064,7 +1067,21 @@ export function aidevMethods(db: Database.Database) {
         db.prepare('UPDATE targets SET is_default=? WHERE id=? AND user_id=?').run(on ? 1 : 0, id, userId);
       })();
     },
-    deleteTarget(userId: number, id: number) { db.prepare('DELETE FROM targets WHERE id=? AND user_id=?').run(id, userId); },
+    /** Deletes the owner's PC with what belongs to it (its remote runs and shares; chats pinned to it lose the pin) and
+     *  keeps its token's hash for runnerRemoved. Returns the ids of its remote runs (their log files go too). */
+    deleteTarget(userId: number, id: number) {
+      const t = m.target(userId, id);
+      if (!t) return [];
+      const runs = (db.prepare('SELECT id FROM remote_runs WHERE target_id=?').all(id) as Array<{ id: number }>).map((r) => r.id);
+      db.transaction(() => {
+        if (t.token_hash) db.prepare('INSERT OR REPLACE INTO removed_runner_tokens(token_hash,removed_at) VALUES(?,?)').run(t.token_hash, Date.now());
+        db.prepare('UPDATE session_settings SET target_id=NULL WHERE target_id=?').run(id);
+        db.prepare('DELETE FROM targets WHERE id=? AND user_id=?').run(id, userId);
+      })();
+      return runs;
+    },
+    /** This token belonged to a PC that was deleted. */
+    runnerRemoved(tokenHash: string) { return Boolean(db.prepare('SELECT 1 FROM removed_runner_tokens WHERE token_hash=?').get(tokenHash)); },
     addRemoteRun(r: { runId?: number | null; targetId: number; userId: number; kind: string; cmd?: string | null; cwd?: string | null; risk?: number | null; approvedBy?: string | null }) {
       const res = db.prepare('INSERT INTO remote_runs(run_id,target_id,user_id,kind,cmd,cwd,risk,approved_by,started_at) VALUES(?,?,?,?,?,?,?,?,?)')
         .run(r.runId ?? null, r.targetId, r.userId, r.kind, r.cmd?.slice(0, 4000) ?? null, r.cwd ?? null, r.risk ?? null, r.approvedBy ?? null, Date.now());

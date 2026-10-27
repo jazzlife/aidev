@@ -17,7 +17,9 @@ import type { TargetRow } from './store-aidev.js';
  *        One socket per target (a new one replaces the old). `runner.hello{capabilities}` marks the
  *        target online; JSON-RPC calls from the platform go out with call(); the runner's replies
  *        resolve them. Ping every 20 s; 45 s without any frame closes the socket.
- * Deleting a target or re-pairing closes its socket with 4401 (the runner stops and asks for pairing).
+ * Re-pairing closes its socket with 4401 (the runner stops and asks for pairing). Deleting a target (remove()) closes it
+ * with 4410 and answers a later connect with that token 410 + `x-aidev-runner: removed`: the runner (0.20.0+) removes
+ * itself from the PC; older runners only understand 4401 / 401 and get those.
  * With a CDN-free address (`realtimeOrigin`, F-18) a runner that came in through the CDN gets `runner.realtime {url}`
  * after its hello and reconnects there (0.18.2+; it falls back to its own gateway address by itself).
  *
@@ -62,6 +64,9 @@ type Store = ReturnType<typeof openStore>;
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
 type Conn = { ws: WebSocket; targetId: number; userId: number; connectedAt: number; lastFrame: number; pending: Map<number, Pending>; nextId: number; hello: boolean; version: string;
   /** came in through the CDN while a CDN-free address exists: the runner is told to move there (F-18) */ moveTo: string | null };
+
+/** The first runner that removes itself from its PC when its target is deleted (4410 / 410). */
+const REMOVES_ITSELF = '0.20.0';
 
 /** Semver-ish compare of runner versions ("0.7.1" > "0.3.0"); unknown versions sort lowest. */
 export function compareVersions(a: string, b: string) {
@@ -414,7 +419,7 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
     }
   }
 
-  /** Closes a target's socket (4401 = token no longer valid: deleted / re-paired). */
+  /** Closes a target's socket (4401 = token no longer valid: re-paired, or deleted for a runner before 0.20.0). */
   function disconnect(targetId: number, code = 4401, reason = 'revoked') {
     const conn = conns.get(targetId);
     if (!conn) return false;
@@ -453,10 +458,16 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
       if (pathname !== '/_runner/ws') return false;
       const auth = req.headers.authorization ?? '';
       const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
-      const target = /^[0-9a-f]{64}$/.test(token) ? store.targetByTokenHash(hashToken(token)) : undefined;
-      // runners are not browsers: a request carrying an Origin header is refused
-      if (!target || req.headers.origin) { socket.end('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n'); return true; }
+      const hash = /^[0-9a-f]{64}$/.test(token) ? hashToken(token) : null;
+      const target = hash ? store.targetByTokenHash(hash) : undefined;
       const version = String(req.headers['x-aidev-runner'] ?? '?').slice(0, 20);
+      // runners are not browsers: a request carrying an Origin header is refused
+      if (!target || req.headers.origin) {
+        // the PC's target was deleted while its runner was away: it removes itself now
+        const removed = !target && !req.headers.origin && hash && compareVersions(version, REMOVES_ITSELF) >= 0 && store.runnerRemoved(hash);
+        socket.end(removed ? 'HTTP/1.1 410 Gone\r\nx-aidev-runner: removed\r\nConnection: close\r\n\r\n' : 'HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+        return true;
+      }
       // two runners with the same token (an old copy left running somewhere) would take the connection from each
       // other forever: a newer runner that is connected keeps it, the older one is refused
       const current = conns.get(target.id);
@@ -981,6 +992,15 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
     online(targetId: number) { const c = conns.get(targetId); return Boolean(c && c.ws.readyState === WebSocket.OPEN); },
     connection(targetId: number) { const c = conns.get(targetId); return c ? { connectedAt: c.connectedAt, lastFrame: c.lastFrame, hello: c.hello } : null; },
     disconnect,
+    /** A deleted target (store.deleteTarget gave its remote runs): the runner is told to remove itself from the PC
+     *  (before 0.20.0: cut off as revoked), its running commands end as `removed`, and the hub forgets its streams and
+     *  their log files. */
+    remove(targetId: number, remoteRunIds: number[]) {
+      const conn = conns.get(targetId);
+      if (conn) disconnect(targetId, compareVersions(conn.version, REMOVES_ITSELF) >= 0 ? 4410 : 4401, 'removed');
+      for (const [k, st] of [...streams]) if (st.targetId === targetId) { finishStream(st, null, 'removed', null); streams.delete(k); }
+      if (opts.logDir) for (const id of remoteRunIds) fs.rm(path.join(opts.logDir, `${id}.log`), { force: true }, () => {});
+    },
     /** Startup: nothing is connected yet, so every target is offline. */
     resetStatuses() { store.db.prepare("UPDATE targets SET status='offline' WHERE status!='offline'").run(); },
     size: () => conns.size,

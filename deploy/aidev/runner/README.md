@@ -64,6 +64,11 @@ aidev-runner service start|stop|restart|status
 - 연결: Bearer 토큰, 접속 즉시 `runner.hello{capabilities}`(OS·아키텍처·호스트·셸·도구 버전·adb/sdb 기기·allowed_roots·화면 동의),
   15초 heartbeat, 45초 무응답이면 재연결(1초→60초 지수 backoff + jitter), 연결 수립(DNS·TCP·TLS·업그레이드)은 30초 제한(0.19.1). 핸드셰이크 401/403 또는 close 4401이면
   토큰 폐기로 보고 종료(exit 3) → 다시 페어링.
+  작업대에서 대상을 삭제하면 close 4410(그때 꺼져 있었으면 다음 접속 때 410 + `x-aidev-runner: removed`): 러너가 PC에서 자신을
+  제거한다 — 서비스와 로그인·부팅 자동 실행, PATH 등록, 비밀번호 없는 sudo, macOS 권한 기록(머신 전체 항목은 이 홈에 설치된 러너의
+  것일 때만), `~/.aidev` 전체(설정·토큰·로그·설치본), 비어 있는 `~/aidev-work`. 자기 서비스를 멈추지 않고 등록만 지운 뒤 exit 0
+  (Android 3)으로 끝나 다시 뜨지 않는다. 동기화된 프로젝트, linger, 장치 그룹은 남는다. 그 사이 PC에서 다시 페어링했으면
+  (runner.toml의 토큰이 다름) 그대로 두고 exit 3 (0.20.0).
 - 프로토콜: JSON-RPC 2.0 텍스트 프레임 + 바이너리 스트림 `[streamId u32 BE][payload]`. 현재 메서드:
   `runner.ping`, `runner.capabilities`, `fs.resolve{path}`(allowed_roots 검사),
   `exec.start{cmd | program+args, cwd, env, pty, cols, rows, timeoutSec, streamId, tag}` → `{streamId, pid, cwd}`,

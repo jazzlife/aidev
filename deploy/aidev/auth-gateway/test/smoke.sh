@@ -487,7 +487,7 @@ FAKE
   for i in $(seq 1 40); do get "$A" /api/aidev/targets | grep -q '"online":true' && break; sleep 0.25; done
   r=$(post "$A" "/api/aidev/targets/$TID" '{}' DELETE); check "$r" 'j.ok' "target deleted"
   for i in $(seq 1 40); do kill -0 $RPID 2>/dev/null || break; sleep 0.25; done; code=0; wait $RPID || code=$?
-  check "{\"code\":$code}" 'j.code===3' "deleting the target disconnects the runner (exit 3)"
+  check "{\"code\":$code,\"left\":$([ -e "$AIDEV_RUNNER_HOME/runner.toml" ] && echo true || echo false)}" 'j.code===0 && !j.left' "deleting the target removes the runner from the PC (exit 0, settings and token gone)"
   cp "$T/old-runner.toml" "$AIDEV_RUNNER_HOME/runner.toml"; code=0; HOME="$RH" perl -e 'alarm shift; exec @ARGV' 10 "$RUNNER_BIN" start >/dev/null 2>&1 || code=$?
   check "{\"code\":$code}" 'j.code===3' "old token no longer connects"
   unset AIDEV_RUNNER_HOME

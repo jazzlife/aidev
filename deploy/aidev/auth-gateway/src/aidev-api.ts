@@ -1535,7 +1535,7 @@ export function createAidevApi(deps: AidevDeps) {
         }
         if (targetMatch[2] && m === 'POST') { const code = crypto.randomBytes(4).toString('hex').toUpperCase(); store.updateTarget(uid, id, { pairingCode: code, pairingExpires: Date.now() + 10 * 60_000 }); return json(res, 200, { pairing_code: code, expires_in: 600 }), true; }
         if (!targetMatch[2] && m === 'PATCH') { const b = await readJson(req); if (typeof b.default === 'boolean') store.setDefaultTarget(uid, id, b.default); store.updateTarget(uid, id, { name: optStr(b.name, 41), description: optStr(b.description, 600), tags: Array.isArray(b.tags) ? (b.tags as unknown[]).map(String) : undefined, policy: optStr(b.policy, 10) }); return json(res, 200, { ok: true }), true; }
-        if (!targetMatch[2] && m === 'DELETE') { store.deleteTarget(uid, id); deps.runners?.disconnect(id); return json(res, 200, { ok: true }), true; }
+        if (!targetMatch[2] && m === 'DELETE') { const runs = store.deleteTarget(uid, id); deps.runners?.remove(id, runs); return json(res, 200, { ok: true }), true; }
       }
 
       // ---- admin / export ----------------------------------------------------------------------

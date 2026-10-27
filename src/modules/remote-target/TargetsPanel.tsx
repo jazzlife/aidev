@@ -128,6 +128,8 @@ function TargetRow({ target, files, reload, setNote }: { target: Target; files: 
   // confirmDelete: deleting disconnects the runner immediately, so it takes a second click
   const [confirmDelete, setConfirmDelete] = useState(false);
   const caps = target.capabilities;
+  // runner 0.20.0+ removes itself from the PC when its target is deleted (now, or when it next connects)
+  const removesItself = Boolean(caps?.features?.includes('remove'));
   const shared = Boolean(target.shared_by);
   const act = async (work: () => Promise<Response>, done?: (body: Record<string, unknown>) => string | null) => {
     setNote(null);
@@ -184,7 +186,7 @@ function TargetRow({ target, files, reload, setNote }: { target: Target; files: 
             <button type="button" disabled={!target.online} onClick={() => { void act(() => api.targets.refreshCapabilities(target.id), () => '정보를 새로 받았습니다'); }} className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 hover:bg-accent disabled:opacity-50"><RefreshCw size={11} /> 정보 새로고침</button>
             {!shared && target.paired && !target.pairing_code ? <button type="button" onClick={() => { void act(() => api.targets.refreshPairing(target.id), () => '새 코드로 다시 페어링하면 기존 러너 연결은 끊어집니다'); }} className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 hover:bg-accent">다시 페어링</button> : null}
             {shared ? null : confirmDelete
-              ? <button type="button" onClick={() => { void act(() => api.targets.remove(target.id), () => `${target.name} 삭제 — 러너 연결을 끊었습니다`); }} className="inline-flex h-6 items-center gap-1 rounded bg-red-600 px-2 text-white"><Trash2 size={11} /> 삭제 확인</button>
+              ? <button type="button" title={removesItself ? 'PC에서 러너 서비스와 파일(설정·토큰·로그)까지 지웁니다 — 오프라인이면 다음에 연결될 때' : '이 러너는 0.20.0 미만이라 PC에 남습니다 — PC에서 aidev-runner uninstall'} onClick={() => { void act(() => api.targets.remove(target.id), () => (removesItself ? `${target.name} 삭제 — PC에서 러너를 제거합니다${target.online ? '' : ' (다음에 연결될 때)'}` : `${target.name} 삭제 — 러너 연결을 끊었습니다 (러너 0.20.0 미만이라 PC에 남습니다: PC에서 aidev-runner uninstall)`)); }} className="inline-flex h-6 items-center gap-1 rounded bg-red-600 px-2 text-white"><Trash2 size={11} /> {removesItself ? 'PC에서도 제거' : '삭제 확인'}</button>
               : <button type="button" onClick={() => setConfirmDelete(true)} className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 text-red-600 hover:bg-accent"><Trash2 size={11} /> 삭제</button>}
           </div>
         </div>

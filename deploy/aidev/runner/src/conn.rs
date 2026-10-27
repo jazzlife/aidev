@@ -3,6 +3,8 @@
 //! and, in both directions, for preview tunnels (F-06).
 //! Heartbeat every 15 s; a silent link (45 s) or any error reconnects with jittered backoff (1 s → 60 s).
 //! A 401/403 at the handshake means the token was revoked: the runner stops and asks for pairing.
+//! 0.20.0: the target was deleted in the workbench (close 4410, or 410 + `x-aidev-runner: removed` at the handshake
+//! when it was offline then): the runner removes itself from this PC (service::purge).
 //! F-18 (0.18.2): the gateway may name an address of itself that skips the CDN (`runner.realtime {url}`, see
 //! docs/aidev/CONNECTIVITY.md): the runner reconnects there, and after two failed connects in a row goes back to
 //! its own gateway address (which names it again — tried at most every 10 minutes after such a failure).
@@ -55,6 +57,8 @@ fn realtime_named(params: &Value) {
 pub enum Exit {
     /// Token rejected: pairing needed again.
     Unauthorized,
+    /// The target was deleted: remove the runner from this PC.
+    Removed,
     /// Ctrl+C / service stop.
     Shutdown,
     /// Boot-time runner: a sign-in's runner asked to take over (config::handoff_path).
@@ -120,6 +124,7 @@ async fn run_with(cfg: &Config, hub: &ExecHub) -> Exit {
             Some(outcome) => match outcome {
                 Ok(()) => log("연결이 끊어졌습니다"),
                 Err(SessionError::Unauthorized) => return Exit::Unauthorized,
+                Err(SessionError::Removed) => return Exit::Removed,
                 Err(SessionError::Other(e)) => log(&format!("연결 오류: {e}")),
                 Err(SessionError::Replaced) => {
                     log("같은 토큰을 쓰는 다른 러너가 접속해 이 연결을 대체했습니다 — 이 PC나 다른 PC에서 러너가 두 개 실행 중인지 확인하세요 (서비스 + 터미널 start 등). 30초 뒤 다시 시도합니다");
@@ -168,6 +173,7 @@ async fn shutdown_signal() {
 
 enum SessionError {
     Unauthorized,
+    Removed,
     /// Another runner holding the same token took over (gateway close 4000).
     Replaced,
     Other(String),
@@ -193,6 +199,8 @@ async fn session(cfg: &Config, hub: &ExecHub) -> Result<(), SessionError> {
             return Err(SessionError::Other(format!("{url}: {e} (실패가 이어지면 기본 주소로 돌아갑니다)")));
         }
         Err(WsError::Http(resp)) if resp.status() == 401 || resp.status() == 403 => return Err(SessionError::Unauthorized),
+        // only the gateway says so (the header): a 410 from anything else in between never removes the runner
+        Err(WsError::Http(resp)) if resp.status() == 410 && resp.headers().get("x-aidev-runner").is_some_and(|v| v == "removed") => return Err(SessionError::Removed),
         Err(e) => return Err(SessionError::Other(e.to_string())),
     };
     if let Some(r) = REALTIME.lock().unwrap().as_mut().filter(|_| realtime.is_some()) {
@@ -283,8 +291,10 @@ where
                     Message::Ping(payload) => send(Message::Pong(payload)).await?,
                     Message::Close(frame) => {
                         let code = frame.as_ref().map(|f| u16::from(f.code));
-                        // 4401 = token revoked / target deleted by the user
+                        // 4401 = token revoked (paired again; before 0.20.0 also a deleted target)
                         if code == Some(4401) { return Err(SessionError::Unauthorized); }
+                        // 4410 = the target was deleted by the user
+                        if code == Some(4410) { return Err(SessionError::Removed); }
                         // 4000 = another runner connected with this token and took the target over
                         if code == Some(4000) { return Err(SessionError::Replaced); }
                         log(&format!("게이트웨이가 연결을 닫았습니다 (code {}{})", code.map(|c| c.to_string()).unwrap_or_else(|| "-".into()), frame.as_ref().map(|f| format!(", {}", f.reason)).unwrap_or_default()));

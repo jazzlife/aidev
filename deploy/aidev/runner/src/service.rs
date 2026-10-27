@@ -50,6 +50,10 @@ pub fn sign_for_this_mac(file: &std::path::Path) -> Result<(), String> {
     Err(if why.is_empty() { "서명 스크립트 실패 (~/.aidev/signing.log)".into() } else { format!("{why} (~/.aidev/signing.log)") })
 }
 
+/// What `install` adds to the shell start files (`purge` takes exactly this out again).
+#[cfg_attr(not(unix), allow(dead_code))]
+const PATH_LINE: &str = "\n# NadoVibe runner (aidev-runner install)\nexport PATH=\"$HOME/.aidev/bin:$PATH\"\n";
+
 /// `aidev-runner` from any terminal: ~/.aidev/bin on the PATH.
 ///   Windows       — the user's Path (registry, kept as REG_EXPAND_SZ; new windows see it)
 ///   Linux / macOS — a line in the shell start files (zsh, bash, sh, fish), and a link in /usr/local/bin when sudo
@@ -79,7 +83,7 @@ fn register_path(bin: &std::path::Path) -> String {
     #[cfg(unix)]
     {
         let home = config::home();
-        let line = "\n# NadoVibe runner (aidev-runner install)\nexport PATH=\"$HOME/.aidev/bin:$PATH\"\n";
+        let line = PATH_LINE;
         let shell = std::env::var("SHELL").unwrap_or_default();
         let mut files: Vec<PathBuf> = [".zshrc", ".bashrc", ".bash_profile", ".profile"].iter().map(|f| home.join(f)).filter(|p| p.exists()).collect();
         if !files.iter().any(|p| p.ends_with(".zshrc") || p.ends_with(".bashrc")) {
@@ -452,7 +456,7 @@ pub fn install(print_only: bool, limited: bool, logon_only: bool, for_user: Opti
                 return Ok(format!("{}{placed}", notes.join("\n")));
             }
             // an earlier install as a system service (root, before this PC had a user manager): one runner only
-            let mut notes = remove_system();
+            let mut notes = remove_system(true);
             let dir = home.join(".config/systemd/user");
             let unit = dir.join("aidev-runner.service");
             let text = unit_text(&exe_s);
@@ -596,7 +600,7 @@ pub fn uninstall() -> Result<String, String> {
             let _ = std::fs::remove_file(home.join(".config/autostart/aidev-runner.desktop"));
             // the desktop session's runner (autostart) is not the unit's: stop it too
             quiet("pkill", &["-u", &unsafe_uid(), "-f", &format!("{} start", exe()?.display())]);
-            let system = remove_system();
+            let system = remove_system(true);
             let sudo_note = revoke_sudo().err().map(|e| format!("\n! 관리자 권한 설정({SUDOERS})을 지우지 못했습니다: {e}")).unwrap_or_default();
             let mut what = system;
             if user_unit { what.insert(0, "systemd 사용자 서비스를 제거했습니다".into()); }
@@ -648,6 +652,152 @@ pub fn uninstall() -> Result<String, String> {
             }
         }
         other => Err(format!("{other}: 지원하지 않습니다")),
+    }
+}
+
+/// The target was deleted in the workbench (0.20.0): everything `install` set up goes — the services and their
+/// sign-in / boot entries, the PATH entries, the passwordless sudo rule, macOS's permission records — then the runner's
+/// folder (settings and token, logs, the installed runner, macOS's signing keychain) and an empty ~/aidev-work.
+/// This runner keeps running while it does (stopping its own service would end it half-way) and then exits 0, which
+/// no service manager starts again; this PC's other runner (boot-time or session) gets the same answer when it
+/// connects and removes itself the same way. Synced projects, linger and device groups stay. The lines say what went.
+/// What belongs to the whole machine (a system / boot service, the sudo rule, permission records, the Windows tasks)
+/// goes only when it was made for this home's installed runner: another installation on the PC is never touched.
+pub fn purge() -> Vec<String> {
+    let home = config::home();
+    let exe = installed_path();
+    let installed = exe.exists();
+    let ours = |file: &str| std::fs::read_to_string(file).is_ok_and(|t| t.contains(&exe.display().to_string()));
+    let mut notes = Vec::new();
+    match std::env::consts::OS {
+        "linux" => {
+            let unit = home.join(".config/systemd/user/aidev-runner.service");
+            if unit.exists() {
+                let _ = systemctl_user(&["disable", "aidev-runner.service"]);
+                let _ = std::fs::remove_file(&unit);
+                let _ = systemctl_user(&["daemon-reload"]);
+                notes.push("systemd 사용자 서비스를 제거했습니다".into());
+            }
+            if std::fs::remove_file(home.join(".config/autostart/aidev-runner.desktop")).is_ok() {
+                notes.push("데스크탑 로그인 자동 시작을 지웠습니다".into());
+            }
+            let cron = Command::new("crontab").arg("-l").stderr(std::process::Stdio::null()).output()
+                .is_ok_and(|o| String::from_utf8_lossy(&o.stdout).lines().any(|l| cron_ours(l) && l.contains(&exe.display().to_string())));
+            if cron || [SYSTEM_UNIT, INIT_SCRIPT, RCS_SCRIPT].into_iter().any(ours) {
+                notes.extend(remove_system(false));
+            }
+        }
+        "macos" => {
+            if std::fs::remove_file(home.join("Library/LaunchAgents/work.nado.aidev-runner.plist")).is_ok() {
+                notes.push("LaunchAgent를 지웠습니다".into());
+            }
+            if ours(BOOT_PLIST) {
+                notes.push(if quiet_root(&["rm", "-f", BOOT_PLIST]) { "LaunchDaemon(부팅 실행)을 지웠습니다".into() } else { format!("! {BOOT_PLIST}을(를) 지우지 못했습니다 (관리자 권한 필요)") });
+            }
+            // Screen Recording / Accessibility given to the runner (its signing identifier)
+            if installed {
+                for service in ["ScreenCapture", "Accessibility"] {
+                    quiet("tccutil", &["reset", service, "work.nado.aidev-runner"]);
+                }
+            }
+        }
+        "windows" => {
+            // the tasks are only unregistered, not stopped: this runner is one of them
+            let script = format!(
+                "Remove-ItemProperty -Path '{RUN_KEY_PS}' -Name '{STARTUP_NAME}' -ErrorAction SilentlyContinue\n\
+                 $exe = '{exe_q}'\n\
+                 $d = Split-Path -Parent $exe\n\
+                 $k = (Get-Item 'HKCU:\\').OpenSubKey('Environment', $true)\n\
+                 $parts = @(([string]$k.GetValue('Path', '', 'DoNotExpandEnvironmentNames')) -split ';')\n\
+                 $keep = @($parts | Where-Object {{ $_.TrimEnd('\\') -ine $d }})\n\
+                 if ($keep.Count -ne $parts.Count) {{ $k.SetValue('Path', ($keep -join ';'), 'ExpandString') }}\n\
+                 $k.Close()\n\
+                 [Environment]::SetEnvironmentVariable('AIDEV_RUNNER_BIN', $null, 'User')\n\
+                 $failed = 0\n\
+                 foreach ($n in 'aidev-runner', '{BOOT_TASK}') {{\n\
+                   $t = Get-ScheduledTask -TaskName $n -ErrorAction SilentlyContinue\n\
+                   if ($t -and $t.Actions[0].Execute -ieq $exe) {{ try {{ Unregister-ScheduledTask -TaskName $n -Confirm:$false -ErrorAction Stop }} catch {{ $failed = 1 }} }}\n\
+                 }}\n\
+                 exit $failed",
+                exe_q = exe.display().to_string().replace('\'', "''"),
+            );
+            notes.push(match powershell(&script, std::time::Duration::from_secs(60)) {
+                Ok(()) => "작업 스케줄러 작업·시작 앱·PATH 등록을 지웠습니다".into(),
+                Err(e) => format!("! 작업 스케줄러 작업을 모두 지우지 못했습니다 ({e}) — 작업 스케줄러에서 aidev-runner, aidev-runner-boot을 지우세요"),
+            });
+        }
+        _ => {}
+    }
+    #[cfg(unix)]
+    if !cfg!(target_os = "android") {
+        notes.extend(unregister_path());
+        // last: the steps above may need the passwordless sudo it removes
+        if installed {
+            if let Err(e) = revoke_sudo() { notes.push(format!("! 관리자 권한 설정({SUDOERS})을 지우지 못했습니다: {e}")); }
+        }
+    }
+    notes.push(remove_runner_files());
+    notes
+}
+
+/// `register_path` undone: our lines in the shell start files, the fish file, the /usr/local/bin link to our runner.
+#[cfg(unix)]
+fn unregister_path() -> Vec<String> {
+    let home = config::home();
+    let mut notes = Vec::new();
+    for f in [".zshrc", ".bashrc", ".bash_profile", ".profile"].iter().map(|f| home.join(f)) {
+        let Ok(text) = std::fs::read_to_string(&f) else { continue };
+        if text.contains(PATH_LINE) && std::fs::write(&f, text.replace(PATH_LINE, "")).is_ok() {
+            notes.push(format!("PATH 줄을 지웠습니다: {}", f.display()));
+        }
+    }
+    let _ = std::fs::remove_file(home.join(".config/fish/conf.d/aidev-runner.fish"));
+    let link = "/usr/local/bin/aidev-runner";
+    if std::fs::read_link(link).is_ok_and(|to| to == installed_path()) {
+        notes.push(if quiet_root(&["rm", "-f", link]) { format!("{link} 링크를 지웠습니다") } else { format!("! {link}을(를) 지우지 못했습니다") });
+    }
+    notes
+}
+
+/// The runner's folder: ~/.aidev whole; a folder given by AIDEV_RUNNER_HOME may hold other things, so only the
+/// runner's own files there. Windows cannot delete the running runner or its open log: a hidden PowerShell does it
+/// once this process has ended.
+fn remove_runner_files() -> String {
+    let dir = config::dir();
+    let paths: Vec<PathBuf> = if dir == config::home().join(".aidev") {
+        vec![dir.clone()]
+    } else {
+        ["runner.toml", "runner.log", "state", "paused", "updating", "handoff", "boot-holder", "runner.lock", "supervise.pid", "bin", "adapters"].iter().map(|f| dir.join(f)).collect()
+    };
+    // pairing creates ~/aidev-work; it goes only when nothing was ever synced into it
+    let _ = std::fs::remove_dir(config::default_root());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        const DETACHED: u32 = 0x0000_0200 | crate::proc_util::CREATE_NO_WINDOW;   // CREATE_NEW_PROCESS_GROUP, no window
+        const BREAKAWAY: u32 = 0x0100_0000;   // CREATE_BREAKAWAY_FROM_JOB: outlives the task's job when it allows it
+        let list = paths.iter().map(|p| format!("'{}'", p.display().to_string().replace('\'', "''"))).collect::<Vec<_>>().join(", ");
+        let script = format!("Wait-Process -Id {} -Timeout 120 -ErrorAction SilentlyContinue\nStart-Sleep -Seconds 2\nRemove-Item -LiteralPath {list} -Recurse -Force -ErrorAction SilentlyContinue", std::process::id());
+        let encoded = crate::exec::powershell_encoded(&script);
+        let spawn = |flags: u32| {
+            Command::new("powershell.exe")
+                .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &encoded])
+                // nothing of ours inherited: an open log handle would keep the file
+                .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null())
+                .creation_flags(flags)
+                .spawn()
+        };
+        match spawn(DETACHED | BREAKAWAY).or_else(|_| spawn(DETACHED)) {
+            Ok(_) => format!("러너가 끝나면 지웁니다: {}", dir.display()),
+            Err(e) => format!("! {}을(를) 지우지 못했습니다 ({e}) — 직접 지우세요", dir.display()),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        for p in &paths {
+            let _ = if p.is_dir() { std::fs::remove_dir_all(p) } else { std::fs::remove_file(p) };
+        }
+        if dir.exists() && paths.contains(&dir) { format!("! {}을(를) 다 지우지 못했습니다", dir.display()) } else { format!("지웠습니다: {}", dir.display()) }
     }
 }
 
@@ -928,7 +1078,7 @@ fn install_system(exe: &str, user: &str) -> Result<Vec<String>, String> {
     };
     if let Err(e) = registered {
         // what could not be registered goes (no half-made service), and the runner runs now and from cron at boot
-        remove_system();
+        remove_system(true);
         notes.push(format!("! {}로 등록하지 못했습니다: {e} — cron @reboot으로 대신합니다", init_label(init)));
         let _ = set_cron(Some(&format!("@reboot {} supervise >/dev/null 2>&1", sq(exe))));
         if runner_pid().is_none() { spawn_supervise(exe)?; }
@@ -945,11 +1095,12 @@ fn install_system(exe: &str, user: &str) -> Result<Vec<String>, String> {
     Ok(notes)
 }
 
-/// Removes every system-service form of the runner (and its cron line) and stops it; the lines say what went.
-fn remove_system() -> Vec<String> {
+/// Removes every system-service form of the runner (and its cron line) and, with `stop`, stops it (without: the
+/// runner doing it is the service's own — `purge`); the lines say what went.
+fn remove_system(stop: bool) -> Vec<String> {
     let mut notes = Vec::new();
     if std::path::Path::new(SYSTEM_UNIT).exists() {
-        quiet_root(&["systemctl", "disable", "--now", "aidev-runner.service"]);
+        quiet_root(if stop { &["systemctl", "disable", "--now", "aidev-runner.service"] } else { &["systemctl", "disable", "aidev-runner.service"] });
         notes.push(match as_root(&["rm", "-f", SYSTEM_UNIT]) {
             Ok(()) => { quiet_root(&["systemctl", "daemon-reload"]); "systemd 시스템 서비스를 제거했습니다".to_string() }
             Err(e) => format!("! {SYSTEM_UNIT}을(를) 지우지 못했습니다: {e}"),
@@ -960,7 +1111,7 @@ fn remove_system() -> Vec<String> {
             continue;
         }
         let init = script_init(script);
-        quiet_root(&[script, "stop"]);
+        if stop { quiet_root(&[script, "stop"]); }
         match init {
             Init::OpenRc => { quiet_root(&["rc-update", "del", "aidev-runner", "default"]); }
             Init::Procd => { quiet_root(&[script, "disable"]); }
@@ -981,7 +1132,7 @@ fn remove_system() -> Vec<String> {
     }
     // a supervise started by hand or by cron
     #[cfg(unix)]
-    if let Some(pid) = std::fs::read_to_string(supervise_pidfile()).ok().and_then(|s| s.trim().parse::<i32>().ok()) {
+    if let Some(pid) = std::fs::read_to_string(supervise_pidfile()).ok().filter(|_| stop).and_then(|s| s.trim().parse::<i32>().ok()) {
         if pid > 1 && unsafe { libc::kill(pid, 0) } == 0 {
             unsafe { libc::kill(pid, libc::SIGTERM) };
         }

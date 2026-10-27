@@ -251,7 +251,7 @@ fn update_console(version: Option<String>, gateway: Option<String>) -> Result<St
 }
 
 /// The runner's life: connect, reconnect, hand over (boot-time runner), pause and resume (status icon) — until a
-/// shutdown (exit 0) or a refused token (exit 3).
+/// shutdown (exit 0), a refused token (exit 3) or the target's deletion (removed from this PC, exit 0).
 fn serve(cfg: config::Config, boot: bool) -> Result<i32, String> {
     let rt = tokio::runtime::Runtime::new().map_err(|e| e.to_string())?;
     // a service manager's stop (SIGTERM; Android's Process.destroy): end like 종료 — the commands stopped — but not
@@ -325,6 +325,18 @@ fn serve(cfg: config::Config, boot: bool) -> Result<i32, String> {
             conn::Exit::Unauthorized => {
                 eprintln!("게이트웨이가 이 러너의 토큰을 거부했습니다(대상이 삭제되었거나 다시 페어링됨). 작업대에서 새 페어링 코드를 받아 `aidev-runner pair <코드>`를 실행하세요.");
                 return Ok(3);
+            }
+            conn::Exit::Removed => {
+                // the lock stays held until the end: this PC's other runner (the boot-time one) meets the same answer
+                // only after this one is done. Paired again on this PC meanwhile (a new token in runner.toml): that stays.
+                if config::load().is_ok_and(|now| now.token != cfg.token) {
+                    eprintln!("작업대에서 이 대상이 삭제되었습니다 — 이 PC는 그 사이 다시 페어링되어 그대로 둡니다");
+                    return Ok(3);
+                }
+                eprintln!("작업대에서 이 대상이 삭제되어 이 PC에서 러너를 제거합니다");
+                for line in service::purge() { eprintln!("  {line}"); }
+                // exit 0: no service manager starts it again (Android: 3 — the app stops and shows it is unpaired)
+                return Ok(if cfg!(target_os = "android") { 3 } else { 0 });
             }
         }
     }
