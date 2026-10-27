@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react';
-import { Check, ChevronDown, ChevronRight, Copy, Laptop, Plus, RefreshCw, Star, Trash2, Users, Wifi, WifiOff, X } from 'lucide-react';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import type { ReactNode } from 'react';
+import { ArrowUpCircle, Check, ChevronDown, ChevronRight, Copy, KeyRound, Laptop, Plus, RefreshCw, Star, Trash2, Users, Wifi, WifiOff, X } from 'lucide-react';
 
 import { api, readApiJson } from '@/shared/api';
 import { copyTextToClipboard } from '@/shared/utils';
@@ -37,6 +38,14 @@ type Target = {
 // full: agents never wait (the default) — every command is still recorded, pushed to the user and stoppable
 const POLICY_LABEL: Record<Target['policy'], string> = { full: '전체 권한 (확인 없음)', auto: '위험 명령만 확인', ask: '변경 명령은 확인', deny: '실행 금지' };
 const POLL_MS = 5000;
+// below this panel width the buttons and badges keep only their icons (the text moves to the tooltip)
+const COMPACT_PX = 380;
+const BUTTON = 'inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 hover:bg-accent disabled:opacity-50';
+
+/** A button's or badge's text: shown in a wide panel; a narrow one keeps only the icon (screen readers still read it). */
+function Label({ compact, children }: { compact: boolean; children: ReactNode }) {
+  return compact ? <span className="sr-only">{children}</span> : <>{children}</>;
+}
 
 /** a > b for runner versions ("0.20.0" > "0.9.3"). */
 function versionAbove(a: string, b: string) {
@@ -142,7 +151,7 @@ function SharesSection({ targetId, setNote }: { targetId: number; setNote: (note
 }
 
 /** One target row: status, platform, and (expanded) capabilities and actions (managing it: the owner only). */
-function TargetRow({ target, files, latest, reload, setNote }: { target: Target; files: RunnerFile[]; latest: string | null; reload: () => void; setNote: (note: string | null) => void }) {
+function TargetRow({ target, files, latest, compact, reload, setNote }: { target: Target; files: RunnerFile[]; latest: string | null; compact: boolean; reload: () => void; setNote: (note: string | null) => void }) {
   // expanded: details (tools, devices, roots) and actions are shown on demand to keep the list short
   const [open, setOpen] = useState(false);
   // confirmDelete: deleting disconnects the runner immediately, so it takes a second click
@@ -166,13 +175,13 @@ function TargetRow({ target, files, latest, reload, setNote }: { target: Target;
       <button type="button" onClick={() => setOpen(!open)} className="flex w-full items-center gap-1.5 text-left">
         {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
         <span className={`h-2 w-2 shrink-0 rounded-full ${state.dot}`} aria-hidden />
-        <span className="font-medium">{target.name}</span>
-        {shared ? <span title={`${target.shared_by} 님이 공유한 PC — 설정은 소유자만 바꿀 수 있습니다`} className="inline-flex items-center gap-0.5 rounded bg-sky-500/15 px-1 text-[10px] text-sky-700 dark:text-sky-300"><Users size={9} /> {target.shared_by} 공유</span> : null}
-        {target.is_default ? <span title="기본 PC — 명령이 PC를 지정하지 않으면 여기서 실행" className="inline-flex items-center gap-0.5 rounded bg-amber-500/15 px-1 text-[10px] text-amber-700 dark:text-amber-400"><Star size={9} className="fill-current" /> 기본</span> : null}
-        {target.update && !target.update.error ? <span className="inline-flex items-center gap-0.5 rounded bg-sky-500/15 px-1 text-[10px] text-sky-700 dark:text-sky-300"><RefreshCw size={9} className="animate-spin" /> {target.update.to === 'latest' ? '업데이트 중' : `${target.update.to}로 업데이트 중`}</span>
-          : updatable(target, latest) ? <span title={`러너 ${caps?.runner} → ${latest}`} className="rounded bg-amber-500/15 px-1 text-[10px] text-amber-700 dark:text-amber-400">업데이트 가능</span> : null}
-        <span className="truncate text-muted-foreground">{[caps?.os ?? target.platform, caps?.arch ?? target.arch, caps?.hostname].filter(Boolean).join(' · ')}</span>
-        <span className="ml-auto shrink-0 text-[10px] text-muted-foreground">{state.text}</span>
+        <span className="min-w-10 truncate font-medium">{target.name}</span>
+        {shared ? <span title={`${target.shared_by} 님이 공유한 PC — 설정은 소유자만 바꿀 수 있습니다`} className="inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap rounded bg-sky-500/15 px-1 py-px text-[10px] text-sky-700 dark:text-sky-300"><Users size={9} /> <Label compact={compact}>{target.shared_by} 공유</Label></span> : null}
+        {target.is_default ? <span title="기본 PC — 명령이 PC를 지정하지 않으면 여기서 실행" className="inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap rounded bg-amber-500/15 px-1 py-px text-[10px] text-amber-700 dark:text-amber-400"><Star size={9} className="fill-current" /> <Label compact={compact}>기본</Label></span> : null}
+        {target.update && !target.update.error ? <span title={`러너 ${target.update.from} → ${target.update.to} 업데이트 중 — 다시 연결되면 끝`} className="inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap rounded bg-sky-500/15 px-1 py-px text-[10px] text-sky-700 dark:text-sky-300"><RefreshCw size={9} className="animate-spin" /> <Label compact={compact}>업데이트 중</Label></span>
+          : updatable(target, latest) ? <span title={`업데이트 가능: 러너 ${caps?.runner} → ${latest}`} className="inline-flex shrink-0 items-center gap-0.5 whitespace-nowrap rounded bg-amber-500/15 px-1 py-px text-[10px] text-amber-700 dark:text-amber-400"><ArrowUpCircle size={9} /> <Label compact={compact}>업데이트 가능</Label></span> : null}
+        <span className="min-w-0 flex-1 truncate text-muted-foreground">{[caps?.os ?? target.platform, caps?.arch ?? target.arch, caps?.hostname].filter(Boolean).join(' · ')}</span>
+        <span className="shrink-0 whitespace-nowrap text-[10px] text-muted-foreground">{state.text}</span>
       </button>
       {!shared && (!target.paired || target.pairing_code) ? (target.pairing_code ? <PairingCard target={target} files={files} onRefresh={() => { void act(() => api.targets.refreshPairing(target.id)); }} /> : (
         <button type="button" onClick={() => { void act(() => api.targets.refreshPairing(target.id)); }} className="mt-1 inline-flex h-6 items-center gap-1 rounded border border-border px-2 hover:bg-accent"><RefreshCw size={11} /> 페어링 코드 발급</button>
@@ -188,7 +197,7 @@ function TargetRow({ target, files, latest, reload, setNote }: { target: Target;
               <div className="aidev-selectable text-[10px] text-muted-foreground">러너 {caps.runner ?? '?'} · 셸 {caps.shell ?? '?'} · 화면 캡처 {caps.screen ? '허용' : '꺼짐'}</div>
             </>
           ) : <div className="text-muted-foreground">러너가 아직 연결된 적이 없습니다.</div>}
-          {target.update?.error ? <div className="text-rose-600">러너 업데이트 실패 ({target.update.from} → {target.update.to}): {target.update.error}</div> : null}
+          {target.update?.error ? <div className="break-words text-rose-600">러너 업데이트 실패 ({target.update.from} → {target.update.to}): {target.update.error}</div> : null}
           {shared ? <div className="text-muted-foreground">원격 실행: {POLICY_LABEL[target.policy]} · {target.shared_by} 님이 관리</div> : (
             <>
               <label className="flex items-center gap-1.5">
@@ -205,13 +214,13 @@ function TargetRow({ target, files, latest, reload, setNote }: { target: Target;
             </>
           )}
           <div className="flex flex-wrap gap-1.5">
-            <button type="button" disabled={!target.online} onClick={() => { void act(() => api.targets.ping(target.id), (b) => (b.ok ? `응답 ${String(b.rtt_ms)}ms` : `응답 없음: ${String(b.error)}`)); }} className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 hover:bg-accent disabled:opacity-50"><Wifi size={11} /> 연결 확인</button>
-            <button type="button" disabled={!target.online} onClick={() => { void act(() => api.targets.refreshCapabilities(target.id), () => '정보를 새로 받았습니다'); }} className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 hover:bg-accent disabled:opacity-50"><RefreshCw size={11} /> 정보 새로고침</button>
-            {updatable(target, latest) ? <button type="button" onClick={() => { void act(() => api.targets.updateRunner(target.id, latest!), () => `${target.name}: 러너 ${caps?.runner} → ${latest!} 업데이트를 시작했습니다 — 다시 연결되면 끝`); }} className="inline-flex h-6 items-center gap-1 rounded border border-amber-500/60 px-2 text-amber-700 hover:bg-accent dark:text-amber-400"><RefreshCw size={11} /> 러너 업데이트 {caps?.runner} → {latest}</button> : null}
-            {!shared && target.paired && !target.pairing_code ? <button type="button" onClick={() => { void act(() => api.targets.refreshPairing(target.id), () => '새 코드로 다시 페어링하면 기존 러너 연결은 끊어집니다'); }} className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 hover:bg-accent">다시 페어링</button> : null}
+            <button type="button" title="연결 확인" disabled={!target.online} onClick={() => { void act(() => api.targets.ping(target.id), (b) => (b.ok ? `응답 ${String(b.rtt_ms)}ms` : `응답 없음: ${String(b.error)}`)); }} className={`${BUTTON} border-border`}><Wifi size={11} /> <Label compact={compact}>연결 확인</Label></button>
+            <button type="button" title="정보 새로고침" disabled={!target.online} onClick={() => { void act(() => api.targets.refreshCapabilities(target.id), () => '정보를 새로 받았습니다'); }} className={`${BUTTON} border-border`}><RefreshCw size={11} /> <Label compact={compact}>정보 새로고침</Label></button>
+            {updatable(target, latest) ? <button type="button" title={`러너 업데이트 ${caps?.runner} → ${latest}`} onClick={() => { void act(() => api.targets.updateRunner(target.id, latest!), () => `${target.name}: 러너 ${caps?.runner} → ${latest!} 업데이트를 시작했습니다 — 다시 연결되면 끝`); }} className={`${BUTTON} border-amber-500/60 text-amber-700 dark:text-amber-400`}><ArrowUpCircle size={11} /> <Label compact={compact}>업데이트 → {latest}</Label></button> : null}
+            {!shared && target.paired && !target.pairing_code ? <button type="button" title="다시 페어링" onClick={() => { void act(() => api.targets.refreshPairing(target.id), () => '새 코드로 다시 페어링하면 기존 러너 연결은 끊어집니다'); }} className={`${BUTTON} border-border`}><KeyRound size={11} /> <Label compact={compact}>다시 페어링</Label></button> : null}
             {shared ? null : confirmDelete
-              ? <button type="button" title={removesItself ? 'PC에서 러너 서비스와 파일(설정·토큰·로그)까지 지웁니다 — 오프라인이면 다음에 연결될 때' : '이 러너는 0.20.0 미만이라 PC에 남습니다 — PC에서 aidev-runner uninstall'} onClick={() => { void act(() => api.targets.remove(target.id), () => (removesItself ? `${target.name} 삭제 — PC에서 러너를 제거합니다${target.online ? '' : ' (다음에 연결될 때)'}` : `${target.name} 삭제 — 러너 연결을 끊었습니다 (러너 0.20.0 미만이라 PC에 남습니다: PC에서 aidev-runner uninstall)`)); }} className="inline-flex h-6 items-center gap-1 rounded bg-red-600 px-2 text-white"><Trash2 size={11} /> {removesItself ? 'PC에서도 제거' : '삭제 확인'}</button>
-              : <button type="button" onClick={() => setConfirmDelete(true)} className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 text-red-600 hover:bg-accent"><Trash2 size={11} /> 삭제</button>}
+              ? <button type="button" title={removesItself ? 'PC에서 러너 서비스와 파일(설정·토큰·로그)까지 지웁니다 — 오프라인이면 다음에 연결될 때' : '이 러너는 0.20.0 미만이라 PC에 남습니다 — PC에서 aidev-runner uninstall'} onClick={() => { void act(() => api.targets.remove(target.id), () => (removesItself ? `${target.name} 삭제 — PC에서 러너를 제거합니다${target.online ? '' : ' (다음에 연결될 때)'}` : `${target.name} 삭제 — 러너 연결을 끊었습니다 (러너 0.20.0 미만이라 PC에 남습니다: PC에서 aidev-runner uninstall)`)); }} className={`${BUTTON} border-red-600 bg-red-600 text-white hover:bg-red-700`}><Trash2 size={11} /> <Label compact={compact}>{removesItself ? 'PC에서도 제거' : '삭제 확인'}</Label></button>
+              : <button type="button" title="삭제" onClick={() => setConfirmDelete(true)} className={`${BUTTON} border-border text-red-600`}><Trash2 size={11} /> <Label compact={compact}>삭제</Label></button>}
           </div>
         </div>
       ) : null}
@@ -246,6 +255,16 @@ export function TargetsPanel() {
   }, [reload]);
 
   const latest = servedVersion(files);
+  // compact: the panel is narrow — buttons and badges keep only their icons
+  const panel = useRef<HTMLDivElement>(null);
+  const [compact, setCompact] = useState(false);
+  useEffect(() => {
+    const el = panel.current;
+    if (!el) return;
+    const observer = new ResizeObserver(([entry]) => setCompact(entry.contentRect.width < COMPACT_PX));
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, []);
   const outdated = targets?.filter((t) => updatable(t, latest)) ?? [];
   // every outdated PC (8 requests at a time; each PC replaces its own runner and reconnects)
   const updateAll = async () => {
@@ -271,13 +290,13 @@ export function TargetsPanel() {
   };
 
   return (
-    <div className="flex h-full flex-col text-[12px]" data-testid="targets-panel">
+    <div ref={panel} className="flex h-full flex-col text-[12px]" data-testid="targets-panel">
       <div className="flex h-8 items-center gap-2 border-b border-border px-3 text-muted-foreground">
-        <Laptop size={12} />
-        <span>{targets ? `${targets.length}대 · 연결 ${targets.filter((t) => t.online).length}` : '불러오는 중…'}</span>
-        {outdated.length ? <button type="button" onClick={() => { void updateAll(); }} title={`연결된 PC 중 러너가 ${latest}보다 오래된 ${outdated.length}대를 업데이트합니다`} className="inline-flex h-6 items-center gap-1 rounded border border-amber-500/60 px-2 text-amber-700 hover:bg-accent dark:text-amber-400"><RefreshCw size={11} /> 모두 업데이트 ({outdated.length})</button> : null}
-        <button type="button" onClick={reload} aria-label="새로고침" className="ml-auto rounded p-1 hover:bg-accent"><RefreshCw size={12} /></button>
-        <button type="button" onClick={() => setForm(form ? null : { name: '', description: '', policy: 'full' })} className="inline-flex h-6 items-center gap-1 rounded border border-border px-2 text-foreground hover:bg-accent"><Plus size={11} /> 등록</button>
+        <Laptop size={12} className="shrink-0" />
+        <span className="min-w-0 truncate">{targets ? `${targets.length}대 · 연결 ${targets.filter((t) => t.online).length}` : '불러오는 중…'}</span>
+        {outdated.length ? <button type="button" onClick={() => { void updateAll(); }} title={`연결된 PC 중 러너가 ${latest}보다 오래된 ${outdated.length}대를 업데이트합니다`} className={`${BUTTON} border-amber-500/60 text-amber-700 dark:text-amber-400`}><ArrowUpCircle size={11} /> <Label compact={compact}>모두 업데이트</Label> {outdated.length}</button> : null}
+        <button type="button" onClick={reload} aria-label="새로고침" className="ml-auto shrink-0 rounded p-1 hover:bg-accent"><RefreshCw size={12} /></button>
+        <button type="button" title="PC 등록" onClick={() => setForm(form ? null : { name: '', description: '', policy: 'full' })} className={`${BUTTON} border-border text-foreground`}><Plus size={11} /> <Label compact={compact}>등록</Label></button>
       </div>
       {note ? <div className="border-b border-border px-3 py-1.5 text-muted-foreground">{note}</div> : null}
       {form ? (
@@ -297,7 +316,7 @@ export function TargetsPanel() {
         </div>
       ) : null}
       <ul className="flex-1 overflow-auto">
-        {targets?.map((target) => <TargetRow key={target.id} target={target} files={files} latest={latest} reload={reload} setNote={setNote} />)}
+        {targets?.map((target) => <TargetRow key={target.id} target={target} files={files} latest={latest} compact={compact} reload={reload} setNote={setNote} />)}
       </ul>
       {targets && targets.length === 0 && !form ? (
         <div className="px-3 py-4 text-muted-foreground">
