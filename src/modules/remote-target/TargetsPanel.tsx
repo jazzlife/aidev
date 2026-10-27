@@ -216,7 +216,7 @@ function TargetRow({ target, files, latest, compact, reload, setNote }: { target
           <div className="flex flex-wrap gap-1.5">
             <button type="button" title="연결 확인" disabled={!target.online} onClick={() => { void act(() => api.targets.ping(target.id), (b) => (b.ok ? `응답 ${String(b.rtt_ms)}ms` : `응답 없음: ${String(b.error)}`)); }} className={`${BUTTON} border-border`}><Wifi size={11} /> <Label compact={compact}>연결 확인</Label></button>
             <button type="button" title="정보 새로고침" disabled={!target.online} onClick={() => { void act(() => api.targets.refreshCapabilities(target.id), () => '정보를 새로 받았습니다'); }} className={`${BUTTON} border-border`}><RefreshCw size={11} /> <Label compact={compact}>정보 새로고침</Label></button>
-            {updatable(target, latest) ? <button type="button" title={`러너 업데이트 ${caps?.runner} → ${latest}`} onClick={() => { void act(() => api.targets.updateRunner(target.id, latest!), () => `${target.name}: 러너 ${caps?.runner} → ${latest!} 업데이트를 시작했습니다 — 다시 연결되면 끝`); }} className={`${BUTTON} border-amber-500/60 text-amber-700 dark:text-amber-400`}><ArrowUpCircle size={11} /> <Label compact={compact}>업데이트 → {latest}</Label></button> : null}
+            {updatable(target, latest) ? <button type="button" title={`러너 업데이트 ${caps?.runner} → ${latest}`} onClick={() => { void act(() => api.targets.updateRunner(target.id, latest!), () => null); }} className={`${BUTTON} border-amber-500/60 text-amber-700 dark:text-amber-400`}><ArrowUpCircle size={11} /> <Label compact={compact}>업데이트 → {latest}</Label></button> : null}
             {!shared && target.paired && !target.pairing_code ? <button type="button" title="다시 페어링" onClick={() => { void act(() => api.targets.refreshPairing(target.id), () => '새 코드로 다시 페어링하면 기존 러너 연결은 끊어집니다'); }} className={`${BUTTON} border-border`}><KeyRound size={11} /> <Label compact={compact}>다시 페어링</Label></button> : null}
             {shared ? null : confirmDelete
               ? <button type="button" title={removesItself ? 'PC에서 러너 서비스와 파일(설정·토큰·로그)까지 지웁니다 — 오프라인이면 다음에 연결될 때' : '이 러너는 0.20.0 미만이라 PC에 남습니다 — PC에서 aidev-runner uninstall'} onClick={() => { void act(() => api.targets.remove(target.id), () => (removesItself ? `${target.name} 삭제 — PC에서 러너를 제거합니다${target.online ? '' : ' (다음에 연결될 때)'}` : `${target.name} 삭제 — 러너 연결을 끊었습니다 (러너 0.20.0 미만이라 PC에 남습니다: PC에서 aidev-runner uninstall)`)); }} className={`${BUTTON} border-red-600 bg-red-600 text-white hover:bg-red-700`}><Trash2 size={11} /> <Label compact={compact}>{removesItself ? 'PC에서도 제거' : '삭제 확인'}</Label></button>
@@ -266,6 +266,8 @@ export function TargetsPanel() {
     return () => observer.disconnect();
   }, []);
   const outdated = targets?.filter((t) => updatable(t, latest)) ?? [];
+  // PCs whose runner update is under way (from the gateway's state: gone once each runner is back with the new version)
+  const updating = targets?.filter((t) => t.update && !t.update.error) ?? [];
   // every outdated PC (8 requests at a time; each PC replaces its own runner and reconnects)
   const updateAll = async () => {
     setNote(null);
@@ -275,7 +277,8 @@ export function TargetsPanel() {
         try { await readApiJson(await api.targets.updateRunner(t.id, latest!)); } catch (error) { failed.push(`${t.name}: ${error instanceof Error ? error.message : '실패'}`); }
       }));
     }
-    setNote(`러너 ${latest} 업데이트 시작 ${outdated.length - failed.length}대${failed.length ? ` · 실패 ${failed.length}대 — ${failed.join(' / ')}` : ''}`);
+    // only what failed to start stays as a note; the progress line follows the PCs until they are back
+    setNote(failed.length ? `러너 ${latest} 업데이트를 시작하지 못한 PC ${failed.length}대 — ${failed.join(' / ')}` : null);
     reload();
   };
 
@@ -298,7 +301,13 @@ export function TargetsPanel() {
         <button type="button" onClick={reload} aria-label="새로고침" className="ml-auto shrink-0 rounded p-1 hover:bg-accent"><RefreshCw size={12} /></button>
         <button type="button" title="PC 등록" onClick={() => setForm(form ? null : { name: '', description: '', policy: 'full' })} className={`${BUTTON} border-border text-foreground`}><Plus size={11} /> <Label compact={compact}>등록</Label></button>
       </div>
-      {note ? <div className="border-b border-border px-3 py-1.5 text-muted-foreground">{note}</div> : null}
+      {updating.length ? <div className="flex items-center gap-1.5 border-b border-border px-3 py-1.5 text-sky-700 dark:text-sky-300"><RefreshCw size={11} className="shrink-0 animate-spin" /><span className="min-w-0 truncate">러너 업데이트 중 {updating.length}대 — 다시 연결되면 끝</span></div> : null}
+      {note ? (
+        <div className="flex items-start gap-1.5 border-b border-border px-3 py-1.5 text-muted-foreground">
+          <span className="min-w-0 flex-1 break-words">{note}</span>
+          <button type="button" aria-label="알림 닫기" onClick={() => setNote(null)} className="shrink-0 rounded p-0.5 hover:bg-accent"><X size={11} /></button>
+        </div>
+      ) : null}
       {form ? (
         <div className="space-y-1.5 border-b border-border px-3 py-2">
           <input autoFocus className="w-full rounded border border-border bg-background px-2 py-1" placeholder="이름 (예: my-mac, 영문 소문자·숫자·-)" value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value.toLowerCase() })} />
