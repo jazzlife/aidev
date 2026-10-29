@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Check, Copy, Plus, RefreshCw, Share2, Trash2 } from 'lucide-react';
+import { Check, Copy, Plus, RefreshCw, Share2, Trash2, X } from 'lucide-react';
 
 import { api, readApiJson } from '@/modules/chat-core';
 import { pairingSteps } from '@/shared/runnerPairing';
@@ -12,8 +12,19 @@ import { useOpener, useParent } from '@m/lib/nav';
 type Target = {
   id: number; name: string; description: string; platform: string | null; online: boolean; paired: boolean;
   last_seen: number | null; pairing_code: string | null; pairing_expires: number | null;
-  capabilities: { runner?: string; os?: string; hostname?: string } | null;
+  /** another account's PC shared with this one: the owner's username (deleting it here only leaves the share) */
+  shared_by?: string | null;
+  capabilities: { runner?: string; os?: string; hostname?: string; features?: string[] } | null;
 };
+
+/** What the second tap does to the PC, said before it (phones have no hover titles) and after it. */
+function removal(t: Target) {
+  // runner 0.20.0+ removes itself from the PC when its target is deleted (now, or when it next connects)
+  if (t.shared_by) return { label: '공유 해제 확인', hint: `내 목록에서 빼고 공유를 끊습니다 — PC와 러너는 ${t.shared_by} 님에게 그대로 남습니다`, done: `${t.name} 공유 해제 — PC와 러너는 ${t.shared_by} 님에게 그대로 남습니다` };
+  if (t.capabilities?.features?.includes('remove')) return { label: 'PC에서도 제거', hint: 'PC에서 러너 서비스와 파일(설정·토큰·로그)까지 지웁니다 — 오프라인이면 다음에 연결될 때', done: `${t.name} 삭제 — PC에서 러너를 제거합니다${t.online ? '' : ' (다음에 연결될 때)'}` };
+  if (t.paired) return { label: '정말 삭제', hint: '이 러너는 0.20.0 미만이라 PC에 남습니다 — PC에서 aidev-runner uninstall', done: `${t.name} 삭제 — 러너 연결을 끊었습니다 (러너 0.20.0 미만이라 PC에 남습니다: PC에서 aidev-runner uninstall)` };
+  return { label: '정말 삭제', hint: null, done: `${t.name} 삭제` };
+}
 /** The PC's OS for the pairing lines — the phone is not that PC, so it is chosen, not guessed. */
 const OS_CHOICES: Array<{ id: string; label: string }> = [
   { id: 'win-x64', label: 'Windows' }, { id: 'mac-universal', label: 'macOS' }, { id: 'linux-x64', label: 'Linux' },
@@ -115,22 +126,27 @@ export function TargetsScreen() {
         <ul>
           {targets?.map((t) => {
             const state = t.online ? { dot: 'bg-ok', text: '연결됨' } : t.paired ? { dot: 'bg-muted', text: `오프라인${t.last_seen ? ` · ${relativeTime(new Date(t.last_seen).toISOString())}` : ''}` } : { dot: 'bg-warn', text: '페어링 대기' };
-            const open = openId === t.id || Boolean(t.pairing_code && !t.paired);
+            // the actions open on a tap (a PC waiting for its pairing shows its card regardless)
+            const open = openId === t.id;
+            const removing = confirmDelete === t.id ? removal(t) : null;
             return (
               <li key={t.id} className="border-b border-line px-4 py-3" data-testid={`target-${t.name}`}>
                 <button type="button" onClick={() => { setConfirmDelete(null); setOpenId(openId === t.id ? null : t.id); }} className="flex w-full items-center gap-2 text-left">
                   <span className={`h-2.5 w-2.5 shrink-0 rounded-full ${state.dot}`} aria-hidden />
                   <span className="text-[15px] font-medium">{t.name}</span>
+                  {t.shared_by ? <span className="shrink-0 rounded bg-elevated px-1.5 text-[11px] text-muted">{t.shared_by} 공유</span> : null}
                   <span className="min-w-0 flex-1 truncate text-[12px] text-muted">{[t.capabilities?.os ?? t.platform, t.capabilities?.hostname].filter(Boolean).join(' · ')}</span>
                   <span className="shrink-0 text-[12px] text-muted">{state.text}</span>
                 </button>
                 {t.pairing_code ? <PairingCard target={t} files={files} onRefresh={() => { void act(() => api.targets.refreshPairing(t.id)); }} /> : null}
-                {open && !t.pairing_code ? (
+                {open ? (
                   <div className="mt-2 grid grid-cols-2 gap-2">
-                    <button type="button" onClick={() => { void act(() => api.targets.refreshPairing(t.id), '새 코드로 다시 페어링하면 기존 러너 연결은 끊어집니다'); }} className="m-touch flex items-center justify-center gap-1 rounded-xl border border-line text-[13px]"><RefreshCw size={14} /> 다시 페어링</button>
-                    {confirmDelete === t.id
-                      ? <button type="button" onClick={() => { void act(() => api.targets.remove(t.id), `${t.name} 삭제 — 러너 연결을 끊었습니다`); }} className="m-touch rounded-xl bg-danger text-[13px] text-white">정말 삭제</button>
-                      : <button type="button" onClick={() => setConfirmDelete(t.id)} className="m-touch flex items-center justify-center gap-1 rounded-xl border border-line text-[13px] text-danger"><Trash2 size={14} /> 삭제</button>}
+                    {/* re-pairing: the owner's paired PC; a PC still waiting for its pairing can be deleted too */}
+                    {!t.shared_by && !t.pairing_code ? <button type="button" onClick={() => { void act(() => api.targets.refreshPairing(t.id), '새 코드로 다시 페어링하면 기존 러너 연결은 끊어집니다'); }} className="m-touch flex items-center justify-center gap-1 rounded-xl border border-line text-[13px]"><RefreshCw size={14} /> 다시 페어링</button> : <span />}
+                    {removing
+                      ? <button type="button" onClick={() => { void act(() => api.targets.remove(t.id), removing.done); }} className="m-touch rounded-xl bg-danger text-[13px] text-white">{removing.label}</button>
+                      : <button type="button" onClick={() => setConfirmDelete(t.id)} className="m-touch flex items-center justify-center gap-1 rounded-xl border border-line text-[13px] text-danger">{t.shared_by ? <><X size={14} /> 공유 해제</> : <><Trash2 size={14} /> 삭제</>}</button>}
+                    {removing?.hint ? <p className="col-span-2 text-[12px] text-muted">{removing.hint}</p> : null}
                   </div>
                 ) : null}
               </li>

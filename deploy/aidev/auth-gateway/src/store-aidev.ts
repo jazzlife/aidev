@@ -1036,9 +1036,13 @@ export function aidevMethods(db: Database.Database) {
       db.prepare('INSERT OR IGNORE INTO target_shares(target_id,user_id,created_at) VALUES(?,?,?)').run(id, account.id, Date.now());
       return account.id;
     },
+    /** Ends one account's share of the owner's PC (the owner's unshare, or the guest leaving); their chats pinned to it lose the pin. */
     unshareTarget(ownerId: number, id: number, userId: number) {
       if (!m.target(ownerId, id)) throw new Error('Target not found');
-      return db.prepare('DELETE FROM target_shares WHERE target_id=? AND user_id=?').run(id, userId).changes;
+      return db.transaction(() => {
+        db.prepare('UPDATE session_settings SET target_id=NULL WHERE user_id=? AND target_id=?').run(userId, id);
+        return db.prepare('DELETE FROM target_shares WHERE target_id=? AND user_id=?').run(id, userId).changes;
+      })();
     },
     targetById(id: number) { return db.prepare('SELECT * FROM targets WHERE id=?').get(id) as TargetRow | undefined; },
     targetByTokenHash(hash: string) { return db.prepare('SELECT * FROM targets WHERE token_hash=?').get(hash) as TargetRow | undefined; },

@@ -1,6 +1,7 @@
 // Deleting a PC (runner 0.20.0): a connected runner is told to remove itself (close 4410), one that was away hears it
 // at its next connect (410 + x-aidev-runner: removed); runners before 0.20.0 only understand 4401 / 401 and get those.
 // What the gateway kept of the PC goes: its remote runs and their log files, its shares, the chats pinned to it.
+// A guest's delete only leaves the share: the PC and its runner stay with the owner.
 //   npm run build && node test/target-remove-test.mjs
 import assert from 'node:assert/strict';
 import crypto from 'node:crypto';
@@ -68,7 +69,13 @@ fs.writeFileSync(path.join(logDir, '999999.log'), 'another PC\n');
 store.shareTarget(alice, box.tid, 'bob');
 store.setSessionTarget(alice, 's1', box.tid);
 store.setSessionTarget(bob, 's2', box.tid);
-assert.equal((await call(bob, 'DELETE', `/targets/${box.tid}`)).status, 403, 'a guest does not delete the PC');
+const left = await call(bob, 'DELETE', `/targets/${box.tid}`);
+assert.deepEqual([left.status, left.body.left], [200, true], "a guest's delete leaves the share");
+assert.equal(store.targetAccess(bob, box.tid), undefined, 'the guest no longer reaches the PC');
+assert.ok(store.target(alice, box.tid) && hub.online(box.tid), 'the PC and its runner stay with the owner');
+assert.deepEqual([store.sessionTarget(alice, 's1'), store.sessionTarget(bob, 's2')], [box.tid, null], "only the guest's chat loses the pin");
+store.shareTarget(alice, box.tid, 'bob');
+store.setSessionTarget(bob, 's2', box.tid);
 assert.equal((await call(alice, 'DELETE', `/targets/${box.tid}`)).status, 200);
 assert.equal(await live.closed, 4410, 'the connected runner is told to remove itself');
 assert.equal(store.targetById(box.tid), undefined);
@@ -77,7 +84,7 @@ await until(() => !fs.existsSync(path.join(logDir, `${rr}.log`)), 'its run log g
 assert.ok(fs.existsSync(path.join(logDir, '999999.log')), "other PCs' logs stay");
 assert.equal(store.targetAccess(bob, box.tid), undefined, 'its shares go');
 assert.deepEqual([store.sessionTarget(alice, 's1'), store.sessionTarget(bob, 's2')], [null, null], 'chats pinned to it lose the pin');
-console.log('PASS a connected runner gets 4410; runs, logs, shares and chat pins go');
+console.log('PASS a guest leaves the share; a connected runner gets 4410; runs, logs, shares and chat pins go');
 
 // ---- the same runner connecting again (it was away): 410 removed; a runner before 0.20.0 with that token: 401
 assert.deepEqual(await connect(box.token, '0.20.0'), { status: 410, removed: true }, 'an away runner hears it at its next connect');

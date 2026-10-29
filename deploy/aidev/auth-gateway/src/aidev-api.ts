@@ -1507,6 +1507,14 @@ export function createAidevApi(deps: AidevDeps) {
         const id = Number(targetMatch[1]);
         const access = store.targetAccess(uid, id);
         if (!access) throw new HttpError(404, 'Target not found');
+        // a guest's delete leaves the share: the PC drops off their list, the PC and its runner stay with the owner
+        // (their open screens and terminals close within 5 s, like the owner's unshare)
+        if (access.shared_by && !targetMatch[2] && m === 'DELETE') {
+          if (session.sid.startsWith('runtime:')) throw new HttpError(403, 'sharing is managed by the user');
+          store.unshareTarget(access.user_id, id, uid);
+          console.log(`[runner] target #${id} share left by user #${uid}`);
+          return json(res, 200, { ok: true, left: true }), true;
+        }
         // pairing, consent, policy, name and deleting stay with the owner
         if (access.shared_by && targetMatch[2] !== '/ping' && targetMatch[2] !== '/refresh-caps') throw new HttpError(403, `이 PC는 ${access.shared_by} 님이 공유한 PC입니다 — 설정은 소유자만 바꿀 수 있습니다`);
         if (targetMatch[2] === '/ping' && m === 'POST') {

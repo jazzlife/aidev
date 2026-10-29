@@ -130,6 +130,36 @@ describe('mobile PC pairing', () => {
     fireEvent.click(screen.getByText('macOS'));
     expect(screen.getByTestId('pairing-card').textContent).toContain('~/.aidev/bin/aidev-runner pair AB12CD');
   });
+
+  it('deleting my PC removes its runner; a shared PC is only left (공유 해제)', async () => {
+    const pending = api.targets.list.getMockImplementation()!;
+    api.targets.list.mockImplementation(() => json({ targets: [
+      { id: 8, name: 'mine', description: '', platform: 'linux', online: true, paired: true, last_seen: Date.now(), pairing_code: null, pairing_expires: null, capabilities: { runner: '0.20.0', features: ['remove'] } },
+      { id: 9, name: 'theirs', description: '', platform: 'linux', online: true, paired: true, last_seen: Date.now(), pairing_code: null, pairing_expires: null, shared_by: 'alice', capabilities: { runner: '0.20.0', features: ['remove'] } },
+    ] }));
+    api.targets.remove.mockImplementation(() => json({ ok: true }));
+    at('/pcs');
+    await settle();
+    fireEvent.click(screen.getByText('mine'));
+    fireEvent.click(screen.getByText('삭제'));
+    expect(screen.getByText(/러너 서비스와 파일/)).toBeTruthy();
+    fireEvent.click(screen.getByText('PC에서도 제거'));
+    await settle();
+    expect(api.targets.remove).toHaveBeenLastCalledWith(8);
+    expect(screen.getByText('mine 삭제 — PC에서 러너를 제거합니다')).toBeTruthy();
+
+    fireEvent.click(screen.getByText('theirs'));
+    const row = screen.getByTestId('target-theirs');
+    expect(row.textContent).toContain('alice 공유');
+    expect(row.textContent).not.toContain('다시 페어링');
+    expect(row.textContent).not.toContain('삭제');
+    fireEvent.click(screen.getByText('공유 해제'));
+    expect(screen.getByText(/PC와 러너는 alice 님에게 그대로 남습니다$/)).toBeTruthy();
+    fireEvent.click(screen.getByText('공유 해제 확인'));
+    await settle();
+    expect(api.targets.remove).toHaveBeenLastCalledWith(9);
+    api.targets.list.mockImplementation(pending);
+  });
 });
 
 describe('mobile common menu (drawer)', () => {

@@ -154,7 +154,7 @@ function SharesSection({ targetId, setNote }: { targetId: number; setNote: (note
 function TargetRow({ target, files, latest, compact, reload, setNote }: { target: Target; files: RunnerFile[]; latest: string | null; compact: boolean; reload: () => void; setNote: (note: string | null) => void }) {
   // expanded: details (tools, devices, roots) and actions are shown on demand to keep the list short
   const [open, setOpen] = useState(false);
-  // confirmDelete: deleting disconnects the runner immediately, so it takes a second click
+  // confirmDelete: deleting disconnects the runner immediately (leaving a share closes this account's screens), so it takes a second click
   const [confirmDelete, setConfirmDelete] = useState(false);
   const caps = target.capabilities;
   // runner 0.20.0+ removes itself from the PC when its target is deleted (now, or when it next connects)
@@ -218,7 +218,10 @@ function TargetRow({ target, files, latest, compact, reload, setNote }: { target
             <button type="button" title="정보 새로고침" disabled={!target.online} onClick={() => { void act(() => api.targets.refreshCapabilities(target.id), () => '정보를 새로 받았습니다'); }} className={`${BUTTON} border-border`}><RefreshCw size={11} /> <Label compact={compact}>정보 새로고침</Label></button>
             {updatable(target, latest) ? <button type="button" title={`러너 업데이트 ${caps?.runner} → ${latest}`} onClick={() => { void act(() => api.targets.updateRunner(target.id, latest!), () => null); }} className={`${BUTTON} border-amber-500/60 text-amber-700 dark:text-amber-400`}><ArrowUpCircle size={11} /> <Label compact={compact}>업데이트 → {latest}</Label></button> : null}
             {!shared && target.paired && !target.pairing_code ? <button type="button" title="다시 페어링" onClick={() => { void act(() => api.targets.refreshPairing(target.id), () => '새 코드로 다시 페어링하면 기존 러너 연결은 끊어집니다'); }} className={`${BUTTON} border-border`}><KeyRound size={11} /> <Label compact={compact}>다시 페어링</Label></button> : null}
-            {shared ? null : confirmDelete
+            {shared ? (confirmDelete
+              ? <button type="button" title={`내 목록에서 빼고 공유를 끊습니다 — PC와 러너는 ${target.shared_by} 님에게 그대로 남습니다`} onClick={() => { void act(() => api.targets.remove(target.id), () => `${target.name} 공유 해제 — PC와 러너는 ${target.shared_by} 님에게 그대로 남습니다`); }} className={`${BUTTON} border-red-600 bg-red-600 text-white hover:bg-red-700`}><X size={11} /> <Label compact={compact}>공유 해제 확인</Label></button>
+              : <button type="button" title="공유 해제" onClick={() => setConfirmDelete(true)} className={`${BUTTON} border-border text-red-600`}><X size={11} /> <Label compact={compact}>공유 해제</Label></button>)
+              : confirmDelete
               ? <button type="button" title={removesItself ? 'PC에서 러너 서비스와 파일(설정·토큰·로그)까지 지웁니다 — 오프라인이면 다음에 연결될 때' : '이 러너는 0.20.0 미만이라 PC에 남습니다 — PC에서 aidev-runner uninstall'} onClick={() => { void act(() => api.targets.remove(target.id), () => (removesItself ? `${target.name} 삭제 — PC에서 러너를 제거합니다${target.online ? '' : ' (다음에 연결될 때)'}` : `${target.name} 삭제 — 러너 연결을 끊었습니다 (러너 0.20.0 미만이라 PC에 남습니다: PC에서 aidev-runner uninstall)`)); }} className={`${BUTTON} border-red-600 bg-red-600 text-white hover:bg-red-700`}><Trash2 size={11} /> <Label compact={compact}>{removesItself ? 'PC에서도 제거' : '삭제 확인'}</Label></button>
               : <button type="button" title="삭제" onClick={() => setConfirmDelete(true)} className={`${BUTTON} border-border text-red-600`}><Trash2 size={11} /> <Label compact={compact}>삭제</Label></button>}
           </div>
