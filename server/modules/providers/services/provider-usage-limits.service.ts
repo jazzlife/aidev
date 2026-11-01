@@ -40,6 +40,11 @@ const CLAUDE_USAGE_MODEL = 'claude-haiku-4-5';
 const CLAUDE_USAGE_CACHE_MS = 10 * 60_000;
 /** The unified headers' window names → the windows the turn events use. */
 const CLAUDE_HEADER_WINDOWS: Record<string, string> = { '5h': 'five_hour', '7d': 'seven_day' };
+/**
+ * The account windows a full report (the headers, a turn's `unifiedWindows`) names whenever the plan has them: one it
+ * leaves out is not on the plan (any more) — the Ultra plan has no five-hour window, lower plans still do (2026-11-01).
+ */
+const CLAUDE_ACCOUNT_WINDOWS = new Set(Object.values(CLAUDE_HEADER_WINDOWS));
 
 /** The engines the drawers show; only the signed-in ones are reported (2026-10-13). */
 const USAGE_ENGINES: LLMProvider[] = ['claude', 'codex', 'opencode'];
@@ -175,7 +180,8 @@ function upsertWindow(windows: ProviderUsageWindow[], next: ProviderUsageWindow)
 export const providerUsageLimitsService = {
   /**
    * Claude's `rate_limit_event`: the window named by `rateLimitType` with its utilization and reset,
-   * plus any `unifiedWindows` the CLI attaches. `status` says whether that window refuses runs. A
+   * plus any `unifiedWindows` the CLI attaches — the full set, so an account window it leaves out is
+   * dropped (a plan without it). `status` says whether that window refuses runs. A
    * model's own window (`seven_day_fable` …) refusing marks that window only — the account stays
    * open (`blockedUntil` untouched) and the flag lives until its reset or its own allowed event.
    */
@@ -190,8 +196,9 @@ export const providerUsageLimitsService = {
     if (type) {
       windows = upsertWindow(windows, { type, utilization: typeof info.utilization === 'number' ? Math.max(0, Math.min(1, info.utilization)) : null, resetsAt: toEpochMs(info.resetsAt), blocked: blockedHere });
     }
-    const unified = info.unifiedWindows && typeof info.unifiedWindows === 'object' ? info.unifiedWindows as Record<string, { utilization?: unknown; resetsAt?: unknown }> : null;
+    const unified = info.unifiedWindows && typeof info.unifiedWindows === 'object' && Object.keys(info.unifiedWindows).length ? info.unifiedWindows as Record<string, { utilization?: unknown; resetsAt?: unknown }> : null;
     if (unified) {
+      windows = windows.filter((window) => !CLAUDE_ACCOUNT_WINDOWS.has(window.type) || window.type === type || window.type in unified);
       for (const [key, value] of Object.entries(unified)) {
         if (!value || typeof value !== 'object') continue;
         const existing = windows.find((window) => window.type === key);

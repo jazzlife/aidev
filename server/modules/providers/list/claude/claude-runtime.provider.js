@@ -706,9 +706,10 @@ let fableLimitedUntil = 0;
 /**
  * Whether a refusal on a Fable turn was Fable's own weekly share rather than the account. The SDK does
  * not name that window (no `seven_day_fable` in `rate_limit_event`, the CLI only shows it in /usage),
- * so it is told apart by the refusal not naming an account window while the account's five-hour and
- * weekly windows, as last reported, still have room. An account window named in the refusal, or no
- * knowledge of the account windows, reads as the account being out — the handoff as before.
+ * so it is told apart by the refusal not naming an account window while the account's weekly window and
+ * its five-hour one (a plan without it — Ultra, 2026-11-01 — has none to check), as last reported, still
+ * have room. An account window named in the refusal, or no knowledge of the weekly window, reads as the
+ * account being out — the handoff as before.
  *
  * Used by the turn below and the providers module's tests.
  *
@@ -724,7 +725,8 @@ export function isFableOnlyRefusal(limit, claude) {
     const window = windows.find((entry) => entry.type === type);
     return Boolean(window) && !window.blocked && window.utilization !== null && window.utilization < 1;
   };
-  return hasRoom('five_hour') && hasRoom('seven_day');
+  const fiveHourOnPlan = windows.some((entry) => entry.type === 'five_hour');
+  return (!fiveHourOnPlan || hasRoom('five_hour')) && hasRoom('seven_day');
 }
 
 /**

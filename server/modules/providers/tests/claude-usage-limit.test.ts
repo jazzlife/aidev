@@ -44,6 +44,9 @@ test("a Fable turn's refusal is Fable's own share only when no account window is
   assert.ok(!isFableOnlyRefusal({ type: 'unknown', resetsAt: null }, { windows: [{ type: 'five_hour', utilization: 1, blocked: false }, { type: 'seven_day', utilization: 0.7, blocked: false }] }));
   assert.ok(!isFableOnlyRefusal({ type: 'unknown', resetsAt: null }, { windows: [{ type: 'five_hour', utilization: 0.3, blocked: true }, { type: 'seven_day', utilization: 0.7, blocked: false }] }));
   assert.ok(!isFableOnlyRefusal({ type: 'unknown', resetsAt: null }, { windows: [{ type: 'five_hour', utilization: 0.3, blocked: false }] }));
+  // a plan without the five-hour window (Ultra) is told by its weekly one alone
+  assert.ok(isFableOnlyRefusal({ type: 'unknown', resetsAt: null }, { windows: [{ type: 'seven_day', utilization: 0.7, blocked: false }] }));
+  assert.ok(!isFableOnlyRefusal({ type: 'unknown', resetsAt: null }, { windows: [{ type: 'seven_day', utilization: 1, blocked: false }] }));
   assert.ok(!isFableOnlyRefusal({ type: 'unknown', resetsAt: null }, undefined));
   assert.ok(!isFableOnlyRefusal(null, room));
 });

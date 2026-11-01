@@ -20,6 +20,18 @@ test('a Claude rate_limit_event becomes the account picture: window, utilization
   ]);
 });
 
+test('a full report without the five-hour window drops it (a plan without it); a report naming no windows keeps them', () => {
+  service.reset();
+  service.recordClaude({ status: 'allowed', rateLimitType: 'five_hour', utilization: 0.4, resetsAt: 1767225600, unifiedWindows: { five_hour: { utilization: 0.4, resetsAt: 1767225600 }, seven_day: { utilization: 0.2, resetsAt: 1767830400 } } });
+  service.recordClaude({ status: 'rejected', rateLimitType: 'seven_day_fable', utilization: 1, resetsAt: 1767830400, overageStatus: 'rejected' });
+  // the plan changed to one without the five-hour window: the next report names the weekly one only
+  service.recordClaude({ status: 'allowed', rateLimitType: 'seven_day', utilization: 0.21, resetsAt: 1767830400, unifiedWindows: { seven_day: { utilization: 0.21, resetsAt: 1767830400 } } });
+  const types = () => service.snapshot(1767000000000).claude!.windows.map((window) => window.type);
+  assert.deepEqual(types(), ['seven_day', 'seven_day_fable'], "the model's own window is not part of the report");
+  service.recordClaude({ status: 'allowed', rateLimitType: 'seven_day', utilization: 0.22, resetsAt: 1767830400, unifiedWindows: {} });
+  assert.deepEqual(types(), ['seven_day', 'seven_day_fable']);
+});
+
 test('a rejected window blocks until its reset; an allowed event afterwards lifts it', () => {
   service.reset();
   service.recordClaude({ status: 'rejected', rateLimitType: 'five_hour', utilization: 1, resetsAt: 1767225600, overageStatus: 'rejected' });
@@ -201,4 +213,15 @@ test('Claude: the drawer read asks Claude with the platform token; the reply hea
     if (previousToken === undefined) delete process.env.CLAUDE_CODE_OAUTH_TOKEN; else process.env.CLAUDE_CODE_OAUTH_TOKEN = previousToken;
     service.reset();
   }
+});
+
+test('Claude: headers of a plan without the five-hour window (Ultra) leave the weekly window only', () => {
+  service.reset();
+  service.recordClaude({ status: 'allowed', rateLimitType: 'five_hour', utilization: 0.25, resetsAt: 1791990000, unifiedWindows: { five_hour: { utilization: 0.25, resetsAt: 1791990000 }, seven_day: { utilization: 0.04, resetsAt: 1792533600 } } });
+  service.recordClaude(claudeUsageFromHeaders(new Headers({
+    'anthropic-ratelimit-unified-7d-reset': '1792533600', 'anthropic-ratelimit-unified-7d-status': 'allowed', 'anthropic-ratelimit-unified-7d-utilization': '0.05',
+    'anthropic-ratelimit-unified-representative-claim': 'seven_day', 'anthropic-ratelimit-unified-status': 'allowed',
+  })));
+  assert.deepEqual(service.snapshot(1791980000000).claude!.windows, [{ type: 'seven_day', utilization: 0.05, resetsAt: 1792533600000, blocked: false }]);
+  service.reset();
 });
