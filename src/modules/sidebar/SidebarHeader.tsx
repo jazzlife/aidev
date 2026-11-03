@@ -142,7 +142,7 @@ export default function SidebarHeader({
         {showSearchTools && (
           <div className="mt-2.5 space-y-2">
             {/* Search mode toggle */}
-            <div className="flex rounded-lg bg-muted/50 p-0.5">
+            <div className="flex gap-0.5 rounded-lg bg-muted/50 p-0.5">
               <button
                 onClick={() => onSearchModeChange('projects')}
                 aria-pressed={searchMode === 'projects'}
@@ -177,6 +177,8 @@ export default function SidebarHeader({
                   title={t('search.runningTooltip', 'Running sessions')}
                   className={cn(
                     "flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-normal transition-all",
+                    // the count badge hangs 10px past the icon; keep it inside this tab, off the archive tab
+                    runningSessionsCount > 0 && "pr-4",
                     searchMode === 'running'
                       ? "bg-background shadow-sm text-foreground ring-1 ring-emerald-500/15"
                       : "text-muted-foreground hover:text-foreground"
@@ -283,7 +285,7 @@ export default function SidebarHeader({
         {/* Mobile search */}
         {showSearchTools && (
           <div className="mt-2.5 space-y-2">
-            <div className="flex rounded-lg bg-muted/50 p-0.5">
+            <div className="flex gap-0.5 rounded-lg bg-muted/50 p-0.5">
               <button
                 onClick={() => onSearchModeChange('projects')}
                 aria-pressed={searchMode === 'projects'}
@@ -318,6 +320,8 @@ export default function SidebarHeader({
                   title={t('search.runningTooltip', 'Running sessions')}
                   className={cn(
                     "flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-normal transition-all",
+                    // the count badge hangs 10px past the icon; keep it inside this tab, off the archive tab
+                    runningSessionsCount > 0 && "pr-4",
                     searchMode === 'running'
                       ? "bg-background shadow-sm text-foreground ring-1 ring-emerald-500/15"
                       : "text-muted-foreground hover:text-foreground"
