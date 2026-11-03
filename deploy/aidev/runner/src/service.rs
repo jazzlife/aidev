@@ -201,6 +201,26 @@ fn powershell(script: &str, limit: std::time::Duration) -> Result<(), String> {
     }
 }
 
+/// Windows, the boot-time runner while it holds the connection: whenever someone is signed in, their session's runner
+/// should have it (the screen, input). Nothing starts that runner again when it dies after restarting itself (an update:
+/// the new process is no longer the task's, so the task's restart-on-failure does not see it) — the boot-time runner
+/// starts the sign-in task once a minute while it is connected. Without a sign-in an Interactive task does not start;
+/// while one runs, IgnoreNew keeps a second away; a sign-in runner that starts asks for the connection (hand-over).
+#[cfg(windows)]
+pub fn keep_sign_in_runner() {
+    use crate::proc_util::NoWindow;
+    static STARTED: std::sync::Once = std::sync::Once::new();
+    STARTED.call_once(|| {
+        let _ = std::thread::Builder::new().name("aidev-sign-in".into()).spawn(|| loop {
+            std::thread::sleep(std::time::Duration::from_secs(60));
+            if crate::control::state() == crate::control::State::Connected {
+                let _ = Command::new("schtasks.exe").args(["/Run", "/TN", "aidev-runner"]).no_window()
+                    .stdin(std::process::Stdio::null()).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status();
+            }
+        });
+    });
+}
+
 /// The same, quietly (expected failures such as "not loaded").
 pub(crate) fn quiet(cmd: &str, args: &[&str]) -> bool {
     Command::new(cmd).args(args).stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success())

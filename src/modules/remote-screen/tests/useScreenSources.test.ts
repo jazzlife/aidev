@@ -6,6 +6,8 @@ import { readUserPreference, resetUserPreferences, writeUserPreference } from '@
 
 /** What each PC lists: target id → its windows. */
 const listed: Record<number, RemoteWindow[]> = {};
+/** PCs that are away now (restarting, updating): their window list fails. */
+const away = new Set<number>();
 const okJson = (data: unknown) => Promise.resolve({ ok: true, json: async () => data } as Response);
 
 vi.mock('@/shared/api', async (importOriginal) => ({
@@ -13,7 +15,7 @@ vi.mock('@/shared/api', async (importOriginal) => ({
   api: {
     user: { preferences: () => okJson({ preferences: {} }), savePreferences: () => okJson({}) },
     targets: {
-      windows: (id: number) => okJson({ windows: listed[id] ?? [], displays: null, perWindow: true }),
+      windows: (id: number) => (away.has(id) ? Promise.resolve({ ok: false, status: 409, json: async () => ({ error: '원격 PC가 오프라인입니다' }) } as Response) : okJson({ windows: listed[id] ?? [], displays: null, perWindow: true })),
       runs: () => okJson({ runs: [] }),
     },
   },
@@ -33,6 +35,20 @@ describe('useScreenSources — the last window per PC', () => {
     resetUserPreferences();
     listed[1] = [win(10, 'Chrome', 'docs', true), win(11, 'Code', 'main.ts')];
     listed[2] = [win(20, 'Terminal', 'zsh', true), win(21, 'Code', 'other.ts')];
+  });
+
+  it('a PC that was away (restarting) comes back by itself: its windows are asked again', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      away.add(1);
+      const { result } = render({ targetId: 1, chosen: null });
+      await waitFor(() => expect(result.current.error).not.toBeNull());
+      expect(result.current.source).toBeNull();
+      away.delete(1);
+      await act(async () => { await vi.advanceTimersByTimeAsync(4000); });
+      await waitFor(() => expect(result.current.source).toEqual({ kind: 'window', id: 10 }));
+      expect(result.current.error).toBeNull();
+    } finally { away.clear(); vi.useRealTimers(); }
   });
 
   it('opens on the focused window when nothing was picked before', async () => {

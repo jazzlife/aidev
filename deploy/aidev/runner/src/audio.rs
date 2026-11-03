@@ -308,8 +308,25 @@ mod win {
         buf: Vec<u8>,
     }
 
+    /// The MTA stays for the whole process once the sound has used it. A thread that leaves it as its last member tears
+    /// it down, and the WinRT factories windows-rs keeps for the process (windows-capture's ApiInformation) then point at
+    /// freed memory: the next screen capture crashed the runner (0.22.0 on ally, 2026-11-03 — access violation in
+    /// IsApiContractPresentByMajor; a test program there crashed the same way, and not with the MTA kept).
+    fn keep_mta() {
+        #[link(name = "ole32")]
+        extern "system" {
+            fn CoIncrementMTAUsage(cookie: *mut isize) -> i32;
+        }
+        static KEPT: std::sync::Once = std::sync::Once::new();
+        KEPT.call_once(|| {
+            let mut cookie = 0isize;
+            unsafe { CoIncrementMTAUsage(&mut cookie) };   // never decremented
+        });
+    }
+
     impl Source {
         pub fn open() -> Result<Self, String> {
+            keep_mta();
             let _ = initialize_mta();
             let e = |what: &str| { let what = what.to_string(); move |err: wasapi::WasapiError| format!("{what}: {err}") };
             let enumerator = DeviceEnumerator::new().map_err(e("오디오 장치 목록"))?;

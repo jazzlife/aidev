@@ -312,6 +312,9 @@ fn serve(cfg: config::Config, boot: bool) -> Result<i32, String> {
         };
         if boot {
             eprintln!("부팅 러너: 연결을 맡습니다");
+            // a sign-in's runner that went away (crashed) is started again while someone is signed in
+            #[cfg(windows)]
+            service::keep_sign_in_runner();
         }
         match rt.block_on(conn::run(cfg.clone(), boot)) {
             conn::Exit::Handoff => {

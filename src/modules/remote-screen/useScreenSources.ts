@@ -5,6 +5,8 @@ import type { RemoteConsoleSource, RemoteScreenSource, RemoteWindow } from '@/sh
 import { readUserPreference, writeUserPreference } from '@/shared/userSettings';
 
 type Display = { id: number; name?: string; resolution?: string };
+/** How often lists that could not be read are asked again (a PC restarting or updating is back in seconds). */
+const RETRY_MS = 4000;
 type RunRow = { id: number; cmd: string | null; live: { streamId: number; pty: boolean; running: boolean } | null };
 /** Runner ≥ 0.13.3 lists each whole screen (display) as a "window" with an id from this reserved range. */
 const WHOLE_SCREEN_BASE = 0xffff_ff00;
@@ -47,7 +49,8 @@ function findSource({ windows, consoles, perWindow }: Sources, want: LastSource 
 /**
  * What a remote screen view can show on a PC (F-07c): its program windows (focused first; the runner
  * lists them) and the commands running there through the runner (their consoles). Runners before 0.7
- * list displays instead (`perWindow` false). Loaded when enabled/target changes and on `refresh()`.
+ * list displays instead (`perWindow` false). Loaded when enabled/target changes and on `refresh()`, and again every
+ * RETRY_MS while they cannot be read (a PC restarting or updating comes back without the user doing anything).
  * `source` is what to show: the user's `chosen` one while it still exists, otherwise what was last chosen on
  * this PC (remembered per PC, on any device), the focused window (listed first), a console, or display 1 —
  * derived, so a closed window falls back by itself.
@@ -84,6 +87,12 @@ export function useScreenSources(targetId: number | null, enabled: boolean, chos
   }, [targetId]);
 
   useEffect(() => { if (enabled) void refresh(); }, [enabled, refresh]);
+  // the windows could not be read (the PC is away for a moment): asked again until they come, so the view returns by itself
+  useEffect(() => {
+    if (!enabled || !error) return undefined;
+    const timer = setInterval(() => { void refresh(); }, RETRY_MS);
+    return () => clearInterval(timer);
+  }, [enabled, error, refresh]);
 
   // the default: the focused program window, not a whole screen (runner ≥ 0.13.3 lists those last)
   const source = useMemo<RemoteScreenSource | null>(() => {

@@ -175,7 +175,8 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
   /** A browser on a target's screen socket, with the hooks the control lock drives. */
   type ScreenPeer = { id: number; ws: WebSocket; userId: number; name: string; owner: boolean; send: (obj: unknown) => void;
     /** checks consent and policy, starts the control record; false (and the reason sent) when refused */ controlOn: () => boolean;
-    controlOff: (message: string | null) => void; move: (sc: ScreenStream) => void };
+    controlOff: (message: string | null) => void; move: (sc: ScreenStream) => void;
+    /** the PC is back (its runner reconnected): a viewer whose stream ended with the old connection joins again */ rejoin: () => void };
   /** One person controls a PC at a time (2026-10-11): the holder, and who asked for it, in order. */
   type ControlLock = { holder: ScreenPeer; requests: ScreenPeer[] };
   /** Runner updates asked from the workbench (2026-10-27), per target, until its runner says hello with another
@@ -562,6 +563,8 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
               console.log(`[runner] target #${conn.targetId} updated ${update.from} → ${caps.runner}`);
             }
             emit(conn.targetId, { type: 'online' });
+            // the screens that were open when it went away (an update, a restart, a network drop) start again by themselves
+            for (const p of peers.get(conn.targetId) ?? []) p.rejoin();
             if (conn.moveTo) ws.send(JSON.stringify({ jsonrpc: '2.0', method: 'runner.realtime', params: { url: conn.moveTo } }));
             if (Array.isArray(caps.features) && caps.features.includes('exec')) void reconcile(conn.targetId);
             return;
@@ -861,6 +864,10 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
             const old = current; current = null;
             if (old) { old.viewers.delete(ws); old.rtc.delete(ws); }
             if (ws.readyState === WebSocket.OPEN) attach(sc);
+          },
+          rejoin: () => {
+            if (ws.readyState !== WebSocket.OPEN || (current && screens.get(key(targetId, current.streamId)) === current)) return;
+            void join(prefs);
           },
         };
         /** Asks for control: free, or held by this account elsewhere → taken now; else in line until the holder answers or lets go. */
