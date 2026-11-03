@@ -59,7 +59,11 @@ import type { TargetRow } from './store-aidev.js';
  * take it ({op:"control-take"}); every viewer gets {type:"control-state"}. Only the holder gets a direct connection —
  * the PC sends a frame at most twice (gateway + holder) — and the runner takes direct input for a stream only while
  * the holder is the one viewer there that ever opened a channel ({type:"control-direct"}); otherwise the holder's
- * input goes through here, where only the holder's input passes. */
+ * input goes through here, where only the holder's input passes.
+ * Sound (2026-11-03, runner feature "audio"): viewers that play it (`v=3`) turn it on for their stream (`screen.audio
+ * {streamId, on:true}`); the runner then sends the PC's sound on the stream as kind 5 frames (Opus, runner audio.rs),
+ * passed here only to those viewers — never kept for late joiners nor held for a keyframe, dropped while a viewer is
+ * behind. A capture that fails reaches them as {type:"audio", error}. */
 type Store = ReturnType<typeof openStore>;
 type Pending = { resolve: (value: unknown) => void; reject: (error: Error) => void; timer: NodeJS.Timeout };
 type Conn = { ws: WebSocket; targetId: number; userId: number; connectedAt: number; lastFrame: number; pending: Map<number, Pending>; nextId: number; hello: boolean; version: string;
@@ -88,6 +92,8 @@ const PING_MS = 5_000;
 /** pings between repeats of `runner.realtime`: a runner that found the CDN-free address down ignores it for 10 min (conn.rs REALTIME_RETRY) and is only told at hello, so it would otherwise stay on the CDN until its next reconnect */
 const REALTIME_REPEAT_PINGS = 132;   // 11 min
 const SILENCE_MS = 25_000;
+/** A frame of the PC's sound (runner audio.rs): `[5][flags][seq u32][Opus packet]`, not numbered like the pictures. */
+const KIND_OPUS = 5;
 const CALL_TIMEOUT_MS = 30_000;
 const MAX_FRAME = 16 * 1024 * 1024;   // JSON-RPC text frames (a sync manifest of a large project is several MB)
 const RING_BYTES = 256 * 1024;
@@ -157,13 +163,14 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
   const tunnels = new Map<string, RunnerTunnel>();         // `${targetId}:${streamId}` (F-06)
   /** A viewer of a screen stream. v2 viewers (session.ts with `v=2`) take numbered frames and ack each one they
    *  have shown; older pages get the frames without the number and are acked for when sent. */
-  type ScreenViewer = { needKey: boolean; v2: boolean; inFlight: Array<[number, number]>; p2p: boolean };
+  type ScreenViewer = { needKey: boolean; v2: boolean; inFlight: Array<[number, number]>; p2p: boolean; /** plays the PC's sound (v=3) */ audio: boolean };
   type ScreenStream = { targetId: number; streamId: number;
     /** viewers with the same key share the stream: per window (0.7+) mode·window·codecs, else every option */ share: string;
     /** what the runner was asked for (the quality is the holder's or the first viewer's) */ opts: ScreenOpts; perWindow: boolean;
     window: number | null; viewers: Map<WebSocket, ScreenViewer>; gop: Buffer[]; gopBytes: number; format: { codec: string; width?: number; height?: number; reason?: string | null } | null; lastAt: number; frames: number; bytes: number; stopTimer: NodeJS.Timeout | null; keyAskedAt: number; acked: number; relay: boolean; loggedAt: number;
     /** viewers that ever offered a direct channel for this stream (kept until they leave it: the gateway cannot see a channel close) */ rtc: Set<WebSocket>;
-    /** the runner takes input over this stream's channels (screen.control) */ directInput: boolean };
+    /** the runner takes input over this stream's channels (screen.control) */ directInput: boolean;
+    /** the runner sends the PC's sound on this stream (screen.audio) */ audio: boolean };
   const screens = new Map<string, ScreenStream>();          // `${targetId}:${streamId}` (F-07)
   /** A browser on a target's screen socket, with the hooks the control lock drives. */
   type ScreenPeer = { id: number; ws: WebSocket; userId: number; name: string; owner: boolean; send: (obj: unknown) => void;
@@ -230,7 +237,7 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
   /** Asks the runner for a stream (registered first, so viewers arriving meanwhile join it). */
   async function openScreen(targetId: number, o: ScreenOpts, perWindow: boolean, share: string) {
     nextStream = nextStream >= 0x3fff_fff0 ? 1 : nextStream + 1;
-    const sc: ScreenStream = { targetId, streamId: nextStream, share, opts: o, perWindow, window: perWindow ? o.window : null, viewers: new Map(), gop: [], gopBytes: 0, format: null, lastAt: 0, frames: 0, bytes: 0, stopTimer: null, keyAskedAt: 0, acked: 0, relay: true, loggedAt: 0, rtc: new Set(), directInput: false };
+    const sc: ScreenStream = { targetId, streamId: nextStream, share, opts: o, perWindow, window: perWindow ? o.window : null, viewers: new Map(), gop: [], gopBytes: 0, format: null, lastAt: 0, frames: 0, bytes: 0, stopTimer: null, keyAskedAt: 0, acked: 0, relay: true, loggedAt: 0, rtc: new Set(), directInput: false, audio: false };
     screens.set(key(targetId, sc.streamId), sc);
     // 0.15+ runners number their frames and pace themselves by the acks (F-07d)
     const acks = Boolean(screenCaps(targetId).features?.includes('acks'));
@@ -515,6 +522,11 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
             const sc = screens.get(key(conn.targetId, id));
             if (sc) {
               const frame = buf.subarray(4);
+              // the PC's sound: on at once to the viewers that play it (a behind one skips some), nothing kept
+              if (frame[0] === KIND_OPUS) {
+                for (const [v, state] of sc.viewers) if (state.audio && !state.p2p && v.readyState === WebSocket.OPEN && v.bufferedAmount < SCREEN_VIEWER_BUFFER) v.send(frame, { binary: true });
+                return;
+              }
               const isKey = (frame[1] & 1) === 1;
               sc.lastAt = Date.now(); sc.frames++; sc.bytes += frame.length;
               // frames since the last keyframe, for viewers that join mid-stream
@@ -580,6 +592,13 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
             for (const v of sc.viewers.keys()) if (v.readyState === WebSocket.OPEN) v.send(JSON.stringify(out));
             // the runner ended that stream (window closed, capture refused): the next viewer starts a new one
             if (msg.method === 'screen.error') stopScreen(sc, false);
+            return;
+          }
+          if (msg.method === 'screen.audio' && msg.params && typeof msg.params === 'object') {
+            const p = msg.params as { streamId?: number; error?: string | null };
+            const sc = typeof p.streamId === 'number' ? screens.get(key(conn.targetId, p.streamId)) : undefined;
+            const out = JSON.stringify({ type: 'audio', error: p.error ? String(p.error).slice(0, 500) : null });
+            for (const [v, state] of sc?.viewers ?? []) if (state.audio && v.readyState === WebSocket.OPEN) v.send(out);
             return;
           }
           if (msg.method === 'runner.update.failed' && msg.params && typeof msg.params === 'object') {
@@ -746,7 +765,8 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
      *  client → {op:"config", mode, window, display, fps, maxWidth, bitrate, codec, codecs} | {op:"control", on} | {op:"input", ev}
      *           | {op:"ack", seq} | {op:"rtc", offer} | {op:"p2p", on}
      *           | {op:"control-request"} | {op:"control-cancel"} | {op:"control-grant", to?} | {op:"control-deny", to?} | {op:"control-take"} (owner)
-     *  server → {type:"started"|"format"|"control"|"control-state"|"control-direct"|"control-note"|"error"|"offline"} + binary frames `[kind][flags][data]` */
+     *  server → {type:"started"|"format"|"control"|"control-state"|"control-direct"|"control-note"|"audio"|"error"|"offline"} + binary frames `[kind][flags][data]`
+     *  proto: 2 = numbered frames and acks, 3 = also the PC's sound (kind 5) */
     attachScreen(req: IncomingMessage, socket: Duplex, head: Buffer, targetId: number, user: { id: number; name: string }, alive: () => boolean, initial: ScreenOpts, proto = 1) {
       wss.handleUpgrade(req, socket, head, (ws) => {
         let current: ScreenStream | null = null;
@@ -771,11 +791,14 @@ export function createRunnerHub(store: Store, wss: WebSocketServer, opts: { logD
           const caps = screenCaps(targetId);
           if (sc.stopTimer) { clearTimeout(sc.stopTimer); sc.stopTimer = null; }
           const p2p = p2pOf(sc);
-          send({ type: 'started', ...sc.opts, perWindow: sc.perWindow, control: Boolean(caps.control && caps.features?.includes('input')), streamId: sc.streamId, p2p: p2p && isHolder(), p2pInput: p2p && Boolean(caps.features?.includes('p2p-input')) });
+          const audio = proto >= 3 && Boolean(caps.features?.includes('audio'));
+          send({ type: 'started', ...sc.opts, perWindow: sc.perWindow, control: Boolean(caps.control && caps.features?.includes('input')), streamId: sc.streamId, p2p: p2p && isHolder(), p2pInput: p2p && Boolean(caps.features?.includes('p2p-input')), audio });
           if (sc.format) send({ type: 'format', ...sc.format });
           const v2 = proto >= 2;
           for (const f of sc.gop) ws.send(v2 ? f : unnumbered(f), { binary: true });
-          sc.viewers.set(ws, { needKey: sc.gop.length === 0, v2, inFlight: [], p2p: false });
+          sc.viewers.set(ws, { needKey: sc.gop.length === 0, v2, inFlight: [], p2p: false, audio });
+          // the first viewer that plays the sound turns it on for the stream (it stays on until the stream stops)
+          if (audio && !sc.audio) { sc.audio = true; hub.notifyRunner(targetId, 'screen.audio', { streamId: sc.streamId, on: true }); }
           relay(sc);
           if (sc.gop.length === 0 && sc.format) askKey(sc);   // a running stream of an unchanged window sends nothing on its own
           current = sc;

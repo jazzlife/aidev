@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { useParams, useSearchParams } from 'react-router-dom';
 
 import { aidevApi } from '@/modules/aidev-router';
-import { controlButton, isWholeScreen, RemoteConsole, screenSocketUrl, streamStatusLine, useRemoteScreen, useScreenSources, type ScreenOptions, type StickyMods } from '@/modules/remote-screen';
+import { controlButton, isWholeScreen, RemoteConsole, RemoteSoundControl, screenSocketUrl, streamStatusLine, useRemoteScreen, useScreenSources, type ScreenOptions, type StickyMods } from '@/modules/remote-screen';
 import type { RemoteScreenSource } from '@/shared/types';
 import { TopBar } from '@m/components/TopBar';
 import { useOpener, useParent } from '@m/lib/nav';
@@ -14,7 +14,8 @@ import { useOpener, useParent } from '@m/lib/nav';
  * scroll, the key bar and the phone keyboard type into that window (one scrolling row); pinch or ctrl + wheel zooms the
  * picture here (the PC sees nothing of it) — or a console program running
  * through the runner (its terminal, with a key bar for Esc/Tab/Ctrl-C/arrows). One person controls a PC at a time:
- * the others ask for it, the holder hands it over, the PC's owner takes it back.
+ * the others ask for it, the holder hands it over, the PC's owner takes it back. While streaming, the PC's sound plays
+ * on the phone (mute and volume beside the quality).
  */
 type Target = { id: number; name: string; online: boolean; capabilities?: { screen?: boolean; control?: boolean } | null };
 const QUALITY: Array<{ id: string; label: string; opts: Omit<ScreenOptions, 'window' | 'display'> }> = [
@@ -57,7 +58,7 @@ export function RemoteScreenScreen() {
   const q = QUALITY.find((x) => x.id === quality) ?? QUALITY[0];
   const watching = source?.kind === 'window' || source?.kind === 'display';
   const opts: ScreenOptions = { ...q.opts, window: source?.kind === 'window' ? source.id : null, display: source?.kind === 'display' ? source.id : 1 };
-  const { canvasRef, keysRef, state, control, input, zoom } = useRemoteScreen({ targetId, live: streaming && watching, opts, url: screenSocketUrl, sticky: () => stickyRef.current });
+  const { canvasRef, keysRef, state, control, input, zoom, sound } = useRemoteScreen({ targetId, live: streaming && watching, opts, url: screenSocketUrl, sticky: () => stickyRef.current });
 
   useEffect(() => { stickyRef.current = sticky; }, [sticky]);
   useEffect(() => { aidevApi.targets().then((r) => setTarget((r.targets as unknown as Target[]).find((t) => t.id === targetId) ?? null)).catch(() => setTarget(null)); }, [targetId]);
@@ -107,6 +108,12 @@ export function RemoteScreenScreen() {
         <button type="button" aria-label="목록 새로 고침" onClick={() => { void refresh(); }} className="m-touch rounded-lg border border-line px-2 py-1">↻</button>
         {watching ? <select aria-label="화질" value={quality} onChange={(e) => setQuality(e.target.value)} className="rounded-lg border border-line bg-surface px-2 py-1">{QUALITY.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}</select> : null}
       </div>
+      {watching && streaming ? (
+        <div className="flex items-center gap-2 border-b border-line bg-bg px-3 py-1.5 text-[13px] text-muted">
+          <RemoteSoundControl state={state} sound={sound} className="m-touch" />
+          <span className="min-w-0 flex-1 truncate text-[12px]">{!state.audio ? state.audioNote ?? '소리 없음' : state.audioBlocked ? '화면을 한 번 탭하면 소리가 나옵니다' : state.audioNote ?? (sound.muted ? '음소거됨' : 'PC 소리')}</span>
+        </div>
+      ) : null}
       {watching && asker ? (
         <div className="flex items-center gap-2 border-b border-line bg-bg px-3 py-2 text-[13px]">
           <span className="min-w-0 flex-1">{asker.name} 님이 제어권을 요청했습니다{state.requests.length > 1 ? ` (대기 ${state.requests.length}명)` : ''}</span>

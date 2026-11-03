@@ -26,12 +26,18 @@
  * Fast path (F-18, docs/aidev/CONNECTIVITY.md): where the gateway has an address that skips the CDN
  * (`/api/aidev/realtime` → origin and a 2-minute ticket; the session cookie is host-only), the socket opens there
  * first and falls back to this origin when it does not open within FAST_OPEN_MS.
+ * Sound (2026-11-03, runner feature "audio"): where this browser plays Opus the page asks with `v=3`; `started.audio`
+ * says the PC sends its sound, which then comes as kind 5 frames on either path (sound.ts plays them, never in the
+ * picture's frame numbers). `setSound(volume, muted)` is this page's volume; `audioBlocked` = the browser waits for a
+ * click or tap before it plays; `audioNote` = why there is no sound (this browser, an older runner, the capture).
  */
+import { RemoteSound, soundPlayable, soundSupported } from '@/modules/remote-screen/sound';
 import { authenticatedFetch } from '@/shared/api';
 import { getStoredAuthToken } from '@/shared/authToken';
 
 export type ScreenMode = 'video' | 'jpeg';
-export type ScreenOptions = { mode: ScreenMode; window: number | null; display: number; fps: number; maxWidth: number; bitrate: number; codec?: 'h264' | 'vp8'; codecs?: string[] };
+/** `audio`: this page plays the PC's sound (found when it connects, like `codecs`). */
+export type ScreenOptions = { mode: ScreenMode; window: number | null; display: number; fps: number; maxWidth: number; bitrate: number; codec?: 'h264' | 'vp8'; codecs?: string[]; audio?: boolean };
 export type InputEvent =
   | { t: 'move'; x: number; y: number }   // x, y ∈ [0,1] of the picture (the window); the gateway adds which window
   | { t: 'button'; b: 'left' | 'right' | 'middle'; down: boolean; x?: number; y?: number }
@@ -66,6 +72,12 @@ export type ScreenState = {
   owner: boolean;
   /** what happened to control here (taken back by the owner, handed over, a request declined) */
   controlNote: string | null;
+  /** the PC's sound comes to this page */
+  audio: boolean;
+  /** the browser holds the sound until the person clicks or taps the page */
+  audioBlocked: boolean;
+  /** why there is no sound (this browser, an older runner, the PC could not capture it); null when there is */
+  audioNote: string | null;
 };
 /** What a viewer asks about control of a PC someone else may hold (the holder answers with grant / deny). */
 export type ControlRequestOp = 'request' | 'cancel' | 'grant' | 'deny' | 'take';
@@ -74,6 +86,8 @@ const KIND_H264 = 1;
 const KIND_VP8 = 2;
 const KIND_JPEG = 3;
 const KIND_VP9 = 4;
+/** the PC's sound (runner audio.rs): Opus packets, played by sound.ts */
+const KIND_OPUS = 5;
 /** VP9 profile 0, 8-bit, level 5 (up to 4096×2176) — what the runner's libvpx sends. */
 const VP9_CODEC = 'vp09.00.50.08';
 /** The STUN server both ends ask for their public address (the runner's rtc.rs uses the same). */
@@ -152,7 +166,7 @@ export function avcCodecFromAnnexB(au: Uint8Array): string | null {
 export function screenSocketUrl(targetId: number, o: ScreenOptions) {
   const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
   const token = getStoredAuthToken();
-  const q = new URLSearchParams({ v: '2', mode: o.mode, ...(o.window !== null ? { window: String(o.window) } : {}), display: String(o.display), fps: String(o.fps), maxWidth: String(o.maxWidth), bitrate: String(o.bitrate), codec: o.codec ?? 'h264', ...(o.codecs?.length ? { codecs: o.codecs.join(',') } : {}), ...(token ? { token } : {}) });
+  const q = new URLSearchParams({ v: o.audio ? '3' : '2', mode: o.mode, ...(o.window !== null ? { window: String(o.window) } : {}), display: String(o.display), fps: String(o.fps), maxWidth: String(o.maxWidth), bitrate: String(o.bitrate), codec: o.codec ?? 'h264', ...(o.codecs?.length ? { codecs: o.codecs.join(',') } : {}), ...(token ? { token } : {}) });
   return `${protocol}//${window.location.host}/api/aidev/targets/${targetId}/screen?${q}`;
 }
 
@@ -180,7 +194,10 @@ export class RemoteScreenSession {
   private directInput = false;
   /** the gateway says the runner takes this page's input over the channel now (only the holder's, alone there) */
   private controlDirect = false;
-  state: ScreenState = { status: 'connecting', codec: null, note: null, error: null, controlAvailable: false, control: false, width: 0, height: 0, fps: 0, kbps: 0, stats: null, direct: false, fastPath: false, holder: null, requests: [], owner: false, controlNote: null };
+  /** plays the PC's sound while the stream carries it */
+  private sound: RemoteSound | null = null;
+  private volume = { volume: 1, muted: false };
+  state: ScreenState = { status: 'connecting', codec: null, note: null, error: null, controlAvailable: false, control: false, width: 0, height: 0, fps: 0, kbps: 0, stats: null, direct: false, fastPath: false, holder: null, requests: [], owner: false, controlNote: null, audio: false, audioBlocked: false, audioNote: null };
 
   constructor(private url: (opts: ScreenOptions) => string, private canvas: HTMLCanvasElement, private opts: ScreenOptions, private onState: (s: ScreenState) => void) {
     if (opts.mode === 'video' && !webCodecsAvailable()) this.opts = { ...opts, mode: 'jpeg', fps: 5 };
@@ -191,6 +208,8 @@ export class RemoteScreenSession {
 
   private async connect() {
     if (this.opts.mode === 'video') this.opts = { ...this.opts, codecs: await videoCodecs() };
+    // the PC's sound where this browser plays Opus (nothing to wait for without WebCodecs audio)
+    this.opts = { ...this.opts, audio: soundSupported() && await soundPlayable() };
     if (this.closed) return;
     const url = this.url(this.opts);
     // the CDN-free address first, for this origin's own sockets
@@ -220,7 +239,7 @@ export class RemoteScreenSession {
   }
 
   private onText(raw: string) {
-    let m: { type: string; message?: string; codec?: string; reason?: string | null; control?: boolean; on?: boolean; seq?: number; streamId?: number; p2p?: boolean; p2pInput?: boolean; answer?: string;
+    let m: { type: string; message?: string; codec?: string; reason?: string | null; control?: boolean; on?: boolean; seq?: number; streamId?: number; p2p?: boolean; p2pInput?: boolean; answer?: string; audio?: boolean; error?: string | null;
       holder?: ScreenState['holder']; requests?: ScreenState['requests']; owner?: boolean } & Record<string, unknown>;
     try { m = JSON.parse(raw); } catch { return; }
     if (m.type === 'stats') return this.onStats(m);
@@ -231,6 +250,7 @@ export class RemoteScreenSession {
       this.directInput = Boolean(m.p2pInput);
       this.controlDirect = false;
       this.patch({ status: 'live', error: null, controlAvailable: Boolean(m.control), direct: false });
+      this.startSound(Boolean(m.audio));
       if (m.p2p && typeof m.streamId === 'number' && typeof RTCPeerConnection !== 'undefined') void this.openPeer(m.streamId);
     } else if (m.type === 'rtc') {
       if (!this.peer || m.streamId !== this.peer.streamId) return;
@@ -245,9 +265,36 @@ export class RemoteScreenSession {
     else if (m.type === 'control-state') this.patch({ holder: m.holder ?? null, requests: m.requests ?? [], owner: Boolean(m.owner) });
     else if (m.type === 'control-direct') this.controlDirect = Boolean(m.on);
     else if (m.type === 'control-note') this.patch({ controlNote: m.message ?? null });
+    else if (m.type === 'audio') this.patch({ audioNote: m.error ? `소리를 가져오지 못했습니다: ${m.error}` : null });
     else if (m.type === 'error') this.patch({ error: m.message ?? '오류' });
     else if (m.type === 'offline') this.patch({ status: 'closed', error: '원격 PC가 오프라인입니다', control: false });
   }
+
+  /** A stream started: its sound plays here when the PC sends it (else why not). */
+  private startSound(on: boolean) {
+    if (!on) {
+      this.sound?.close(); this.sound = null;
+      const audioNote = !this.opts.audio ? '이 브라우저는 원격 PC의 소리를 재생할 수 없습니다' : '이 PC의 러너는 소리를 보내지 않습니다 — 러너를 최신으로 업데이트하세요';
+      this.patch({ audio: false, audioBlocked: false, audioNote });
+      return;
+    }
+    if (this.sound) this.sound.reset();
+    else {
+      try { this.sound = new RemoteSound((audioBlocked) => this.patch({ audioBlocked })); }
+      catch { this.patch({ audio: false, audioNote: '이 브라우저에서 소리를 재생할 수 없습니다' }); return; }
+    }
+    this.sound.setVolume(this.volume.volume, this.volume.muted);
+    this.patch({ audio: true, audioNote: null });
+  }
+
+  /** This page's volume for the PC's sound (0–1), and whether it is muted. */
+  setSound(volume: number, muted: boolean) {
+    this.volume = { volume, muted };
+    this.sound?.setVolume(volume, muted);
+  }
+
+  /** From a click or tap: lets a held sound start. */
+  resumeSound() { this.sound?.resume(); }
 
   /** Control on or off here. Only the holder takes frames directly: it opens the channel now, and drops it when control goes. */
   private onControl(m: { on?: boolean; message?: string; p2p?: boolean; streamId?: number }) {
@@ -299,7 +346,8 @@ export class RemoteScreenSession {
     const frame = peer.pieces.length === 1 ? peer.pieces[0] : new Uint8Array(peer.pieces.reduce((n, p) => n + p.length, 0));
     if (peer.pieces.length > 1) { let at = 0; for (const p of peer.pieces) { frame.set(p, at); at += p.length; } }
     peer.pieces = [];
-    if (!peer.live) {
+    // the sound may come first: the pictures decide that the channel carries the stream
+    if (!peer.live && frame[0] !== KIND_OPUS) {
       // frames come directly now: the server stops sending them to this page
       peer.live = true;
       this.send({ op: 'p2p', on: true });
@@ -370,6 +418,8 @@ export class RemoteScreenSession {
 
   private onFrame(buf: Uint8Array) {
     if (buf.length < 3) return;
+    // the PC's sound: its own numbers, never the picture's
+    if (buf[0] === KIND_OPUS) { this.sound?.frame(buf); return; }
     const kind = buf[0]; const key = (buf[1] & 1) === 1;
     // numbered frames (0.15+ runners): `[kind][flags][seq u32 BE][data]`
     const numbered = (buf[1] & 2) === 2 && buf.length >= 6;
@@ -407,8 +457,8 @@ export class RemoteScreenSession {
 
   /** New window / quality: the gateway moves this viewer to the matching stream. */
   setOptions(opts: ScreenOptions) {
-    // the codecs this page decodes stay with the session (found when it connected)
-    const next = { ...opts, codecs: this.opts.codecs };
+    // the codecs this page decodes, and whether it plays sound, stay with the session (found when it connected)
+    const next = { ...opts, codecs: this.opts.codecs, audio: this.opts.audio };
     this.opts = next.mode === 'video' && !webCodecsAvailable() ? { ...next, mode: 'jpeg', fps: 5 } : next;
     this.closePeer();   // the next `started` tries again for the new stream
     this.resetDecoder();
@@ -434,5 +484,6 @@ export class RemoteScreenSession {
     this.ws?.close(1000);
     this.closePeer();
     this.resetDecoder();
+    this.sound?.close(); this.sound = null;
   }
 }

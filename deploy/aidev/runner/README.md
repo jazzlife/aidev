@@ -63,6 +63,12 @@ aidev-runner service start|stop|restart|status
 - Windows 원격 화면(F-18): Windows 10 1903+면 Windows Graphics Capture(windows-capture 2 — 창·화면 전체, 바뀔 때만, 커서 포함, RGBA,
   가능하면 테두리 없음) → SIMD 축소·I420 → OpenH264. 실패하거나 `AIDEV_SCREEN_CPU=1`이면 GDI(xcap). Linux X11은 MIT-SHM(공유 메모리)으로
   읽고, 안 되면(원격 X) GetImage. 공통 CPU 경로는 fast_image_resize(box) + yuvutils-rs(BT.601 제한 범위).
+- 원격 PC 소리(0.22.0, `audio.rs`, 기능 `audio`): 이 PC가 내는 소리(출력, 마이크 아님)를 화면 스트림에 함께 실음 — 게이트웨이의
+  `screen.audio{streamId, on}`(소리를 재생하는 뷰어 v=3이 그 스트림을 볼 때)로 켜지고 스트림이 끝나면 꺼짐, 캡처는 스트림 수와 상관없이 하나.
+  macOS 13+ ScreenCaptureKit(화면 기록 권한으로 충분), Windows WASAPI 루프백(기본 출력 장치, 바뀌면 따라감), Linux `parec`
+  (PulseAudio·PipeWire의 pulse) 또는 `pw-record`의 기본 출력 모니터. 48kHz 스테레오 → Opus(opus-rs, 순수 Rust — 플랫폼별 빌드·링크 없음,
+  CELT 저지연, ~128kbps, 20ms 패킷) → 프레임 kind 5 `[5][flags][seq u32][패킷]`(그림 번호와 별개, flags bit 0 = 새 인코더). 0.5초 넘게
+  조용하면 보내지 않음. P2P 채널에서도 키프레임을 기다리지 않음. 캡처 실패는 `screen.audio{streamId, error}`로 뷰어에게.
 - 디버그 어댑터: 처음 쓸 때 `~/.aidev/adapters/<이름>/`에 받음 — `clrdbg`, `netcoredbg`, `js-debug`, `codelldb`, `debugpy`, `probe-rs`,
   `mono-debug`, `delve`, `aidev-jdi`. 담긴 버전(+SHA-256)은 폴더의 `.aidev-ok`에 적고, 버전이 바뀌면 같은 폴더를 새것으로 교체
   (Windows에서 실행 중이라 못 바꾸면 이번엔 있던 버전을 쓰고 다음에 교체) (0.14.1).

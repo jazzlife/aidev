@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 import { AppWindow, Camera, MousePointer2, Pause, Play, RefreshCw } from 'lucide-react';
 
-import { controlButton, isWholeScreen, RemoteConsole, screenSocketUrl, streamStatsDetail, streamStatusLine, useRemoteScreen, useScreenSources, type ScreenOptions } from '@/modules/remote-screen';
+import { controlButton, isWholeScreen, RemoteConsole, RemoteSoundControl, screenSocketUrl, streamStatsDetail, streamStatusLine, useRemoteScreen, useScreenSources, type ScreenOptions } from '@/modules/remote-screen';
 import { SCREEN_REQUEST_EVENT, takeScreenRequest } from '@/modules/remote-target/utils/screenRequest';
 import { api, readApiJson } from '@/shared/api';
 import { readUserPreference, writeUserPreference } from '@/shared/userSettings';
@@ -15,6 +15,7 @@ import type { RemoteConsoleSource, RemoteScreenSource, RemoteWindow } from '@/sh
  * drive that window on the PC (the owner's `consent control on` is required; every session is recorded). It opens on the
  * PC picked last (remembered for the account) paused on one picture; streaming starts with "스트리밍". One person
  * controls a PC at a time (PCs shared between accounts): the others ask, the holder hands over, the owner takes it back.
+ * While streaming, the PC's sound plays here too (volume and mute in the toolbar, remembered for the account).
  */
 type Target = { id: number; name: string; online: boolean; shared_by?: string | null; capabilities: { screen?: boolean; control?: boolean; features?: string[] } | null };
 const QUALITY: Array<{ id: string; label: string; opts: Omit<ScreenOptions, 'window' | 'display'> }> = [
@@ -45,7 +46,7 @@ export function ScreenPane({ isVisible = true }: { isVisible?: boolean }) {
   const watching = source?.kind === 'window' || source?.kind === 'display';
   const opts: ScreenOptions = { ...q.opts, window: source?.kind === 'window' ? source.id : null, display: source?.kind === 'display' ? source.id : 1 };
   const screen = useRemoteScreen({ targetId, live: isVisible && streaming && watching, opts, url: screenSocketUrl });
-  const { canvasRef, keysRef, state, control, zoom } = screen;
+  const { canvasRef, keysRef, state, control, zoom, sound } = screen;
 
   useEffect(() => {
     if (!isVisible) return;
@@ -139,6 +140,7 @@ export function ScreenPane({ isVisible = true }: { isVisible?: boolean }) {
             {!streaming ? <button type="button" title="지금 화면 가져오기" aria-label="지금 화면 가져오기" onClick={() => { void snapshot(); }} className="rounded px-1.5 py-1 text-muted-foreground hover:bg-muted">새로 찍기</button> : null}
             <button type="button" title={controlTitle} aria-pressed={state.control} disabled={!canControl} onClick={() => control(button.op)}
               className={`flex h-7 items-center gap-1 rounded px-2 disabled:opacity-40 ${button.active ? 'bg-rose-600 text-white' : 'border border-border hover:bg-muted'}`}><MousePointer2 size={13} />{button.label}</button>
+            {streaming ? <RemoteSoundControl state={state} sound={sound} className="text-muted-foreground" /> : null}
             <button type="button" title="현재 화면 저장" aria-label="현재 화면 저장" onClick={save} className="rounded p-1 text-muted-foreground hover:bg-muted"><Camera size={14} /></button>
             <span className="ml-auto text-muted-foreground" title={streaming ? streamStatsDetail(state) : undefined}>{streaming ? `${streamStatusLine(state)}${state.width ? ` · ${state.width}×${state.height}` : ''}` : '정지됨 — 마지막 화면'}</span>
           </>

@@ -6,6 +6,7 @@
 //! 16 KB messages `[last u8][bytes]`; the page acks the frames it has shown as text `{"ack":seq}` (screen::ack, as
 //! from the gateway) and, while the gateway has control on for the stream (screen.control), sends its input as
 //! `{"input":ev}` (screen::direct_input; 0.18.1+, caps feature "p2p-input"). A viewer whose channel is more than QUEUE_MAX behind skips to the next keyframe (asked for).
+//! The stream's sound (audio.rs, kind 5) goes the same way, never held for a keyframe; dropped only past QUEUE_MAX.
 //! Windows: inbound UDP needs a firewall rule — added once by the elevated runner; a limited runner offers no P2P.
 
 use futures_util::future::join_all;
@@ -205,14 +206,20 @@ impl Chan {
             return;
         }
         let key = frame[1] & 1 == 1;
-        if !key && (self.need_key || self.queued > QUEUE_MAX) {
+        // sound (audio.rs) never waits for a keyframe: it goes unless the channel is that far behind
+        if frame[0] == crate::audio::KIND_OPUS {
+            if self.queued > QUEUE_MAX {
+                return;
+            }
+        } else if !key && (self.need_key || self.queued > QUEUE_MAX) {
             if !self.need_key {
                 self.need_key = true;
                 crate::screen::key(stream);
             }
             return;
+        } else {
+            self.need_key = false;
         }
-        self.need_key = false;
         let n = frame.len().div_ceil(CHUNK);
         for (i, c) in frame.chunks(CHUNK).enumerate() {
             let mut m = Vec::with_capacity(c.len() + 1);
@@ -359,5 +366,15 @@ mod tests {
         ch.push(&key, 1);
         assert_eq!(ch.queue.iter().map(|m| (m[0], m.len())).collect::<Vec<_>>(), vec![(0, CHUNK + 1), (0, CHUNK + 1), (1, 7)]);
         assert_eq!(ch.queue.iter().flat_map(|m| m[1..].to_vec()).collect::<Vec<_>>(), key);
+    }
+
+    #[test]
+    fn sound_does_not_wait_for_a_keyframe() {
+        let mut ch = Chan { id: None, queue: VecDeque::new(), queued: 0, need_key: true, connected: true };
+        ch.push(&[crate::audio::KIND_OPUS, 1, 0, 0, 0, 1, 9, 9], 999);
+        assert_eq!(ch.queue.len(), 1, "sound before the first keyframe");
+        assert!(ch.need_key, "and the pictures still wait for theirs");
+        ch.push(&[4, 2, 0, 0, 0, 2], 999);
+        assert_eq!(ch.queue.len(), 1);
     }
 }

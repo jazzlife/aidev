@@ -31,6 +31,8 @@ export type UserPreferences = {
   remoteScreenLast: unknown;
   /** the PC the workbench's remote screen showed last (its id) — the screen opens on it */
   remoteScreenTarget: unknown;
+  /** the remote screen's sound here: `{ volume: 0–1, muted }` (useRemoteScreen) */
+  remoteScreenSound: unknown;
 };
 
 export type UserPreferenceKey = keyof UserPreferences;
@@ -73,6 +75,7 @@ const LEGACY_STORAGE_KEYS: Record<UserPreferenceKey, string> = {
   // Unused: new with the server store, there is nothing to migrate.
   remoteScreenLast: '',
   remoteScreenTarget: '',
+  remoteScreenSound: '',
 };
 
 const PREFERENCE_KEYS = Object.keys(LEGACY_STORAGE_KEYS) as UserPreferenceKey[];

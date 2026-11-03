@@ -4,13 +4,23 @@ import { bindRemoteInput, type StickyMods } from '@/modules/remote-screen/input'
 import { RemoteScreenSession, type ControlRequestOp, type InputEvent, type ScreenOptions, type ScreenState } from '@/modules/remote-screen/session';
 import type { ControlOp } from '@/modules/remote-screen/utils/controlButton';
 import { bindViewZoom, type ZoomGesture } from '@/modules/remote-screen/viewZoom';
+import { readUserPreference, writeUserPreference } from '@/shared/userSettings';
 
-const IDLE: ScreenState = { status: 'closed', codec: null, note: null, error: null, controlAvailable: false, control: false, width: 0, height: 0, fps: 0, kbps: 0, stats: null, direct: false, fastPath: false, holder: null, requests: [], owner: false, controlNote: null };
+const IDLE: ScreenState = { status: 'closed', codec: null, note: null, error: null, controlAvailable: false, control: false, width: 0, height: 0, fps: 0, kbps: 0, stats: null, direct: false, fastPath: false, holder: null, requests: [], owner: false, controlNote: null, audio: false, audioBlocked: false, audioNote: null };
+
+type SoundLevel = { volume: number; muted: boolean };
+/** The remembered sound level (the account's, on every device), sanitised. */
+function readSoundLevel(): SoundLevel {
+  const saved = readUserPreference<Partial<SoundLevel> | null>('remoteScreenSound', null);
+  const volume = typeof saved?.volume === 'number' && Number.isFinite(saved.volume) ? Math.min(Math.max(saved.volume, 0), 1) : 0.8;
+  return { volume, muted: saved?.muted === true };
+}
 
 /**
  * Used by the workbench ScreenPane and the mobile remote screen: streams a PC's screen into `canvasRef`
  * while `live` is true (paused = the last picture stays), and forwards input while control is on. The picture can
- * be zoomed on this device (pinch, ctrl + wheel; viewZoom.ts) — `zoom.scale`, `zoom.reset()`.
+ * be zoomed on this device (pinch, ctrl + wheel; viewZoom.ts) — `zoom.scale`, `zoom.reset()`. The PC's sound plays
+ * at `sound.volume` unless `sound.muted` (remembered for the account; `sound.change({volume?, muted?})`).
  */
 export function useRemoteScreen(p: { targetId: number | null; live: boolean; opts: ScreenOptions; url: (targetId: number, opts: ScreenOptions) => string; sticky?: () => StickyMods }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -27,8 +37,11 @@ export function useRemoteScreen(p: { targetId: number | null; live: boolean; opt
   const controlRef = useRef(false);
   // how far the picture is zoomed here, for the page's "×2.0" chip (1 = fit)
   const [zoomScale, setZoomScale] = useState(1);
+  // the PC's sound level here (the volume slider and mute button show it; each new session starts at it)
+  const [soundLevel, setSoundLevel] = useState<SoundLevel>(readSoundLevel);
+  const soundRef = useRef(soundLevel);
   // latest values for the effects below (declared first, so they run first)
-  useEffect(() => { optsRef.current = p.opts; urlRef.current = p.url; stickyRef.current = p.sticky; controlRef.current = state.control; });
+  useEffect(() => { optsRef.current = p.opts; urlRef.current = p.url; stickyRef.current = p.sticky; controlRef.current = state.control; soundRef.current = soundLevel; });
 
   // one session per target while live; option changes move the viewer without reconnecting
   useEffect(() => {
@@ -36,6 +49,7 @@ export function useRemoteScreen(p: { targetId: number | null; live: boolean; opt
     if (!p.live || !p.targetId || !canvas) { setState((s) => ({ ...s, status: 'closed', control: false })); return undefined; }
     const targetId = p.targetId;
     const session = new RemoteScreenSession((o) => urlRef.current(targetId, o), canvas, optsRef.current, setState);
+    session.setSound(soundRef.current.volume, soundRef.current.muted);
     sessionRef.current = session;
     return () => { session.close(); sessionRef.current = null; };
   }, [p.live, p.targetId]);
@@ -51,6 +65,17 @@ export function useRemoteScreen(p: { targetId: number | null; live: boolean; opt
     zoomRef.current = { canvas, ...zoom };
   });
   useEffect(() => () => { zoomRef.current?.cleanup(); zoomRef.current = null; }, []);
+
+  useEffect(() => { sessionRef.current?.setSound(soundLevel.volume, soundLevel.muted); }, [soundLevel]);
+  const changeSound = useCallback((next: Partial<SoundLevel>) => {
+    setSoundLevel((current) => {
+      const level = { ...current, ...next };
+      writeUserPreference('remoteScreenSound', level);
+      return level;
+    });
+    // the change is a click or a drag: a sound the browser still holds may start now
+    sessionRef.current?.resumeSound();
+  }, []);
 
   const optsKey = JSON.stringify(p.opts);
   const firstOpts = useRef(true);
@@ -77,5 +102,5 @@ export function useRemoteScreen(p: { targetId: number | null; live: boolean; opt
   }, []);
   const input = useCallback((ev: InputEvent) => sessionRef.current?.input(ev), []);
   const resetZoom = useCallback(() => zoomRef.current?.reset(), []);
-  return { canvasRef, keysRef, state, setControl, control, input, zoom: { scale: zoomScale, reset: resetZoom } };
+  return { canvasRef, keysRef, state, setControl, control, input, zoom: { scale: zoomScale, reset: resetZoom }, sound: { ...soundLevel, change: changeSound } };
 }

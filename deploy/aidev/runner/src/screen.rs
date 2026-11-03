@@ -15,6 +15,8 @@
 //!   from the gateway: notification screen.relay {streamId, on} — off while every viewer gets the frames directly
 //!   from the gateway: notification screen.control {streamId, on} — a viewer of the stream has remote control: its input
 //!   may also come straight over the stream's channel (rtc.rs), positions relative to the stream's window
+//!   from the gateway: notification screen.audio {streamId, on} — the stream carries the PC's sound too (audio.rs, kind 5);
+//!   notification screen.audio {streamId, error} when it cannot be captured (error null: it can again)
 //! Frames: binary `[streamId u32 BE][kind u8][flags u8][seq u32 BE, when flags bit 1][data]`, kind 1 = H.264
 //! access unit (Annex B, SPS/PPS before every IDR), 3 = JPEG; flags bit 0 = keyframe, bit 1 = numbered. A
 //! frame is encoded only when the window's pixels changed (or a keyframe was asked for), at most `fps` per
@@ -97,6 +99,16 @@ pub fn control(cfg: &Config, params: &Value) {
     }
 }
 
+/// `screen.audio` from the gateway (a notification): the stream's viewers hear the PC (audio.rs).
+pub fn audio(params: &Value) {
+    let (Some(id), Some(on)) = (params.get("streamId").and_then(Value::as_u64), params.get("on").and_then(Value::as_bool)) else { return };
+    // under the lock: a stream ending meanwhile leaves the sound after this (run() removes it here first)
+    let g = hub().lock().unwrap();
+    if g.streams.contains_key(&(id as u32)) || !on {
+        crate::audio::set(id as u32, on);
+    }
+}
+
 /// An input event from a direct viewer of `stream` (rtc.rs): replayed on the stream's window while control is on.
 pub fn direct_input(stream: u32, ev: &Value) {
     let g = hub().lock().unwrap();
@@ -142,7 +154,7 @@ fn out() -> Option<Out> {
     hub().lock().unwrap().out.clone()
 }
 
-fn note(method: &str, params: Value) {
+pub(crate) fn note(method: &str, params: Value) {
     if let Some(out) = out() {
         let _ = out.blocking_send(Message::Text(json!({ "jsonrpc": "2.0", "method": method, "params": params }).to_string()));
     }
@@ -330,7 +342,7 @@ impl Pace {
 }
 
 /// To the direct viewers and into the connection; false when that is gone.
-fn send_frame(id: u32, payload: &[u8]) -> bool {
+pub(crate) fn send_frame(id: u32, payload: &[u8]) -> bool {
     crate::rtc::frame(id, payload);
     let relay = hub().lock().unwrap().streams.get(&id).is_none_or(|c| c.relay.load(Ordering::Relaxed));
     out().is_some_and(|out| !relay || out.blocking_send(Message::Binary(frame(id, payload))).is_ok())
@@ -439,6 +451,7 @@ fn run(id: u32, o: StreamOpts, stop: Arc<AtomicBool>, want_key: Arc<AtomicBool>,
                 stream_mac(id, &o, cap, &stop, &want_key, acked);
                 hub().lock().unwrap().streams.remove(&id);
                 crate::rtc::close(id);
+                crate::audio::set(id, false);
                 return;
             }
             Err(e) => eprintln!("[aidev-runner] ScreenCaptureKit을 쓰지 못해 CPU 캡처로 합니다: {e}"),
@@ -450,6 +463,7 @@ fn run(id: u32, o: StreamOpts, stop: Arc<AtomicBool>, want_key: Arc<AtomicBool>,
     }
     hub().lock().unwrap().streams.remove(&id);
     crate::rtc::close(id);
+    crate::audio::set(id, false);
 }
 
 fn stream(id: u32, o: StreamOpts, mut source: Source, stop: Arc<AtomicBool>, want_key: Arc<AtomicBool>, acked: Acked) {

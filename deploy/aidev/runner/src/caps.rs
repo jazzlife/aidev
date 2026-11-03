@@ -147,6 +147,10 @@ pub async fn collect(cfg: &crate::config::Config) -> Value {
     if cfg!(feature = "vpx") {
         features.push("vp9");
     }
+    // the PC's sound beside its screen (audio.rs)
+    if crate::audio::available() {
+        features.push("audio");
+    }
     // the screen straight to the browser over WebRTC (rtc.rs, F-18)
     if crate::rtc::available() {
         features.push("p2p");
@@ -155,7 +159,7 @@ pub async fn collect(cfg: &crate::config::Config) -> Value {
     // Android: the runner lives in the NadoVibe app's sandbox — no screen capture or input there (the gateway then
     // says the PC cannot show its screen instead of trying)
     if cfg!(target_os = "android") {
-        features.retain(|f| !["screen", "video", "input", "windows", "displays", "acks", "vp9", "p2p", "p2p-input"].contains(f));
+        features.retain(|f| !["screen", "video", "input", "windows", "displays", "acks", "vp9", "p2p", "p2p-input", "audio"].contains(f));
     } else {
         // the workbench updates the runner (runner.update); Android's runner comes with the app
         features.push("update");

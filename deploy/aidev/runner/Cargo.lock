@@ -54,7 +54,7 @@ dependencies = [
 
 [[package]]
 name = "aidev-runner"
-version = "0.21.1"
+version = "0.22.0"
 dependencies = [
  "apple-cf",
  "base64 0.23.1",
@@ -72,6 +72,7 @@ dependencies = [
  "objc2-core-graphics",
  "objc2-foundation",
  "openh264",
+ "opus-rs",
  "portable-pty",
  "rand 0.8.8",
  "screencapturekit",
@@ -87,6 +88,7 @@ dependencies = [
  "tray-icon",
  "ureq",
  "videotoolbox",
+ "wasapi",
  "windows-capture",
  "x11rb",
  "xcap",
@@ -3286,6 +3288,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "opus-rs"
+version = "0.1.40"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5d664b01dda81206fd3c80582eafd8dfef0e936eea1c2ac90ed408823bbb410c"
+
+[[package]]
 name = "ordered-stream"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5000,6 +5008,19 @@ checksum = "29790946404f91d9c5d06f9874efddea1dc06c5efe94541a7d6863108e3a5e4b"
 dependencies = [
  "same-file",
  "winapi-util",
+]
+
+[[package]]
+name = "wasapi"
+version = "0.26.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1b5f8804a710cf7a18b07610225abb127e562f3249a1f3ed88a6f045c5444910"
+dependencies = [
+ "log",
+ "num-integer",
+ "thiserror 2.0.21",
+ "windows 0.62.2",
+ "windows-core 0.62.2",
 ]
 
 [[package]]

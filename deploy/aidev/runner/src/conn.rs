@@ -337,6 +337,8 @@ pub async fn handle(cfg: &Config, hub: &ExecHub, text: &str) -> Option<Value> {
             crate::screen::relay(params);
         } else if method == "screen.control" {
             crate::screen::control(cfg, params);
+        } else if method == "screen.audio" {
+            crate::screen::audio(params);
         } else {
             crate::input::notify(cfg, method, params);
         }

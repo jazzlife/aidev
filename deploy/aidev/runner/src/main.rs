@@ -3,6 +3,7 @@
 //! Outbound WebSocket only; everything it touches is confined to `allowed_roots`.
 
 mod appwin;
+mod audio;
 mod caps;
 mod config;
 mod conn;

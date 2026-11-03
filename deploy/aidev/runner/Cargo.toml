@@ -1,6 +1,6 @@
 [package]
 name = "aidev-runner"
-version = "0.21.1"
+version = "0.22.0"
 edition = "2021"
 # wide 1.x (SIMD for the built-in H.264 encoder, via openh264 0.9.8) needs Rust 1.89; tray-icon 0.26 needs 1.90
 rust-version = "1.90"
@@ -42,6 +42,8 @@ fast_image_resize = { version = "6", features = ["rayon"] }
 yuvutils-rs = "0.8"
 str0m = { version = "0.24", default-features = false, features = ["rust-crypto"] }
 if-addrs = "0.15.0"
+# the PC's sound beside its screen (audio.rs): Opus in pure Rust — nothing to build or link per platform
+opus-rs = "0.1.40"
 
 [profile.release]
 opt-level = "s"
@@ -59,6 +61,8 @@ tao = { version = "0.37", default-features = false }
 [target.'cfg(windows)'.dependencies]
 # F-18: the remote screen from Windows Graphics Capture (pictures only on change, RGBA, with the cursor)
 windows-capture = "2"
+# the PC's sound (audio.rs): WASAPI loopback of the default output (the same windows 0.62 as windows-capture)
+wasapi = "0.26"
 
 [target.'cfg(target_os = "macos")'.dependencies]
 # F-18: the remote screen from ScreenCaptureKit (GPU scaling, NV12) into VideoToolbox's hardware H.264
