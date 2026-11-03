@@ -114,6 +114,8 @@ export function ScreenPane({ isVisible = true }: { isVisible?: boolean }) {
   // the first who asked, for the holder to answer
   const asker = state.control ? state.requests[0] ?? null : null;
   const controlLine = state.controlNote ?? (button.op === 'on' || button.op === 'off' ? null : button.hint);
+  // why the PC's sound does not play (an older runner, this browser, the capture), or that it waits for a click
+  const soundLine = state.status !== 'live' ? null : !state.audio || !state.audioBlocked ? state.audioNote : '원격 PC의 소리를 들으려면 화면을 한 번 클릭하세요';
   const empty = !sources.loading && !windows.length && !consoles.length && perWindow;
 
   return (
@@ -155,6 +157,7 @@ export function ScreenPane({ isVisible = true }: { isVisible?: boolean }) {
         </div>
       ) : null}
       {watching && streaming && controlLine ? <div className="shrink-0 border-b border-border bg-muted/30 px-2 py-1 text-muted-foreground">{controlLine}</div> : null}
+      {watching && streaming && soundLine ? <div className="shrink-0 border-b border-border bg-muted/30 px-2 py-1 text-muted-foreground">{soundLine}</div> : null}
       {watching && state.note ? <div className="shrink-0 border-b border-border bg-muted/30 px-2 py-1 text-amber-700 dark:text-amber-300">{state.note}</div> : null}
       {(watching && (state.error || snapNote)) || sources.error ? <div className="shrink-0 border-b border-border bg-muted/30 px-2 py-1 text-rose-600">{(watching ? state.error ?? snapNote : null) ?? sources.error}</div> : null}
       {source?.kind === 'console' && targetId ? (
