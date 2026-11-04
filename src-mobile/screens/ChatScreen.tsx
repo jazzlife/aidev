@@ -218,21 +218,26 @@ export function ChatScreen() {
   });
   // Agent creation flow (§3.7): the architect's draft is read from the newest assistant message.
   const sendRef = useRef<(text: string) => void>(() => undefined);
+  const openSessionIdRef = useRef<string | null>(sessionId ?? null);
+  useEffect(() => { openSessionIdRef.current = sessionId ?? null; });
   const agentCreation = useAgentCreation({
     getLastAssistantText: () => { const list = sessionId ? sessionStore.getMessages(sessionId) : []; for (let index = list.length - 1; index >= 0; index -= 1) { const message = list[index]; if (message.kind === 'text' && message.role === 'assistant' && message.content) return message.content; } return null; },
+    getOpenSessionId: () => openSessionIdRef.current,
     resend: (text) => sendRef.current(text),
   });
   const agentCreationRef = useRef(agentCreation);
   useEffect(() => { agentCreationRef.current = agentCreation; });
   // Run outcome signal (§3.8): the provider's `complete` event ends the routed run.
   useEffect(() => subscribe((event) => {
-    if (event.kind !== 'complete' || (event.sessionId && event.sessionId !== sessionId)) return;
+    if (event.kind !== 'complete') return;
+    // any chat's run: an agent design goes on in its own chat while another one is on screen
+    setTimeout(() => { void agentCreationRef.current.onRunComplete(event.sessionId ?? null); }, 400);
+    if (event.sessionId && event.sessionId !== sessionId) return;
     const exitCode = typeof event.exitCode === 'number' ? event.exitCode : (event.isError ? 1 : 0);
     // a limit refusal is reported as such: the gateway skips the engine until the reset and proposes the other engine
     const usageLimit = parseProviderUsageLimit(event.usageLimit);
     void reportOutcome({ exit_code: exitCode, session_id: event.sessionId ?? sessionId, ...(usageLimit ? { usage_limit: { type: usageLimit.type, resets_at: usageLimit.resetsAt ?? null } } : {}) });
     setLastRunFinished(Date.now());
-    setTimeout(() => { void agentCreationRef.current.onRunComplete(); }, 400);
   }), [subscribe, sessionId, reportOutcome]);
 
   // ---- send ------------------------------------------------------------------------------------

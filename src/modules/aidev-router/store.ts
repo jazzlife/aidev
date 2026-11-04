@@ -33,6 +33,8 @@ export type PendingCreate = {
   agentName: string | null;
   selfCheckResult: { pass: boolean | null; confidence: number; note: string } | null;
   error: string | null;
+  /** created while another chat was on screen: the original command was not re-sent (it would have landed there) */
+  resendSkipped?: boolean;
 };
 
 export type RoutingState = {
@@ -135,10 +137,12 @@ export const routingStore = {
   },
   /**
    * The conversation continues in `sessionId` (a new chat's id, a handoff, the way back): the overrides go with it, and
-   * a new chat's last route (sent before its id existed) becomes that chat's.
+   * a new chat's last route (sent before its id existed) becomes that chat's, and so does an agent design started there.
    */
   adoptSession(sessionId: string) {
-    routingStore.patch({ overridesSessionId: sessionId, ...(state.last && state.runSessionId === null ? { runSessionId: sessionId } : {}) });
+    const create = state.pendingCreate;
+    routingStore.patch({ overridesSessionId: sessionId, ...(state.last && state.runSessionId === null ? { runSessionId: sessionId } : {}),
+      ...(create && create.stage === 'architect' && create.sessionId === null ? { pendingCreate: { ...create, sessionId } } : {}) });
   },
   /** Drops one override (the engine chip's "자동": back to priority / routing for the next sends). */
   clearOverride(key: keyof RoutingOverrides) {

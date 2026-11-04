@@ -1,5 +1,5 @@
-import { authenticatedFetch } from '@/shared/api';
-import type { AidevEngine } from '@/shared/types';
+import { api, authenticatedFetch } from '@/shared/api';
+import type { AidevEngine, NormalizedMessage } from '@/shared/types';
 
 /**
  * Gateway `/api/aidev/*` client (IMPLEMENTATION-PLAN §3.3). Shared, non-visual: the
@@ -377,6 +377,12 @@ export const aidevApi = {
   openCodeLoginProviders: () => authenticatedFetch('/api/aidev-tools/opencode-login').then((response) => readRuntimeData<{ providers: string[] }>(response)),
   /** Stores an API key as one OpenCode provider's sign-in; the key goes to the user's runtime and is never read back. */
   openCodeLoginKey: (provider: string, key: string) => post('/api/aidev-tools/opencode-login', { provider, key }).then((response) => readRuntimeData<{ provider: string; providers: string[] }>(response)),
+  /** A chat's newest assistant reply as the runtime stored it: the architect's chat need not be the one on screen. */
+  async lastAssistantText(sessionId: string): Promise<string | null> {
+    const { messages = [] } = (await readRuntimeData<{ messages?: NormalizedMessage[] } | undefined>(await api.providers.sessionMessages(sessionId, { limit: 20 }))) ?? {};
+    for (let index = messages.length - 1; index >= 0; index -= 1) { const message = messages[index]; if (message.kind === 'text' && message.role === 'assistant' && message.content?.trim()) return message.content; }
+    return null;
+  },
   agents: () => authenticatedFetch('/api/aidev/agents').then((response) => readJson<{ agents: CatalogAgent[] }>(response)),
   agent: (id: number) => authenticatedFetch(`/api/aidev/agents/${id}`).then((response) => readJson<AgentDetail>(response)),
   createAgent: (input: Record<string, unknown>) => post('/api/aidev/agents', input).then((response) => readJson<{ agent: CatalogAgent }>(response)),

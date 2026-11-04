@@ -73,7 +73,7 @@ export function AgentCreateCard({ pending, onApprove, onSelfCheck, onDismiss, co
           ) : pending.draft?.self_check ? (
             <button type="button" onClick={onSelfCheck} className="h-7 rounded-md border border-border px-2">자가 검증 실행</button>
           ) : null}
-          <span className="text-muted-foreground">다음부터 이 분야의 명령은 {pending.agentName}(으)로 라우팅됩니다.</span>
+          <span className="text-muted-foreground">다음부터 이 분야의 명령은 {pending.agentName}(으)로 라우팅됩니다.{pending.resendSkipped ? ' 원래 명령은 실행되지 않았습니다 — 그 채팅에서 다시 보내 주세요.' : ''}</span>
         </div>
       ) : null}
     </div>

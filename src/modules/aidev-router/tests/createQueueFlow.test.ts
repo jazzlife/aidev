@@ -46,7 +46,7 @@ describe('create queue flow (D-04)', () => {
     const createSpy = vi.spyOn(aidevApi, 'createAgent').mockResolvedValue({ agent: { id: 77, name: 'unity-shader' } } as never);
     routingStore.patch({ pendingCreate: { stage: 'review', originalText: '', queueId: 42, sessionId: 's1', decisionId: 9, draft, agentId: null, agentName: null, selfCheckResult: null, error: null } });
     const resend = vi.fn();
-    const { result } = renderHook(() => useAgentCreation({ getLastAssistantText: () => null, resend }));
+    const { result } = renderHook(() => useAgentCreation({ getLastAssistantText: () => null, getOpenSessionId: () => 's1', resend }));
     await act(async () => { await result.current.approve(draft); });
     expect(createSpy.mock.calls[0][0]).toMatchObject({ queue_id: 42 });
     expect(resend).not.toHaveBeenCalled();
@@ -57,7 +57,7 @@ describe('create queue flow (D-04)', () => {
     vi.spyOn(aidevApi, 'createAgent').mockResolvedValue({ agent: { id: 78, name: 'unity-shader' } } as never);
     routingStore.patch({ pendingCreate: { stage: 'review', originalText: 'Unity 물 셰이더 만들어줘', sessionId: 's1', decisionId: 9, draft, agentId: null, agentName: null, selfCheckResult: null, error: null } });
     const resend = vi.fn();
-    const { result } = renderHook(() => useAgentCreation({ getLastAssistantText: () => null, resend }));
+    const { result } = renderHook(() => useAgentCreation({ getLastAssistantText: () => null, getOpenSessionId: () => 's1', resend }));
     await act(async () => { await result.current.approve(draft); });
     expect(resend).toHaveBeenCalledWith('Unity 물 셰이더 만들어줘');
     expect(routingStore.get().oneShotAgent).toBe('unity-shader');

@@ -79,8 +79,10 @@ function ChatInterface({
   // and advances the agent-creation flow when one is pending (§3.7).
   const { reportOutcome: reportAidevOutcome } = useAidevRouting();
   const chatMessagesRef = useRef<ChatMessage[]>([]);
+  const openSessionIdRef = useRef<string | null>(null);
   const agentCreation = useAgentCreation({
     getLastAssistantText: () => { const list = chatMessagesRef.current; for (let index = list.length - 1; index >= 0; index -= 1) { const message = list[index]; if (message.type === 'assistant' && typeof message.content === 'string' && message.content.trim()) return message.content; } return null; },
+    getOpenSessionId: () => openSessionIdRef.current,
     resend: (text) => { handleVoiceTranscriptRef.current?.(text, true); },
   });
   const handleVoiceTranscriptRef = useRef<((text: string, send?: boolean) => void) | null>(null);
@@ -104,6 +106,9 @@ function ChatInterface({
   }, [seenSessionId]);
   useEffect(() => subscribe((event) => {
     if (event.kind !== 'complete') return;
+    // any chat's run: an agent design goes on in its own chat while another one is on screen.
+    // The store applies the final assistant text on the same tick; read it after React commits.
+    setTimeout(() => { void agentCreationRef.current.onRunComplete(event.sessionId ?? null); }, 400);
     if (event.sessionId && selectedSession?.id && event.sessionId !== selectedSession.id) return;
     const finishedId = event.sessionId ?? selectedSession?.id ?? null;
     if (finishedId && finishedId === seenSessionIdRef.current) {
@@ -125,8 +130,6 @@ function ChatInterface({
     }
     // the workbench opens a changed file and brings the right pane forward (C-10)
     announceRunComplete({ sessionId: event.sessionId ?? selectedSession?.id ?? null, exitCode, changedFiles: changedFilesSince(chatMessagesRef.current) });
-    // the store applies the final assistant text on the same tick; read it after React commits
-    setTimeout(() => { void agentCreationRef.current.onRunComplete(); }, 400);
   }), [reportAidevOutcome, selectedSession?.id, subscribe]);
   const { t } = useTranslation('chat');
   const processingSessions = useProcessingSessions();
@@ -324,7 +327,7 @@ function ChatInterface({
     // engine priority: assigned from useEscalation below (the composer hook is created before it)
     onEngineSwitchBack: (args) => switchBackRef.current?.(args) ?? Promise.resolve(false),
   });
-  useEffect(() => { chatMessagesRef.current = chatMessages; handleVoiceTranscriptRef.current = handleVoiceTranscript; });
+  useEffect(() => { chatMessagesRef.current = chatMessages; openSessionIdRef.current = currentSessionId || selectedSession?.id || null; handleVoiceTranscriptRef.current = handleVoiceTranscript; });
   // D-04: the catalog's "만들기" on a proposed domain sends the creation turn through this chat (needs a project)
   useEffect(() => {
     const onCompose = (event: Event) => {
