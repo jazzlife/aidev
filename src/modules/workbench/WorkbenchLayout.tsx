@@ -244,7 +244,8 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
     );
     return (
       <div className="relative flex h-full min-h-0">
-        <div className="aidev-chrome shrink-0 border-r border-border overflow-hidden" style={{ width: isTablet ? 300 : layout.sideWidth }}>{sessionsPanel}</div>
+        <div className="aidev-chrome shrink-0 border-r border-border overflow-hidden" style={{ width: layout.sideWidth }}>{sessionsPanel}</div>
+        <SplitHandle edge="right" size={layout.sideWidth} min={200} max={isTablet ? 480 : 600} onSize={(size) => layoutStore.patch(tier, { sideWidth: size })} />
         <div className="flex min-w-0 flex-1 flex-col">
           <div className="aidev-chrome flex h-10 shrink-0 items-center gap-1 border-b border-border bg-muted/30 px-2" data-testid="workbench-empty-bar">
             {emptyView ? <button type="button" onClick={() => setEmptyView(null)} aria-label="닫기" title="닫기" className="p-2 rounded text-muted-foreground hover:text-foreground hover:bg-muted"><X size={16} /></button> : null}
@@ -315,9 +316,10 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
             screen as a frozen blur over the whole workbench, and no click seemed to do anything. */}
         <div className={`absolute inset-0 z-40 transition-[visibility] duration-150 ${drawerOpen ? 'visible' : 'invisible pointer-events-none'}`} aria-hidden={!drawerOpen}>
           <button type="button" aria-label="세션 닫기" tabIndex={drawerOpen ? 0 : -1} onClick={() => setDrawerOpen(false)} className={`absolute inset-0 bg-background/60 transition-opacity duration-150 ${drawerOpen ? 'opacity-100' : 'opacity-0'}`} />
-          <div className={`aidev-chrome absolute left-0 top-0 bottom-0 w-[320px] max-w-[85vw] border-r border-border bg-background shadow-xl transition-transform duration-150 ease-out flex flex-col ${drawerOpen ? 'translate-x-0' : '-translate-x-full'}`}>
+          <div className={`aidev-chrome absolute left-0 top-0 bottom-0 max-w-[85vw] bg-background shadow-xl transition-transform duration-150 ease-out flex ${drawerOpen ? 'translate-x-0' : '-translate-x-full'}`} style={{ width: layout.sideWidth }}>
             {/* closes on backdrop tap, Escape, or once a session is picked */}
-            <div className="flex-1 min-h-0">{sessionsPanel}</div>
+            <div className="flex-1 min-w-0 min-h-0">{sessionsPanel}</div>
+            <SplitHandle edge="right" size={layout.sideWidth} min={200} max={480} onSize={(size) => layoutStore.patch('tablet', { sideWidth: size })} />
           </div>
         </div>
         <div className="flex-1 min-h-0 relative">
@@ -336,7 +338,6 @@ function WorkbenchLayout(props: WorkbenchLayoutProps) {
           {!layout.tabletShowChat && pane === 'browser' && browserUseEnabled ? <div className="absolute inset-0"><BrowserUsePanel isVisible onShowSettings={onShowSettings} /></div> : null}
         </div>
         <LiveWindowHost windows={liveSpecs} compact={compactLive} />
-      {agentToast}
         {agentToast}
       </div>
     );

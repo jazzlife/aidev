@@ -32,7 +32,7 @@ export type WorkbenchLayoutState = {
 
 const DEFAULTS: Record<Exclude<DeviceTier, 'mobile'>, WorkbenchLayoutState> = {
   desktop: { sideView: 'sessions', sideWidth: 280, chatOpen: true, chatWidth: 440, bottomOpen: false, bottomHeight: 260, bottomTab: 'terminal', tabletPane: 'files', tabletShowChat: true, workOpen: false, workWidth: 640 },
-  tablet: { sideView: null, sideWidth: 260, chatOpen: true, chatWidth: 380, bottomOpen: false, bottomHeight: 240, bottomTab: 'terminal', tabletPane: 'files', tabletShowChat: true, workOpen: false, workWidth: 640 },
+  tablet: { sideView: null, sideWidth: 300, chatOpen: true, chatWidth: 380, bottomOpen: false, bottomHeight: 240, bottomTab: 'terminal', tabletPane: 'files', tabletShowChat: true, workOpen: false, workWidth: 640 },
 };
 
 const key = (tier: string) => `aidev.workbench.${tier}`;

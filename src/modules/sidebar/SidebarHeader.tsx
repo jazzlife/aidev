@@ -176,7 +176,8 @@ export default function SidebarHeader({
                   aria-label={t('search.runningTooltip', 'Running sessions')}
                   title={t('search.runningTooltip', 'Running sessions')}
                   className={cn(
-                    "flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-normal transition-all",
+                    // h-full: icon only, no text line, so it would sit 4px short at the top of the Tooltip wrapper
+                    "flex h-full items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-normal transition-all",
                     // the count badge hangs 10px past the icon; keep it inside this tab, off the archive tab
                     runningSessionsCount > 0 && "pr-4",
                     searchMode === 'running'
@@ -319,7 +320,8 @@ export default function SidebarHeader({
                   aria-label={t('search.runningTooltip', 'Running sessions')}
                   title={t('search.runningTooltip', 'Running sessions')}
                   className={cn(
-                    "flex items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-normal transition-all",
+                    // h-full: icon only, no text line, so it would sit 4px short at the top of the Tooltip wrapper
+                    "flex h-full items-center justify-center gap-1.5 rounded-md px-2 py-1.5 text-xs font-normal transition-all",
                     // the count badge hangs 10px past the icon; keep it inside this tab, off the archive tab
                     runningSessionsCount > 0 && "pr-4",
                     searchMode === 'running'

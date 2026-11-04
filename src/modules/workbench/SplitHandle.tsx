@@ -42,7 +42,9 @@ export function SplitHandle({ edge, size, min, max, onSize }: SplitHandleProps) 
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
-      className={`shrink-0 bg-border/60 hover:bg-primary/60 active:bg-primary transition-colors ${vertical ? 'h-1 w-full cursor-row-resize' : 'w-1 h-full cursor-col-resize'}`}
+      // touch-none: without it iPad Safari takes the drag as a pan and cancels the pointer at once.
+      // The ::before widens the grab area past the 4px line so a finger can hit it.
+      className={`relative z-10 shrink-0 touch-none bg-border/60 hover:bg-primary/60 active:bg-primary transition-colors before:absolute ${vertical ? 'h-1 w-full cursor-row-resize before:inset-x-0 before:-inset-y-1.5' : 'w-1 h-full cursor-col-resize before:inset-y-0 before:-inset-x-1.5'}`}
     />
   );
 }
