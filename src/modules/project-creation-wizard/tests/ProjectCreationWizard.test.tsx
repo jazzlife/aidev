@@ -8,6 +8,7 @@ const api = {
   system: { workspacesRoot: vi.fn(() => json({ success: true, data: { root: '/w' } })) },
   browseFilesystem: vi.fn((path: string | null) => json({ path: path ?? '/w', suggestions: path === '/w/new' ? [] : [{ name: 'alpha', path: '/w/alpha' }, { name: 'new', path: '/w/new' }, { name: '.git', path: '/w/.git' }] })),
   createFolder: vi.fn((body: string) => json({ success: true, path: body })),
+  deleteFolder: vi.fn((body: string) => json({ success: true, path: body })),
   createProject: vi.fn((_body: unknown) => json({ success: true, project: { projectId: 'p3', displayName: 'new', fullPath: '/w/new', isArchived: false } })),
   restoreProject: vi.fn((_id: string) => json({ success: true })),
   settings: { createCredential: vi.fn((_body: unknown) => json({ success: true })) },
@@ -53,6 +54,36 @@ describe('ProjectCreationWizard', () => {
     expect(api.createProject).toHaveBeenCalledWith({ path: '/w/new', customName: 'New' });
     expect(onProjectCreated).toHaveBeenCalledWith(expect.objectContaining({ projectId: 'p3' }));
     expect(onClose).toHaveBeenCalled();
+  });
+
+  it('a folder\'s context menu deletes it after a confirmation, then the list is read again', async () => {
+    render(<ProjectCreationWizard onClose={vi.fn()} />);
+    await settle();
+    fireEvent.contextMenu(screen.getByText('alpha'), { clientX: 10, clientY: 10 });
+    fireEvent.click(screen.getByRole('menuitem', { name: '삭제' }));
+    expect(screen.getByTestId('folder-delete-confirm').textContent).toContain('alpha');
+    expect(api.deleteFolder).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: '삭제' }));
+    await settle();
+    expect(api.deleteFolder).toHaveBeenCalledWith('/w/alpha');
+    expect(api.browseFilesystem).toHaveBeenLastCalledWith('/w');
+    expect(screen.queryByTestId('folder-delete-confirm')).toBeNull();
+  });
+
+  it('a long press on touch opens the same menu without entering the folder', async () => {
+    vi.useFakeTimers();
+    try {
+      render(<ProjectCreationWizard onClose={vi.fn()} />);
+      await settle();
+      const alpha = screen.getByText('alpha').closest('button')!;
+      fireEvent.pointerDown(alpha, { pointerType: 'touch', clientX: 10, clientY: 10 });
+      act(() => { vi.advanceTimersByTime(600); });
+      fireEvent.click(alpha);
+      expect(screen.getByRole('menuitem', { name: '삭제' })).toBeTruthy();
+      expect(api.browseFilesystem).not.toHaveBeenCalledWith('/w/alpha');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('a typed ~/x is expanded against the projects home; a path removed earlier is restored', async () => {

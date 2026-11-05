@@ -1186,6 +1186,8 @@ export type FileTreeFileSystem = {
  */
 export type FileTreeProjectGateway = {
   getProjectPathById(projectId: string): string | null | Promise<string | null>;
+  /** Every registered project folder, archived ones included, so a folder holding one is never deleted. */
+  listProjectPaths(): string[] | Promise<string[]>;
 };
 
 /**
@@ -1254,6 +1256,7 @@ export type FileTreeServices = {
     suggestions: Array<{ path: string; name: string; type: 'directory' }>;
   }>;
   createWorkspaceFolder(folderPath: string): Promise<{ success: true; path: string }>;
+  deleteWorkspaceFolder(folderPath: string): Promise<{ success: true; path: string }>;
   readTextFile(projectId: string, filePath: string): Promise<{ content: string; path: string }>;
   openFile(projectId: string, filePath: string): Promise<{ contentType: string; stream: Readable }>;
   saveTextFile(projectId: string, filePath: string, content: string): Promise<{

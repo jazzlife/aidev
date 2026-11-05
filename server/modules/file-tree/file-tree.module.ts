@@ -63,6 +63,8 @@ const fileTreeFileSystem: FileTreeFileSystem = {
  */
 const fileTreeProjects: FileTreeProjectGateway = {
   getProjectPathById: (projectId) => projectsDb.getProjectPathById(projectId),
+  listProjectPaths: () => [...projectsDb.getProjectPaths(), ...projectsDb.getArchivedProjectPaths()]
+    .map((project) => project.project_path),
 };
 
 /**

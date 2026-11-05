@@ -125,6 +125,12 @@ export function createFileTreeRouter(
     response.json(await services.createWorkspaceFolder(folderPath));
   }, logger));
 
+  router.post('/delete-folder', createRouteHandler(async (request, response) => {
+    const body = readBody(request);
+    const folderPath = readRequiredString(body.path, 'path', 'Path is required');
+    response.json(await services.deleteWorkspaceFolder(folderPath));
+  }, logger));
+
   router.get('/projects/:projectId/file', createRouteHandler(async (request, response) => {
     const filePath = readRequiredString(request.query.filePath, 'filePath', 'Invalid file path');
     response.json(await services.readTextFile(readProjectId(request), filePath));

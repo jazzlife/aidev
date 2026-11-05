@@ -111,6 +111,13 @@ function expandWorkspacePath(workspaceRoot: string, inputPath: string): string {
   return inputPath;
 }
 
+// True when `child` is `parent` itself or lies anywhere beneath it.
+function isSameOrInside(parent: string, child: string): boolean {
+  const relativePath = path.relative(parent, child);
+  const outside = relativePath === '..' || relativePath.startsWith(`..${path.sep}`) || path.isAbsolute(relativePath);
+  return !outside;
+}
+
 function createConcurrencyLimiter(maximumConcurrency: number) {
   let activeOperations = 0;
   const pendingOperations: Array<() => void> = [];
@@ -401,6 +408,62 @@ export function createFileTreeService(dependencies: FileTreeServiceDependencies)
       } catch (error) {
         mapFileSystemError(error, {
           EEXIST: { message: 'Folder already exists', statusCode: 409 },
+        });
+      }
+
+      return { success: true, path: targetPath };
+    },
+
+    async deleteWorkspaceFolder(folderPath) {
+      const browseStart = dependencies.workspace.browseStartPath ?? dependencies.workspace.rootPath;
+      const resolvedInput = path.resolve(expandWorkspacePath(browseStart, folderPath));
+      const validation = await dependencies.workspace.validatePath(resolvedInput);
+      if (!validation.valid) {
+        throw createFileTreeError(validation.error ?? 'Path is outside the workspace root', 403, 'INVALID_WORKSPACE_PATH');
+      }
+
+      const realOrSelf = async (candidatePath: string) => {
+        try {
+          return await fileSystem.realpath(candidatePath);
+        } catch {
+          return candidatePath;
+        }
+      };
+      // The parent is resolved but the folder itself is not: a symlinked folder loses only its link, never its target.
+      const targetPath = path.join(await realOrSelf(path.dirname(resolvedInput)), path.basename(resolvedInput));
+      let stats;
+      try {
+        stats = await fileSystem.lstat(targetPath);
+      } catch {
+        throw createFileTreeError('Folder not found', 404, 'FOLDER_NOT_FOUND');
+      }
+      if (!stats.isDirectory() && !stats.isSymbolicLink()) {
+        throw createFileTreeError('Path is not a directory', 400, 'NOT_A_DIRECTORY');
+      }
+
+      // Only folders strictly inside the projects home: browsing may go above it to pick a folder, deleting may not.
+      const projectsHome = await realOrSelf(browseStart);
+      if (!isSameOrInside(projectsHome, targetPath) || path.relative(projectsHome, targetPath) === '') {
+        throw createFileTreeError('Only folders inside the projects home can be deleted', 403, 'FOLDER_DELETE_FORBIDDEN');
+      }
+
+      // A registered project (archived too) would be left pointing at nothing.
+      const realTargetPath = await realOrSelf(targetPath);
+      const projectPaths = await dependencies.projects.listProjectPaths();
+      const holdsProject = projectPaths.some((projectPath) => {
+        const normalizedProjectPath = path.resolve(normalizeProjectPath(projectPath));
+        return isSameOrInside(targetPath, normalizedProjectPath) || isSameOrInside(realTargetPath, normalizedProjectPath);
+      });
+      if (holdsProject) {
+        throw createFileTreeError('This folder holds a registered project; remove the project first', 409, 'FOLDER_HOLDS_PROJECT');
+      }
+
+      try {
+        await fileSystem.removeDirectory(targetPath);
+      } catch (error) {
+        mapFileSystemError(error, {
+          EACCES: { message: 'Permission denied', statusCode: 403 },
+          EPERM: { message: 'Permission denied', statusCode: 403 },
         });
       }
 

@@ -299,6 +299,8 @@ export const api = {
     get(`/api/file-tree/browse-filesystem${query({ path: dirPath })}`),
 
   createFolder: (folderPath: string) => post('/api/file-tree/create-folder', { path: folderPath }),
+  // Deletes a folder (and everything in it) inside the projects home; refused for one holding a registered project.
+  deleteFolder: (folderPath: string) => post('/api/file-tree/delete-folder', { path: folderPath }),
 
   // Git endpoints. The `project` param carries the DB projectId post-migration.
   git: {

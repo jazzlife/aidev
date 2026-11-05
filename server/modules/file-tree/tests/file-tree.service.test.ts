@@ -76,6 +76,7 @@ function createDependencies(
     fileSystem,
     projects: {
       getProjectPathById: async () => projectRoot,
+      listProjectPaths: async () => [],
     },
     workspace: {
       rootPath: projectRoot,
@@ -414,4 +415,47 @@ test('browseWorkspace starts at the projects home and expands ~ against it, not 
   const typed = await service.browseWorkspace('~/alpha');
   assert.equal(typed.path, path.join(projectsHome, 'alpha'));
   assert.equal(readDirectories.includes(path.join(projectsHome, 'alpha')), true);
+});
+
+test('deleteWorkspaceFolder removes a folder inside the projects home, never the home, outside it, or a project', async () => {
+  const home = path.resolve('file-tree-test-home');
+  const projectsHome = path.join(home, 'workspaces');
+  const removed: string[] = [];
+  const fileSystem = createFakeFileSystem({
+    realpath: async (target) => target,
+    lstat: async () => createStats(true, 0o755),
+    removeDirectory: async (target) => { removed.push(target); },
+  });
+  const dependencies = createDependencies(fileSystem, home);
+  dependencies.workspace.browseStartPath = projectsHome;
+  dependencies.projects.listProjectPaths = async () => [path.join(projectsHome, 'apps', 'web')];
+  const service = createFileTreeService(dependencies);
+
+  const deleted = await service.deleteWorkspaceFolder('~/scratch');
+  assert.equal(deleted.path, path.join(projectsHome, 'scratch'));
+
+  const rejects = async (folderPath: string, code: string) => {
+    await assert.rejects(service.deleteWorkspaceFolder(folderPath), (error) => error instanceof AppError && error.code === code);
+  };
+  await rejects('~', 'FOLDER_DELETE_FORBIDDEN');
+  await rejects(path.join(home, 'Documents'), 'FOLDER_DELETE_FORBIDDEN');
+  await rejects('~/apps', 'FOLDER_HOLDS_PROJECT');
+  await rejects('~/apps/web', 'FOLDER_HOLDS_PROJECT');
+
+  assert.deepEqual(removed, [path.join(projectsHome, 'scratch')]);
+});
+
+test('deleteWorkspaceFolder removes a symlinked folder itself, not the folder it points at', async () => {
+  const home = path.resolve('file-tree-test-home');
+  const link = path.join(home, 'linked');
+  const removed: string[] = [];
+  const fileSystem = createFakeFileSystem({
+    realpath: async (target) => (target === link ? path.join(home, 'real') : target),
+    lstat: async () => ({ ...createStats(false, 0o777), isSymbolicLink: () => true }),
+    removeDirectory: async (target) => { removed.push(target); },
+  });
+  const service = createFileTreeService(createDependencies(fileSystem, home));
+
+  await service.deleteWorkspaceFolder(link);
+  assert.deepEqual(removed, [link]);
 });

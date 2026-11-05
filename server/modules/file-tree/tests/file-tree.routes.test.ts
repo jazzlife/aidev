@@ -16,6 +16,7 @@ function createFakeServices(overrides: Partial<FileTreeServices> = {}): FileTree
   return {
     browseWorkspace: unexpectedOperation,
     createWorkspaceFolder: unexpectedOperation,
+    deleteWorkspaceFolder: unexpectedOperation,
     readTextFile: unexpectedOperation,
     openFile: unexpectedOperation,
     saveTextFile: unexpectedOperation,
@@ -154,4 +155,26 @@ test('create route rejects invalid entry types without calling the service', asy
   });
 
   assert.equal(createCalled, false);
+});
+
+test('delete-folder route forwards the path and rejects a missing one', async () => {
+  const inputs: string[] = [];
+  const services = createFakeServices({
+    deleteWorkspaceFolder: async (folderPath) => {
+      inputs.push(folderPath);
+      return { success: true, path: '/w/old' };
+    },
+  });
+
+  await withFileTreeServer(services, async (baseUrl) => {
+    const post = (body: unknown) => fetch(`${baseUrl}/api/file-tree/delete-folder`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify(body),
+    });
+    assert.equal((await post({ path: '~/old' })).status, 200);
+    assert.equal((await post({})).status, 400);
+  });
+
+  assert.deepEqual(inputs, ['~/old']);
 });
