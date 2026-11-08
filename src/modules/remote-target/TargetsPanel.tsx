@@ -38,7 +38,8 @@ type Target = {
 // full: agents never wait (the default) — every command is still recorded, pushed to the user and stoppable
 const POLICY_LABEL: Record<Target['policy'], string> = { full: '전체 권한 (확인 없음)', auto: '위험 명령만 확인', ask: '변경 명령은 확인', deny: '실행 금지' };
 const POLL_MS = 5000;
-// below this panel width the buttons and badges keep only their icons (the text moves to the tooltip)
+// below this panel width the header buttons and the row badges keep only their icons (the text moves to the tooltip);
+// a row's action buttons keep their text and wrap instead — a delete and its confirmation must read differently
 const COMPACT_PX = 380;
 const BUTTON = 'inline-flex h-6 shrink-0 items-center gap-1 whitespace-nowrap rounded border px-2 hover:bg-accent disabled:opacity-50';
 
@@ -214,16 +215,16 @@ function TargetRow({ target, files, latest, compact, reload, setNote }: { target
             </>
           )}
           <div className="flex flex-wrap gap-1.5">
-            <button type="button" title="연결 확인" disabled={!target.online} onClick={() => { void act(() => api.targets.ping(target.id), (b) => (b.ok ? `응답 ${String(b.rtt_ms)}ms` : `응답 없음: ${String(b.error)}`)); }} className={`${BUTTON} border-border`}><Wifi size={11} /> <Label compact={compact}>연결 확인</Label></button>
-            <button type="button" title="정보 새로고침" disabled={!target.online} onClick={() => { void act(() => api.targets.refreshCapabilities(target.id), () => '정보를 새로 받았습니다'); }} className={`${BUTTON} border-border`}><RefreshCw size={11} /> <Label compact={compact}>정보 새로고침</Label></button>
-            {updatable(target, latest) ? <button type="button" title={`러너 업데이트 ${caps?.runner} → ${latest}`} onClick={() => { void act(() => api.targets.updateRunner(target.id, latest!), () => null); }} className={`${BUTTON} border-amber-500/60 text-amber-700 dark:text-amber-400`}><ArrowUpCircle size={11} /> <Label compact={compact}>업데이트 → {latest}</Label></button> : null}
-            {!shared && target.paired && !target.pairing_code ? <button type="button" title="다시 페어링" onClick={() => { void act(() => api.targets.refreshPairing(target.id), () => '새 코드로 다시 페어링하면 기존 러너 연결은 끊어집니다'); }} className={`${BUTTON} border-border`}><KeyRound size={11} /> <Label compact={compact}>다시 페어링</Label></button> : null}
+            <button type="button" title="연결 확인" disabled={!target.online} onClick={() => { void act(() => api.targets.ping(target.id), (b) => (b.ok ? `응답 ${String(b.rtt_ms)}ms` : `응답 없음: ${String(b.error)}`)); }} className={`${BUTTON} border-border`}><Wifi size={11} /> 연결 확인</button>
+            <button type="button" title="정보 새로고침" disabled={!target.online} onClick={() => { void act(() => api.targets.refreshCapabilities(target.id), () => '정보를 새로 받았습니다'); }} className={`${BUTTON} border-border`}><RefreshCw size={11} /> 정보 새로고침</button>
+            {updatable(target, latest) ? <button type="button" title={`러너 업데이트 ${caps?.runner} → ${latest}`} onClick={() => { void act(() => api.targets.updateRunner(target.id, latest!), () => null); }} className={`${BUTTON} border-amber-500/60 text-amber-700 dark:text-amber-400`}><ArrowUpCircle size={11} /> 업데이트 → {latest}</button> : null}
+            {!shared && target.paired && !target.pairing_code ? <button type="button" title="다시 페어링" onClick={() => { void act(() => api.targets.refreshPairing(target.id), () => '새 코드로 다시 페어링하면 기존 러너 연결은 끊어집니다'); }} className={`${BUTTON} border-border`}><KeyRound size={11} /> 다시 페어링</button> : null}
             {shared ? (confirmDelete
-              ? <button type="button" title={`내 목록에서 빼고 공유를 끊습니다 — PC와 러너는 ${target.shared_by} 님에게 그대로 남습니다`} onClick={() => { void act(() => api.targets.remove(target.id), () => `${target.name} 공유 해제 — PC와 러너는 ${target.shared_by} 님에게 그대로 남습니다`); }} className={`${BUTTON} border-red-600 bg-red-600 text-white hover:bg-red-700`}><X size={11} /> <Label compact={compact}>공유 해제 확인</Label></button>
-              : <button type="button" title="공유 해제" onClick={() => setConfirmDelete(true)} className={`${BUTTON} border-border text-red-600`}><X size={11} /> <Label compact={compact}>공유 해제</Label></button>)
+              ? <button type="button" title={`내 목록에서 빼고 공유를 끊습니다 — PC와 러너는 ${target.shared_by} 님에게 그대로 남습니다`} onClick={() => { void act(() => api.targets.remove(target.id), () => `${target.name} 공유 해제 — PC와 러너는 ${target.shared_by} 님에게 그대로 남습니다`); }} className={`${BUTTON} border-red-600 bg-red-600 text-white hover:bg-red-700`}><X size={11} /> 공유 해제 확인</button>
+              : <button type="button" title="공유 해제" onClick={() => setConfirmDelete(true)} className={`${BUTTON} border-border text-red-600`}><X size={11} /> 공유 해제</button>)
               : confirmDelete
-              ? <button type="button" title={removesItself ? 'PC에서 러너 서비스와 파일(설정·토큰·로그)까지 지웁니다 — 오프라인이면 다음에 연결될 때' : '이 러너는 0.20.0 미만이라 PC에 남습니다 — PC에서 aidev-runner uninstall'} onClick={() => { void act(() => api.targets.remove(target.id), () => (removesItself ? `${target.name} 삭제 — PC에서 러너를 제거합니다${target.online ? '' : ' (다음에 연결될 때)'}` : `${target.name} 삭제 — 러너 연결을 끊었습니다 (러너 0.20.0 미만이라 PC에 남습니다: PC에서 aidev-runner uninstall)`)); }} className={`${BUTTON} border-red-600 bg-red-600 text-white hover:bg-red-700`}><Trash2 size={11} /> <Label compact={compact}>{removesItself ? 'PC에서도 제거' : '삭제 확인'}</Label></button>
-              : <button type="button" title="삭제" onClick={() => setConfirmDelete(true)} className={`${BUTTON} border-border text-red-600`}><Trash2 size={11} /> <Label compact={compact}>삭제</Label></button>}
+              ? <button type="button" title={removesItself ? 'PC에서 러너 서비스와 파일(설정·토큰·로그)까지 지웁니다 — 오프라인이면 다음에 연결될 때' : '이 러너는 0.20.0 미만이라 PC에 남습니다 — PC에서 aidev-runner uninstall'} onClick={() => { void act(() => api.targets.remove(target.id), () => (removesItself ? `${target.name} 삭제 — PC에서 러너를 제거합니다${target.online ? '' : ' (다음에 연결될 때)'}` : `${target.name} 삭제 — 러너 연결을 끊었습니다 (러너 0.20.0 미만이라 PC에 남습니다: PC에서 aidev-runner uninstall)`)); }} className={`${BUTTON} border-red-600 bg-red-600 text-white hover:bg-red-700`}><Trash2 size={11} /> {removesItself ? 'PC에서도 제거' : '삭제 확인'}</button>
+              : <button type="button" title="삭제" onClick={() => setConfirmDelete(true)} className={`${BUTTON} border-border text-red-600`}><Trash2 size={11} /> 삭제</button>}
           </div>
         </div>
       ) : null}
