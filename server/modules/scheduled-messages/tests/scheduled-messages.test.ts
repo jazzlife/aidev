@@ -142,6 +142,24 @@ test('a turn waiting for a specialist being designed is skipped; the turns behin
   });
 });
 
+test('a queued turn the server runs is in the running list while it runs (a drain restart must see it)', async () => {
+  await withIsolatedDatabase(async (userId) => {
+    sessionDraftsDb.saveDraft(userId, SESSION_ID, { text: '', queuedMessage: [{ id: 'q', content: '드라이브 관리창 이름 정리', options: {}, attachments: [] }] });
+    let finish: () => void = () => undefined;
+    const runtime = {
+      hasRuntime: () => true,
+      run: () => new Promise<void>((resolve) => { finish = resolve; }),
+      abort: async () => true,
+    } as never;
+    const dispatching = dispatchQueuedMessages(runtime);
+    await new Promise((resolve) => setTimeout(resolve, 10));
+    // server 2026-11-09: a drain restart found "no live sessions" and cut such a turn off mid-work
+    assert.deepEqual(chatRunRegistry.listRunningRuns().map((run) => run.sessionId), [SESSION_ID]);
+    finish();
+    await dispatching;
+  });
+});
+
 test('queued turns go out oldest first, one per idle pass, and the rest stay queued', async () => {
   await withIsolatedDatabase(async (userId) => {
     sessionDraftsDb.saveDraft(userId, SESSION_ID, {
