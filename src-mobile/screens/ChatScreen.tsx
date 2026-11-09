@@ -3,7 +3,7 @@ import { useLocation, useParams } from 'react-router-dom';
 import { Clock, Download, Gauge, GitBranch, MoreHorizontal, Search } from 'lucide-react';
 
 import { api, grantClaudeToolPermission, buildClaudeToolPermissionEntry, useChatRealtimeHandlers, useSessionStore, useWebSocket, type LLMProvider, type NormalizedMessage, type PendingPermissionRequest, type ProjectSession } from '@/modules/chat-core';
-import { aidevApi, routingStore, sessionKey, shouldAskClarify, useAidevRouting, useEscalation, usePrejudge, useReturnFromHandoff, useRoutingState, ReturnCard, VerificationCard, type AidevSendDecoration, type Engine } from '@/modules/aidev-router';
+import { aidevApi, designHoldFor, GENERALIST, routingStore, sessionKey, shouldAskClarify, useAidevRouting, useDesignHolds, useEscalation, usePrejudge, useReturnFromHandoff, useRoutingState, ReturnCard, VerificationCard, type AidevSendDecoration, type Engine } from '@/modules/aidev-router';
 import { isAidevEngine, parseProviderUsageLimit } from '@/shared/utils';
 import { hydrateChatDrafts, readQueuedMessages, subscribeToChatDrafts, writeQueuedMessages, type StoredQueuedMessage } from '@/shared/chatDrafts';
 import { Composer } from '@m/components/Composer';
@@ -38,8 +38,11 @@ import { setCurrentConversation, setCurrentProject } from '@m/lib/current';
 import { MODE_LABELS, adoptDraftPermissionMode, buildSendOptions, uploadAttachments, useCapsMap, usePermissionMode, type UploadedAttachment } from '@m/lib/chatOptions';
 
 type SessionMeta = { id: string; provider: LLMProvider; projectId: string; projectPath: string; projectName: string; title: string };
-/** How a send goes: `interrupt` cuts into the running answer; `options` are a queued turn's own (else the screen's). */
-type DispatchOptions = { interrupt?: boolean; options?: Record<string, unknown>; queuedId?: string };
+/**
+ * How a send goes: `interrupt` cuts into the running answer; `options` are a queued turn's own (else the screen's);
+ * `holdFor` puts it in the chat's queue to wait for the specialist being designed for it (a new chat is made first).
+ */
+type DispatchOptions = { interrupt?: boolean; options?: Record<string, unknown>; queuedId?: string; holdFor?: string };
 /** What the router (and the title) reads for a send of attachments only: the server takes an empty text, the router cannot. */
 const attachmentLabel = (names: string[]) => `첨부 ${names.length}개 (${names.slice(0, 3).join(', ')}${names.length > 3 ? ' …' : ''})`;
 const isImage = (a: { mimeType?: string; name?: string; path?: string }) => Boolean(a.mimeType?.startsWith('image/')) || /\.(gif|jpe?g|png|webp|heic)$/i.test(a.name || a.path || '');
@@ -253,6 +256,18 @@ export function ChatScreen() {
     }
     if (!target) return false;
     const label = text || attachmentLabel(attachments.map((a) => a.name ?? a.path?.split(/[\\/]/).pop() ?? '파일'));
+    // no specialist yet: the command waits in this chat's queue and runs on it once designed (DesignHoldWatcher);
+    // its card can run it at once on the generalist instead (2026-11-09, user decision)
+    if (how.holdFor) {
+      writeQueuedMessages(target.id, [...readQueuedMessages(target.id), {
+        id: createQueuedId(), content: text, options: { ...buildSendOptions(target.provider, permission.mode), sessionSummary: label.slice(0, 80) }, attachments,
+        hold: { design: how.holdFor, since: Date.now(), provider: target.provider, projectHint: target.projectName ?? null, projectPath: target.projectPath ?? null },
+      }]);
+      for (const url of previews) if (url) { URL.revokeObjectURL(url); pendingPreviewsRef.current.delete(url); }
+      // nothing of this chat runs now: a later run here is not this route's to report (the release routes it anew)
+      routingStore.setFor('sent', target.id, null);
+      return true;
+    }
     // the phone's own copy shows the picked images at once (object URLs of the files just sent)
     const images = attachments.map((a, index) => ({ a, preview: previews[index] })).filter(({ a }) => isImage(a)).map(({ a, preview }) => ({ path: a.path, name: a.name, ...(preview ? { data: preview } : {}) }));
     const files = attachments.filter((a) => !isImage(a));
@@ -319,7 +334,8 @@ export function ChatScreen() {
         const moved = await switchBackRef.current?.({ sessionId: meta.id, engine: switchBack.engine, fromEngine: meta.provider, text: routed, reason: switchBack.reason });
         if (moved) return;
       }
-      if (!(await dispatch(text, decoration, attachments, previews, { interrupt: busy }))) {
+      const holdFor = designHoldFor(decoration) ?? undefined;
+      if (!(await dispatch(text, decoration, attachments, previews, { interrupt: busy, holdFor }))) {
         for (const url of previews) if (url) { URL.revokeObjectURL(url); pendingPreviewsRef.current.delete(url); }
         setRestore({ text, files, n: Date.now() });
       }
@@ -387,6 +403,26 @@ export function ChatScreen() {
     try {
       const decoration = await beforeSend(routed, { sessionId, provider, isNewSession: false, projectHint: meta?.projectName ?? null, projectPath: meta?.projectPath ?? null, userPinnedModel: false });
       await dispatch(turn.content, decoration, attachments, [], { interrupt: busy, options: turn.options, queuedId: id });
+    } finally {
+      sendingRef.current = false;
+      setSending(null);
+    }
+  };
+  // "범용 에이전트로 즉시 실행" on a held turn: it goes now on the generalist (the specialist takes the next command);
+  // while the answer runs it is released into the queue on the generalist instead, sent when the answer ends
+  const { release: releaseHold } = useDesignHolds();
+  const runHeldNow = async (id: string) => {
+    const turn = queue.find((candidate) => candidate.id === id);
+    if (!turn?.hold || !sessionId) return;
+    if (busy || sendingRef.current) { void releaseHold(sessionId, { ...turn, id, hold: turn.hold }, GENERALIST); return; }
+    writeQueue(queue.filter((candidate) => candidate.id !== id));
+    const attachments = (turn.attachments ?? []) as UploadedAttachment[];
+    const routed = turn.content || attachmentLabel(attachments.map((a) => a.name ?? '파일'));
+    sendingRef.current = true;
+    setSending(routed);
+    try {
+      const decoration = await beforeSend(routed, { sessionId, provider, isNewSession: false, projectHint: meta?.projectName ?? null, projectPath: meta?.projectPath ?? null, userPinnedModel: false, forceAgent: GENERALIST });
+      await dispatch(turn.content, decoration, attachments, [], { options: turn.options, queuedId: id });
     } finally {
       sendingRef.current = false;
       setSending(null);
@@ -564,7 +600,7 @@ export function ChatScreen() {
           <span className="min-w-0 flex-1 truncate">{sending}</span>
         </div>
       ) : null}
-      <QueuedTurns queue={queue} onMove={moveQueued} onSendNow={(id) => { void sendQueuedNow(id); }} onEdit={editQueued} onDelete={(id) => writeQueue(queue.filter((turn) => turn.id !== id))} />
+      <QueuedTurns queue={queue} onMove={moveQueued} onSendNow={(id) => { void sendQueuedNow(id); }} onRunHeldNow={(id) => { void runHeldNow(id); }} onEdit={editQueued} onDelete={(id) => writeQueue(queue.filter((turn) => turn.id !== id))} />
       {contextShare !== null && contextShare >= 0.8 ? <div className="mx-3 mb-1 rounded-lg bg-warn/10 px-3 py-1.5 text-[12px] text-warn" role="status" data-testid="context-warning">컨텍스트 {Math.round(contextShare * 100)}% 사용 · 곧 자동으로 요약됩니다</div> : null}
       {waiting && !sheetRequest ? (
         <button type="button" onClick={() => setLaterRequestId(null)} className="mx-3 mb-1 flex items-center gap-2 rounded-xl border border-warn/50 bg-warn/10 px-3 py-2 text-left text-[13px]" data-testid="permission-waiting">

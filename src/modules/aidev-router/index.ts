@@ -17,6 +17,8 @@ export type { AidevSendDecoration, BeforeSendContext } from '@/modules/aidev-rou
 export { useAidevDecide } from '@/modules/aidev-router/hooks/useAidevDecide';
 // D-04: domains offered for background creation (workbench catalog + mobile conversation list).
 export { useCreateProposals } from '@/modules/aidev-router/hooks/useCreateProposals';
+// Held commands: wait in the queue for the specialist being designed for them (both apps).
+export { DesignHoldWatcher, designHoldFor, holdLabel, useDesignHolds, GENERALIST } from '@/modules/aidev-router/hooks/useDesignHolds';
 // Workbench-only UI (the mobile app has its own chip in src-mobile).
 export { AidevRouterBar } from '@/modules/aidev-router/AidevRouterBar';
 export { AgentCatalog } from '@/modules/aidev-router/AgentCatalog';

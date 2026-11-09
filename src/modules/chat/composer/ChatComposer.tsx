@@ -92,6 +92,8 @@ type ChatComposerProps = {
   onMoveQueuedDraft: (id: string, direction: -1 | 1) => void;
   /** Takes a queued turn out of the line and sends it at once, cutting into the running turn. */
   onSendQueuedDraftNow: (id: string) => void;
+  /** A held turn (waiting for a specialist being designed) runs at once on the generalist. */
+  onRunHeldDraftNow: (id: string) => void;
   attachedFiles: File[];
   onRemoveAttachment: (index: number) => void;
   fileErrors: Map<string, string>;
@@ -170,6 +172,7 @@ export default function ChatComposer({
   onDeleteQueuedDraft,
   onMoveQueuedDraft,
   onSendQueuedDraftNow,
+  onRunHeldDraftNow,
   attachedFiles,
   onRemoveAttachment,
   fileErrors,
@@ -343,6 +346,8 @@ export default function ChatComposer({
           onMoveUp={index > 0 ? () => onMoveQueuedDraft(draft.id, -1) : undefined}
           onMoveDown={index < queuedDrafts.length - 1 ? () => onMoveQueuedDraft(draft.id, 1) : undefined}
           onSendNow={() => onSendQueuedDraftNow(draft.id)}
+          hold={draft.hold}
+          onRunHeldNow={() => onRunHeldDraftNow(draft.id)}
         />
       ))}
 

@@ -64,7 +64,13 @@ function readQueuedMessages(value: unknown): unknown[] {
 }
 
 /**
- * Takes the head of a session's queue and runs it. Resolves when that turn
+ * A turn waiting for the specialist the gateway is designing for it: the app releases it (routed to the new agent, or
+ * to the generalist) and until then it is not sent — the turns behind it still are, so work goes on meanwhile.
+ */
+const isHeld = (turn: unknown): boolean => Boolean(turn && typeof turn === 'object' && (turn as Record<string, unknown>).hold);
+
+/**
+ * Takes the first turn of a session's queue that is not held and runs it. Resolves when that turn
  * settles; the turns behind it go out one per settle through the registry's
  * run-settled hook (or the poll, whichever comes first).
  */
@@ -73,10 +79,16 @@ async function sendQueueHead(
   runtime: ProviderRuntimeGateway,
 ): Promise<boolean> {
   const queue = readQueuedMessages(candidate.queuedMessage);
-  const message = readQueuedMessage(queue[0]);
-  const remaining = queue.length > 1 ? queue.slice(1) : null;
+  const index = queue.findIndex((turn) => !isHeld(turn));
+  if (index < 0) {
+    return false;
+  }
+  const taken = queue[index];
+  const message = readQueuedMessage(taken);
+  const rest = queue.filter((_, position) => position !== index);
+  const remaining = rest.length > 0 ? rest : null;
 
-  if (!sessionDraftsDb.claimQueuedMessage(candidate, remaining)) {
+  if (!sessionDraftsDb.claimQueuedMessage(candidate, remaining, taken)) {
     return false;
   }
   if (!message) {
@@ -98,7 +110,7 @@ async function sendQueueHead(
   // The registry check and run reservation are separate operations. If a run
   // wins that tiny race, put the turn back so the next pass tries again.
   if (!result.started && result.error === 'A run was already in progress for this session.') {
-    sessionDraftsDb.restoreQueuedMessage(candidate, remaining);
+    sessionDraftsDb.restoreQueuedMessage(candidate, remaining, taken);
     return false;
   }
   sessionDraftsDb.deleteEmptyDraft(candidate.userId, candidate.sessionId);

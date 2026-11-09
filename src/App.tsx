@@ -9,6 +9,7 @@ import { WebSocketProvider } from '@/shared/context/WebSocketContext';
 import { PluginsProvider } from '@/modules/plugins';
 import { LiveWindowPage } from '@/modules/workbench';
 import { ProjectWorkspaceRoute } from '@/modules/project-workspace';
+import { DesignHoldWatcher } from '@/modules/aidev-router';
 import { i18n } from '@/modules/i18n';
 import { useReleaseWatch } from '@/shared/hooks/useReleaseWatch';
 
@@ -133,6 +134,7 @@ export default function App() {
               <TasksSettingsProvider>
                 <TaskMasterProvider>
                 <ProtectedRoute>
+                  <DesignHoldWatcher />
                   <Router basename={routerBasename}>
                     <Routes>
                       <Route path="/" element={<ProjectWorkspaceRoute />} />

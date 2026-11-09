@@ -73,6 +73,11 @@ vi.mock('@/modules/aidev-router', () => ({
   routingStore: { patch: vi.fn(), setFor: vi.fn(), followSession: vi.fn(), adoptSession: vi.fn() },
   sessionKey: (id: string | null) => id ?? '',
   shouldAskClarify: () => false,
+  // no specialist is being designed in these tests: nothing is held
+  designHoldFor: () => null,
+  GENERALIST: 'generalist',
+  holdLabel: () => '',
+  useDesignHolds: () => ({ release: vi.fn(async () => undefined) }),
   useAidevRouting: () => ({ beforeSend: vi.fn(async () => null), reportOutcome: vi.fn(async () => undefined) }),
   useEscalation: () => ({ escalation: null, takeHandoff: () => null, label: '', busy: false, error: null, run: vi.fn(), dismiss: vi.fn() }),
   usePrejudge: () => undefined,

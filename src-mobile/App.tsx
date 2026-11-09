@@ -2,6 +2,7 @@ import { Suspense, useEffect } from 'react';
 import { BrowserRouter, Navigate, Outlet, Route, Routes } from 'react-router-dom';
 
 import { AuthProvider, WebSocketProvider, useAuth } from '@/modules/chat-core';
+import { DesignHoldWatcher } from '@/modules/aidev-router';
 import { LoginScreen } from '@m/screens/LoginScreen';
 import { SessionsScreen } from '@m/screens/SessionsScreen';
 import { Splash } from '@m/components/Splash';
@@ -72,6 +73,7 @@ function Gate() {
         <ScreenErrorBoundary><Suspense fallback={<Splash />}><Outlet /></Suspense></ScreenErrorBoundary>
         <ApprovalSheet />
         <UiCommandBridge />
+        <DesignHoldWatcher />
       </DrawerProvider>
     </WebSocketProvider>
   );

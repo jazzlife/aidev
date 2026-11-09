@@ -117,6 +117,31 @@ test('a queued message stays pending while its session is busy', async () => {
   });
 });
 
+test('a turn waiting for a specialist being designed is skipped; the turns behind it still go, and a released one carries its routing', async () => {
+  await withIsolatedDatabase(async (userId) => {
+    const hold = { design: 'apple-sidecar-interop', since: Date.now(), provider: 'claude' };
+    sessionDraftsDb.saveDraft(userId, SESSION_ID, {
+      text: '',
+      queuedMessage: [
+        { id: 'held', content: 'Sidecar를 윈도우에서 받아줘', options: {}, attachments: [], hold },
+        { id: 'next', content: '로그 정리해줘', options: {}, attachments: [] },
+      ],
+    });
+
+    const runs: RunCall[] = [];
+    assert.equal(await dispatchQueuedMessages(createRuntime(runs)), 1);
+    assert.equal(runs[0].command, '로그 정리해줘');
+    assert.deepEqual(sessionDraftsDb.getDrafts(userId)[0]?.queuedMessage, [{ id: 'held', content: 'Sidecar를 윈도우에서 받아줘', options: {}, attachments: [], hold }]);
+    chatRunRegistry.clearAll();
+    assert.equal(await dispatchQueuedMessages(createRuntime(runs)), 0, 'a queue of held turns sends nothing');
+
+    // the app releases it: no hold, the new agent's routing in its options
+    sessionDraftsDb.saveDraft(userId, SESSION_ID, { text: '', queuedMessage: [{ id: 'held', content: 'Sidecar를 윈도우에서 받아줘', options: { aidev: { agent: { name: 'apple-sidecar-interop' } } }, attachments: [] }] });
+    assert.equal(await dispatchQueuedMessages(createRuntime(runs)), 1);
+    assert.deepEqual((runs[1].options.aidev as { agent: { name: string } }).agent.name, 'apple-sidecar-interop');
+  });
+});
+
 test('queued turns go out oldest first, one per idle pass, and the rest stay queued', async () => {
   await withIsolatedDatabase(async (userId) => {
     sessionDraftsDb.saveDraft(userId, SESSION_ID, {

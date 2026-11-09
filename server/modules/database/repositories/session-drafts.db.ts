@@ -159,11 +159,11 @@ export const sessionDraftsDb = {
   },
 
   /**
-   * Atomically takes the head of a session's queue, only if the queue has not
-   * been edited since listing: the column becomes `remaining` (the turns still
-   * waiting, or NULL when the head was the last one).
+   * Atomically takes one turn of a session's queue — the head unless `sent` names another (a turn waiting for a
+   * specialist being designed is skipped) — only if the queue has not been edited since listing: the column becomes
+   * `remaining` (the turns still waiting, or NULL when the taken one was the last).
    */
-  claimQueuedMessage(candidate: QueuedSessionMessageRecord, remaining: unknown[] | null): boolean {
+  claimQueuedMessage(candidate: QueuedSessionMessageRecord, remaining: unknown[] | null, sent: unknown = queueHead(candidate.queuedMessage)): boolean {
     const result = getConnection()
       .prepare(
         `UPDATE session_drafts
@@ -179,7 +179,7 @@ export const sessionDraftsDb = {
     if (result.changes === 0) {
       return false;
     }
-    rememberSentTurn(candidate.userId, candidate.sessionId, queueHead(candidate.queuedMessage));
+    rememberSentTurn(candidate.userId, candidate.sessionId, sent);
     return true;
   },
 
@@ -188,8 +188,8 @@ export const sessionDraftsDb = {
    * `remaining` must be what the claim left in the column, so a queue the user
    * changed meanwhile is never overwritten.
    */
-  restoreQueuedMessage(candidate: QueuedSessionMessageRecord, remaining: unknown[] | null): void {
-    forgetSentTurn(candidate.userId, candidate.sessionId, queueHead(candidate.queuedMessage));
+  restoreQueuedMessage(candidate: QueuedSessionMessageRecord, remaining: unknown[] | null, sent: unknown = queueHead(candidate.queuedMessage)): void {
+    forgetSentTurn(candidate.userId, candidate.sessionId, sent);
     getConnection()
       .prepare(
         `UPDATE session_drafts

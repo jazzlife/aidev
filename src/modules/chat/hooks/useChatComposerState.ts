@@ -11,7 +11,7 @@ import type {
 } from 'react';
 import { useDropzone } from 'react-dropzone';
 
-import { shouldAskClarify, useAidevRouting, usePrejudge, type AidevSendDecoration } from '@/modules/aidev-router';
+import { designHoldFor, GENERALIST, routingStore, shouldAskClarify, useAidevRouting, useDesignHolds, usePrejudge, type AidevSendDecoration } from '@/modules/aidev-router';
 import { api } from '@/shared/api';
 import { PROVIDER_PERMISSION_PREFERENCE_KEYS } from '@/shared/constants';
 import { isAidevEngine } from '@/shared/utils';
@@ -145,6 +145,7 @@ const restoreQueuedDrafts = (sessionKey: string, files: Map<string, File[]>): Qu
       attachments: files.get(id) ?? [],
       uploadedAttachments: saved.attachments,
       options: saved.options,
+      ...(saved.hold ? { hold: saved.hold } : {}),
     };
   })
 );
@@ -154,6 +155,7 @@ const toStoredQueuedMessage = (draft: QueuedDraft): StoredQueuedMessage => ({
   content: draft.content,
   options: draft.options,
   attachments: draft.uploadedAttachments,
+  ...(draft.hold ? { hold: draft.hold } : {}),
 });
 
 const sameQueuedDrafts = (a: QueuedDraft[], b: QueuedDraft[]): boolean => (
@@ -169,7 +171,8 @@ const createQueuedMessageId = (): string => `q-${Date.now().toString(36)}-${Math
  * (its text, already-uploaded files and the settings it was queued with)
  * instead of what is in the composer, which stays as it is.
  */
-type SubmitOptions = { interrupt?: boolean; queued?: QueuedDraft };
+/** `forceAgent`: the agent this send runs on whatever routing picks (a held turn run at once on the generalist). */
+type SubmitOptions = { interrupt?: boolean; queued?: QueuedDraft; forceAgent?: string };
 
 const getNotificationSessionSummary = (
   selectedSession: ProjectSession | null,
@@ -655,6 +658,9 @@ export function useChatComposerState({
   // agent, engine and model tier for this turn (IMPLEMENTATION-PLAN §3.6). Failures
   // never block the send — the message goes out exactly as an unrouted send would.
   const { beforeSend: aidevBeforeSend } = useAidevRouting();
+  // a held turn's "run now" while the chat is busy: released into the queue on the generalist (DesignHoldWatcher
+  // releases the rest once their specialist exists)
+  const { release: releaseHold } = useDesignHolds();
   // §3.1 clarify (C-09): a routed send held until the user adds the missing detail or lets it go; the command
   // stays in the composer, and the hold belongs to the chat it was typed in. `interrupt` remembers that the user
   // was cutting into the running turn, so the release still does.
@@ -841,6 +847,7 @@ export function useChatComposerState({
         projectHint: typeof selectedProject?.displayName === 'string' ? selectedProject.displayName : (typeof selectedProject?.name === 'string' ? selectedProject.name : null),
         projectPath: resolvedProjectPath || null,
         userPinnedModel: false,
+        forceAgent: submitOptions?.forceAgent ?? null,
       });
       // a new send supersedes a hold; a command missing essential detail waits for one line (ClarifyPrompt)
       setClarifyHold(null);
@@ -911,6 +918,41 @@ export function useChatComposerState({
           project: selectedProject,
           summary: createdSessionName,
         });
+      }
+
+      // No specialist yet for this command: it waits in this chat's queue while the gateway designs one, and then runs
+      // on it (DesignHoldWatcher); its card can run it at once on the generalist instead (2026-11-09, user decision).
+      const heldFor = queued || replacesAnchorId ? null : designHoldFor(aidevDecoration);
+      if (heldFor) {
+        const sendOptions = buildSendOptions(messageContent);
+        writeQueuedMessages(targetSessionId, [
+          ...readQueuedMessages(targetSessionId),
+          {
+            id: createQueuedMessageId(),
+            content: messageContent,
+            options: newSessionPermissionMode ? { ...sendOptions, permissionMode: newSessionPermissionMode } : sendOptions,
+            attachments: uploadedAttachments,
+            hold: {
+              design: heldFor, since: Date.now(), provider: sessionProvider, projectPath: resolvedProjectPath || null,
+              projectHint: typeof selectedProject?.displayName === 'string' ? selectedProject.displayName : (typeof selectedProject?.name === 'string' ? selectedProject.name : null),
+            },
+          },
+        ]);
+        recordSentMessage(currentInput, targetSessionId);
+        // nothing of this chat runs now: a later run here is not this route's to report (the release routes it anew)
+        routingStore.setFor('sent', targetSessionId, null);
+        if (newSessionPermissionMode) routingStore.setFor('sent', null, null);
+        resetCommandMenuState();
+        setAttachedFiles([]);
+        setFileErrors(new Map());
+        setIsTextareaExpanded(false);
+        if (textareaRef.current) {
+          textareaRef.current.style.height = 'auto';
+        }
+        if (draftScopeRef.current) {
+          writeDraftText(draftScopeRef.current, inputValueRef.current);
+        }
+        return;
       }
 
       const attachmentRecords = uploadedAttachments as ChatAttachment[];
@@ -1126,6 +1168,25 @@ export function useChatComposerState({
     writeQueuedMessages(sessionKey, queuedDrafts.filter((candidate) => candidate.id !== id).map(toStoredQueuedMessage));
     void handleSubmit(createFakeSubmitEvent(), { interrupt: isLoading, queued: draft });
   }, [canAbortSession, handleSubmit, isLoading, queuedDrafts, sessionKey]);
+
+  /**
+   * "범용 에이전트로 즉시 실행" on a held turn: it goes now on the generalist, and the specialist being designed takes
+   * over from the chat's next command, not this one. While the chat is busy it is released into the queue on the
+   * generalist instead (sent when the running turn ends).
+   */
+  const runHeldDraftNow = useCallback((id: string) => {
+    const draft = queuedDrafts.find((candidate) => candidate.id === id);
+    if (!draft?.hold || !sessionKey) {
+      return;
+    }
+    if (isLoading || sendingRef.current) {
+      void releaseHold(sessionKey, { ...toStoredQueuedMessage(draft), id, hold: draft.hold }, GENERALIST);
+      return;
+    }
+    queuedFilesRef.current.delete(id);
+    writeQueuedMessages(sessionKey, queuedDrafts.filter((candidate) => candidate.id !== id).map(toStoredQueuedMessage));
+    void handleSubmit(createFakeSubmitEvent(), { queued: draft, forceAgent: GENERALIST });
+  }, [handleSubmit, isLoading, queuedDrafts, releaseHold, sessionKey]);
 
   /**
    * Sends now, cutting into the running turn, instead of queueing behind it.
@@ -1427,6 +1488,7 @@ export function useChatComposerState({
     deleteQueuedDraft,
     moveQueuedDraft,
     sendQueuedDraftNow,
+    runHeldDraftNow,
     handleVoiceTranscript,
     handleInputChange,
     handleKeyDown,

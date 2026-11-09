@@ -1,11 +1,14 @@
-import { ChevronDown, ChevronUp, Pencil, X, Zap } from 'lucide-react';
+import { Bot, ChevronDown, ChevronUp, Pencil, X, Zap } from 'lucide-react';
 
+import { holdLabel } from '@/modules/aidev-router';
 import type { StoredQueuedMessage } from '@/shared/chatDrafts';
 
 type QueuedTurnsProps = {
   queue: StoredQueuedMessage[];
   onMove: (id: string, direction: -1 | 1) => void;
   onSendNow: (id: string) => void;
+  /** A held turn (waiting for the specialist being designed for it) runs at once on the generalist. */
+  onRunHeldNow: (id: string) => void;
   onEdit: (id: string) => void;
   onDelete: (id: string) => void;
 };
@@ -13,9 +16,10 @@ type QueuedTurnsProps = {
 /**
  * Used by ChatScreen: the session's command queue (the same one the workbench shows), oldest first. The server sends
  * the head each time the answer ends; each card can move earlier or later, go now (cutting into the running answer),
- * go back into the composer, or be dropped.
+ * go back into the composer, or be dropped. A held turn waits for the specialist being designed for it and offers
+ * "범용 에이전트로 즉시 실행" instead of "send now".
  */
-export function QueuedTurns({ queue, onMove, onSendNow, onEdit, onDelete }: QueuedTurnsProps) {
+export function QueuedTurns({ queue, onMove, onSendNow, onRunHeldNow, onEdit, onDelete }: QueuedTurnsProps) {
   if (!queue.length) return null;
   const button = 'm-touch flex h-8 w-8 shrink-0 items-center justify-center rounded-full text-muted disabled:opacity-30';
   return (
@@ -24,8 +28,11 @@ export function QueuedTurns({ queue, onMove, onSendNow, onEdit, onDelete }: Queu
         const id = turn.id ?? '';
         const files = turn.attachments?.length ?? 0;
         return (
-          <li key={id || index} className="flex items-center gap-1 rounded-xl border border-line bg-surface py-1 pl-3 pr-1 text-[13px]" data-testid="chat-queued">
-            <span className="shrink-0 rounded-md bg-elevated px-1.5 py-0.5 text-[11px] text-muted">대기 {index + 1}/{queue.length}</span>
+          <li key={id || index} className="flex flex-wrap items-center gap-1 rounded-xl border border-line bg-surface py-1 pl-3 pr-1 text-[13px]" data-testid="chat-queued">
+            {turn.hold ? (
+              <span className="flex w-full items-center gap-1 pt-0.5 text-[12px] text-accent" data-testid="held-turn"><Bot size={13} className="m-pulse shrink-0" />{holdLabel(turn.hold)}</span>
+            ) : null}
+            <span className="shrink-0 rounded-md bg-elevated px-1.5 py-0.5 text-[11px] text-muted">{turn.hold ? '보류' : `대기 ${index + 1}/${queue.length}`}</span>
             <span className="min-w-0 flex-1 truncate pl-1">{turn.content}{files ? ` · 첨부 ${files}` : ''}</span>
             {queue.length > 1 ? (
               <>
@@ -33,7 +40,9 @@ export function QueuedTurns({ queue, onMove, onSendNow, onEdit, onDelete }: Queu
                 <button type="button" aria-label="나중에 보내기" disabled={index === queue.length - 1} onClick={() => onMove(id, 1)} className={button}><ChevronDown size={16} /></button>
               </>
             ) : null}
-            <button type="button" aria-label="지금 보내기" onClick={() => onSendNow(id)} className={`${button} text-warn`}><Zap size={16} /></button>
+            {turn.hold
+              ? <button type="button" onClick={() => onRunHeldNow(id)} className="m-touch h-8 shrink-0 rounded-full border border-accent/50 px-3 text-[12px] font-medium text-accent" data-testid="run-held-now">범용 에이전트로 즉시 실행</button>
+              : <button type="button" aria-label="지금 보내기" onClick={() => onSendNow(id)} className={`${button} text-warn`}><Zap size={16} /></button>}
             <button type="button" aria-label="대기 메시지 수정" onClick={() => onEdit(id)} className={button}><Pencil size={15} /></button>
             <button type="button" aria-label="대기 메시지 삭제" onClick={() => onDelete(id)} className={button}><X size={16} /></button>
           </li>

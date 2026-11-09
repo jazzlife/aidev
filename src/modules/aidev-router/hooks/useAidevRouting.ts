@@ -36,6 +36,11 @@ export type BeforeSendContext = {
   projectPath?: string | null;
   /** Whether the composer's model is an explicit user choice rather than the provider default. */
   userPinnedModel: boolean;
+  /**
+   * The agent this send runs on, whatever routing would pick: a held command released to the specialist designed for
+   * it, or run at once on the generalist. An app re-send — never held or asked back.
+   */
+  forceAgent?: string | null;
 };
 
 
@@ -142,9 +147,10 @@ export function useAidevRouting() {
       const forText = current.oneShotPlan?.forText;
       const staleRetry = Boolean(forText && !text.trim().endsWith(forText.trim()));
       // A self-check turn or an explicit agent pick bypasses Laya's agent choice (§3.7, C-07).
-      const oneShotAgent = staleRetry ? null : current.oneShotAgent;
-      const forceAgent = oneShotAgent || overrides.agent || null;
-      if (current.oneShotAgent) routingStore.patch({ oneShotAgent: null });
+      // a send that names its own agent leaves the one-shot pick for the user's next send
+      const oneShotAgent = staleRetry || context.forceAgent ? null : current.oneShotAgent;
+      const forceAgent = context.forceAgent || oneShotAgent || overrides.agent || null;
+      if (current.oneShotAgent && !context.forceAgent) routingStore.patch({ oneShotAgent: null });
       // E-03: an escalated retry / handoff pins engine, model and effort for this one send.
       const oneShot = staleRetry ? null : current.oneShotPlan;
       if (current.oneShotPlan) routingStore.patch({ oneShotPlan: null });
@@ -204,9 +210,9 @@ export function useAidevRouting() {
       }
       const applyPlan = !context.userPinnedModel && route.plan.engine !== null && (context.isNewSession || route.plan.engine === asEngine(context.provider));
       const payload = buildAidevPayload(route, runId);
-      // No fitting specialist: the gateway designs it out of band (route.create.design) while this turn runs on the
-      // routed agent — the architect never takes a turn of the chat (2026-11-09: an interruption, another chat's end or
-      // a mistyped closing tag each lost the design when the app read it back from the chat).
+      // No fitting specialist: the gateway designs it out of band (route.create.design) — the architect never takes a
+      // turn of the chat (2026-11-09: an interruption, another chat's end or a mistyped closing tag each lost the
+      // design when the app read it back from the chat). The host holds the command for it (designHoldFor).
       // a manual engine choice for this send (chip/bar, escalation, handoff) keeps the chat where it is
       const manualEngine = Boolean(oneShot?.engine || overrides.engine);
       return {
@@ -215,7 +221,7 @@ export function useAidevRouting() {
         effort: applyPlan ? route.plan.effort : null,
         route,
         runId,
-        appResend: Boolean(oneShotAgent || oneShot),
+        appResend: Boolean(oneShotAgent || oneShot || context.forceAgent),
         switchBack: pinnedElsewhere ? { engine: pinnedElsewhere, reason: `the user pinned this chat to ${pinnedElsewhere}` }
           : route.plan.switch_back && !manualEngine && !context.isNewSession ? route.plan.switch_back : null,
       };

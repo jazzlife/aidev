@@ -1,5 +1,8 @@
 import { useTranslation } from 'react-i18next';
-import { ChevronDownIcon, ChevronUpIcon, PencilIcon, XIcon, ZapIcon } from 'lucide-react';
+import { BotIcon, ChevronDownIcon, ChevronUpIcon, PencilIcon, XIcon, ZapIcon } from 'lucide-react';
+
+import { holdLabel } from '@/modules/aidev-router';
+import type { QueuedTurnHold } from '@/shared/types';
 
 type QueuedMessageCardProps = {
   content: string;
@@ -15,6 +18,9 @@ type QueuedMessageCardProps = {
   onMoveUp?: () => void;
   onMoveDown?: () => void;
   onSendNow: () => void;
+  /** Waiting for the specialist being designed for it: shown as such, with "범용 에이전트로 즉시 실행" instead of "send now". */
+  hold?: QueuedTurnHold;
+  onRunHeldNow?: () => void;
 };
 
 /**
@@ -32,6 +38,8 @@ export default function QueuedMessageCard({
   onMoveUp,
   onMoveDown,
   onSendNow,
+  hold,
+  onRunHeldNow,
 }: QueuedMessageCardProps) {
   const { t } = useTranslation('chat');
   const moveUpLabel = t('input.queue.moveUp', { defaultValue: 'Send earlier' });
@@ -45,17 +53,24 @@ export default function QueuedMessageCard({
         <span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-primary/60" aria-hidden />
 
         <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-primary/70">
-            <span>
-              {t('input.queue.label', { defaultValue: 'Queued' })}
-              {total > 1 && <span className="tabular-nums"> {position}/{total}</span>}
-            </span>
-            <span className="normal-case text-muted-foreground/60">
-              · {position === 1
-                ? t('input.queue.willSend', { defaultValue: 'Will send when this finishes' })
-                : t('input.queue.afterPrevious', { defaultValue: 'Sent after the one above' })}
-            </span>
-          </div>
+          {hold ? (
+            <div className="flex items-center gap-1.5 text-[11px] font-medium text-primary/80" data-testid="held-turn">
+              <BotIcon className="h-3 w-3 shrink-0 animate-pulse" />
+              <span>{holdLabel(hold)}</span>
+            </div>
+          ) : (
+            <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-primary/70">
+              <span>
+                {t('input.queue.label', { defaultValue: 'Queued' })}
+                {total > 1 && <span className="tabular-nums"> {position}/{total}</span>}
+              </span>
+              <span className="normal-case text-muted-foreground/60">
+                · {position === 1
+                  ? t('input.queue.willSend', { defaultValue: 'Will send when this finishes' })
+                  : t('input.queue.afterPrevious', { defaultValue: 'Sent after the one above' })}
+              </span>
+            </div>
+          )}
           <p className="mt-0.5 line-clamp-2 break-words text-sm text-foreground/90">{content}</p>
           {attachmentCount > 0 && (
             <p className="mt-0.5 text-xs text-muted-foreground">
@@ -75,16 +90,22 @@ export default function QueuedMessageCard({
               </button>
             </div>
           )}
-          <button
-            type="button"
-            onClick={onSendNow}
-            disabled={!canSendNow}
-            aria-label={sendNowLabel}
-            title={sendNowLabel}
-            className="rounded-md p-1.5 text-amber-600 transition-colors hover:bg-amber-500/10 hover:text-amber-700 disabled:opacity-30 disabled:hover:bg-transparent dark:text-amber-400 dark:hover:text-amber-300"
-          >
-            <ZapIcon className="h-3.5 w-3.5" />
-          </button>
+          {hold ? (
+            <button type="button" onClick={onRunHeldNow} className="mr-1 whitespace-nowrap rounded-md border border-primary/40 px-2 py-1 text-xs font-medium text-primary transition-colors hover:bg-primary/10" data-testid="run-held-now">
+              범용 에이전트로 즉시 실행
+            </button>
+          ) : (
+            <button
+              type="button"
+              onClick={onSendNow}
+              disabled={!canSendNow}
+              aria-label={sendNowLabel}
+              title={sendNowLabel}
+              className="rounded-md p-1.5 text-amber-600 transition-colors hover:bg-amber-500/10 hover:text-amber-700 disabled:opacity-30 disabled:hover:bg-transparent dark:text-amber-400 dark:hover:text-amber-300"
+            >
+              <ZapIcon className="h-3.5 w-3.5" />
+            </button>
+          )}
           <button
             type="button"
             onClick={onEdit}

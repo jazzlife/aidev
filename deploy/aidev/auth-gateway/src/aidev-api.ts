@@ -406,19 +406,35 @@ export function createAidevApi(deps: AidevDeps) {
   const DESIGN_TIMEOUT_MS = 10 * 60_000;
   /** `${uid}|${proposal name}` being designed: a burst of commands in one domain designs it once */
   const designing = new Set<string>();
+  /**
+   * Where each design stands, by the same key (memory only): the apps hold a command for the specialist being designed
+   * (GET /designs/:name) and release it to that agent once `created`, or to the generalist when the design ended
+   * without one (`none`: the architect found the catalog enough or gave no block; `failed`: every engine failed).
+   */
+  type DesignStatus = { status: 'designing' | 'created' | 'none' | 'failed'; agent: string | null; at: number };
+  const designs = new Map<string, DesignStatus>();
+  const DESIGN_STATUS_KEPT_MS = 24 * 3600_000;
+  const markDesign = (key: string, status: DesignStatus['status'], agent: string | null = null) => {
+    const now = Date.now();
+    for (const [k, v] of designs) if (now - v.at > DESIGN_STATUS_KEPT_MS) designs.delete(k);
+    designs.set(key, { status, agent, at: now });
+  };
   async function designAgent(session: Session, availability: EngineAvailability, create: { proposal: { name: string; domain: string; description: string; technologies: string[] }; catalog: string; /** D-04: the accepted create-queue entry, closed with the agent */ queueId?: number }, command: string, sessionId: string | null) {
     const uid = session.user.id;
     const key = `${uid}|${create.proposal.name}`;
     const architect = store.agent(uid, 'agent-architect');
-    if (!architect || designing.has(key) || store.agent(uid, create.proposal.name)) return;
+    if (designing.has(key)) return;
+    if (store.agent(uid, create.proposal.name)) { markDesign(key, 'created', create.proposal.name); return; }
+    if (!architect) { markDesign(key, 'failed'); return; }
     // the account's engine order (none set: Claude first — its web tools), skipping signed-out and usage-limited engines (D-05)
     const usable = usableEngines(availability).filter((engine) => !availability[engine].limited_until);
     // with a work order only its providers design (Q1: the order is kept); without one the catalog order follows it
     const priority = store.enginePriority(uid);
     const order = (priority.length ? priority : ENGINES).filter((engine) => usable.includes(engine));
-    if (!order.length) { console.warn(`[aidev] design ${create.proposal.name}: no usable engine`); return; }
+    if (!order.length) { console.warn(`[aidev] design ${create.proposal.name}: no usable engine`); markDesign(key, 'failed'); return; }
     const floor = store.effectiveModelFloor(uid, sessionId).floor;
     designing.add(key);
+    markDesign(key, 'designing');
     try {
       for (const engine of order) {
         // agent design is D3 work (routing ARCHITECT_MIN_DEPTH): the provider policy's pick, else the table never below the floor
@@ -432,10 +448,11 @@ export function createAidevApi(deps: AidevDeps) {
           const body = await response.json().catch(() => ({})) as { data?: { draft: Record<string, unknown> | null; note: string | null }; error?: string };
           if (!response.ok || !body.data) { console.warn(`[aidev] design ${create.proposal.name} on ${engine} failed: ${body.error ?? response.status}`); continue; }
           const draft = body.data.draft;
-          if (!draft) { console.log(`[aidev] design ${create.proposal.name} on ${engine}: no draft — ${body.data.note ?? ''}`); return; }
-          if (typeof draft.name === 'string' && store.agent(uid, draft.name)) { console.log(`[aidev] design ${create.proposal.name}: ${draft.name} already exists`); return; }
+          if (!draft) { console.log(`[aidev] design ${create.proposal.name} on ${engine}: no draft — ${body.data.note ?? ''}`); markDesign(key, 'none'); return; }
+          if (typeof draft.name === 'string' && store.agent(uid, draft.name)) { console.log(`[aidev] design ${create.proposal.name}: ${draft.name} already exists`); markDesign(key, 'created', draft.name); return; }
           const agent = createAgentFrom(session, { ...draft, source: 'generated', ...(create.queueId ? { queue_id: create.queueId } : {}) });
           console.log(`[aidev] agent ${agent.name} (#${agent.id}) designed in the background on ${engine} ${tier.model} for "${command.slice(0, 60)}"`);
+          markDesign(key, 'created', agent.name);
           void notifier.handle(uid, { code: 'agent.created', sessionId, sessionName: '전문 agent 생성', provider: engine,
             detail: `'${agent.domain || create.proposal.domain}' 전문 agent ${agent.name}을(를) 만들었습니다 — 다음 명령부터 이 분야는 ${agent.name}이(가) 맡습니다` }).catch(() => undefined);
           return;
@@ -443,7 +460,8 @@ export function createAidevApi(deps: AidevDeps) {
           console.warn(`[aidev] design ${create.proposal.name} on ${engine} failed: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
-      // every engine failed: the user hears it (the chat itself never waited on the design)
+      // every engine failed: the user hears it; a command held for this specialist goes to the generalist
+      markDesign(key, 'failed');
       void notifier.handle(uid, { code: 'agent.design_failed', sessionId, sessionName: '전문 agent 생성', provider: null,
         detail: `'${create.proposal.domain}' 전문 agent(${create.proposal.name})를 만들지 못했습니다 — 같은 분야 명령에서 다시 시도합니다` }).catch(() => undefined);
     } finally {
@@ -658,6 +676,14 @@ export function createAidevApi(deps: AidevDeps) {
       if (rest === '/notify-event' && m === 'POST') {
         const b = await readJson(req);
         return json(res, 200, await notifier.handle(uid, { code: str(b.code, 'code', 60), sessionId: optStr(b.session_id, 200) ?? null, sessionName: optStr(b.session_name, 200) ?? null, provider: optStr(b.provider, 20) ?? null, detail: optStr(b.detail, 300) ?? null })), true;
+      }
+      // where a background design stands: an app holding a command for that specialist releases it on the answer
+      const designMatch = rest.match(/^\/designs\/([a-z0-9-]{1,41})$/);
+      if (designMatch && m === 'GET') {
+        const known = designs.get(`${uid}|${designMatch[1]}`);
+        if (known) return json(res, 200, { status: known.status, agent: known.agent }), true;
+        // the gateway restarted since (statuses live in memory): an agent of that name is the design's result
+        return json(res, 200, store.agent(uid, designMatch[1]) ? { status: 'created', agent: designMatch[1] } : { status: 'unknown', agent: null }), true;
       }
       // D-04 create queue: proposals to accept (designed out of band) or dismiss
       if (rest === '/create-queue' && m === 'GET') return json(res, 200, { entries: store.createQueue(uid, ['queued', 'proposed']) }), true;

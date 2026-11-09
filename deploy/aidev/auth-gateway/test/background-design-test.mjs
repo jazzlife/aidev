@@ -70,6 +70,12 @@ const post = async (p, body) => {
   return res;
 };
 const settle = () => new Promise((resolve) => setTimeout(resolve, 20));
+const get = async (p) => {
+  const req = Readable.from([]); req.method = 'GET'; req.headers = {};
+  const res = {};
+  await api.handle(req, res, new URL(`http://gw${p}`), session);
+  return res;
+};
 
 let r = await post('/api/aidev/route', { text: '서버와 플레이어가 바이너리로 배포된 거 맞지?', sessionId: 'chat-1' });
 assert.equal(r.status, 200);
@@ -87,9 +93,13 @@ r = await post('/api/aidev/route', { text: '플레이어 소스도 안 보이게
 assert.equal(r.body.create.design, true);
 await settle();
 assert.equal(designCalls.length, 1, 'one design per domain at a time');
+// an app holding the command asks where the design stands (2026-11-09)
+assert.deepEqual((await get('/api/aidev/designs/binary-protection')).body, { status: 'designing', agent: null });
+assert.deepEqual((await get('/api/aidev/designs/never-proposed')).body, { status: 'unknown', agent: null });
 
 releaseDesign();
 await settle();
+assert.deepEqual((await get('/api/aidev/designs/binary-protection')).body, { status: 'created', agent: 'binary-protection' });
 const created = store.agent(uid, 'binary-protection');
 assert.ok(created, 'the draft became an agent');
 assert.equal(created.source, 'generated'); assert.equal(created.owner_id, uid);

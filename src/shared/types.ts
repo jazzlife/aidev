@@ -647,6 +647,8 @@ export type QueuedDraft = {
    * permission settings while another session is being viewed.
    */
   options?: QueuedSendOptions;
+  /** Waiting for a specialist being designed (see QueuedTurnHold); absent for an ordinary queued turn. */
+  hold?: QueuedTurnHold;
 };
 
 /** Viewport-relative placement box (right/bottom offsets plus max height and width) computed for a composer popover so the model and permission menus stay inside the window. */
@@ -695,6 +697,14 @@ export type VoicePlayState = 'idle' | 'loading' | 'playing';
  * e.g. the app-level auto-send that fires while another session is viewed.
  */
 export type QueuedSendOptions = Record<string, unknown>;
+
+/**
+ * A queued turn waiting for the specialist the gateway is designing for it (2026-11-09): the server's dispatch skips
+ * it, and the app releases it — routed to the new agent once it exists, to the generalist when the design fails or
+ * takes too long — or the user runs it at once on the generalist. `design` is the proposed agent's name (the
+ * gateway's design key); `provider`/`projectHint`/`projectPath` are what routing needs to send it from any screen.
+ */
+export type QueuedTurnHold = { design: string; since: number; provider: string; projectHint?: string | null; projectPath?: string | null };
 
 // ---------------------------
 

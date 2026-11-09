@@ -1,5 +1,5 @@
 import { api } from '@/shared/api';
-import type { QueuedSendOptions } from '@/shared/types';
+import type { QueuedSendOptions, QueuedTurnHold } from '@/shared/types';
 
 /**
  * Unsent composer text and queued messages, stored in `auth.db` rather than in
@@ -33,6 +33,8 @@ export type StoredQueuedMessage = {
    * File objects, they can follow a queued message across session switches.
    */
   attachments?: unknown[];
+  /** Waiting for a specialist being designed: the server's dispatch skips it until the app releases it. */
+  hold?: QueuedTurnHold;
 };
 
 type DraftRecord = {
@@ -93,6 +95,8 @@ function normalizeQueuedMessage(value: unknown): StoredQueuedMessage | null {
     content: value.content,
     ...(isRecord(value.options) ? { options: value.options as QueuedSendOptions } : {}),
     attachments,
+    ...(isRecord(value.hold) && typeof value.hold.design === 'string' && typeof value.hold.since === 'number' && typeof value.hold.provider === 'string'
+      ? { hold: value.hold as QueuedTurnHold } : {}),
   };
 }
 
@@ -264,6 +268,15 @@ export function writeQueuedMessages(scope: string, messages: StoredQueuedMessage
   // Queueing is a send-like action, and an edit or removal must beat the
   // server's next dispatch, so persist before the tab can close.
   flushServerWritesNow();
+}
+
+/** Every queued turn waiting for a specialist being designed, across all sessions (the app releases them). */
+export function heldQueuedTurns(): Array<{ scope: string; turn: StoredQueuedMessage & { id: string; hold: QueuedTurnHold } }> {
+  const held: Array<{ scope: string; turn: StoredQueuedMessage & { id: string; hold: QueuedTurnHold } }> = [];
+  for (const [scope, draft] of drafts) {
+    for (const turn of draft.queuedMessages) if (turn.hold && turn.id) held.push({ scope, turn: turn as StoredQueuedMessage & { id: string; hold: QueuedTurnHold } });
+  }
+  return held;
 }
 
 /** Subscribes to any draft change; returns the unsubscribe function. */

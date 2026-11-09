@@ -359,6 +359,10 @@ export const aidevApi = {
   /** C-06: sessions with news not looked at yet (notify.level ≥ 1), newest first. */
   notifyUnread: () => authenticatedFetch('/api/aidev/notify/unread').then((response) => readJson<{ sessions: UnreadSession[] }>(response)),
   /** C-06: the session was looked at (no id: everything). */
+  /** Where the background design of a proposed specialist stands (a held command waits on it). */
+  designStatus: (name: string) => authenticatedFetch(`/api/aidev/designs/${encodeURIComponent(name)}`).then((response) => readJson<{ status: 'designing' | 'created' | 'none' | 'failed' | 'unknown'; agent: string | null }>(response)),
+  /** An app-side event worth a notification (Laya decides how loudly), e.g. a held command released to the generalist. */
+  notifyEvent: (event: { code: string; session_id?: string | null; session_name?: string | null; detail?: string | null }) => post('/api/aidev/notify-event', event).then((response) => readJson<unknown>(response)),
   notifySeen: (sessionId?: string | null) => post('/api/aidev/notify/seen', { session_id: sessionId ?? null }).then((response) => readJson<{ cleared: number }>(response)),
   // E-04 knowledge refresh: start (one item or the caller's due items), progress, review proposals
   knowledgeRefresh: (id?: number) => post('/api/aidev/knowledge/refresh', id === undefined ? {} : { id }).then((response) => readJson<{ job: KnowledgeRefreshJob }>(response)),
