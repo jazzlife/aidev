@@ -50,11 +50,11 @@ assert.deepEqual([r.create.queue.count, r.create.queue.proposed_now], [4, false]
 console.log('PASS quick work in an unknown domain runs on the generalist; the third command proposes its specialist once');
 
 r = await go('Verilog로 UART 송신 모듈 작성', newDomain('verilog-hdl', 'hardware description', ['Verilog', 'FPGA']), 2.5);
-assert.equal(r.decision, 'create'); assert.equal(r.create.queue, null);
+assert.deepEqual([r.decision, r.create.design, r.create.queue], ['create_background', true, null]);
 const refactorLaya = { status: {}, predict: async (state, questions) => { const out = await laya(1.2).predict(state, questions); out.answers.task_kind = { choice: 'refactor', probabilities: { refactor: 0.9 }, confidence: 0.9 }; return out; } };
 r = await route(store, refactorLaya, uid, engines, { text: 'Godot 노드 이름 하나 바꿔줘' }, { judge: newDomain('godot-engine', 'Godot game engine', ['Godot', 'GDScript']) });
 assert.equal(r.scope.depth, 2, 'the refactor floor still picks the stronger model'); assert.equal(r.decision, 'create_background');
-console.log('PASS deeper work (D2+) still creates the specialist first; a kind floor (refactor ≥ D2) alone does not');
+console.log('PASS deeper work (D2+) designs the specialist now (out of band); a kind floor (refactor ≥ D2) alone only queues it');
 
 r = await go('Solidity 함수 이름 바꿔줘', newDomain('solidity-contracts', 'smart contracts', ['Solidity', 'EVM']));
 assert.notEqual(r.create.queue.id, id, 'another domain is its own entry');
@@ -73,8 +73,8 @@ assert.equal(r.scope.depth, 2, 'no architect floor (D3): the generalist answers 
 r = await go('Solidity 컨트랙트 감사 리포트 써줘', newDomain('solidity-audit', 'smart contracts', ['Solidity', 'EVM']), 2.5, { sessionId: 'chat-1' });
 assert.equal(r.create.design, false, 'a dismissed domain is not designed on its own'); assert.equal(r.create.queue.count, 4);
 r = await go('Verilog로 UART 수신 모듈 작성', newDomain('verilog-hdl', 'hardware description', ['Verilog', 'FPGA']), 2.5);
-assert.equal(r.decision, 'create'); assert.equal(r.create.design, false, 'a new chat still starts with the architect');
-console.log('PASS an ongoing chat runs on the generalist and its specialist is designed in the background; a new chat keeps the architect turn');
+assert.deepEqual([r.decision, r.agent.name, r.create.design], ['create_background', 'generalist', true], 'a new chat too (2026-11-09): the architect never takes a chat turn');
+console.log('PASS ongoing and new chats run on the routed agent while the specialist is designed in the background');
 
 // 2026-10-10: a new agent only when the closest one fits too poorly (JUDGE_USE_FIT)
 assert.equal(JUDGE_USE_FIT, 0.6);
@@ -86,9 +86,9 @@ r = await go('Node SEA 바이트코드로 서버 빌드해줘', closest('devops'
 assert.deepEqual([r.decision, r.agent.name, r.create], ['use', 'devops', null], 'an agent covering the main technology (fit 0.6) is used, not duplicated');
 assert.equal(examplesOf(), before + 1, 'and the command becomes its routing example');
 r = await go('Node SEA 빌드에 코드 서명 추가', closest('devops', 0.5), 2.5);
-assert.deepEqual([r.decision, r.create.proposal.name], ['create', 'node-sea-bytecode'], 'a same-family-only match (0.5) is too far: created');
+assert.deepEqual([r.decision, r.create.proposal.name], ['create_background', 'node-sea-bytecode'], 'a same-family-only match (0.5) is too far: created');
 r = await go('SwiftUI로 iOS 위젯 만들어줘', closest('devops', 0.15, { name: 'ios-swift', domain: 'iOS', description: 'SwiftUI', technologies: ['Swift'] }), 2.5);
-assert.deepEqual([r.decision, r.create.proposal.name], ['create', 'ios-swift'], 'below the line a new specialist is created');
+assert.deepEqual([r.decision, r.create.proposal.name], ['create_background', 'ios-swift'], 'below the line a new specialist is created');
 assert.ok(r.plan.reason.some((line) => line.includes('fits too poorly')), r.plan.reason.join(' | '));
 r = await go('SwiftUI 위젯 색 바꿔줘', closest('devops', 0.15, null), 2.5);
 assert.deepEqual([r.decision, r.agent.name], ['generalist', 'generalist'], 'a low fit with nothing to propose is not a specialist (2026-10-13): the generalist');

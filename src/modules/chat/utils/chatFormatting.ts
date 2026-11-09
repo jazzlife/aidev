@@ -28,9 +28,8 @@ export function stripProposedPlanEnvelope(text: string) {
 
 /**
  * Strips the agent-architect's raw `<aidev-agent>{...}</aidev-agent>` design block from a reply
- * before it reaches the transcript. `parseAgentDraft` already turns that block into the
- * AgentCreateCard, so showing the same JSON a second time as a chat bubble is pure noise — the
- * architect is told to keep surrounding text minimal, so there is rarely anything else to show.
+ * before it reaches the transcript. Agents are designed out of band now (the gateway), but chats
+ * from before keep architect turns whose JSON would only be noise as a chat bubble.
  * Streaming-safe: while only the opening tag has arrived, everything from it onward is dropped too.
  */
 export function stripAgentArchitectBlock(text: string) {

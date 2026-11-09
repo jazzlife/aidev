@@ -66,7 +66,7 @@ console.log('PASS a debug command floored to D2 asks even when Laya scored it D1
 r = await go(laya({ depth: 2.5, clarify: 0.9 }), '그 버그 고쳐줘', async () => ({ agent: null, fit: 0, reason: 'unclear', new: null, question: '어느 버그인가요?' }));
 assert.equal(r.decision, 'generalist'); assert.equal(r.create, null); assert.equal(r.scope.clarify_question, '어느 버그인가요?');
 r = await go(laya({ depth: 2.5, clarify: 0.2 }), 'Verilog UART 모듈', async () => ({ agent: null, fit: 0, reason: 'no hdl agent', new: { name: 'verilog-hdl', domain: 'hdl', description: 'Verilog', technologies: ['Verilog'] }, question: null }));
-assert.equal(r.decision, 'create');
+assert.deepEqual([r.decision, r.create.design], ['create_background', true]);
 console.log('PASS unclear command (no specialist, nothing to propose, a question) → generalist, not creation; a real new domain still creates');
 
 // an unclear command is not sent to a PC on Laya's remote guess; naming the PC keeps it remote

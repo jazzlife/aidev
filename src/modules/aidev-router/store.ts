@@ -1,6 +1,6 @@
 import { useSyncExternalStore } from 'react';
 
-import type { AgentDraft, Engine, NextAction, RouteResult, RunVerification } from '@/modules/aidev-router/api';
+import type { Engine, NextAction, RouteResult, RunVerification } from '@/modules/aidev-router/api';
 
 /**
  * Small external store for routing state shared between the composer hook and the
@@ -19,24 +19,6 @@ export type RoutingOverrides = {
   targetId?: number | null;
 };
 
-/** Agent creation in progress (§3.7): architect turn → review card → optional self-check turn. */
-export type PendingCreate = {
-  stage: 'architect' | 'review' | 'selfcheck' | 'done';
-  /** the command to re-send with the new agent; empty for a queued domain (its commands already ran — D-04) */
-  originalText: string;
-  sessionId: string | null;
-  decisionId: number;
-  /** D-04: the create-queue entry being created (marked created with the agent) */
-  queueId?: number | null;
-  draft: AgentDraft | null;
-  agentId: number | null;
-  agentName: string | null;
-  selfCheckResult: { pass: boolean | null; confidence: number; note: string } | null;
-  error: string | null;
-  /** created while another chat was on screen: the original command was not re-sent (it would have landed there) */
-  resendSkipped?: boolean;
-};
-
 /** The last routed send in one chat: the run it opened, its command and its agent (E-03 follow-ups read these). */
 export type SentRun = { runId: number | null; text: string; agent: string | null; reported: boolean };
 /** E-03: the gateway's proposal for a chat's failed run; `text` is the command a retry sends. */
@@ -50,11 +32,8 @@ export const sessionKey = (sessionId: string | null | undefined): string => sess
 
 export type RoutingState = {
   mode: RoutingMode;
-  pendingCreate: PendingCreate | null;
-  /** Agent forced for exactly the next send (creation re-send, self-check); consumed by beforeSend. */
+  /** Agent forced for exactly the next send (the catalog's "다음 명령에 사용", an escalated retry or handoff); consumed by beforeSend. */
   oneShotAgent: string | null;
-  /** D-04: create-queue entry whose specialist the next send creates; consumed by beforeSend. */
-  oneShotCreate: number | null;
   busy: boolean;
   last: RouteResult | null;
   lastText: string | null;
@@ -109,7 +88,7 @@ function readMode(): RoutingMode {
   }
 }
 
-let state: RoutingState = { mode: readMode(), pendingCreate: null, oneShotAgent: null, oneShotCreate: null, busy: false, last: null, lastText: null, error: null, overrides: {}, overridesSessionId: null, runId: null, runSessionId: null, runFinishedAt: null, runFeedback: null, oneShotPlan: null, sent: {}, escalations: {}, pendingHandoff: null, chatCap: { sessionId: null, cap: null }, chatFloor: { sessionId: null, floor: null }, verifications: {} };
+let state: RoutingState = { mode: readMode(), oneShotAgent: null, busy: false, last: null, lastText: null, error: null, overrides: {}, overridesSessionId: null, runId: null, runSessionId: null, runFinishedAt: null, runFeedback: null, oneShotPlan: null, sent: {}, escalations: {}, pendingHandoff: null, chatCap: { sessionId: null, cap: null }, chatFloor: { sessionId: null, floor: null }, verifications: {} };
 const listeners = new Set<() => void>();
 
 function emit() {
@@ -158,10 +137,9 @@ export const routingStore = {
   },
   /**
    * The conversation continues in `sessionId` (a new chat's id, a handoff, the way back): the overrides go with it, and
-   * a new chat's last route (sent before its id existed) becomes that chat's, and so does an agent design started there.
+   * a new chat's last route (sent before its id existed) becomes that chat's.
    */
   adoptSession(sessionId: string) {
-    const create = state.pendingCreate;
     // what a new chat sent, was verified or was offered before its id existed is that chat's now
     const adopted: Partial<RoutingState> = {};
     for (const key of ['sent', 'escalations', 'verifications'] as const) {
@@ -170,8 +148,7 @@ export const routingStore = {
       const { '': entry, ...rest } = map;
       adopted[key] = { ...rest, [sessionId]: entry } as never;
     }
-    routingStore.patch({ overridesSessionId: sessionId, ...adopted, ...(state.last && state.runSessionId === null ? { runSessionId: sessionId } : {}),
-      ...(create && create.stage === 'architect' && create.sessionId === null ? { pendingCreate: { ...create, sessionId } } : {}) });
+    routingStore.patch({ overridesSessionId: sessionId, ...adopted, ...(state.last && state.runSessionId === null ? { runSessionId: sessionId } : {}) });
   },
   /** Drops one override (the engine chip's "자동": back to priority / routing for the next sends). */
   clearOverride(key: keyof RoutingOverrides) {

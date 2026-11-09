@@ -5,7 +5,7 @@ import { aidevApi, type AgentDetail, type CatalogAgent } from '@/modules/aidev-r
 import { KnowledgePanel, KnowledgeProposalCard } from '@/modules/aidev-router/KnowledgePanel';
 import { TierPolicyPanel } from '@/modules/aidev-router/TierPolicyPanel';
 import { refreshSummary, useKnowledgeRefresh } from '@/modules/aidev-router/hooks/useKnowledgeRefresh';
-import { COMPOSE_EVENT, useCreateProposals } from '@/modules/aidev-router/hooks/useCreateProposals';
+import { useCreateProposals } from '@/modules/aidev-router/hooks/useCreateProposals';
 import { routingStore } from '@/modules/aidev-router/store';
 
 /**
@@ -70,7 +70,7 @@ export function AgentCatalog() {
                   <div className="font-medium">{entry.name} <span className="font-normal text-muted-foreground">· {entry.domain}</span></div>
                   <div className="mt-0.5 text-muted-foreground">이 분야 작업을 {entry.count}번 했습니다. 최근: {entry.commands[0]}</div>
                   <div className="mt-1.5 flex gap-1.5">
-                    <button type="button" className="h-6 rounded bg-primary px-2 text-primary-foreground" onClick={() => { window.dispatchEvent(new CustomEvent(COMPOSE_EVENT, { detail: { text: creation.accept(entry) } })); }}>만들기</button>
+                    <button type="button" className="h-6 rounded bg-primary px-2 text-primary-foreground" onClick={() => creation.accept(entry)}>만들기</button>
                     <button type="button" className="h-6 rounded border border-border px-2 hover:bg-accent" onClick={() => creation.dismiss(entry)}>그만</button>
                   </div>
                 </div>

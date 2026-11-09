@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import crypto from 'node:crypto';
 import type { openStore } from './store.js';
-import { EFFORT_LADDER, ENGINES, MODEL_LADDER, type Engine, type RunRow } from './store-aidev.js';
+import { EFFORT_LADDER, ENGINES, MODEL_LADDER, routingHint, type Engine, type RunRow } from './store-aidev.js';
 import type { LayaClient } from './laya.js';
 import type { Push } from './push.js';
 import { createNotifier } from './notify.js';
@@ -406,7 +406,7 @@ export function createAidevApi(deps: AidevDeps) {
   const DESIGN_TIMEOUT_MS = 10 * 60_000;
   /** `${uid}|${proposal name}` being designed: a burst of commands in one domain designs it once */
   const designing = new Set<string>();
-  async function designAgent(session: Session, availability: EngineAvailability, create: { proposal: { name: string; domain: string; description: string; technologies: string[] }; catalog: string }, command: string, sessionId: string | null) {
+  async function designAgent(session: Session, availability: EngineAvailability, create: { proposal: { name: string; domain: string; description: string; technologies: string[] }; catalog: string; /** D-04: the accepted create-queue entry, closed with the agent */ queueId?: number }, command: string, sessionId: string | null) {
     const uid = session.user.id;
     const key = `${uid}|${create.proposal.name}`;
     const architect = store.agent(uid, 'agent-architect');
@@ -434,7 +434,7 @@ export function createAidevApi(deps: AidevDeps) {
           const draft = body.data.draft;
           if (!draft) { console.log(`[aidev] design ${create.proposal.name} on ${engine}: no draft — ${body.data.note ?? ''}`); return; }
           if (typeof draft.name === 'string' && store.agent(uid, draft.name)) { console.log(`[aidev] design ${create.proposal.name}: ${draft.name} already exists`); return; }
-          const agent = createAgentFrom(session, { ...draft, source: 'generated' });
+          const agent = createAgentFrom(session, { ...draft, source: 'generated', ...(create.queueId ? { queue_id: create.queueId } : {}) });
           console.log(`[aidev] agent ${agent.name} (#${agent.id}) designed in the background on ${engine} ${tier.model} for "${command.slice(0, 60)}"`);
           void notifier.handle(uid, { code: 'agent.created', sessionId, sessionName: '전문 agent 생성', provider: engine,
             detail: `'${agent.domain || create.proposal.domain}' 전문 agent ${agent.name}을(를) 만들었습니다 — 다음 명령부터 이 분야는 ${agent.name}이(가) 맡습니다` }).catch(() => undefined);
@@ -443,6 +443,9 @@ export function createAidevApi(deps: AidevDeps) {
           console.warn(`[aidev] design ${create.proposal.name} on ${engine} failed: ${error instanceof Error ? error.message : String(error)}`);
         }
       }
+      // every engine failed: the user hears it (the chat itself never waited on the design)
+      void notifier.handle(uid, { code: 'agent.design_failed', sessionId, sessionName: '전문 agent 생성', provider: null,
+        detail: `'${create.proposal.domain}' 전문 agent(${create.proposal.name})를 만들지 못했습니다 — 같은 분야 명령에서 다시 시도합니다` }).catch(() => undefined);
     } finally {
       designing.delete(key);
     }
@@ -656,8 +659,19 @@ export function createAidevApi(deps: AidevDeps) {
         const b = await readJson(req);
         return json(res, 200, await notifier.handle(uid, { code: str(b.code, 'code', 60), sessionId: optStr(b.session_id, 200) ?? null, sessionName: optStr(b.session_name, 200) ?? null, provider: optStr(b.provider, 20) ?? null, detail: optStr(b.detail, 300) ?? null })), true;
       }
-      // D-04 create queue: proposals to accept (via /route createProposal) or dismiss
+      // D-04 create queue: proposals to accept (designed out of band) or dismiss
       if (rest === '/create-queue' && m === 'GET') return json(res, 200, { entries: store.createQueue(uid, ['queued', 'proposed']) }), true;
+      const cqDesign = rest.match(/^\/create-queue\/(\d+)\/design$/);
+      if (cqDesign && m === 'POST') {
+        const entry = store.createQueueEntry(uid, Number(cqDesign[1]));
+        if (!entry) throw new HttpError(404, 'create-queue entry not found');
+        const catalog = store.agents(uid).filter((a) => a.domain !== 'meta').map((a) => `${a.name}: ${routingHint(a)}`).join('\n');
+        const proposal = { name: entry.name, domain: entry.domain, description: entry.description, technologies: entry.technologies };
+        // the domain's recent commands are the architect's material — they already ran on the generalist
+        void designAgent(session, await engineAvailability(session), { proposal, catalog, queueId: entry.id }, entry.commands.join('\n') || `${entry.domain} — ${entry.description}`, null)
+          .catch((error) => console.warn('[aidev] queued design failed:', error instanceof Error ? error.message : error));
+        return json(res, 202, { designing: true }), true;
+      }
       const cqMatch = rest.match(/^\/create-queue\/(\d+)$/);
       if (cqMatch && m === 'PATCH') {
         const b = await readJson(req);

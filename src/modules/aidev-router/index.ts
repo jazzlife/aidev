@@ -16,14 +16,9 @@ export { usePrejudge } from '@/modules/aidev-router/hooks/usePrejudge';
 export type { AidevSendDecoration, BeforeSendContext } from '@/modules/aidev-router/hooks/useAidevRouting';
 export { useAidevDecide } from '@/modules/aidev-router/hooks/useAidevDecide';
 // D-04: domains offered for background creation (workbench catalog + mobile conversation list).
-export { useCreateProposals, COMPOSE_EVENT } from '@/modules/aidev-router/hooks/useCreateProposals';
+export { useCreateProposals } from '@/modules/aidev-router/hooks/useCreateProposals';
 // Workbench-only UI (the mobile app has its own chip in src-mobile).
 export { AidevRouterBar } from '@/modules/aidev-router/AidevRouterBar';
-export { AgentCreateCard } from '@/modules/aidev-router/AgentCreateCard';
-export { useAgentCreation } from '@/modules/aidev-router/hooks/useAgentCreation';
-export { parseAgentDraft } from '@/modules/aidev-router/api';
-export type { AgentDraft } from '@/modules/aidev-router/api';
-export type { PendingCreate } from '@/modules/aidev-router/store';
 export { AgentCatalog } from '@/modules/aidev-router/AgentCatalog';
 // Claude subscription login (in-app, both apps): state + flow hooks, workbench panel/dialog.
 export { claudeAuth, useClaudeAuth } from '@/modules/aidev-router/hooks/useClaudeAuth';

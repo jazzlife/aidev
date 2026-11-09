@@ -119,20 +119,19 @@ test('"그대로 진행" sends the command unchanged; dismissing keeps it in the
   assert.equal(sent[0].content, '그 버그 고쳐줘');
 });
 
-test('no hold when the router does not ask, for agent creation, or for the app\'s own re-sends', async () => {
+test('no hold when the router does not ask, or for the app\'s own re-sends', async () => {
   const sent: Array<Record<string, unknown>> = [];
   const view = renderComposer(sent);
   for (const [text, result] of [
     ['web/src/Login.tsx 버튼 고쳐줘', decoration(false)],
-    ['결제 기능 추가해줘', decoration(true, { route: { ...decoration(true).route, decision: 'create' } as AidevSendDecoration['route'] })],
-    ['[자가 검증] 셰이더 컴파일', decoration(true, { appResend: true })],
+    ['[다시 시도] 셰이더 컴파일', decoration(true, { appResend: true })],
   ] as const) {
     routing.beforeSend = async () => result;
     await act(async () => { view.result.current.setInput(text); });
     await act(async () => { await view.result.current.handleSubmit(submitEvent); });
     assert.equal(view.result.current.clarify, null, text);
   }
-  assert.deepEqual(sent.map((message) => message.content), ['web/src/Login.tsx 버튼 고쳐줘', '결제 기능 추가해줘', '[자가 검증] 셰이더 컴파일']);
+  assert.deepEqual(sent.map((message) => message.content), ['web/src/Login.tsx 버튼 고쳐줘', '[다시 시도] 셰이더 컴파일']);
 });
 
 test('Enter clears the composer at once and shows the command as sending; a repeated Enter is not a second send', async () => {

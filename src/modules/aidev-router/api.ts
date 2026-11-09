@@ -173,8 +173,6 @@ export type SpecialistProposal = { name: string; domain: string; description: st
 export type CreateQueueEntry = { id: number; name: string; domain: string; description: string; technologies: string[]; count: number; commands: string[]; status: 'queued' | 'proposed'; updated_at: number };
 
 export type RouteRequest = {
-  /** D-04: create the specialist of this create-queue entry (the turn goes to the agent-architect) */
-  createProposal?: number | null;
   /** this chat's own effort ceiling (a new chat sends it with its first message) */
   effortCap?: Partial<Record<Engine, string>> | null;
   /** this chat's own model floor (same lifecycle as effortCap) */
@@ -192,80 +190,6 @@ export type RouteRequest = {
   effort?: string | null;
   forceAgent?: string | null;
 };
-
-/** Draft produced by the agent-architect (parsed from its <aidev-agent> block). */
-export type AgentDraft = {
-  name: string;
-  domain: string;
-  hint: string;
-  description: string;
-  prompt: string;
-  tools: string[] | null;
-  examples: string[];
-  knowledge: Array<{ title: string; body: string; source_url?: string; source_date?: string }>;
-  self_check: { task: string; expected: string } | null;
-};
-
-/**
- * The JSON object of a design block: up to where its first object closes — anything after it (prose, a stray tag) is
- * dropped, so a block whose closing tag is missing or mistyped still reads (server 2026-11-09: a complete 10 KB object
- * followed by `</invoke>` instead of `</aidev-agent>`). When the LLM left brackets open at the end (D-06: a 3.3 KB
- * block lacked its final `}`), the text with them closed. String-aware; null when the text ends inside a string.
- */
-function blockJson(text: string): string | null {
-  const start = text.indexOf('{');
-  if (start < 0) return null;
-  const open: string[] = [];
-  let inString = false; let escaped = false;
-  for (let index = start; index < text.length; index += 1) {
-    const ch = text[index];
-    if (inString) {
-      if (escaped) escaped = false;
-      else if (ch === '\\') escaped = true;
-      else if (ch === '"') inString = false;
-      continue;
-    }
-    if (ch === '"') inString = true;
-    else if (ch === '{' || ch === '[') open.push(ch === '{' ? '}' : ']');
-    else if (ch === '}' || ch === ']') { open.pop(); if (!open.length) return text.slice(start, index + 1); }
-  }
-  if (inString) return null;
-  return text.slice(start).replace(/```\s*$/, '').trimEnd().replace(/,\s*$/, '') + open.reverse().join('');
-}
-
-/** The text after the architect's `<aidev-agent>` tag, up to its closing tag when there is one; null without the tag. */
-function agentBlock(text: string): string | null {
-  const open = text.indexOf('<aidev-agent>');
-  if (open < 0) return null;
-  const rest = text.slice(open + '<aidev-agent>'.length);
-  const close = rest.indexOf('</aidev-agent>');
-  return close >= 0 ? rest.slice(0, close) : rest;
-}
-
-/** Used by the create-flow watcher (ChatInterface / mobile ChatScreen) to pull the architect's draft out of an assistant message. */
-export function parseAgentDraft(text: string): AgentDraft | null {
-  const block = agentBlock(text);
-  if (block === null) return null;
-  const parse = (json: string | null) => { if (!json) return null; try { return JSON.parse(json) as Record<string, unknown>; } catch { return null; } };
-  try {
-    const raw = parse(blockJson(block));
-    if (!raw) return null;
-    if (typeof raw.name !== 'string' || typeof raw.prompt !== 'string') return null;
-    return {
-      name: raw.name.toLowerCase().replace(/[^a-z0-9-]+/g, '-').replace(/^-+|-+$/g, '').slice(0, 41),
-      domain: typeof raw.domain === 'string' ? raw.domain.slice(0, 40) : '',
-      hint: typeof raw.hint === 'string' ? raw.hint.slice(0, 60) : '',
-      description: typeof raw.description === 'string' ? raw.description.slice(0, 600) : '',
-      prompt: raw.prompt,
-      tools: Array.isArray(raw.tools) ? raw.tools.map(String) : null,
-      examples: Array.isArray(raw.examples) ? raw.examples.filter((e): e is string => typeof e === 'string' && e.trim().length > 3).slice(0, 50) : [],
-      knowledge: Array.isArray(raw.knowledge) ? raw.knowledge.filter((k): k is Record<string, string> => Boolean(k && typeof k === 'object' && typeof (k as Record<string, unknown>).title === 'string' && typeof (k as Record<string, unknown>).body === 'string')).map((k) => ({ title: k.title, body: k.body, source_url: k.source_url, source_date: k.source_date })) : [],
-      self_check: raw.self_check && typeof raw.self_check === 'object' && typeof (raw.self_check as Record<string, unknown>).task === 'string' ? { task: String((raw.self_check as Record<string, unknown>).task), expected: String((raw.self_check as Record<string, unknown>).expected ?? '') } : null,
-    };
-  } catch {
-    return null;
-  }
-}
 
 async function readJson<T>(response: Response): Promise<T> {
   const data = await response.json().catch(() => ({})) as T & { error?: string };
@@ -389,15 +313,8 @@ export const aidevApi = {
   openCodeLoginProviders: () => authenticatedFetch('/api/aidev-tools/opencode-login').then((response) => readRuntimeData<{ providers: string[] }>(response)),
   /** Stores an API key as one OpenCode provider's sign-in; the key goes to the user's runtime and is never read back. */
   openCodeLoginKey: (provider: string, key: string) => post('/api/aidev-tools/opencode-login', { provider, key }).then((response) => readRuntimeData<{ provider: string; providers: string[] }>(response)),
-  /** A chat's newest assistant reply as the runtime stored it: the architect's chat need not be the one on screen. */
-  async lastAssistantText(sessionId: string): Promise<string | null> {
-    const { messages = [] } = (await readRuntimeData<{ messages?: NormalizedMessage[] } | undefined>(await api.providers.sessionMessages(sessionId, { limit: 20 }))) ?? {};
-    for (let index = messages.length - 1; index >= 0; index -= 1) { const message = messages[index]; if (message.kind === 'text' && message.role === 'assistant' && message.content?.trim()) return message.content; }
-    return null;
-  },
   agents: () => authenticatedFetch('/api/aidev/agents').then((response) => readJson<{ agents: CatalogAgent[] }>(response)),
   agent: (id: number) => authenticatedFetch(`/api/aidev/agents/${id}`).then((response) => readJson<AgentDetail>(response)),
-  createAgent: (input: Record<string, unknown>) => post('/api/aidev/agents', input).then((response) => readJson<{ agent: CatalogAgent }>(response)),
   updateAgent: (id: number, input: Record<string, unknown>) => post(`/api/aidev/agents/${id}`, input, 'PUT').then((response) => readJson<{ agent: CatalogAgent; version: number }>(response)),
   createRun: (input: Record<string, unknown>) => post('/api/aidev/runs', input).then((response) => readJson<{ run_id: number }>(response)),
   runOutcome: (runId: number, outcome: Record<string, unknown>) => post(`/api/aidev/runs/${runId}/outcome`, outcome, 'PATCH').then((response) => readJson<{ run: Record<string, unknown>; next?: NextAction | null; verifying?: boolean }>(response)),
@@ -437,6 +354,8 @@ export const aidevApi = {
   createQueue: () => authenticatedFetch('/api/aidev/create-queue').then((response) => readJson<{ entries: CreateQueueEntry[] }>(response)),
   /** D-04: never offer this domain again. */
   dismissCreate: (id: number) => post(`/api/aidev/create-queue/${id}`, { status: 'dismissed' }, 'PATCH').then((response) => readJson<{ changed: number }>(response)),
+  /** D-04: design a proposed domain's specialist now — the gateway runs the architect out of band and registers it */
+  designCreate: (id: number) => post(`/api/aidev/create-queue/${id}/design`, {}).then((response) => readJson<{ designing: boolean }>(response)),
   /** C-06: sessions with news not looked at yet (notify.level ≥ 1), newest first. */
   notifyUnread: () => authenticatedFetch('/api/aidev/notify/unread').then((response) => readJson<{ sessions: UnreadSession[] }>(response)),
   /** C-06: the session was looked at (no id: everything). */

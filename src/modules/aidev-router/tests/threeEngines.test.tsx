@@ -38,7 +38,7 @@ const routeFor = (opencodeAllowed: boolean) => ({
 
 beforeEach(() => {
   vi.restoreAllMocks();
-  routingStore.patch({ mode: 'auto', pendingCreate: null, oneShotAgent: null, oneShotCreate: null, oneShotPlan: null, overrides: {}, runId: null });
+  routingStore.patch({ mode: 'auto', oneShotAgent: null, oneShotPlan: null, overrides: {}, runId: null });
 });
 
 test('an OpenCode chat is routed like any engine once the account routes to OpenCode', async () => {

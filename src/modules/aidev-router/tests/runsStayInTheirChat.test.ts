@@ -35,7 +35,7 @@ async function sendInBoth() {
 
 beforeEach(() => {
   vi.useFakeTimers();
-  routingStore.patch({ mode: 'auto', oneShotAgent: null, oneShotPlan: null, oneShotCreate: null, overrides: {}, sent: {}, escalations: {}, verifications: {}, runId: null, last: null, lastText: null });
+  routingStore.patch({ mode: 'auto', oneShotAgent: null, oneShotPlan: null, overrides: {}, sent: {}, escalations: {}, verifications: {}, runId: null, last: null, lastText: null });
 });
 afterEach(() => { vi.useRealTimers(); vi.restoreAllMocks(); });
 

@@ -41,11 +41,10 @@ export type BeforeSendContext = {
 
 /**
  * Used by the workbench composer and the mobile chat (C-05/C-09): whether a routed send should wait for one line of
- * detail (§3.1). Never for agent creation (the architect asks its own questions) or for the app's own re-sends —
- * the user already chose there.
+ * detail (§3.1). Never for the app's own re-sends — the user already chose there.
  */
 export function shouldAskClarify(decoration: AidevSendDecoration | null): decoration is AidevSendDecoration {
-  return Boolean(decoration && decoration.route.scope.ask_clarify && decoration.route.decision !== 'create' && !decoration.appResend);
+  return Boolean(decoration && decoration.route.scope.ask_clarify && !decoration.appResend);
 }
 const asEngine = (value: string): Engine | null => (isAidevEngine(value) ? value : null);
 
@@ -149,9 +148,6 @@ export function useAidevRouting() {
       // E-03: an escalated retry / handoff pins engine, model and effort for this one send.
       const oneShot = staleRetry ? null : current.oneShotPlan;
       if (current.oneShotPlan) routingStore.patch({ oneShotPlan: null });
-      // D-04: an accepted create-queue proposal
-      const createProposal = current.oneShotCreate;
-      if (createProposal) routingStore.patch({ oneShotCreate: null });
       const route = await aidevApi.route({
         text,
         sessionId: context.sessionId,
@@ -163,7 +159,6 @@ export function useAidevRouting() {
         model: oneShot?.model ?? overrides.model ?? null,
         effort: oneShot?.effort ?? overrides.effort ?? null,
         forceAgent,
-        createProposal,
         // the chat's own ceiling and model floor: stored server-side for known sessions, sent inline for a new chat
         effortCap: current.chatCap.sessionId === (context.isNewSession ? null : context.sessionId ?? null) ? current.chatCap.cap : null,
         modelFloor: current.chatFloor.sessionId === (context.isNewSession ? null : context.sessionId ?? null) ? current.chatFloor.floor : null,
@@ -209,20 +204,9 @@ export function useAidevRouting() {
       }
       const applyPlan = !context.userPinnedModel && route.plan.engine !== null && (context.isNewSession || route.plan.engine === asEngine(context.provider));
       const payload = buildAidevPayload(route, runId);
-      // No fitting specialist: this turn goes to the agent-architect (design only); the original
-      // command is re-sent once the user approves the draft (§3.7). Shallow tasks just run.
-      // a finished or failed creation card left open does not block the next one (it used to, silently)
-      const creating = current.pendingCreate && current.pendingCreate.stage !== 'done' && !current.pendingCreate.error;
-      if (route.decision === 'create' && route.create && !route.create.background && !forceAgent && !creating) {
-        // a queued domain's commands already ran on the generalist: nothing to re-send once its agent exists
-        const fromQueue = route.create.from_queue ? route.create.queue?.id ?? null : null;
-        routingStore.patch({ pendingCreate: { stage: 'architect', originalText: fromQueue ? '' : text, queueId: fromQueue, sessionId: context.sessionId, decisionId: route.decision_id, draft: null, agentId: null, agentName: null, selfCheckResult: null, error: null } });
-        const architect = route.create.architect;
-        payload.agent = { name: architect.name, version: architect.version, description: architect.description, prompt: architect.prompt, tools: architect.tools, model: architect.model, maxTurns: architect.maxTurns, skills: null, mcpServers: null };
-        payload.lessons = [];
-        const proposal = route.create.proposal;
-        payload.knowledgeDigest = `## 현재 카탈로그 (name: routing hint)\n${route.create.catalog}${proposal ? `\n\n## 라우터가 판단한 필요한 전문 분야\n- 이름 제안: ${proposal.name}\n- 분야: ${proposal.domain}\n- 설명: ${proposal.description}\n- 핵심 기술: ${proposal.technologies.join(', ')}\n이 분야를 정확히 전문으로 하는 agent를 설계할 것(기존 agent와 겹치지 않게).` : ''}`;
-      }
+      // No fitting specialist: the gateway designs it out of band (route.create.design) while this turn runs on the
+      // routed agent — the architect never takes a turn of the chat (2026-11-09: an interruption, another chat's end or
+      // a mistyped closing tag each lost the design when the app read it back from the chat).
       // a manual engine choice for this send (chip/bar, escalation, handoff) keeps the chat where it is
       const manualEngine = Boolean(oneShot?.engine || overrides.engine);
       return {
@@ -231,7 +215,7 @@ export function useAidevRouting() {
         effort: applyPlan ? route.plan.effort : null,
         route,
         runId,
-        appResend: Boolean(oneShotAgent || oneShot || createProposal),
+        appResend: Boolean(oneShotAgent || oneShot),
         switchBack: pinnedElsewhere ? { engine: pinnedElsewhere, reason: `the user pinned this chat to ${pinnedElsewhere}` }
           : route.plan.switch_back && !manualEngine && !context.isNewSession ? route.plan.switch_back : null,
       };

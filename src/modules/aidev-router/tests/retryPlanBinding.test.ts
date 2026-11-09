@@ -21,7 +21,7 @@ const context = { sessionId: 's1', provider: 'claude', isNewSession: false, user
 const retryText = '재생/정지 상태도 연동되게 해\n\n[검증에서 발견된 문제 — 먼저 해결할 것]\n- 연동 구현이 없음';
 
 beforeEach(() => {
-  routingStore.patch({ mode: 'auto', oneShotAgent: 'game-loop-player', oneShotCreate: null, overrides: {}, overridesSessionId: 's1',
+  routingStore.patch({ mode: 'auto', oneShotAgent: 'game-loop-player', overrides: {}, overridesSessionId: 's1',
     oneShotPlan: { engine: 'claude', model: 'opus', effort: 'xhigh', depth: 4, escalatedFromRun: 397, forText: retryText } });
   vi.spyOn(aidevApi, 'createRun').mockResolvedValue({ run_id: 5 });
 });

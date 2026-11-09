@@ -3,7 +3,7 @@ import { useLocation, useParams } from 'react-router-dom';
 import { Clock, Download, Gauge, GitBranch, MoreHorizontal, Search } from 'lucide-react';
 
 import { api, grantClaudeToolPermission, buildClaudeToolPermissionEntry, useChatRealtimeHandlers, useSessionStore, useWebSocket, type LLMProvider, type NormalizedMessage, type PendingPermissionRequest, type ProjectSession } from '@/modules/chat-core';
-import { AgentCreateCard, aidevApi, routingStore, sessionKey, shouldAskClarify, useAgentCreation, useAidevRouting, useEscalation, usePrejudge, useReturnFromHandoff, useRoutingState, ReturnCard, VerificationCard, type AidevSendDecoration, type Engine } from '@/modules/aidev-router';
+import { aidevApi, routingStore, sessionKey, shouldAskClarify, useAidevRouting, useEscalation, usePrejudge, useReturnFromHandoff, useRoutingState, ReturnCard, VerificationCard, type AidevSendDecoration, type Engine } from '@/modules/aidev-router';
 import { isAidevEngine, parseProviderUsageLimit } from '@/shared/utils';
 import { hydrateChatDrafts, readQueuedMessages, subscribeToChatDrafts, writeQueuedMessages, type StoredQueuedMessage } from '@/shared/chatDrafts';
 import { Composer } from '@m/components/Composer';
@@ -75,13 +75,10 @@ export function ChatScreen() {
   const [voiceError, setVoiceError] = useState<string | null>(null);
 
   const [meta, setMeta] = useState<SessionMeta | null>(null);
-  // D-04: "만들기" on a proposal opens this new chat with the creation turn; it goes out once a project is chosen
   const location = useLocation();
   // a new chat started from a project screen starts in that project
   const [project, setProject] = useState<PickedProject | null>(() => (location.state as { project?: PickedProject } | null)?.project ?? readLastProject());
-  const composeText = (location.state as { compose?: string } | null)?.compose ?? null;
-  const composeRef = useRef<string | null>(composeText);
-  const [pickingProject, setPickingProject] = useState(() => Boolean(composeText) && !readLastProject());
+  const [pickingProject, setPickingProject] = useState(false);
   const [busy, setBusy] = useState(false);
   // Enter → sent: the command shown as "보내는 중" while routing / a new session take their time; the ref blocks a repeat
   const sendingRef = useRef(false);
@@ -216,22 +213,11 @@ export function ChatScreen() {
     pendingPermissionRequests, setPendingPermissionRequests, lastSeqRef, statusCheckSentAtRef,
     onSessionProcessing, onSessionIdle, onWebSocketReconnect, requestLatestMessages, sessionStore,
   });
-  // Agent creation flow (§3.7): the architect's draft is read from the newest assistant message.
+  // the app's own re-sends (escalation, handoff); a missing specialist is designed by the gateway, never in this chat
   const sendRef = useRef<(text: string) => void>(() => undefined);
-  const openSessionIdRef = useRef<string | null>(sessionId ?? null);
-  useEffect(() => { openSessionIdRef.current = sessionId ?? null; });
-  const agentCreation = useAgentCreation({
-    getLastAssistantText: () => { const list = sessionId ? sessionStore.getMessages(sessionId) : []; for (let index = list.length - 1; index >= 0; index -= 1) { const message = list[index]; if (message.kind === 'text' && message.role === 'assistant' && message.content) return message.content; } return null; },
-    getOpenSessionId: () => openSessionIdRef.current,
-    resend: (text) => sendRef.current(text),
-  });
-  const agentCreationRef = useRef(agentCreation);
-  useEffect(() => { agentCreationRef.current = agentCreation; });
   // Run outcome signal (§3.8): the provider's `complete` event ends the routed run.
   useEffect(() => subscribe((event) => {
     if (event.kind !== 'complete') return;
-    // any chat's run: an agent design goes on in its own chat while another one is on screen
-    setTimeout(() => { void agentCreationRef.current.onRunComplete(event.sessionId ?? null); }, 400);
     const exitCode = typeof event.exitCode === 'number' ? event.exitCode : (event.isError ? 1 : 0);
     // a limit refusal is reported as such: the gateway skips the engine until the reset and proposes the other engine
     const usageLimit = parseProviderUsageLimit(event.usageLimit);
@@ -406,14 +392,6 @@ export function ChatScreen() {
       setSending(null);
     }
   };
-  useEffect(() => {
-    const text = composeRef.current;
-    if (!text || meta || !isConnected || !project) return;
-    composeRef.current = null;
-    void send(text);
-  }, [isConnected, meta, project, send]);
-  // leaving before it went out disarms the proposal, so it cannot hijack a later send
-  useEffect(() => () => { if (composeRef.current) routingStore.patch({ oneShotCreate: null }); }, []);
   // E-03: one-tap follow-up for a failed run; a handoff opens the new session on the other engine
   // and its brief is sent there once the screen has resolved that session.
   const escalation = useEscalation({
@@ -573,7 +551,6 @@ export function ChatScreen() {
         }}
         onCancel={scheduled.cancel} />
       {actionError ? <div className="px-4 py-1 text-[13px] text-danger" role="alert">{actionError}</div> : null}
-      {agentCreation.pending ? <div className="m-scroll max-h-[45dvh]"><AgentCreateCard compact pending={agentCreation.pending} onApprove={(draft) => { void agentCreation.approve(draft); }} onSelfCheck={agentCreation.runSelfCheck} onDismiss={agentCreation.dismiss} /></div> : null}
       {!busy ? <ReturnCard compact back={returnFromHandoff} /> : null}
       {openVerification && !busy ? <VerificationCard compact status={openVerification.status} result={openVerification.result} onDismiss={() => routingStore.setFor('verifications', sessionId, null)} /> : null}
       {escalation.escalation && !busy ? <EscalationPrompt next={escalation.escalation.next} label={escalation.label} busy={escalation.busy} error={escalation.error} onRun={() => { void escalation.run(); }} onDismiss={escalation.dismiss} /> : null}

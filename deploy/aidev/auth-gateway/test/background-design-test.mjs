@@ -57,7 +57,7 @@ const runtimeFetch = async (_session, p, init = {}) => {
   if (p === '/api/aidev-tools/design-agent') {
     designCalls.push(body);
     await new Promise((resolve) => { releaseDesign = resolve; });
-    return Response.json({ data: { draft, note: null, engine: body.engine, model: body.model } });
+    return Response.json({ data: { draft: { ...draft, name: body.proposal.name }, note: null, engine: body.engine, model: body.model } });
   }
   return Response.json({}, { status: 404 });
 };
@@ -101,6 +101,21 @@ r = await post('/api/aidev/route', { text: '바이너리 난독화 옵션 정리
 await settle();
 assert.equal(designCalls.length, 1, 'an existing agent is not designed again');
 console.log('PASS an existing specialist is not designed again');
+
+// "만들기" on a create-queue proposal (2026-11-09): designed out of band from the domain's commands, no chat turn,
+// and the entry is closed with the agent
+const qid = store.addCreateQueue(uid, { name: 'unity-shader', domain: 'Unity graphics', description: 'Unity shaders', technologies: ['Unity'] }, 'Unity 셰이더 색 바꿔줘');
+store.setCreateQueueStatus(uid, qid, 'proposed');
+r = await post(`/api/aidev/create-queue/${qid}/design`, {});
+assert.deepEqual([r.status, r.body.designing], [202, true]);
+await settle();
+assert.equal(designCalls.at(-1).proposal.name, 'unity-shader'); assert.match(designCalls.at(-1).command, /셰이더 색/);
+releaseDesign();
+await settle();
+assert.ok(store.agent(uid, 'unity-shader'), 'the queued domain\'s agent exists');
+assert.equal(store.createQueueEntry(uid, qid).status, 'created');
+assert.equal((await post('/api/aidev/create-queue/99999/design', {})).status, 404);
+console.log('PASS accepting a proposal designs it out of band and closes the queue entry');
 
 fs.rmSync(dir, { recursive: true, force: true });
 console.log('background design: all checks passed');

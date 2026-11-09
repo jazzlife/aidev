@@ -96,8 +96,8 @@ const MessageComponent = memo(({ message, prevMessage, createDiff, onFileOpen, s
     return null;
   }
 
-  // The architect's reply was nothing but the <aidev-agent> design block (by design — the
-  // AgentCreateCard already shows it): once stripped there is no bubble left to draw.
+  // An older chat's architect reply was nothing but the <aidev-agent> design block (agents are now designed
+  // out of band, but those transcripts remain): once stripped there is no bubble left to draw.
   const isEmptyAfterArchitectStrip = message.type === 'assistant' && !message.isToolUse && !message.isThinking &&
     !message.isSubagentContainer && !message.compact && !message.isTaskNotification &&
     formattedMessageContent.trim().length === 0 && String(message.content || '').trim().length > 0;

@@ -128,17 +128,15 @@ assert.equal(r.agent.name, 'database');
 r = await route(store, laya({ agent: 'generalist', depth: 1 }), uid, claudeOnly, { text: '진행해', sessionId: sid, sessionEngine: 'claude', forceAgent: 'frontend-react' });
 assert.equal(r.agent.name, 'frontend-react');
 
-// ---- architect turn: a new specialist is designed at D3 or deeper
+// ---- agent design never takes the chat's turn (2026-11-09): the routed agent answers at the command's own depth and
+// engine weights; the specialist is designed out of band at D3 (aidev-api designAgent, ARCHITECT_MIN_DEPTH)
 assert.equal(ARCHITECT_MIN_DEPTH, 3);
 r = await route(store, laya({ agent: 'generalist', depth: 2, needsNew: 0.9 }), uid, claudeOnly, { text: 'Unity 셰이더로 물 표면 굴절 효과를 구현해줘' }, { judge: creator });
-assert.equal(r.decision, 'create'); assert.equal(r.scope.depth, 3, `architect depth ${r.scope.depth}`); assert.equal(r.plan.model, 'opus');
-assert.ok(r.plan.reason.some((line) => line.includes('agent design ≥ D3')));
-// the architect turn weighs engines as design work, not as the command's kind (ops favoured codex here)
+assert.deepEqual([r.decision, r.create.design, r.agent.name, r.scope.depth], ['create_background', true, 'generalist', 2], r.plan.reason.join(' | '));
 store.setEngineWeight('ops', 'codex', 0.9, { pinned: true, actor: 'test' }); store.setEngineWeight('ops', 'claude', 0.1, { pinned: true, actor: 'test' });
 store.setEngineWeight('design', 'claude', 0.6, { pinned: true, actor: 'test' }); store.setEngineWeight('design', 'codex', 0.4, { pinned: true, actor: 'test' });
 r = await route(store, laya({ agent: 'generalist', depth: 3, kind: 'ops', needsNew: 0.9 }), uid, engines, { text: '배포 파이프라인 전문 agent가 필요한 운영 작업' }, { judge: creator });
-assert.equal(r.decision, 'create'); assert.equal(r.plan.engine, 'claude', `design weights decide: ${r.plan.reason.join(' | ')}`);
-assert.ok(r.engines.claude.notes.some((note) => note.startsWith('w(design)')), r.engines.claude.notes.join(' | '));
+assert.equal(r.decision, 'create_background'); assert.equal(r.plan.engine, 'codex', `the turn follows its own kind: ${r.plan.reason.join(' | ')}`);
 // the same ops command run (not created) still follows the ops weight
 r = await route(store, laya({ agent: 'devops', depth: 3, kind: 'ops' }), uid, engines, { text: '배포 스크립트 점검' });
 assert.equal(r.plan.engine, 'codex');

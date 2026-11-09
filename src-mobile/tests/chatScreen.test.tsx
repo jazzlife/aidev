@@ -69,13 +69,11 @@ vi.mock('@/modules/chat-core', async () => {
   };
 });
 vi.mock('@/modules/aidev-router', () => ({
-  AgentCreateCard: () => null,
   aidevApi: { notifySeen: () => Promise.resolve() },
   routingStore: { patch: vi.fn(), setFor: vi.fn(), followSession: vi.fn(), adoptSession: vi.fn() },
   sessionKey: (id: string | null) => id ?? '',
   shouldAskClarify: () => false,
   useAidevRouting: () => ({ beforeSend: vi.fn(async () => null), reportOutcome: vi.fn(async () => undefined) }),
-  useAgentCreation: () => ({ pending: null, onRunComplete: vi.fn(), approve: vi.fn(), runSelfCheck: vi.fn(), dismiss: vi.fn() }),
   useEscalation: () => ({ escalation: null, takeHandoff: () => null, label: '', busy: false, error: null, run: vi.fn(), dismiss: vi.fn() }),
   usePrejudge: () => undefined,
   // no verification card in these tests

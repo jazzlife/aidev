@@ -25,6 +25,7 @@ export function describeEvent(e: NotifyEvent) {
     case 'agent.notification': return `${who}: ${e.detail ?? '새 알림'}`;
     case 'agent.proposal': return e.detail ?? '새 전문 agent를 만들 수 있습니다';
     case 'agent.created': return e.detail ?? '새 전문 agent를 만들었습니다';
+    case 'agent.design_failed': return e.detail ?? '새 전문 agent를 만들지 못했습니다';
     case 'run.verify_failed': return `검증 실패: 작업자의 보고가 실제와 다릅니다${e.detail ? ` — ${e.detail}` : ''}`;
     default: return `${who}: ${e.detail ?? e.code}`;
   }

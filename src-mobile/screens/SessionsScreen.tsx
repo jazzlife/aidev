@@ -136,7 +136,7 @@ export function SessionsScreen() {
             <div className="mt-1 text-[15px] font-medium">{entry.name}</div>
             <div className="text-[13px] text-muted">'{entry.domain}' 작업을 {entry.count}번 했습니다. 이 분야 전문 agent를 만들까요?</div>
             <div className="mt-2 grid grid-cols-2 gap-2">
-              <button type="button" className="h-10 rounded-xl bg-accent text-[14px] font-medium text-accent-ink" onClick={() => navigate('/new', { state: { compose: creation.accept(entry) } })}>만들기</button>
+              <button type="button" className="h-10 rounded-xl bg-accent text-[14px] font-medium text-accent-ink" onClick={() => creation.accept(entry)}>만들기</button>
               <button type="button" className="h-10 rounded-xl border border-line text-[14px]" onClick={() => creation.dismiss(entry)}>그만</button>
             </div>
           </div>

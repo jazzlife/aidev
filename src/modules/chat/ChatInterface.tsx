@@ -29,7 +29,7 @@ import {
 } from '@/shared/context/SessionProtectionContext';
 import ChatMessagesPane from '@/modules/chat/transcript/ChatMessagesPane';
 import ChatComposer from '@/modules/chat/composer/ChatComposer';
-import { AgentCreateCard, AidevRouterBar, aidevApi, isPolicyProvider, ClarifyPrompt, COMPOSE_EVENT, announceRunComplete, changedFilesSince, EscalationCard, routingStore, sessionKey, useAgentCreation, useAidevRouting, useEffortCap, useEscalation, useReturnFromHandoff, useRoutingState, ReturnCard, VerificationCard } from '@/modules/aidev-router';
+import { AidevRouterBar, aidevApi, isPolicyProvider, ClarifyPrompt, announceRunComplete, changedFilesSince, EscalationCard, routingStore, sessionKey, useAidevRouting, useEffortCap, useEscalation, useReturnFromHandoff, useRoutingState, ReturnCard, VerificationCard } from '@/modules/aidev-router';
 import CommandResultModal from '@/modules/chat/modals/CommandResultModal';
 
 type ChatInterfaceProps = {
@@ -75,23 +75,15 @@ function ChatInterface({
 }: ChatInterfaceProps) {
   const { tasksEnabled, isTaskMasterInstalled } = useTasksSettings();
   const { subscribe } = useWebSocket();
-  // Nado AI Dev: a provider `complete` event ends the routed run started by the last send (§3.8)
-  // and advances the agent-creation flow when one is pending (§3.7).
+  // Nado AI Dev: a provider `complete` event ends the routed run started by the last send (§3.8). A missing specialist
+  // is designed by the gateway out of band (§3.7), never as a turn of this chat.
   const { reportOutcome: reportAidevOutcome } = useAidevRouting();
   const chatMessagesRef = useRef<ChatMessage[]>([]);
-  const openSessionIdRef = useRef<string | null>(null);
-  const agentCreation = useAgentCreation({
-    getLastAssistantText: () => { const list = chatMessagesRef.current; for (let index = list.length - 1; index >= 0; index -= 1) { const message = list[index]; if (message.type === 'assistant' && typeof message.content === 'string' && message.content.trim()) return message.content; } return null; },
-    getOpenSessionId: () => openSessionIdRef.current,
-    resend: (text) => { handleVoiceTranscriptRef.current?.(text, true); },
-  });
   const handleVoiceTranscriptRef = useRef<((text: string, send?: boolean) => void) | null>(null);
   // Assigned from useEscalation below; the composer hook that calls it is created before it exists.
   const switchBackRef = useRef<((args: { sessionId: string; engine: AidevEngine; fromEngine: AidevEngine; text: string; reason: string }) => Promise<boolean>) | null>(null);
   // Assigned from useEscalation below; the complete subscriber is installed before it exists.
   const handoffOnUsageLimitRef = useRef<((args: { sessionId: string; blockedEngine: AidevEngine; reason: string }) => Promise<unknown>) | null>(null);
-  const agentCreationRef = useRef(agentCreation);
-  useEffect(() => { agentCreationRef.current = agentCreation; });
   // C-06: the chat on show here has no unread news on the phone either — on open, on coming back to the window,
   // on leaving, and shortly after a run here ends (the runtime's event reaches the gateway around the `complete`)
   const seenSessionId = isActive ? selectedSession?.id ?? null : null;
@@ -106,9 +98,6 @@ function ChatInterface({
   }, [seenSessionId]);
   useEffect(() => subscribe((event) => {
     if (event.kind !== 'complete') return;
-    // any chat's run: an agent design goes on in its own chat while another one is on screen.
-    // The store applies the final assistant text on the same tick; read it after React commits.
-    setTimeout(() => { void agentCreationRef.current.onRunComplete(event.sessionId ?? null); }, 400);
     const exitCode = typeof event.exitCode === 'number' ? event.exitCode : (event.isError ? 1 : 0);
     const usageLimit = parseProviderUsageLimit(event.usageLimit);
     // Any chat's routed run is reported, matched to that chat's own run (a chat left mid-run still gets its outcome,
@@ -319,18 +308,7 @@ function ChatInterface({
     // engine priority: assigned from useEscalation below (the composer hook is created before it)
     onEngineSwitchBack: (args) => switchBackRef.current?.(args) ?? Promise.resolve(false),
   });
-  useEffect(() => { chatMessagesRef.current = chatMessages; openSessionIdRef.current = currentSessionId || selectedSession?.id || null; handleVoiceTranscriptRef.current = handleVoiceTranscript; });
-  // D-04: the catalog's "만들기" on a proposed domain sends the creation turn through this chat (needs a project)
-  useEffect(() => {
-    const onCompose = (event: Event) => {
-      const text = (event as CustomEvent<{ text?: string }>).detail?.text;
-      if (!text) return;
-      if (!selectedProject) { routingStore.patch({ oneShotCreate: null }); return; }
-      handleVoiceTranscriptRef.current?.(text, true);
-    };
-    window.addEventListener(COMPOSE_EVENT, onCompose);
-    return () => window.removeEventListener(COMPOSE_EVENT, onCompose);
-  }, [selectedProject]);
+  useEffect(() => { chatMessagesRef.current = chatMessages; handleVoiceTranscriptRef.current = handleVoiceTranscript; });
 
   // E-03: one-tap follow-up for a failed run. A handoff opens a new session on the other engine in
   // this project; its brief is sent once that session is selected and the composer's provider has
@@ -725,7 +703,6 @@ function ChatInterface({
           <ReturnCard back={returnFromHandoff} />
           {openVerification ? <VerificationCard status={openVerification.status} result={openVerification.result} onDismiss={() => routingStore.setFor('verifications', openChatId, null)} /> : null}
           {escalation.escalation ? <EscalationCard next={escalation.escalation.next} label={escalation.label} busy={escalation.busy} error={escalation.error} onRun={() => { void escalation.run(); }} onDismiss={escalation.dismiss} /> : null}
-          {agentCreation.pending ? <AgentCreateCard pending={agentCreation.pending} onApprove={(draft) => { void agentCreation.approve(draft); }} onSelfCheck={agentCreation.runSelfCheck} onDismiss={agentCreation.dismiss} /> : null}
           <AidevRouterBar sessionId={selectedSession?.id ?? null} />
         </div>
       </div>

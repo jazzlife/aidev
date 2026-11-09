@@ -740,14 +740,15 @@ export async function route(store: Store, laya: LayaClient, userId: number, engi
     decision = 'create_background';
     reason.push(`quick work (scored D${scoredDepth}) → generalist now${proposal ? `, ${proposal.name} queued for creation` : ''}`);
   }
-  // An ongoing chat never hands its turn to the agent-architect (2026-10-10): resumed with the whole conversation it
-  // answered the user's question instead of designing (server run #219, "…바이너리 형태로 배포된거 맞지?"), and the
-  // app found no design block. The generalist answers now; the proposed specialist is designed out of band
-  // (aidev-api designAgent) and takes the next command of its domain. A new chat still starts with the architect.
+  // The agent-architect never takes a turn of a chat: the routed agent answers now, the proposed specialist is designed
+  // out of band (aidev-api designAgent) and takes the next command of its domain. In an ongoing chat (2026-10-10) the
+  // resumed architect answered the question instead of designing (server run #219); in a new chat (2026-11-09) the
+  // app reading the design back from the chat lost it to the user cutting in (run #1748) and to a mistyped closing
+  // tag (run #1688). A create-queue entry accepted by an older app (createProposal) still gets its architect turn.
   let designInBackground = false;
-  if (decision === 'create' && input.sessionId && !fromQueue) {
+  if (decision === 'create' && !fromQueue) {
     decision = 'create_background'; designInBackground = Boolean(proposal && !dismissedDomain(store, userId, proposal));
-    reason.push(`ongoing chat → generalist now${proposal ? `, ${proposal.name} ${designInBackground ? 'designed in the background' : 'dismissed before — not designed'}` : ''}`);
+    reason.push(`no specialist → ${agentName} now${proposal ? `, ${proposal.name} ${designInBackground ? 'designed in the background' : 'dismissed before — not designed'}` : ''}`);
   }
   // Clarify (§3.1): the judge decides when it ran — on the server Laya's clarify did not separate vague from specific
   // commands (0.36 "로그인 버튼 고쳐줘" vs 0.42 with the file and behavior named) while the judge got 3/3. Laya decides
