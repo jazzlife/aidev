@@ -20,6 +20,14 @@ test('parseAgentDraft repairs a block that lost its closing brackets, and reject
   assert.equal(parseAgentDraft('카탈로그의 기존 agent로 충분합니다.'), null);
 });
 
+test('parseAgentDraft reads a complete object whose closing tag is missing or mistyped (server 2026-11-09: `</invoke>`)', () => {
+  const json = JSON.stringify({ name: 'cross-platform-drive-agent', domain: 'virtual filesystem', prompt: '가상 드라이브 전문가다. {중괄호} 그대로', examples: ['NAS를 드라이브로 마운트해줘'] });
+  const draft = parseAgentDraft(`설계만 수행했습니다.\n\n<aidev-agent>\n${json}\n</invoke>\n\nSources: [Dokany {2.3}](https://github.com/dokan-dev/dokany)`);
+  assert.equal(draft?.name, 'cross-platform-drive-agent');
+  assert.equal(draft?.prompt, '가상 드라이브 전문가다. {중괄호} 그대로');
+  assert.equal(parseAgentDraft(`<aidev-agent>${json}`)?.name, 'cross-platform-drive-agent', 'the reply ended right after the object');
+});
+
 test('buildDesignRequest hands the architect the command, the catalog and the proposed domain — design only', () => {
   const request = buildDesignRequest({ command: '바이너리로 배포된 거 맞지?', catalog: 'generalist: general help', proposal: { name: 'binary-protection', domain: 'code protection', description: 'no readable source', technologies: ['Node SEA', 'obfuscation'] } });
   assert.match(request, /바이너리로 배포된 거 맞지\?/);

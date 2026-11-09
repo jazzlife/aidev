@@ -206,16 +206,19 @@ export type AgentDraft = {
   self_check: { task: string; expected: string } | null;
 };
 
-/** Used by the create-flow watcher (ChatInterface / mobile ChatScreen) to pull the architect's draft out of an assistant message. */
 /**
- * Closes the brackets an LLM left open at the end of a JSON object — the usual slip in a long design block
- * (D-06 on the server: the architect's 3.3 KB block lacked its final `}`, and the whole draft was dropped).
- * String-aware; returns null when the text ends inside a string (nothing safe to repair).
+ * The JSON object of a design block: up to where its first object closes — anything after it (prose, a stray tag) is
+ * dropped, so a block whose closing tag is missing or mistyped still reads (server 2026-11-09: a complete 10 KB object
+ * followed by `</invoke>` instead of `</aidev-agent>`). When the LLM left brackets open at the end (D-06: a 3.3 KB
+ * block lacked its final `}`), the text with them closed. String-aware; null when the text ends inside a string.
  */
-function closeOpenJson(text: string): string | null {
+function blockJson(text: string): string | null {
+  const start = text.indexOf('{');
+  if (start < 0) return null;
   const open: string[] = [];
   let inString = false; let escaped = false;
-  for (const ch of text) {
+  for (let index = start; index < text.length; index += 1) {
+    const ch = text[index];
     if (inString) {
       if (escaped) escaped = false;
       else if (ch === '\\') escaped = true;
@@ -224,19 +227,28 @@ function closeOpenJson(text: string): string | null {
     }
     if (ch === '"') inString = true;
     else if (ch === '{' || ch === '[') open.push(ch === '{' ? '}' : ']');
-    else if (ch === '}' || ch === ']') open.pop();
+    else if (ch === '}' || ch === ']') { open.pop(); if (!open.length) return text.slice(start, index + 1); }
   }
   if (inString) return null;
-  return text.replace(/,\s*$/, '') + open.reverse().join('');
+  return text.slice(start).replace(/```\s*$/, '').trimEnd().replace(/,\s*$/, '') + open.reverse().join('');
 }
 
+/** The text after the architect's `<aidev-agent>` tag, up to its closing tag when there is one; null without the tag. */
+function agentBlock(text: string): string | null {
+  const open = text.indexOf('<aidev-agent>');
+  if (open < 0) return null;
+  const rest = text.slice(open + '<aidev-agent>'.length);
+  const close = rest.indexOf('</aidev-agent>');
+  return close >= 0 ? rest.slice(0, close) : rest;
+}
+
+/** Used by the create-flow watcher (ChatInterface / mobile ChatScreen) to pull the architect's draft out of an assistant message. */
 export function parseAgentDraft(text: string): AgentDraft | null {
-  const match = /<aidev-agent>\s*([\s\S]*?)\s*<\/aidev-agent>/.exec(text);
-  if (!match) return null;
-  const body = match[1].replace(/^```(?:json)?/m, '').replace(/```$/m, '').trim();
+  const block = agentBlock(text);
+  if (block === null) return null;
   const parse = (json: string | null) => { if (!json) return null; try { return JSON.parse(json) as Record<string, unknown>; } catch { return null; } };
   try {
-    const raw = parse(body) ?? parse(closeOpenJson(body));
+    const raw = parse(blockJson(block));
     if (!raw) return null;
     if (typeof raw.name !== 'string' || typeof raw.prompt !== 'string') return null;
     return {

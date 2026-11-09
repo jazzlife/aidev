@@ -20,6 +20,14 @@ describe('parseAgentDraft (D-06)', () => {
     expect(parseAgentDraft(block(json.slice(0, -2)))?.self_check?.expected).toBe('SampleSceneColor 사용');
   });
 
+  it('reads a complete object whose closing tag is missing or mistyped (server 2026-11-09: `</invoke>`)', () => {
+    const json = JSON.stringify(draft);
+    const mistyped = `설계만 수행했습니다.\n\n<aidev-agent>\n${json}\n</invoke>\n\nSources: [Dokany {2.3}](https://github.com/dokan-dev/dokany) · [winfsp](https://crates.io/crates/winfsp)`;
+    expect(parseAgentDraft(mistyped)?.name).toBe('unity-graphics');
+    expect(parseAgentDraft(mistyped)?.self_check?.task).toBe('굴절 셰이더 작성');
+    expect(parseAgentDraft(`<aidev-agent>\n\`\`\`json\n${json}\n\`\`\``)?.prompt).toContain('"따옴표"');
+  });
+
   it('gives up when the text stops inside a string or has no block', () => {
     expect(parseAgentDraft(block('{"name":"x","prompt":"unterminated'))).toBeNull();
     expect(parseAgentDraft('no block here')).toBeNull();
