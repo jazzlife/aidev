@@ -127,8 +127,6 @@ export function ChatScreen() {
   const echoPreviewsRef = useRef(new Map<string, { urls: string[]; seen: boolean }>());
   // previews made for a send that has not become an echo yet (routing, a held clarify)
   const pendingPreviewsRef = useRef(new Set<string>());
-  const streamTimerRef = useRef<number | null>(null);
-  const accumulatedStreamRef = useRef('');
   const lastSeqRef = useRef(new Map<string, number>());
   const statusCheckSentAtRef = useRef(new Map<string, number>());
 
@@ -215,7 +213,7 @@ export function ChatScreen() {
   const onSessionIdle = useCallback((id?: string | null) => { if (!id || id === sessionId) setBusy(false); }, [sessionId]);
   useChatRealtimeHandlers({
     isActive: true, subscribe, provider, selectedSession, currentSessionId: sessionId, setTokenBudget,
-    pendingPermissionRequests, setPendingPermissionRequests, streamTimerRef, accumulatedStreamRef, lastSeqRef, statusCheckSentAtRef,
+    pendingPermissionRequests, setPendingPermissionRequests, lastSeqRef, statusCheckSentAtRef,
     onSessionProcessing, onSessionIdle, onWebSocketReconnect, requestLatestMessages, sessionStore,
   });
   // Agent creation flow (§3.7): the architect's draft is read from the newest assistant message.

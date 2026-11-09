@@ -6,6 +6,9 @@ import { showCompletionTitleIndicator } from '@/modules/chat/utils/pageTitleNoti
 import { playChatCompletionSound, playNotificationSound } from '@/shared/utils';
 import type { SessionStore } from '@/modules/chat/hooks/useSessionStore';
 
+/** One session's streamed text not yet written to its streaming row, and the timer that writes it. */
+type StreamBuffer = { text: string; provider: LLMProvider; timer: number | null };
+
 const isActionablePermissionRequest = (request: { toolName?: unknown } | null | undefined): boolean => {
   return request?.toolName !== 'ExitPlanMode' && request?.toolName !== 'exit_plan_mode';
 };
@@ -23,8 +26,6 @@ type UseChatRealtimeHandlersArgs = {
   setTokenBudget: (budget: Record<string, unknown> | null) => void;
   pendingPermissionRequests: PendingPermissionRequest[];
   setPendingPermissionRequests: Dispatch<SetStateAction<PendingPermissionRequest[]>>;
-  streamTimerRef: MutableRefObject<number | null>;
-  accumulatedStreamRef: MutableRefObject<string>;
   /**
    * Highest live `seq` observed per session. Essential for reconnect catch-up:
    * `chat.subscribe` sends this value as `lastSeq` so the server replays only
@@ -63,8 +64,6 @@ export function useChatRealtimeHandlers({
   setTokenBudget,
   pendingPermissionRequests,
   setPendingPermissionRequests,
-  streamTimerRef,
-  accumulatedStreamRef,
   lastSeqRef,
   statusCheckSentAtRef,
   onSessionProcessing,
@@ -91,6 +90,20 @@ export function useChatRealtimeHandlers({
     pendingPermissionRequestsRef.current = pendingPermissionRequests;
   }, [pendingPermissionRequests]);
 
+  // Streamed text is buffered per session. Several chats stream at once — the one on screen and others left
+  // running — and one shared buffer spliced their text into whichever chat's flush timer fired first, while a
+  // session switch emptied it under a stream still going. The buffers outlive the listener's re-subscribes.
+  const streamBuffersRef = useRef(new Map<string, StreamBuffer>());
+  useEffect(() => {
+    const buffers = streamBuffersRef.current;
+    return () => {
+      for (const buffer of buffers.values()) {
+        if (buffer.timer) clearTimeout(buffer.timer);
+      }
+      buffers.clear();
+    };
+  }, []);
+
   useEffect(() => {
     const handleEvent = (msg: ServerEvent) => {
       if (!msg.kind) {
@@ -98,7 +111,27 @@ export function useChatRealtimeHandlers({
       }
 
       const activeViewSessionId = activeViewSessionIdRef.current;
-      const sid = (typeof msg.sessionId === 'string' && msg.sessionId) || activeViewSessionId;
+      // Every run frame carries its app session id. Only a protocol error answering this view's own request may
+      // lack one; any other frame without an id belongs to no chat and must not land in the one on screen.
+      const sid = (typeof msg.sessionId === 'string' && msg.sessionId)
+        || (msg.kind === 'protocol_error' ? activeViewSessionId : null);
+
+      /** Writes a session's buffered text to its streaming row now. */
+      const flushStream = (id: string) => {
+        const buffer = streamBuffersRef.current.get(id);
+        if (!buffer) return;
+        if (buffer.timer) {
+          clearTimeout(buffer.timer);
+          buffer.timer = null;
+        }
+        if (buffer.text) sessionStore.updateStreaming(id, buffer.text, buffer.provider);
+      };
+      /** Ends a session's stream: its last text is written and the streaming row becomes a message. */
+      const endStream = (id: string) => {
+        flushStream(id);
+        streamBuffersRef.current.delete(id);
+        sessionStore.finalizeStreaming(id);
+      };
 
       // Record replay progress for every sequenced live event.
       if (sid && typeof msg.seq === 'number') {
@@ -185,38 +218,31 @@ export function useChatRealtimeHandlers({
       /*  Provider NormalizedMessage handling                            */
       /* -------------------------------------------------------------- */
 
-      // --- Streaming: buffer for performance ---
+      // --- Streaming: buffered per session, written to that session's streaming row every 100ms ---
       if (msg.kind === 'stream_delta') {
         const text = (msg.content as string) || '';
-        if (!text) return;
-        accumulatedStreamRef.current += text;
-        if (!streamTimerRef.current) {
-          streamTimerRef.current = window.setTimeout(() => {
-            streamTimerRef.current = null;
-            if (sid) {
-              sessionStore.updateStreaming(sid, accumulatedStreamRef.current, provider);
+        if (!text || !sid) return;
+        let buffer = streamBuffersRef.current.get(sid);
+        if (!buffer) {
+          buffer = { text: '', provider: (msg.provider as LLMProvider) || provider, timer: null };
+          streamBuffersRef.current.set(sid, buffer);
+        }
+        buffer.text += text;
+        if (!buffer.timer) {
+          const pending = buffer;
+          pending.timer = window.setTimeout(() => {
+            pending.timer = null;
+            // a stream already ended (or a newer one started) has nothing left to write
+            if (streamBuffersRef.current.get(sid) === pending) {
+              sessionStore.updateStreaming(sid, pending.text, pending.provider);
             }
           }, 100);
-        }
-        // Also route to store for non-active sessions
-        if (sid && sid !== activeViewSessionId) {
-          sessionStore.appendRealtime(sid, msg as unknown as NormalizedMessage);
         }
         return;
       }
 
       if (msg.kind === 'stream_end') {
-        if (streamTimerRef.current) {
-          clearTimeout(streamTimerRef.current);
-          streamTimerRef.current = null;
-        }
-        if (sid) {
-          if (accumulatedStreamRef.current) {
-            sessionStore.updateStreaming(sid, accumulatedStreamRef.current, provider);
-          }
-          sessionStore.finalizeStreaming(sid);
-        }
-        accumulatedStreamRef.current = '';
+        if (sid) endStream(sid);
         return;
       }
 
@@ -235,16 +261,10 @@ export function useChatRealtimeHandlers({
       // --- UI side effects for specific kinds ---
       switch (msg.kind) {
         case 'complete': {
-          // Flush any remaining streaming state
-          if (streamTimerRef.current) {
-            clearTimeout(streamTimerRef.current);
-            streamTimerRef.current = null;
+          // Flush this session's remaining streamed text (other sessions keep streaming)
+          if (sid && streamBuffersRef.current.has(sid)) {
+            endStream(sid);
           }
-          if (sid && accumulatedStreamRef.current) {
-            sessionStore.updateStreaming(sid, accumulatedStreamRef.current, provider);
-            sessionStore.finalizeStreaming(sid);
-          }
-          accumulatedStreamRef.current = '';
 
           // `complete` is the unified terminal event — every provider run ends
           // with exactly one, regardless of success, failure, or abort. The
@@ -362,8 +382,6 @@ export function useChatRealtimeHandlers({
     setTokenBudget,
     pendingPermissionRequests,
     setPendingPermissionRequests,
-    streamTimerRef,
-    accumulatedStreamRef,
     lastSeqRef,
     statusCheckSentAtRef,
     onSessionProcessing,
