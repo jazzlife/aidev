@@ -19,7 +19,7 @@ import CodeEditorHeader from '@/modules/code-editor/CodeEditorHeader';
 import CodeEditorLoadingState from '@/modules/code-editor/CodeEditorLoadingState';
 import CodeEditorSurface from '@/modules/code-editor/CodeEditorSurface';
 import CodeEditorBinaryFile from '@/modules/code-editor/CodeEditorBinaryFile';
-import CodeEditorMediaPreview from '@/modules/code-editor/CodeEditorMediaPreview';
+import MediaFilePreview from '@/modules/code-editor/MediaFilePreview';
 
 type CodeEditorProps = {
   file: CodeEditorFile;
@@ -31,7 +31,7 @@ type CodeEditorProps = {
   onPopOut?: (() => void) | null;
 };
 
-/** Loaded on demand by LazyCodeEditor (EditorSidebar here, the workbench editor group via the barrel) as the full CodeMirror editor for one open file. */
+/** Loaded on demand by LazyCodeEditor (EditorSidebar here, the workbench editor group via the barrel) as the full CodeMirror editor for one open text file. */
 export default function CodeEditor({
   file,
   onClose,
@@ -66,7 +66,6 @@ export default function CodeEditor({
     saveError,
     isBinary,
     previewKind,
-    fileProjectId,
     handleSave,
     handleDownload,
   } = useCodeEditorDocument({
@@ -212,25 +211,7 @@ export default function CodeEditor({
   // Natively previewable media (image/pdf/audio/video) is rendered inline
   // instead of showing the generic "cannot be displayed" placeholder.
   if (previewKind) {
-    return (
-      <CodeEditorMediaPreview
-        file={file}
-        kind={previewKind}
-        projectId={fileProjectId}
-        isSidebar={isSidebar}
-        isFullscreen={isFullscreen}
-        onClose={onClose}
-        onToggleFullscreen={() => setIsFullscreen((previous) => !previous)}
-        labels={{
-          loading: t('filePreview.loading', 'Loading preview...'),
-          error: t('filePreview.error', 'Unable to display this file.'),
-          openInNewTab: t('filePreview.openInNewTab', 'Open in new tab'),
-          fullscreen: t('actions.fullscreen', 'Fullscreen'),
-          exitFullscreen: t('actions.exitFullscreen', 'Exit fullscreen'),
-          close: t('actions.close', 'Close'),
-        }}
-      />
-    );
+    return <MediaFilePreview file={file} kind={previewKind} onClose={onClose} projectPath={projectPath} isSidebar={isSidebar} />;
   }
 
   // Binary file display

@@ -189,7 +189,10 @@ export default function CodeEditorMediaPreview({
   const previewBody = (
     <div className="relative flex h-full w-full flex-col items-center justify-center bg-muted/30 p-2">
       {loading && (
-        <div className="text-sm text-muted-foreground">{labels.loading}</div>
+        <div className="flex items-center gap-3 text-sm text-muted-foreground" data-testid="media-preview-loading">
+          <div className="h-5 w-5 animate-spin rounded-full border-b-2 border-primary" aria-hidden />
+          <span>{labels.loading}</span>
+        </div>
       )}
 
       {!loading && currentUrl && renderMedia()}
