@@ -511,9 +511,10 @@ export function useSidebarController({
         return;
       }
 
+      // Each project opens and closes on its own; opening one leaves the others as they are.
       setExpandedProjects((prev) => {
-        const next = new Set<string>();
-        if (!prev.has(projectId)) {
+        const next = new Set(prev);
+        if (!next.delete(projectId)) {
           next.add(projectId);
         }
         return next;
