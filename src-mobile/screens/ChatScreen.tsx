@@ -3,7 +3,7 @@ import { useLocation, useParams } from 'react-router-dom';
 import { Clock, Download, Gauge, GitBranch, MoreHorizontal, Search } from 'lucide-react';
 
 import { api, grantClaudeToolPermission, buildClaudeToolPermissionEntry, useChatRealtimeHandlers, useSessionStore, useWebSocket, type LLMProvider, type NormalizedMessage, type PendingPermissionRequest, type ProjectSession } from '@/modules/chat-core';
-import { AgentCreateCard, aidevApi, routingStore, shouldAskClarify, useAgentCreation, useAidevRouting, useEscalation, usePrejudge, useReturnFromHandoff, useRoutingState, ReturnCard, VerificationCard, type AidevSendDecoration, type Engine } from '@/modules/aidev-router';
+import { AgentCreateCard, aidevApi, routingStore, sessionKey, shouldAskClarify, useAgentCreation, useAidevRouting, useEscalation, usePrejudge, useReturnFromHandoff, useRoutingState, ReturnCard, VerificationCard, type AidevSendDecoration, type Engine } from '@/modules/aidev-router';
 import { isAidevEngine, parseProviderUsageLimit } from '@/shared/utils';
 import { hydrateChatDrafts, readQueuedMessages, subscribeToChatDrafts, writeQueuedMessages, type StoredQueuedMessage } from '@/shared/chatDrafts';
 import { Composer } from '@m/components/Composer';
@@ -133,6 +133,8 @@ export function ChatScreen() {
   const statusCheckSentAtRef = useRef(new Map<string, number>());
 
   const sessionId = meta?.id ?? null;
+  // this chat's own verdict; a verification of a run in another chat waits there
+  const openVerification = routingState.verifications[sessionKey(sessionId)] ?? null;
   usePrejudge(draft, meta?.projectPath || project?.fullPath || null, sessionId);
   const provider: LLMProvider = meta?.provider ?? readProvider();
   const caps = useCapsMap();
@@ -232,11 +234,13 @@ export function ChatScreen() {
     if (event.kind !== 'complete') return;
     // any chat's run: an agent design goes on in its own chat while another one is on screen
     setTimeout(() => { void agentCreationRef.current.onRunComplete(event.sessionId ?? null); }, 400);
-    if (event.sessionId && event.sessionId !== sessionId) return;
     const exitCode = typeof event.exitCode === 'number' ? event.exitCode : (event.isError ? 1 : 0);
     // a limit refusal is reported as such: the gateway skips the engine until the reset and proposes the other engine
     const usageLimit = parseProviderUsageLimit(event.usageLimit);
-    void reportOutcome({ exit_code: exitCode, session_id: event.sessionId ?? sessionId, ...(usageLimit ? { usage_limit: { type: usageLimit.type, resets_at: usageLimit.resetsAt ?? null } } : {}) });
+    // any chat's routed run is reported against that chat's own run (its verdict and follow-up wait there);
+    // a `superseded` end is the user cutting in — the next turn is already routed
+    if (!event.superseded) void reportOutcome({ exit_code: exitCode, session_id: event.sessionId ?? sessionId, ...(usageLimit ? { usage_limit: { type: usageLimit.type, resets_at: usageLimit.resetsAt ?? null } } : {}) });
+    if (event.sessionId && event.sessionId !== sessionId) return;
     setLastRunFinished(Date.now());
   }), [subscribe, sessionId, reportOutcome]);
 
@@ -415,6 +419,7 @@ export function ChatScreen() {
   // E-03: one-tap follow-up for a failed run; a handoff opens the new session on the other engine
   // and its brief is sent there once the screen has resolved that session.
   const escalation = useEscalation({
+    sessionId,
     resend: (text) => sendRef.current(text),
     openSession: (id) => { routingStore.adoptSession(id); navigate(`/session/${encodeURIComponent(id)}`); },
     getProjectPath: () => meta?.projectPath || project?.fullPath || null,
@@ -572,7 +577,7 @@ export function ChatScreen() {
       {actionError ? <div className="px-4 py-1 text-[13px] text-danger" role="alert">{actionError}</div> : null}
       {agentCreation.pending ? <div className="m-scroll max-h-[45dvh]"><AgentCreateCard compact pending={agentCreation.pending} onApprove={(draft) => { void agentCreation.approve(draft); }} onSelfCheck={agentCreation.runSelfCheck} onDismiss={agentCreation.dismiss} /></div> : null}
       {!busy ? <ReturnCard compact back={returnFromHandoff} /> : null}
-      {routingState.verification && !busy ? <VerificationCard compact status={routingState.verification.status} result={routingState.verification.result} onDismiss={() => routingStore.patch({ verification: null })} /> : null}
+      {openVerification && !busy ? <VerificationCard compact status={openVerification.status} result={openVerification.result} onDismiss={() => routingStore.setFor('verifications', sessionId, null)} /> : null}
       {escalation.escalation && !busy ? <EscalationPrompt next={escalation.escalation.next} label={escalation.label} busy={escalation.busy} error={escalation.error} onRun={() => { void escalation.run(); }} onDismiss={escalation.dismiss} /> : null}
       {lastRunFinished && !busy ? <RunFeedback key={lastRunFinished} onFeedback={(value) => { void reportOutcome({ user_feedback: value }); }} /> : null}
       {clarify ? <ClarifyPrompt key={clarify.decoration.route.decision_id} text={clarify.text || attachmentLabel(clarify.attachments.map((a) => a.name ?? '파일'))} question={clarify.decoration.route.scope.clarify_question} onProceed={() => { setClarify(null); void dispatch(clarify.text, clarify.decoration, clarify.attachments, clarify.previews, { interrupt: busy }); }} onAnswer={(answer) => { setClarify(null); void dispatch(`${clarify.text}\n\n(추가 정보) ${answer}`, clarify.decoration, clarify.attachments, clarify.previews, { interrupt: busy }); }} /> : null}

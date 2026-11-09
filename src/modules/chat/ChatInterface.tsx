@@ -29,7 +29,7 @@ import {
 } from '@/shared/context/SessionProtectionContext';
 import ChatMessagesPane from '@/modules/chat/transcript/ChatMessagesPane';
 import ChatComposer from '@/modules/chat/composer/ChatComposer';
-import { AgentCreateCard, AidevRouterBar, aidevApi, isPolicyProvider, ClarifyPrompt, COMPOSE_EVENT, announceRunComplete, changedFilesSince, EscalationCard, routingStore, useAgentCreation, useAidevRouting, useEffortCap, useEscalation, useReturnFromHandoff, useRoutingState, ReturnCard, VerificationCard } from '@/modules/aidev-router';
+import { AgentCreateCard, AidevRouterBar, aidevApi, isPolicyProvider, ClarifyPrompt, COMPOSE_EVENT, announceRunComplete, changedFilesSince, EscalationCard, routingStore, sessionKey, useAgentCreation, useAidevRouting, useEffortCap, useEscalation, useReturnFromHandoff, useRoutingState, ReturnCard, VerificationCard } from '@/modules/aidev-router';
 import CommandResultModal from '@/modules/chat/modals/CommandResultModal';
 
 type ChatInterfaceProps = {
@@ -109,6 +109,13 @@ function ChatInterface({
     // any chat's run: an agent design goes on in its own chat while another one is on screen.
     // The store applies the final assistant text on the same tick; read it after React commits.
     setTimeout(() => { void agentCreationRef.current.onRunComplete(event.sessionId ?? null); }, 400);
+    const exitCode = typeof event.exitCode === 'number' ? event.exitCode : (event.isError ? 1 : 0);
+    const usageLimit = parseProviderUsageLimit(event.usageLimit);
+    // Any chat's routed run is reported, matched to that chat's own run (a chat left mid-run still gets its outcome,
+    // verdict and follow-up, kept for when it is opened again). A `superseded` end is the user cutting in: the next
+    // turn is already routed, so it is not this run's end to report.
+    // a limit refusal is reported as such: the gateway skips the engine until the reset, and holds nothing else against it
+    if (!event.superseded) void reportAidevOutcome({ exit_code: exitCode, session_id: event.sessionId ?? selectedSession?.id ?? null, ...(usageLimit ? { usage_limit: { type: usageLimit.type, resets_at: usageLimit.resetsAt ?? null } } : {}) });
     if (event.sessionId && selectedSession?.id && event.sessionId !== selectedSession.id) return;
     const finishedId = event.sessionId ?? selectedSession?.id ?? null;
     if (finishedId && finishedId === seenSessionIdRef.current) {
@@ -116,10 +123,6 @@ function ChatInterface({
         if (seenSessionIdRef.current === finishedId && document.visibilityState === 'visible') void aidevApi.notifySeen(finishedId).catch(() => undefined);
       }, 3000);
     }
-    const exitCode = typeof event.exitCode === 'number' ? event.exitCode : (event.isError ? 1 : 0);
-    const usageLimit = parseProviderUsageLimit(event.usageLimit);
-    // a limit refusal is reported as such: the gateway skips the engine until the reset, and holds nothing else against it
-    void reportAidevOutcome({ exit_code: exitCode, session_id: event.sessionId ?? selectedSession?.id ?? null, ...(usageLimit ? { usage_limit: { type: usageLimit.type, resets_at: usageLimit.resetsAt ?? null } } : {}) });
     // A usage limit refused this run, so the work continues on the next provider of
     // the work order instead of stopping — this engine cannot answer again until
     // the window resets (E-03, no tap). handoffOnUsageLimit blocks instead if no
@@ -344,6 +347,7 @@ function ChatInterface({
   // this project; its brief is sent once that session is selected and the composer's provider has
   // caught up with it (so routing sees the right engine).
   const escalation = useEscalation({
+    sessionId: currentSessionId || selectedSession?.id || null,
     resend: (text) => { handleVoiceTranscriptRef.current?.(text, true); },
     openSession: (sessionId, engine, title) => {
       if (!selectedProject) return;
@@ -504,6 +508,9 @@ function ChatInterface({
   // shows that (last plan, or "자동") instead of the provider default it would ignore; picking a model or
   // effort there pins it for the router (engine = this composer's provider) until reset to 자동.
   const routingState = useRoutingState();
+  // this chat's own verdict; a verification of a run in another chat waits there
+  const openChatId = currentSessionId || selectedSession?.id || null;
+  const openVerification = routingState.verifications[sessionKey(openChatId)] ?? null;
   // a model, effort, engine or agent picked by hand holds for its chat only: another chat is routed afresh
   useEffect(() => { routingStore.followSession(selectedSession?.id ?? null); }, [selectedSession?.id]);
   // the router's effort levels are the pinned engine's (the session's last model may accept none, e.g. haiku); the
@@ -735,7 +742,7 @@ function ChatInterface({
           ) : null}
           {clarify ? <ClarifyPrompt key={clarify.decisionId} question={clarify.question} onAnswer={(answer) => releaseClarify(answer)} onProceed={() => releaseClarify(null)} onDismiss={dismissClarify} /> : null}
           <ReturnCard back={returnFromHandoff} />
-          {routingState.verification ? <VerificationCard status={routingState.verification.status} result={routingState.verification.result} onDismiss={() => routingStore.patch({ verification: null })} /> : null}
+          {openVerification ? <VerificationCard status={openVerification.status} result={openVerification.result} onDismiss={() => routingStore.setFor('verifications', openChatId, null)} /> : null}
           {escalation.escalation ? <EscalationCard next={escalation.escalation.next} label={escalation.label} busy={escalation.busy} error={escalation.error} onRun={() => { void escalation.run(); }} onDismiss={escalation.dismiss} /> : null}
           {agentCreation.pending ? <AgentCreateCard pending={agentCreation.pending} onApprove={(draft) => { void agentCreation.approve(draft); }} onSelfCheck={agentCreation.runSelfCheck} onDismiss={agentCreation.dismiss} /> : null}
           <AidevRouterBar sessionId={selectedSession?.id ?? null} />

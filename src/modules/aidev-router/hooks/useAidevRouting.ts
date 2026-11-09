@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 
 import { aidevApi, type Engine, type RouteResult, type RunView } from '@/modules/aidev-router/api';
-import { routingStore, useRoutingState } from '@/modules/aidev-router/store';
+import { routingStore, sessionKey, useRoutingState } from '@/modules/aidev-router/store';
 import { isAidevEngine } from '@/shared/utils';
 
 /**
@@ -59,26 +59,32 @@ const VERIFY_MAX_MS = 13 * 60_000;
  * command the retry will send — the next attempt knows what the last one got wrong. When that step is
  * retry_worker, useEscalation sends it back to the worker by itself (cross-verification loop).
  */
-async function followVerification(runId: number, sessionId: string | null) {
+async function followVerification(runId: number, sessionId: string | null, sent: { text: string; agent: string | null }) {
+  // the verdict belongs to this run's chat, whichever chat is on screen when it comes (adoptSession may rename a new chat's '')
+  const own = () => {
+    const verifications = routingStore.get().verifications;
+    const key = verifications[sessionKey(sessionId)]?.runId === runId ? sessionId : verifications['']?.runId === runId ? null : undefined;
+    return key === undefined ? null : { key, verification: verifications[sessionKey(key)] };
+  };
   const until = Date.now() + VERIFY_MAX_MS;
   while (Date.now() < until) {
     await new Promise((resolve) => setTimeout(resolve, VERIFY_POLL_MS));
-    const current = routingStore.get().verification;
-    if (!current || current.runId !== runId) return;   // a newer send replaced it
+    if (!own()) return;   // a newer send in that chat replaced it, or it was dismissed
     let view: RunView;
     try { view = await aidevApi.run(runId); } catch { continue; }
     const result = view.run.verification;
     if (!result) { if (!view.verifying) break; continue; }
-    routingStore.patch({ verification: { runId, status: 'done', result } });
-    if (result.verdict === 'fail' && view.run.next_action && !routingStore.get().escalation) {
-      const text = routingStore.get().lastText ?? '';
+    const current = own();
+    if (!current) return;
+    routingStore.setFor('verifications', current.key, { runId, status: 'done', result });
+    if (result.verdict === 'fail' && view.run.next_action && !routingStore.get().escalations[sessionKey(current.key)]) {
       const findings = result.issues.length ? `\n\n[검증에서 발견된 문제 — 먼저 해결할 것]\n${result.issues.map((issue) => `- ${issue}`).join('\n')}` : `\n\n[검증 결과] ${result.summary}`;
-      routingStore.patch({ escalation: { next: view.run.next_action, text: text ? `${text}${findings}` : '', sessionId } });
+      routingStore.setFor('escalations', current.key, { next: view.run.next_action, text: sent.text ? `${sent.text}${findings}` : '', sessionId: current.key, agent: sent.agent });
     }
     return;
   }
-  const stale = routingStore.get().verification;
-  if (stale && stale.runId === runId && stale.status === 'pending') routingStore.patch({ verification: { runId, status: 'done', result: { verdict: 'unclear', summary: '검증 결과를 받지 못했습니다', checked: [], issues: [], engine: null, model: null, at: Date.now() } } });
+  const stale = own();
+  if (stale && stale.verification.status === 'pending') routingStore.setFor('verifications', stale.key, { runId, status: 'done', result: { verdict: 'unclear', summary: '검증 결과를 받지 못했습니다', checked: [], issues: [], engine: null, model: null, at: Date.now() } });
 }
 
 function buildAidevPayload(route: RouteResult, runId: number | null) {
@@ -126,8 +132,10 @@ export function useAidevRouting() {
     if (!asEngine(context.provider)) {
       return null;
     }
-    // a new send supersedes any follow-up or verdict still shown for the previous run
-    routingStore.patch({ busy: true, error: null, escalation: null, verification: null });
+    // a new send supersedes any follow-up or verdict still shown for this chat's previous run (other chats keep theirs)
+    routingStore.patch({ busy: true, error: null });
+    routingStore.setFor('escalations', context.sessionId, null);
+    routingStore.setFor('verifications', context.sessionId, null);
     try {
       const overrides = current.overrides;
       // A retry's plan and agent belong to the retry's own command (the composer may put a draft before it). Another
@@ -190,6 +198,7 @@ export function useAidevRouting() {
         runId = null; // a missing run row only loses learning signal for this turn
       }
       routingStore.patch({ busy: false, last: route, lastText: text, runId, runSessionId: context.sessionId, runFinishedAt: null, runFeedback: null });
+      routingStore.setFor('sent', context.sessionId, { runId, text, agent: route.agent.name, reported: false });
       // Pinned by hand to the other engine (bar chip, or a model from the other engine's list): sessions are
       // provider-bound, so this chat cannot run there — the send continues in a new session on that engine (handoff).
       const sessionEngine = context.isNewSession ? null : asEngine(context.provider);
@@ -232,21 +241,35 @@ export function useAidevRouting() {
     }
   }, []);
 
-  /** Records the terminal signal of the run started by the last routed send (§3.8). */
+  /**
+   * Records the terminal signal of a routed run (§3.8). A run's end (`exit_code`) is matched to the run its own chat
+   * last opened — never to the page's last send, which may belong to another chat — and is reported once; feedback
+   * goes to the last run.
+   */
   const reportOutcome = useCallback(async (outcome: { session_id?: string | null; exit_code?: number | null; tool_errors?: number; user_feedback?: 'up' | 'down' | null; test_result?: 'pass' | 'fail' | null; summary?: string; reverted?: boolean; /** the engine refused the run on a usage limit (its reset time when known) */ usage_limit?: { type: string; resets_at: number | null } | null }, runId?: number | null) => {
-    const id = runId ?? routingStore.get().runId;
-    if (outcome.exit_code !== undefined) routingStore.patch({ runFinishedAt: Date.now() });
+    const ending = outcome.exit_code !== undefined;
+    const sentMap = routingStore.get().sent;
+    const sentKey = outcome.session_id && sentMap[outcome.session_id] ? outcome.session_id : sentMap[''] ? null : outcome.session_id ?? null;
+    const sent = ending ? sentMap[sessionKey(sentKey)] ?? null : null;
+    // a chat's run that this page did not route (sent from another device, a timer) has nothing to report here
+    if (ending && !runId && (!sent || sent.reported)) return null;
+    const id = runId ?? (ending ? sent?.runId : routingStore.get().runId) ?? null;
+    if (ending && sent) routingStore.setFor('sent', sentKey, { ...sent, reported: true });
+    const isLastRun = id !== null && id === routingStore.get().runId;
+    if (ending && isLastRun) routingStore.patch({ runFinishedAt: Date.now() });
     if (outcome.user_feedback) routingStore.patch({ runFeedback: outcome.user_feedback });
-    if (outcome.session_id) routingStore.patch({ runSessionId: outcome.session_id });
+    if (outcome.session_id && isLastRun) routingStore.patch({ runSessionId: outcome.session_id });
     if (!id) {
       return null;
     }
+    const chatId = outcome.session_id ?? (sent ? sentKey : routingStore.get().runSessionId);
+    const followUp = { text: sent?.text ?? routingStore.get().lastText ?? '', agent: sent?.agent ?? routingStore.get().last?.agent.name ?? null };
     try {
       const result = await aidevApi.runOutcome(id, outcome);
-      // E-03: a failed run comes back with a proposed next step (retry / stronger model / other engine)
-      if (result.next) routingStore.patch({ escalation: { next: result.next, text: routingStore.get().lastText ?? '', sessionId: outcome.session_id ?? routingStore.get().runSessionId } });
+      // E-03: a failed run comes back with a proposed next step (retry / stronger model / other engine), kept in its chat
+      if (result.next) routingStore.setFor('escalations', chatId, { next: result.next, text: followUp.text, sessionId: chatId, agent: followUp.agent });
       // worker ≠ verifier: the gateway started an independent check of this run — follow it to its verdict
-      if (result.verifying) { routingStore.patch({ verification: { runId: id, status: 'pending', result: null } }); void followVerification(id, outcome.session_id ?? routingStore.get().runSessionId); }
+      if (result.verifying) { routingStore.setFor('verifications', chatId, { runId: id, status: 'pending', result: null }); void followVerification(id, chatId, followUp); }
       return result;
     } catch {
       return null;

@@ -2,11 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { api } from '@/shared/api';
 import { aidevApi, type Engine, type EnginesResult } from '@/modules/aidev-router/api';
-import { routingStore, useRoutingState } from '@/modules/aidev-router/store';
+import { routingStore, sessionKey, useRoutingState } from '@/modules/aidev-router/store';
 import { rememberHandoff } from '@/modules/aidev-router/hooks/useReturnFromHandoff';
 import { AIDEV_ENGINES, ENGINE_LABELS } from '@/shared/constants';
 
 type UseEscalationArgs = {
+  /** The chat on screen: only its own proposal is shown and run here, so a retry never lands in another chat. */
+  sessionId: string | null;
   /** Sends text as a new user turn in the open session through the composer (routing runs again). */
   resend: (text: string) => void;
   /** Opens another session (the handoff target, bound to `engine`) in the host UI. */
@@ -45,7 +47,7 @@ export function nextUsableEngine(blocked: Engine, available: Pick<EnginesResult,
 
 /**
  * One-tap follow-up for a failed routed run (IMPLEMENTATION-PLAN §3.8, E-03). The gateway's
- * proposal (`routingStore.escalation`, set by useAidevRouting.reportOutcome) is executed here:
+ * proposal for the open chat (`routingStore.escalations`, set by useAidevRouting.reportOutcome) is executed here:
  *   retry_same / escalate_tier → the same command re-sent once with the proposed model/effort,
  *                                 linked to the failed run (escalated_from_run);
  *   retry_worker               → the verifier failed the run: the command plus the verifier's findings goes
@@ -58,15 +60,16 @@ export function nextUsableEngine(blocked: Engine, available: Pick<EnginesResult,
  * and the mobile ChatScreen; nothing runs without the user's tap (each attempt spends usage) —
  * except retry_worker and a usage-limit block, which `handoffOnUsageLimit` carries over on its own.
  */
-export function useEscalation({ resend, openSession, getProjectPath }: UseEscalationArgs) {
-  const { escalation, last } = useRoutingState();
+export function useEscalation({ sessionId: openSessionId, resend, openSession, getProjectPath }: UseEscalationArgs) {
+  const { escalations, last } = useRoutingState();
+  const escalation = escalations[sessionKey(openSessionId)] ?? null;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Sessions already carried over, so a repeated limit on the same chat cannot
   // spawn a second handoff session.
   const handedOffSessions = useRef<Set<string>>(new Set());
 
-  const dismiss = useCallback(() => { routingStore.patch({ escalation: null }); setError(null); }, []);
+  const dismiss = useCallback(() => { routingStore.setFor('escalations', openSessionId, null); setError(null); }, [openSessionId]);
 
   /** Builds the brief, opens a session on `engine` in the same project, and queues the brief for it. */
   const handoff = useCallback(async ({ engine, fromEngine, sessionId, text, reason, plan, oneShotAgent, title, appendText }: HandoffArgs) => {
@@ -82,7 +85,8 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
       handedOffSessions.current.add(sessionId);
       // the new chat remembers where it came from, so it can offer the way back once that engine is usable again
       rememberHandoff(newId, { fromSessionId: sessionId, fromEngine, toEngine: engine, reason, at: Date.now() });
-      routingStore.patch({ pendingHandoff: { sessionId: newId, text: appendText ? `${brief.text}\n\n## 이어서 할 요청\n${appendText}` : brief.text }, oneShotPlan: plan, oneShotAgent, escalation: null });
+      routingStore.patch({ pendingHandoff: { sessionId: newId, text: appendText ? `${brief.text}\n\n## 이어서 할 요청\n${appendText}` : brief.text }, oneShotPlan: plan, oneShotAgent });
+      routingStore.setFor('escalations', sessionId, null);
       openSession(newId, engine, title);
     } catch (failure) {
       setError(failure instanceof Error ? failure.message : '인계 실패');
@@ -92,16 +96,18 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
   }, [getProjectPath, openSession]);
 
   const run = useCallback(async () => {
-    const current = routingStore.get().escalation;
+    // the open chat's own proposal: `resend` types into this chat's composer
+    const current = routingStore.get().escalations[sessionKey(openSessionId)];
     if (!current || busy) return;
     const { next, text } = current;
-    const agentName = routingStore.get().last?.agent.name ?? null;
+    const agentName = current.agent;
     const oneShotAgent = agentName && agentName !== 'agent-architect' ? agentName : null;
     const plan = { engine: next.engine ?? undefined, model: next.model, effort: next.effort, depth: next.depth, escalatedFromRun: next.from_run };
     setError(null);
     if (next.action === 'retry_same' || next.action === 'retry_worker' || next.action === 'escalate_tier') {
       if (!text.trim()) { setError('다시 보낼 명령을 찾지 못했습니다'); return; }
-      routingStore.patch({ oneShotPlan: { ...plan, forText: text }, oneShotAgent, escalation: null });
+      routingStore.patch({ oneShotPlan: { ...plan, forText: text }, oneShotAgent });
+      routingStore.setFor('escalations', openSessionId, null);
       resend(text);
       return;
     }
@@ -118,7 +124,7 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
       oneShotAgent,
       title: `[인계] ${(text || '이어서 작업').slice(0, 60)}`,
     });
-  }, [busy, dismiss, handoff, last, resend]);
+  }, [busy, dismiss, handoff, last, openSessionId, resend]);
 
   // Runs already sent back to their worker, so a re-render (or the card reappearing) never sends twice.
   const reworkedRuns = useRef<Set<number>>(new Set());
@@ -145,6 +151,8 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
    */
   const handoffOnUsageLimit = useCallback(async (args: { sessionId: string; blockedEngine: Engine; reason: string }): Promise<{ status: 'handed-off' | 'blocked' | 'skipped'; otherEngine: Engine | null }> => {
     if (busy || handedOffSessions.current.has(args.sessionId)) return { status: 'skipped', otherEngine: null };
+    // the limited chat's own last command and agent, not the page's last send
+    const sent = routingStore.get().sent[args.sessionId] ?? routingStore.get().sent[''] ?? null;
 
     // the next provider of the user's work order that can run now; with the gateway out of reach nobody knows that
     // order, so nothing is handed over by guess (the card below says why)
@@ -158,18 +166,17 @@ export function useEscalation({ resend, openSession, getProjectPath }: UseEscala
       // No other provider is usable, so this is a dead end rather than a handoff —
       // surfaced through the same ask_user card other failures use, so the user
       // is not left staring at a transcript that just stopped.
-      routingStore.patch({
-        escalation: {
-          next: { action: 'ask_user', engine: null, model: null, effort: null, depth: null, from_run: 0, chain: 0, reason: `${ENGINE_LABELS[args.blockedEngine]} 사용량 한도에 걸렸는데, 지금 쓸 수 있는 다른 공급자가 없어 자동으로 전환할 수 없습니다. 한도가 초기화될 때까지 기다리거나 다른 공급자에 로그인해주세요.` },
-          text: routingStore.get().lastText ?? '',
-          sessionId: args.sessionId,
-        },
+      routingStore.setFor('escalations', args.sessionId, {
+        next: { action: 'ask_user', engine: null, model: null, effort: null, depth: null, from_run: 0, chain: 0, reason: `${ENGINE_LABELS[args.blockedEngine]} 사용량 한도에 걸렸는데, 지금 쓸 수 있는 다른 공급자가 없어 자동으로 전환할 수 없습니다. 한도가 초기화될 때까지 기다리거나 다른 공급자에 로그인해주세요.` },
+        text: sent?.text ?? '',
+        sessionId: args.sessionId,
+        agent: sent?.agent ?? null,
       });
       return { status: 'blocked', otherEngine };
     }
 
-    const text = routingStore.get().lastText ?? '';
-    const agentName = routingStore.get().last?.agent.name ?? null;
+    const text = sent?.text ?? '';
+    const agentName = sent?.agent ?? null;
     setError(null);
     await handoff({
       engine: otherEngine,

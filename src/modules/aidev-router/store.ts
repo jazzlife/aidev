@@ -37,6 +37,17 @@ export type PendingCreate = {
   resendSkipped?: boolean;
 };
 
+/** The last routed send in one chat: the run it opened, its command and its agent (E-03 follow-ups read these). */
+export type SentRun = { runId: number | null; text: string; agent: string | null; reported: boolean };
+/** E-03: the gateway's proposal for a chat's failed run; `text` is the command a retry sends. */
+export type Escalation = { next: NextAction; text: string; sessionId: string | null; agent: string | null };
+/** Independent verification of a chat's last routed run: pending while the verifier reads the repository, then its verdict. */
+export type Verification = { runId: number; status: 'pending' | 'done'; result: RunVerification | null };
+/** The per-chat maps below; their key is the session id ('' = a new chat whose id is not known yet). */
+type SessionKeyed = 'sent' | 'escalations' | 'verifications';
+
+export const sessionKey = (sessionId: string | null | undefined): string => sessionId ?? '';
+
 export type RoutingState = {
   mode: RoutingMode;
   pendingCreate: PendingCreate | null;
@@ -69,19 +80,22 @@ export type RoutingState = {
    * turn, or dropped while busy) runs routed instead, and the plan and its agent are dropped.
    */
   oneShotPlan: { engine?: Engine; model?: string | null; effort?: string | null; depth?: number | null; escalatedFromRun?: number; forText?: string } | null;
-  /** E-03: the proposal for the last failed run, shown as a card until acted on or dismissed. */
-  escalation: { next: NextAction; text: string; sessionId: string | null } | null;
+  /**
+   * Per chat, because runs go on in several chats at once while one is on screen: a run's outcome, verdict and
+   * follow-up stay with the chat it ran in (2026-11-09: one global slot sent a MyDrives verifier retry into the
+   * NewHyOn-Web chat that was open when the verdict came — server run #1736).
+   */
+  sent: Record<string, SentRun>;
+  /** E-03: each chat's proposal for its last failed run, shown in that chat until acted on or dismissed. */
+  escalations: Record<string, Escalation>;
   /** E-03: a handoff brief waiting to be sent once the new session (other engine) is open. */
   pendingHandoff: { sessionId: string; text: string } | null;
   /** The open chat's own effort ceiling (sessionId null = a new chat whose id is not known yet). */
   chatCap: { sessionId: string | null; cap: Partial<Record<Engine, string>> | null };
   /** The open chat's own model floor (same lifecycle as chatCap). */
   chatFloor: { sessionId: string | null; floor: Partial<Record<Engine, string>> | null };
-  /**
-   * Independent verification of the last routed run (worker ≠ verifier): pending while the gateway's
-   * verifier reads the repository, then its verdict — shown as a card until dismissed or the next send.
-   */
-  verification: { runId: number; status: 'pending' | 'done'; result: RunVerification | null } | null;
+  /** Each chat's verification of its last routed run (worker ≠ verifier), shown there until dismissed or its next send. */
+  verifications: Record<string, Verification>;
 };
 
 const MODE_KEY = 'aidev.routing.mode';
@@ -95,7 +109,7 @@ function readMode(): RoutingMode {
   }
 }
 
-let state: RoutingState = { mode: readMode(), pendingCreate: null, oneShotAgent: null, oneShotCreate: null, busy: false, last: null, lastText: null, error: null, overrides: {}, overridesSessionId: null, runId: null, runSessionId: null, runFinishedAt: null, runFeedback: null, oneShotPlan: null, escalation: null, pendingHandoff: null, chatCap: { sessionId: null, cap: null }, chatFloor: { sessionId: null, floor: null }, verification: null };
+let state: RoutingState = { mode: readMode(), pendingCreate: null, oneShotAgent: null, oneShotCreate: null, busy: false, last: null, lastText: null, error: null, overrides: {}, overridesSessionId: null, runId: null, runSessionId: null, runFinishedAt: null, runFeedback: null, oneShotPlan: null, sent: {}, escalations: {}, pendingHandoff: null, chatCap: { sessionId: null, cap: null }, chatFloor: { sessionId: null, floor: null }, verifications: {} };
 const listeners = new Set<() => void>();
 
 function emit() {
@@ -114,6 +128,13 @@ export const routingStore = {
   patch(patch: Partial<RoutingState>) {
     state = { ...state, ...patch };
     emit();
+  },
+  /** Sets (or with null, clears) one chat's entry of a per-chat map. */
+  setFor<K extends SessionKeyed>(key: K, sessionId: string | null | undefined, value: RoutingState[K][string] | null) {
+    const next = { ...state[key] } as RoutingState[K];
+    if (value) next[sessionKey(sessionId)] = value as RoutingState[K][string];
+    else delete next[sessionKey(sessionId)];
+    routingStore.patch({ [key]: next } as Partial<RoutingState>);
   },
   setMode(mode: RoutingMode) {
     try {
@@ -141,7 +162,15 @@ export const routingStore = {
    */
   adoptSession(sessionId: string) {
     const create = state.pendingCreate;
-    routingStore.patch({ overridesSessionId: sessionId, ...(state.last && state.runSessionId === null ? { runSessionId: sessionId } : {}),
+    // what a new chat sent, was verified or was offered before its id existed is that chat's now
+    const adopted: Partial<RoutingState> = {};
+    for (const key of ['sent', 'escalations', 'verifications'] as const) {
+      const map = state[key] as Record<string, unknown>;
+      if (!('' in map) || sessionId in map) continue;
+      const { '': entry, ...rest } = map;
+      adopted[key] = { ...rest, [sessionId]: entry } as never;
+    }
+    routingStore.patch({ overridesSessionId: sessionId, ...adopted, ...(state.last && state.runSessionId === null ? { runSessionId: sessionId } : {}),
       ...(create && create.stage === 'architect' && create.sessionId === null ? { pendingCreate: { ...create, sessionId } } : {}) });
   },
   /** Drops one override (the engine chip's "자동": back to priority / routing for the next sends). */

@@ -104,7 +104,8 @@ export function useReturnFromHandoff(sessionId: string | null, openSession: (ses
     try {
       const brief = await aidevApi.handoffBrief(sessionId, { from_engine: origin.toEngine, to_engine: origin.fromEngine, reason: `${ENGINE_LABELS[origin.fromEngine]} 사용량 한도가 풀려 돌아왔습니다` });
       const agentName = routingStore.get().last?.agent.name ?? null;
-      routingStore.patch({ pendingHandoff: { sessionId: origin.fromSessionId, text: brief.text }, oneShotPlan: { engine: origin.fromEngine }, oneShotAgent: agentName && agentName !== 'agent-architect' ? agentName : null, escalation: null });
+      routingStore.patch({ pendingHandoff: { sessionId: origin.fromSessionId, text: brief.text }, oneShotPlan: { engine: origin.fromEngine }, oneShotAgent: agentName && agentName !== 'agent-architect' ? agentName : null });
+      routingStore.setFor('escalations', sessionId, null);
       forget(sessionId);
       openSession(origin.fromSessionId, origin.fromEngine, `[${ENGINE_LABELS[origin.fromEngine]} 복귀]`);
     } catch (failure) {

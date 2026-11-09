@@ -7,7 +7,7 @@ export type { RouteResult, RouteScope, RouteTarget, DecideResult, EnginesResult,
 export { useRemoteApprovals, focusRemoteRun, REMOTE_RUN_FOCUS_EVENT } from '@/modules/aidev-router/hooks/useRemoteApprovals';
 export { useUiCommands } from '@/modules/aidev-router/hooks/useUiCommands';
 export { announceRunComplete, changedFilesSince, RUN_COMPLETE_EVENT } from '@/modules/aidev-router/runEvents';
-export { routingStore, useRoutingState } from '@/modules/aidev-router/store';
+export { routingStore, sessionKey, useRoutingState } from '@/modules/aidev-router/store';
 export type { RoutingMode, RoutingOverrides, RoutingState } from '@/modules/aidev-router/store';
 export { useAidevRouting, shouldAskClarify } from '@/modules/aidev-router/hooks/useAidevRouting';
 // §3.1 clarify card for the workbench composer (the mobile app has its own).
