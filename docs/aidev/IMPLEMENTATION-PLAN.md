@@ -191,7 +191,7 @@ CREATE TABLE remote_runs (id PK, run_id INT NULL, target_id INT REF targets, use
 | 1 | sonnet / medium | gpt-5.6-terra / medium | + 교훈 top-3 |
 | 2 | sonnet / high | gpt-5.6-terra / high | + 지식 요약(≤2k 토큰) |
 | 3 | opus / high | gpt-5.6-sol / high | + 지식 전체, 교훈 전부, 교차 검토 |
-| 4 | best(= Fable 5.1, 없으면 최신 Opus) / xhigh | gpt-6-astra / xhigh | + 다중 agent |
+| 4 | best(= CLI의 `fable` → 최신 Fable, Fable 주간 한도 소진 시 Opus) / xhigh | gpt-6-astra / xhigh | + 다중 agent |
 - 두 엔진 모두 D4에서 최상위 모델, D3에서 차상위 모델(대칭). `opusplan`(Opus 계획 → Sonnet 실행)은 최상위 등급에서 제외(2026-09-28 수정: 이전 코드는 D4=opusplan이라 Fable 미사용).
 - **등급 = 수월하게 해낼 모델**(2026-10-13, 사용자 결정 "겨우 해낼 모델이 아니라 충분히 수월하게 해낼 모델"): 전문 agent 판정 LLM이 명령마다 `level`(0~4)을 낸다 — 프롬프트에 각 등급 모델이 안정적으로 해내는 범위와 흔들리기 시작하는 지점(하한·상한)을 주고, 범위 안에 확실히 드는 가장 낮은 등급, 경계에 걸리거나 애매하면 위 등급, 파괴적 작업은 한 단계 위. 게이트웨이는 판정의 level을 깊이로 쓰고(하한·채팅 고정은 그 위에 적용), Laya 깊이 점수는 판정 level이 없을 때(판정 실패·이전 캐시)만 쓴다 — 서버 475건에서 Laya 기대값이 0.04~2.60에 머물러 D4(≥3.35)가 한 번도 나오지 않았고 Fable/Astra가 자동으로 쓰인 적이 없었다. 유사 명령 지름길은 그 명령의 판정 level을 이어받는다. 실제 판정 모델 검증: `POST /api/aidev/route/eval-judge`(관리자, `data/judge-eval.jsonl`) — verify-b가 level 적중 ≥0.8, D4 사례 ≥2/3, 핸드오프 판단 ≥0.85를 요구.
 - `risk ≥ 1.5` → depth +1 (Laya 점수를 쓸 때). 사용자 지정 model/effort/engine → 그대로.

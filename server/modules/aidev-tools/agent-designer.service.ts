@@ -5,7 +5,7 @@ import { Codex } from '@openai/codex-sdk';
 
 import { askOpenCodeSideTurn } from '@/modules/aidev-tools/opencode-side-turn.client.js';
 import { sessionsDb } from '@/modules/database/index.js';
-import { codexSandboxConfig, noteCodexTurnError } from '@/shared/index.js';
+import { claudeCliModel, codexSandboxConfig, noteCodexTurnError } from '@/shared/index.js';
 import type { AidevSideEngine } from '@/shared/index.js';
 
 /**
@@ -126,7 +126,7 @@ async function askClaude(input: AgentDesignInput, prompt: string, cwd: string): 
       prompt,
       options: {
         // `tools` is what limits the turn; `allowedTools` alone only skips the permission prompt
-        cwd, maxTurns: input.maxTurns, model: input.model ?? 'opus', allowedTools: input.tools, tools: input.tools, permissionMode: 'bypassPermissions',
+        cwd, maxTurns: input.maxTurns, model: claudeCliModel(input.model ?? 'opus'), allowedTools: input.tools, tools: input.tools, permissionMode: 'bypassPermissions',
         systemPrompt: input.prompt, settingSources: [], persistSession: false, abortController,
       },
     });

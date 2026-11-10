@@ -4,7 +4,7 @@ import { query } from '@anthropic-ai/claude-agent-sdk';
 import { Codex } from '@openai/codex-sdk';
 
 import { askOpenCodeSideTurn } from '@/modules/aidev-tools/opencode-side-turn.client.js';
-import { codexSandboxConfig, noteCodexTurnError } from '@/shared/index.js';
+import { claudeCliModel, codexSandboxConfig, noteCodexTurnError } from '@/shared/index.js';
 import type { AidevSideEngine } from '@/shared/index.js';
 
 /**
@@ -91,7 +91,7 @@ async function askClaude(system: string, prompt: string, model: string | null): 
   const stream = query({
     prompt,
     options: {
-      cwd: os.homedir(), maxTurns: 8, model: model ?? 'sonnet', allowedTools: ['WebSearch', 'WebFetch'], tools: ['WebSearch', 'WebFetch'],
+      cwd: os.homedir(), maxTurns: 8, model: claudeCliModel(model ?? 'sonnet'), allowedTools: ['WebSearch', 'WebFetch'], tools: ['WebSearch', 'WebFetch'],
       permissionMode: 'bypassPermissions', systemPrompt: system, settingSources: [],
       // an internal one-shot job: no transcript, so it never shows up as a conversation
       persistSession: false,

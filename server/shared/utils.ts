@@ -678,6 +678,18 @@ export function buildDefaultProviderCurrentActiveModel(
   };
 }
 
+/**
+ * The model name to hand the Claude CLI for a platform model name. The platform's `best` (routing D4,
+ * model floors, provider policy, the model picker) means the strongest model, Fable. Claude Code 2.1.276
+ * resolved its own `best` alias to Fable, but newer versions (2.1.322, 2026-11-11) resolve it to the
+ * account's default (Opus), so `best` is sent as `fable` — the CLI's alias for its latest Fable. Every
+ * other name is passed through unchanged. Used by the Claude runtime and the aidev side turns
+ * (verifier, designer, knowledge check, lesson curator), the code that hands a model to the SDK.
+ */
+export function claudeCliModel<T extends string | null | undefined>(model: T): T | 'fable' {
+  return model === 'best' ? 'fable' : model;
+}
+
 // ---------------------------
 //----------------- WEBSOCKET PAYLOAD PARSING UTILITIES ------------
 /**

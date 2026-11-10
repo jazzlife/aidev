@@ -3,7 +3,7 @@ import { Codex } from '@openai/codex-sdk';
 
 import { askOpenCodeSideTurn } from '@/modules/aidev-tools/opencode-side-turn.client.js';
 import { sessionsDb } from '@/modules/database/index.js';
-import { codexSandboxConfig, noteCodexTurnError } from '@/shared/index.js';
+import { claudeCliModel, codexSandboxConfig, noteCodexTurnError } from '@/shared/index.js';
 import type { AidevSideEngine } from '@/shared/index.js';
 
 /**
@@ -89,7 +89,7 @@ async function askClaude(prompt: string, cwd: string, model: string): Promise<st
   let output = '';
   const stream = query({
     prompt,
-    options: { cwd, maxTurns: 1, model, allowedTools: [], tools: [], permissionMode: 'bypassPermissions', systemPrompt: CURATOR_PROMPT, settingSources: [],
+    options: { cwd, maxTurns: 1, model: claudeCliModel(model), allowedTools: [], tools: [], permissionMode: 'bypassPermissions', systemPrompt: CURATOR_PROMPT, settingSources: [],
       // an internal one-shot call: no transcript, so it never shows up as a conversation in the user's project
       persistSession: false },
   });

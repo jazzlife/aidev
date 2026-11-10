@@ -32,7 +32,7 @@ import { resolveClaudeCodeExecutablePath } from '@/shared/claude-cli-path.js';
 import { aidevToolsService, composeAgentInstructions, sanitizeAidevOptions } from '@/modules/aidev-tools/index.js';
 import { claudeAuthStore, isClaudeAuthFailure, isClaudeUsageLimit } from '@/modules/providers/services/claude-auth-store.service.js';
 import { providerUsageLimitsService } from '@/modules/providers/services/provider-usage-limits.service.js';
-import { isModelScopedUsageLimit } from '@/shared/utils.js';
+import { claudeCliModel, isModelScopedUsageLimit } from '@/shared/utils.js';
 import {
   createNotificationEvent,
   notifyBackgroundWorkCompleted,
@@ -270,7 +270,7 @@ function applyAidevRouting(sdkOptions, rawAidev) {
       description: aidev.agent.description || `Specialist agent ${aidev.agent.name}`,
       prompt: instructions,
       ...(aidev.agent.tools && aidev.agent.tools.length ? { tools: aidev.agent.tools } : {}),
-      ...(aidev.agent.model ? { model: aidev.agent.model } : {}),
+      ...(aidev.agent.model ? { model: claudeCliModel(aidev.agent.model) } : {}),
       ...(aidev.agent.skills && aidev.agent.skills.length ? { skills: aidev.agent.skills } : {}),
       ...(aidev.agent.maxTurns ? { maxTurns: aidev.agent.maxTurns } : {}),
     },
@@ -1005,7 +1005,9 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
 
     // Fable's weekly share (2026-10-09): a turn re-run after Fable refused, or started while that share
     // is known to be spent, goes to Opus — the account's own windows still have room, so handing the
-    // work to the other engine would be wrong.
+    // work to the other engine would be wrong. The platform's `best` runs as `fable` (claudeCliModel), so a
+    // D4 turn is a Fable turn here too.
+    sdkOptions.model = claudeCliModel(sdkOptions.model);
     fableTurn = /^fable/i.test(String(sdkOptions.model || ''));
     if (fableTurn && (options.fallbackFromFable || fableLimitedUntil > Date.now())) {
       sdkOptions.model = FABLE_FALLBACK_MODEL;

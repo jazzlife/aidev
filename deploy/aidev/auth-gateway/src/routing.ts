@@ -99,8 +99,8 @@ export type RouteInput = { text: string; sessionId?: string | null; sessionEngin
   /** this chat's own ceiling (a new chat sends it with its first message; later it is stored per session) */ effortCap?: Partial<Record<Engine, string>> | null;
   /** this chat's own model floor (same lifecycle as effortCap) */ modelFloor?: Partial<Record<Engine, string>> | null };
 
-// Each engine's ladder ends on its strongest model: Codex gpt-6-astra, Claude 'best' (= Fable when the
-// subscription has it, else the latest Opus — resolved by the Claude CLI). 'opusplan' is not used at
+// Each engine's ladder ends on its strongest model: Codex gpt-6-astra, Claude 'best' (= the latest Fable: the
+// runtime hands it to the CLI as 'fable', claudeCliModel; Opus while Fable's weekly share is spent). 'opusplan' is not used at
 // the top: it plans with Opus but executes with Sonnet, i.e. weaker than D3 on the hardest tasks.
 // OpenCode has no column: its models differ per account, so it always runs on its provider policy (store.providerPolicy).
 export const TIER_TABLE: Record<number, Partial<Record<Engine, { model: string; effort: string }>>> = {

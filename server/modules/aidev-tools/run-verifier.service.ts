@@ -3,7 +3,7 @@ import { Codex } from '@openai/codex-sdk';
 
 import { askOpenCodeSideTurn } from '@/modules/aidev-tools/opencode-side-turn.client.js';
 import { sessionsDb } from '@/modules/database/index.js';
-import { codexCheckSandboxMode, codexSandboxConfig, currentCodexAuthFailure, noteCodexTurnError } from '@/shared/index.js';
+import { claudeCliModel, codexCheckSandboxMode, codexSandboxConfig, currentCodexAuthFailure, noteCodexTurnError } from '@/shared/index.js';
 import type { AidevSideEngine } from '@/shared/index.js';
 
 /**
@@ -231,7 +231,7 @@ async function askClaude(prompt: string, cwd: string, model: string, effort: str
     const stream = query({
       prompt,
       options: {
-        cwd, maxTurns: 25, model, ...(effort ? { effort: effort as 'high' } : {}), allowedTools: VERIFIER_TOOLS, tools: VERIFIER_TOOLS, permissionMode: 'bypassPermissions', systemPrompt,
+        cwd, maxTurns: 25, model: claudeCliModel(model), ...(effort ? { effort: effort as 'high' } : {}), allowedTools: VERIFIER_TOOLS, tools: VERIFIER_TOOLS, permissionMode: 'bypassPermissions', systemPrompt,
         // an internal side turn: no transcript, so it never shows up as a conversation in the user's project
         settingSources: [], persistSession: false, abortController,
       },
