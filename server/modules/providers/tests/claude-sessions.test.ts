@@ -499,6 +499,57 @@ test('parallel tool calls are not mistaken for an edit', { concurrency: false },
   }
 });
 
+test('API request rows Claude Code writes beside the conversation are not read as chat', { concurrency: false }, async () => {
+  const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'claude-api-request-rows-'));
+  const sessionId = 'claude-api-request-session';
+
+  try {
+    const transcriptPath = path.join(tempRoot, `${sessionId}.jsonl`);
+    const toolUse = { type: 'tool_use', id: 'tool-1', name: 'Bash', input: { command: 'ls' } };
+    const toolResult = { type: 'tool_result', tool_use_id: 'tool-1', content: 'a.txt' };
+    // Claude Code 2.1.322 records each request it sent: the same tool call and
+    // result again, plus an injected "Tool loaded." text, in rows with no uuid.
+    const rows = [
+      {
+        type: 'user', uuid: 'q1', parentUuid: null, sessionId,
+        timestamp: '2026-11-11T10:00:00.000Z',
+        message: { role: 'user', content: [{ type: 'text', text: 'list files' }] },
+      },
+      {
+        type: 'assistant', uuid: 'qa1', parentUuid: 'q1', sessionId,
+        timestamp: '2026-11-11T10:00:01.000Z',
+        message: { role: 'assistant', model: 'claude-opus-5-5', content: [toolUse] },
+      },
+      {
+        type: 'user', uuid: 'qr1', parentUuid: 'qa1', sessionId,
+        timestamp: '2026-11-11T10:00:02.000Z',
+        message: { role: 'user', content: [toolResult] },
+      },
+      { type: 'api-request-blob', sessionId, hash: 'h1', message: { role: 'assistant', content: [toolUse] } },
+      {
+        type: 'api-request-blob', sessionId, hash: 'h2',
+        message: { role: 'user', content: [toolResult, { type: 'text', text: 'Tool loaded.' }] },
+      },
+      { type: 'api-request', sessionId, id: 'r1', timestamp: '2026-11-11T10:00:03.000Z', tail: ['h1', 'h2'] },
+    ];
+    await writeFile(transcriptPath, `${rows.map((row) => JSON.stringify(row)).join('\n')}\n`, 'utf8');
+
+    await withIsolatedDatabase(async () => {
+      const now = new Date().toISOString();
+      sessionsDb.createSession(sessionId, 'claude', tempRoot, 'API request rows', now, now, transcriptPath);
+
+      const history = await new ClaudeSessionsProvider().fetchHistory(sessionId, {
+        providerSessionId: sessionId,
+      });
+
+      assert.equal(history.messages.filter((message) => message.kind === 'tool_use').length, 1);
+      assert.equal(history.messages.some((message) => message.content === 'Tool loaded.'), false);
+    });
+  } finally {
+    await rm(tempRoot, { recursive: true, force: true });
+  }
+});
+
 test('resolving an edit anchor returns the assistant turn before it', { concurrency: false }, async () => {
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), 'claude-edit-anchor-'));
 

@@ -690,6 +690,18 @@ export function claudeCliModel<T extends string | null | undefined>(model: T): T
   return model === 'best' ? 'fable' : model;
 }
 
+/**
+ * True for a Claude transcript row that records an API request rather than the conversation. Claude
+ * Code 2.1.322 (2026-11-11) writes `api-request`, `api-request-shape` and `api-request-blob` rows into
+ * the session JSONL next to the conversation; a blob carries a full `message` — every tool call again,
+ * and tool results with an injected "Tool loaded." text — but has no `uuid`. Readers that take any row
+ * with a `message` must skip these, or the chat shows each command twice and "Tool loaded." lines.
+ * Used by the Claude session history reader and the session search.
+ */
+export function isClaudeApiRequestRow(row: { type?: unknown } | null | undefined): boolean {
+  return typeof row?.type === 'string' && row.type.startsWith('api-request');
+}
+
 // ---------------------------
 //----------------- WEBSOCKET PAYLOAD PARSING UTILITIES ------------
 /**
