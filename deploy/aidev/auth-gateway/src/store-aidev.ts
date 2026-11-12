@@ -1047,8 +1047,13 @@ export function aidevMethods(db: Database.Database) {
     targetById(id: number) { return db.prepare('SELECT * FROM targets WHERE id=?').get(id) as TargetRow | undefined; },
     targetByTokenHash(hash: string) { return db.prepare('SELECT * FROM targets WHERE token_hash=?').get(hash) as TargetRow | undefined; },
     targetByPairingCode(code: string) { return db.prepare('SELECT * FROM targets WHERE pairing_code=? AND pairing_expires>?').get(code, Date.now()) as TargetRow | undefined; },
+    /** A PC's name as agents write it (`target`): its format, and unique among the owner's PCs (`exceptId`: the PC being renamed). */
+    checkTargetName(userId: number, name: string, exceptId?: number) {
+      if (!/^[a-z0-9][a-z0-9-]{1,40}$/.test(name)) throw new Error('Target name: lowercase letters, digits and dashes, 2-41 chars');
+      if (db.prepare('SELECT 1 FROM targets WHERE user_id=? AND name=? AND id!=?').get(userId, name, exceptId ?? -1)) throw new Error(`이미 ${name} 이름의 PC가 있습니다`);
+    },
     addTarget(t: { userId: number; name: string; platform?: string | null; tags?: string[]; description?: string; policy?: string; pairingCode: string; pairingExpires: number }) {
-      if (!/^[a-z0-9][a-z0-9-]{1,40}$/.test(t.name)) throw new Error('Target name: lowercase letters, digits and dashes, 2-41 chars');
+      m.checkTargetName(t.userId, t.name);
       if (t.policy && !POLICIES.includes(t.policy)) throw new Error('policy must be full|auto|ask|deny');
       const r = db.prepare('INSERT INTO targets(user_id,name,platform,tags,description,pairing_code,pairing_expires,policy,created_at) VALUES(?,?,?,?,?,?,?,?,?)')
         .run(t.userId, t.name, t.platform ?? null, json(t.tags ?? []), (t.description ?? '').slice(0, 600), t.pairingCode, t.pairingExpires, t.policy ?? 'full', Date.now());
@@ -1057,6 +1062,8 @@ export function aidevMethods(db: Database.Database) {
     updateTarget(userId: number, id: number, p: Partial<{ name: string; description: string; tags: string[]; policy: string; allowedRoots: string[] | null; pairingCode: string | null; pairingExpires: number | null; tokenHash: string | null; platform: string | null; arch: string | null; capabilities: unknown; status: string; lastSeen: number | null }>) {
       const cur = m.target(userId, id); if (!cur) throw new Error('Target not found');
       if (p.policy && !POLICIES.includes(p.policy)) throw new Error('policy must be full|auto|ask|deny');
+      // a rename (2026-11-12): agents find the PC by its new name at their next call; the runner keeps the name it paired with for its tray
+      if (p.name !== undefined && p.name !== cur.name) m.checkTargetName(userId, p.name, id);
       db.prepare('UPDATE targets SET name=?,description=?,tags=?,policy=?,allowed_roots=?,pairing_code=?,pairing_expires=?,token_hash=?,platform=?,arch=?,capabilities=?,status=?,last_seen=? WHERE id=?')
         .run(p.name ?? cur.name, p.description === undefined ? cur.description : p.description.slice(0, 600), p.tags === undefined ? cur.tags : json(p.tags), p.policy ?? cur.policy,
           p.allowedRoots === undefined ? cur.allowed_roots : json(p.allowedRoots), p.pairingCode === undefined ? cur.pairing_code : p.pairingCode, p.pairingExpires === undefined ? cur.pairing_expires : p.pairingExpires,

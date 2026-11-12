@@ -38,6 +38,8 @@ type Target = {
 // full: agents never wait (the default) — every command is still recorded, pushed to the user and stoppable
 const POLICY_LABEL: Record<Target['policy'], string> = { full: '전체 권한 (확인 없음)', auto: '위험 명령만 확인', ask: '변경 명령은 확인', deny: '실행 금지' };
 const POLL_MS = 5000;
+// a PC's name as agents write it (`target`); the gateway checks the same rule and that the owner has no other PC by that name
+const TARGET_NAME = /^[a-z0-9][a-z0-9-]{1,40}$/;
 // below this panel width the header buttons and the row badges keep only their icons (the text moves to the tooltip);
 // a row's action buttons keep their text and wrap instead — a delete and its confirmation must read differently
 const COMPACT_PX = 380;
@@ -157,6 +159,8 @@ function TargetRow({ target, files, latest, compact, reload, setNote }: { target
   const [open, setOpen] = useState(false);
   // confirmDelete: deleting disconnects the runner immediately (leaving a share closes this account's screens), so it takes a second click
   const [confirmDelete, setConfirmDelete] = useState(false);
+  // rename: the name being typed (null: not renaming — the field shows the current name, kept fresh by the poll)
+  const [rename, setRename] = useState<string | null>(null);
   const caps = target.capabilities;
   // runner 0.20.0+ removes itself from the PC when its target is deleted (now, or when it next connects)
   const removesItself = Boolean(caps?.features?.includes('remove'));
@@ -169,6 +173,11 @@ function TargetRow({ target, files, latest, compact, reload, setNote }: { target
       if (message) setNote(message);
       reload();
     } catch (error) { setNote(error instanceof Error ? error.message : '실패했습니다'); }
+  };
+  const renamed = rename !== null && rename !== target.name;
+  const saveName = () => {
+    if (rename === null || rename === target.name || !TARGET_NAME.test(rename)) return;
+    void act(() => api.targets.update(target.id, { name: rename }), () => { setRename(null); return `${target.name} → ${rename} — agent는 다음 명령부터 새 이름으로 이 PC를 찾습니다`; });
   };
   const state = target.online ? { dot: 'bg-emerald-500', text: '연결됨' } : target.paired ? { dot: 'bg-muted-foreground/40', text: `오프라인 · ${ago(target.last_seen)}` } : { dot: 'bg-amber-500', text: '페어링 대기' };
   return (
@@ -201,6 +210,18 @@ function TargetRow({ target, files, latest, compact, reload, setNote }: { target
           {target.update?.error ? <div className="break-words text-rose-600">러너 업데이트 실패 ({target.update.from} → {target.update.to}): {target.update.error}</div> : null}
           {shared ? <div className="text-muted-foreground">원격 실행: {POLICY_LABEL[target.policy]} · {target.shared_by} 님이 관리</div> : (
             <>
+              <div className="flex flex-wrap items-center gap-1.5">
+                <label className="flex items-center gap-1.5" title="agent가 이 PC를 부르는 이름 (영문 소문자·숫자·-) — PC의 러너 트레이에는 페어링 때 이름이 그대로 보입니다">
+                  <span className="text-muted-foreground">이름</span>
+                  <input aria-label="PC 이름" maxLength={41} value={rename ?? target.name} onChange={(event) => setRename(event.target.value.toLowerCase().replace(/[^a-z0-9-]/g, '-'))} onKeyDown={(event) => { if (event.key === 'Enter') saveName(); if (event.key === 'Escape') setRename(null); }} className="h-6 w-36 rounded border border-border bg-background px-1.5" />
+                </label>
+                {renamed ? (
+                  <>
+                    <button type="button" disabled={!TARGET_NAME.test(rename ?? '')} onClick={saveName} className={`${BUTTON} border-border`}><Check size={11} /> 이름 변경</button>
+                    <button type="button" onClick={() => setRename(null)} className={`${BUTTON} border-border`}>취소</button>
+                  </>
+                ) : null}
+              </div>
               <label className="flex items-center gap-1.5">
                 <span className="text-muted-foreground">원격 실행</span>
                 <select aria-label="실행 정책" value={target.policy} onChange={(event) => { void act(() => api.targets.update(target.id, { policy: event.target.value })); }} className="h-6 rounded border border-border bg-background px-1">
