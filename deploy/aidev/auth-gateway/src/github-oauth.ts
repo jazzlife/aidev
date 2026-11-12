@@ -23,7 +23,7 @@ export class GithubOauthError extends Error { constructor(public status: number,
 
 const KV_KEY = 'github.oauth';
 const STATE_TTL_MS = 10 * 60_000;
-const SCOPE = 'repo read:user';
+const SCOPE = 'repo workflow read:org read:user';
 /** Where a finished login may send the browser back: an app path on this origin. */
 export const safeReturn = (value: string | null) => (value && /^\/(m\/)?[A-Za-z0-9/_\-?=&.%]*$/.test(value) && !value.startsWith('//') ? value : '/m/projects');
 const withParams = (path: string, params: Record<string, string>) => `${path}${path.includes('?') ? '&' : '?'}${new URLSearchParams(params).toString()}`;

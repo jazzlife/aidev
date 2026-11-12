@@ -38,7 +38,7 @@ assert.equal(JSON.parse(kv.get('github.oauth')).clientSecret, 'a'.repeat(40));
 const url = new URL(oauth.start(3, '/m/projects?add=clone'));
 assert.equal(url.origin + url.pathname, 'https://github.com/login/oauth/authorize');
 assert.equal(url.searchParams.get('redirect_uri'), 'https://dev.nado.work/_gateway/github/callback');
-assert.equal(url.searchParams.get('scope'), 'repo read:user');
+assert.equal(url.searchParams.get('scope'), 'repo workflow read:org read:user');
 const state = url.searchParams.get('state');
 
 const done = await oauth.callback('good', state, null);

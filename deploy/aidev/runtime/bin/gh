@@ -1,0 +1,11 @@
+#!/bin/sh
+# gh signed in as the GitHub account connected in the app, unless gh has a login of its own. entrypoint.mjs puts this
+# directory first on PATH; the token comes from git-credential-github.mjs, so it follows a reconnect.
+real=
+for p in /usr/bin/gh /usr/local/bin/gh "$HOME/.local/bin/gh"; do [ -x "$p" ] && { real=$p; break; }; done
+[ -n "$real" ] || { echo "gh: GitHub CLI is not installed" >&2; exit 127; }
+if [ -z "${GH_TOKEN:-}${GITHUB_TOKEN:-}" ] && ! "$real" auth token --hostname github.com >/dev/null 2>&1; then
+  token=$(printf 'protocol=https\nhost=github.com\n\n' | node /srv/app/current/runtime/git-credential-github.mjs get | sed -n 's/^password=//p')
+  [ -n "$token" ] && export GH_TOKEN="$token"
+fi
+exec "$real" "$@"

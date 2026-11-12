@@ -16,7 +16,8 @@ process.env.JWT_SECRET = fs.readFileSync('/run/secrets/runtime-jwt', 'utf8').tri
 if (process.env.JWT_SECRET.length < 32) throw new Error('Runtime key too short');
 const username = process.env.AIDEV_RUNTIME;
 if (!/^(user\d{2}|u[a-f0-9]{24})$/.test(username ?? '')) throw new Error('Invalid runtime identity');
-process.env.PATH = `${APP}/node_modules/.bin:${process.env.PATH ?? ''}`;
+// runtime/bin first: its `gh` signs in as the GitHub account connected in the app.
+process.env.PATH = `/srv/app/current/runtime/bin:${APP}/node_modules/.bin:${process.env.PATH ?? ''}`;
 // Every git here (agents' shells, the git panel) authenticates to github.com with the account connected in the app.
 // Command-scope config comes after the user's own helpers, so a gh login they set up still answers first.
 // (GIT_CONFIG_PARAMETERS, not GIT_CONFIG_KEY_n: Codex drops *KEY* variables from its shells.)

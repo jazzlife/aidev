@@ -14,6 +14,10 @@ RUN test -n "$CLAUDE_CODE_VERSION" && test -n "$OPENCODE_VERSION" && apt-get upd
  && rm -rf /var/lib/apt/lists/* \
  && npm install -g @anthropic-ai/claude-code@${CLAUDE_CODE_VERSION} opencode-ai@${OPENCODE_VERSION} \
  && useradd --uid 1001 --create-home --shell /bin/bash cloudcli
+# GitHub CLI (creating repositories, workflows, secrets); signed in by the release's runtime/bin/gh wrapper.
+RUN curl -fsSL https://cli.github.com/packages/githubcli-archive-keyring.gpg -o /usr/share/keyrings/githubcli-archive-keyring.gpg \
+ && echo "deb [arch=$(dpkg --print-architecture) signed-by=/usr/share/keyrings/githubcli-archive-keyring.gpg] https://cli.github.com/packages stable main" > /etc/apt/sources.list.d/github-cli.list \
+ && apt-get update && apt-get install -y --no-install-recommends gh && rm -rf /var/lib/apt/lists/*
 # SDB is vendor-distributed; injected at build time when a checksum-verified archive is configured.
 RUN mkdir -p /opt/tizen-tools /srv/app \
  && if [ -n "$SDB_TARBALL_URL" ]; then curl -fsSL "$SDB_TARBALL_URL" -o /tmp/sdb.zip && echo "$SDB_SHA256  /tmp/sdb.zip" | sha256sum -c - && unzip -q /tmp/sdb.zip -d /opt/tizen-tools && install -m 0755 /opt/tizen-tools/data/tools/sdb /usr/local/bin/sdb && rm /tmp/sdb.zip; fi \
