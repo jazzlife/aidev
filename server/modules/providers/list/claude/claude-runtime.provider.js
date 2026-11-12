@@ -787,6 +787,18 @@ export function startsBackgroundWork(sdkMessage) {
 }
 
 /**
+ * Whether a `result` closes a turn the CLI ran for a task notification rather than for a prompt we sent
+ * (`origin.kind === 'task-notification'`, e.g. the "N background tasks didn't finish before the previous
+ * session ended" report the CLI queues ahead of the prompt on resume). Used by queryClaudeSDK below and its test.
+ *
+ * @param {Object} sdkMessage - SDK stream message
+ * @returns {boolean} True for a task-notification turn's `result`
+ */
+export function isTaskNotificationResult(sdkMessage) {
+  return sdkMessage?.type === 'result' && sdkMessage.origin?.kind === 'task-notification';
+}
+
+/**
  * Builds the SDK user messages for one turn.
  *
  * Always returns SDKUserMessage records rather than a bare string: a string
@@ -1211,11 +1223,14 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
         ws.send(msg);
       }
 
+      // A turn the CLI ran on its own for a task notification before our prompt's turn ended — not its end.
+      const notificationTurnResult = !turnCompleteSent && isTaskNotificationResult(message);
+
       // Extract and send token budget updates from assistant usage payloads,
       // falling back to the turn's cumulative bill only for SDK builds that
       // report no per-assistant usage at all.
       const tokenBudgetData = extractTokenBudget(message)
-        || (assistantBudgetSent ? null : extractCumulativeTokenBudget(message));
+        || (assistantBudgetSent || notificationTurnResult ? null : extractCumulativeTokenBudget(message));
       if (tokenBudgetData) {
         if (message.type === 'assistant') {
           assistantBudgetSent = true;
@@ -1245,7 +1260,14 @@ async function queryClaudeSDK(command, options = {}, ws, context) {
         }
       }
 
-      if (message.type === 'result') {
+      if (notificationTurnResult) {
+        // Resuming a chat whose previous process left background tasks behind, the CLI first runs a turn of its
+        // own reporting them stopped, and its `result` lands before our prompt is even read (2026-11-12: a Modules
+        // turn was shown finished, notified and verified 1s in while it went on for minutes). Our prompt's own
+        // `result` is still to come, so nothing is reported here; the idle countdown only guards against it never
+        // coming, so the CLI cannot be held open forever.
+        scheduleRelease();
+      } else if (message.type === 'result') {
         // The turn is done as far as the client is concerned.
         const abortPending = sessionKey() ? abortedSessionIds.has(sessionKey()) : false;
         // `terminal_reason: 'blocking_limit'` is deliberately not read as a usage
