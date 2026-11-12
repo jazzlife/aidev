@@ -412,16 +412,19 @@ export function useChatSessionState({
   /*  addMessage                                                       */
   /* ---------------------------------------------------------------- */
 
-  const addMessage = useCallback((msg: ChatMessage) => {
-    if (!activeSessionId) {
+  // `sessionId` names the session the message belongs to when it may not be the
+  // one on screen: a send that finishes after the user opened another chat.
+  const addMessage = useCallback((msg: ChatMessage, sessionId?: string | null) => {
+    const targetSessionId = sessionId ?? activeSessionId;
+    if (!targetSessionId) {
       // No session yet — show as pending until the backend creates one
       setPendingUserMessage(msg);
       return;
     }
     const prov = readSelectedProvider();
-    const normalized = chatMessageToNormalized(msg, activeSessionId, prov);
+    const normalized = chatMessageToNormalized(msg, targetSessionId, prov);
     if (normalized) {
-      sessionStore.appendRealtime(activeSessionId, normalized);
+      sessionStore.appendRealtime(targetSessionId, normalized);
     }
   }, [activeSessionId, sessionStore]);
 

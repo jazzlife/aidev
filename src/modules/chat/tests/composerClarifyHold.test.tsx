@@ -7,7 +7,7 @@ import { beforeEach, test, vi } from 'vitest';
 import type * as AidevRouter from '@/modules/aidev-router';
 import type { AidevSendDecoration } from '@/modules/aidev-router';
 import { useChatComposerState } from '@/modules/chat/hooks/useChatComposerState';
-import { resetChatDrafts } from '@/shared/chatDrafts';
+import { readDraftText, resetChatDrafts } from '@/shared/chatDrafts';
 import type { PermissionMode, Project } from '@/shared/types';
 
 /**
@@ -30,6 +30,7 @@ vi.mock('@/shared/api', () => {
         savePreferences: () => okJson({ success: true, preferences: {} }),
       },
       commands: { list: () => okJson({ success: true, commands: [] }) },
+      providers: { createSession: () => okJson({ data: { sessionId: 'session-new', sessionName: '새 채팅' } }) },
       files: { search: () => okJson({ success: true, files: [] }) },
     },
   };
@@ -54,11 +55,17 @@ const decoration = (askClarify: boolean, extra: Partial<AidevSendDecoration> = {
 
 const submitEvent = { preventDefault: () => undefined } as unknown as FormEvent<HTMLFormElement>;
 
-function renderComposer(sent: Array<Record<string, unknown>>) {
-  return renderHook(() => useChatComposerState({
-    selectedProject: PROJECT,
-    selectedSession: { id: 'session-a' },
-    currentSessionId: 'session-a',
+type ComposerArgs = Parameters<typeof useChatComposerState>[0];
+
+function renderComposer(
+  sent: Array<Record<string, unknown>>,
+  extra: Partial<ComposerArgs> = {},
+  initialProps: { project: Project; sessionId: string | null } = { project: PROJECT, sessionId: 'session-a' },
+) {
+  return renderHook(({ project, sessionId }: { project: Project; sessionId: string | null }) => useChatComposerState({
+    selectedProject: project,
+    selectedSession: sessionId ? { id: sessionId } : null,
+    currentSessionId: sessionId,
     provider: 'claude',
     permissionMode: 'default',
     cyclePermissionMode: () => undefined,
@@ -73,7 +80,8 @@ function renderComposer(sent: Array<Record<string, unknown>>) {
     addMessage: () => undefined,
     setIsUserScrolledUp: () => undefined,
     setPendingPermissionRequests: () => undefined,
-  }));
+    ...extra,
+  }), { initialProps });
 }
 
 beforeEach(() => {
@@ -159,4 +167,102 @@ test('Enter clears the composer at once and shows the command as sending; a repe
   assert.equal(sent[0].content, '테스트 돌려줘');
   assert.equal(view.result.current.sending, null);
   assert.equal(view.result.current.input, '테스트 돌려줘', 'the send finishing does not wipe what was typed meanwhile');
+});
+
+test('a command still routing stays with its own chat when another project\'s chat is opened meanwhile', async () => {
+  // switching chats between Enter and the send used to show the command as sending in the other chat, and a held
+  // command was put back into whichever composer was open — the other chat's, where it then stayed as its draft
+  let finish: (value: unknown) => void = () => undefined;
+  routing.beforeSend = () => new Promise((resolve) => { finish = resolve; });
+  const sent: Array<Record<string, unknown>> = [];
+  const view = renderComposer(sent);
+  const other: Project = { projectId: 'project-2', displayName: 'Project Two', fullPath: '/tmp/project-two' };
+
+  await act(async () => { view.result.current.setInput('로그인 버튼 고쳐줘'); });
+  let first: Promise<void> = Promise.resolve();
+  await act(async () => { first = view.result.current.handleSubmit(submitEvent); });
+  view.rerender({ project: other, sessionId: 'session-b' });
+  assert.equal(view.result.current.sending, null, 'the other chat does not show it as sending');
+
+  await act(async () => { finish(decoration(true)); await first; });
+  assert.equal(sent.length, 0);
+  assert.equal(view.result.current.input, '', 'the other chat\'s composer stays as it was');
+  assert.equal(readDraftText('session-b'), '');
+  // read through a call: an assertion on the property would narrow it to null for the rest of the test
+  const clarifyQuestion = () => view.result.current.clarify?.question;
+  assert.equal(clarifyQuestion(), undefined, 'the question belongs to the chat it was asked in');
+
+  view.rerender({ project: PROJECT, sessionId: 'session-a' });
+  await vi.waitFor(() => assert.equal(view.result.current.input, '로그인 버튼 고쳐줘'));
+  assert.equal(clarifyQuestion(), '어느 화면의 로그인 버튼인가요?');
+});
+
+test('each chat keeps its own attachments, message being replaced, and send lock', async () => {
+  // a command routing in one chat used to block Enter in every other chat (nothing happened), and the files and the
+  // sent message being edited in one chat followed the user into the next
+  const finishes: Array<(value: unknown) => void> = [];
+  routing.beforeSend = () => new Promise((resolve) => { finishes.push(resolve); });
+  const sent: Array<Record<string, unknown>> = [];
+  const view = renderComposer(sent);
+  const other: Project = { projectId: 'project-2', displayName: 'Project Two', fullPath: '/tmp/project-two' };
+  const file = new File(['x'], 'a.txt', { type: 'text/plain' });
+
+  await act(async () => {
+    view.result.current.setAttachedFiles([file]);
+    view.result.current.beginEditMessage({ type: 'user', content: '고칠 메시지', timestamp: new Date(), transcriptAnchorId: 'anchor-a' });
+  });
+  assert.equal(view.result.current.editingAnchorId, 'anchor-a');
+  view.rerender({ project: other, sessionId: 'session-b' });
+  assert.deepEqual(view.result.current.attachedFiles, [], 'chat B does not show chat A\'s files');
+  assert.equal(view.result.current.editingAnchorId, null, 'nor the message chat A is replacing');
+
+  view.rerender({ project: PROJECT, sessionId: 'session-a' });
+  assert.deepEqual(view.result.current.attachedFiles, [file]);
+  await act(async () => { view.result.current.setAttachedFiles([]); view.result.current.cancelEditMessage(); });
+  await act(async () => { view.result.current.setInput('A 명령'); });
+  let sendA: Promise<void> = Promise.resolve();
+  await act(async () => { sendA = view.result.current.handleSubmit(submitEvent); });
+
+  view.rerender({ project: other, sessionId: 'session-b' });
+  await act(async () => { view.result.current.setInput('B 명령'); });
+  let sendB: Promise<void> = Promise.resolve();
+  await act(async () => { sendB = view.result.current.handleSubmit(submitEvent); });
+  assert.equal(finishes.length, 2, 'chat B sends while chat A is still routing');
+  assert.equal(view.result.current.sending, 'B 명령');
+
+  await act(async () => { finishes[1](decoration(false)); await sendB; });
+  assert.deepEqual(sent.map((message) => [message.sessionId, message.content]), [['session-b', 'B 명령']]);
+  view.rerender({ project: PROJECT, sessionId: 'session-a' });
+  assert.equal(view.result.current.sending, 'A 명령', 'chat A still shows its own send');
+
+  await act(async () => { finishes[0](decoration(false)); await sendA; });
+  assert.deepEqual(sent.map((message) => [message.sessionId, message.content]), [['session-b', 'B 명령'], ['session-a', 'A 명령']]);
+  assert.equal(view.result.current.sending, null);
+});
+
+test('a new chat\'s session being created does not pull back a user who moved to another chat', async () => {
+  // the new session used to open by force the moment it was created, and its first message was added to the
+  // transcript on screen — the other chat's
+  for (const moveAway of [true, false]) {
+    let finish: (value: unknown) => void = () => undefined;
+    routing.beforeSend = () => new Promise((resolve) => { finish = resolve; });
+    const sent: Array<Record<string, unknown>> = [];
+    const established: Array<[string, unknown]> = [];
+    const added: Array<[unknown, unknown]> = [];
+    const view = renderComposer(sent, {
+      onSessionEstablished: (sessionId, _context, options) => { established.push([sessionId, options]); },
+      addMessage: (message, sessionId) => { added.push([message.content, sessionId]); },
+    }, { project: PROJECT, sessionId: null });
+
+    await act(async () => { view.result.current.setInput('새 기능 만들어줘'); });
+    let send: Promise<void> = Promise.resolve();
+    await act(async () => { send = view.result.current.handleSubmit(submitEvent); });
+    if (moveAway) view.rerender({ project: { ...PROJECT, projectId: 'project-2' }, sessionId: 'session-b' });
+    await act(async () => { finish(decoration(false)); await send; });
+
+    assert.deepEqual(established, [['session-new', { open: !moveAway }]], moveAway ? 'moved away: stays put' : 'still there: opens it');
+    assert.deepEqual(added, [['새 기능 만들어줘', 'session-new']], 'the message goes into the new session');
+    assert.equal(sent[0]?.sessionId, 'session-new');
+    view.unmount();
+  }
 });

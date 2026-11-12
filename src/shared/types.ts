@@ -437,6 +437,14 @@ export type SessionEstablishedContext = {
   summary?: string | null;
 };
 
+/**
+ * How the chat composer (useChatComposerState) tells ChatInterface to treat a session it just created for a new chat:
+ * `open` is false when the user moved to another chat while it was being created, so the screen stays where they are.
+ */
+export type SessionEstablishedOptions = {
+  open: boolean;
+};
+
 /** The result returned for a tool call, carrying its content, error flag, timestamp and any provider-specific extras that the tool renderers read. */
 export type ToolResult = {
   content?: unknown;

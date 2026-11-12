@@ -12,6 +12,7 @@ import type {
   Project,
   ProjectSession,
   SessionEstablishedContext,
+  SessionEstablishedOptions,
   SessionNavigationOptions,
 } from '@/shared/types';
 import type { AidevEngine } from '@/shared/types';
@@ -216,11 +217,16 @@ function ChatInterface({
   // Brand-new conversation: the composer allocated a stable session id via
   // the session gateway before the first send. Record it locally and put it
   // in the URL — this id never changes again, so there is no later handoff.
-  const handleSessionEstablished = useCallback<NonNullable<ChatInterfaceProps['onSessionEstablished']>>((sessionId, context) => {
+  // A user who moved to another chat meanwhile is not pulled back to it: the
+  // session is only registered (it shows in the sidebar) and runs there.
+  const handleSessionEstablished = useCallback((sessionId: string, context: SessionEstablishedContext, options?: SessionEstablishedOptions) => {
     // the conversation goes on there, so the model/effort/agent picked for it go along
-    routingStore.adoptSession(sessionId);
-    setCurrentSessionId(sessionId);
+    routingStore.adoptSession(sessionId, options?.open !== false);
     onSessionEstablished?.(sessionId, context);
+    if (options?.open === false) {
+      return;
+    }
+    setCurrentSessionId(sessionId);
     onNavigateToSession?.(sessionId);
   }, [setCurrentSessionId, onSessionEstablished, onNavigateToSession]);
 

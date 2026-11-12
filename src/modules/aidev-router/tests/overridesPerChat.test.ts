@@ -45,3 +45,15 @@ test('a new chat\'s last route becomes the chat\'s once it has an id; another ch
   assert.equal(routingStore.get().runSessionId, 'new-2');
   routingStore.patch({ last: null, runSessionId: null });
 });
+
+test('a new chat that gets its id after the user opened another chat leaves that chat\'s picks alone', () => {
+  routingStore.followSession(null);
+  routingStore.patch({ sent: { '': { runId: 9, text: '새 채팅 명령', agent: null, reported: false } } });
+  routingStore.followSession('b');
+  routingStore.setOverrides({ model: 'opus' });
+  routingStore.adoptSession('new-3', false);
+  routingStore.followSession('b');
+  assert.deepEqual(routingStore.get().overrides, { model: 'opus' }, 'chat B keeps its pick');
+  assert.equal(routingStore.get().sent['new-3']?.runId, 9, 'the new chat\'s send is still its own');
+  routingStore.patch({ sent: {} });
+});

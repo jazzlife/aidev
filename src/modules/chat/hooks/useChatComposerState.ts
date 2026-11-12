@@ -16,7 +16,7 @@ import { api } from '@/shared/api';
 import { PROVIDER_PERMISSION_PREFERENCE_KEYS } from '@/shared/constants';
 import { isAidevEngine } from '@/shared/utils';
 import { readUserPreference } from '@/shared/userSettings';
-import type { AidevEngine, CommandModalPayload, CostCommandData, HelpCommandData, MarkSessionProcessing, ModelCommandData, QueuedDraft, SessionActivityMap, StatusCommandData,QueuedSendOptions,ChatAttachment,ChatMessage,PendingPermissionRequest,PermissionMode,SessionEstablishedContext,Project,ProjectSession,LLMProvider,SlashCommand } from '@/shared/types';
+import type { AidevEngine, CommandModalPayload, CostCommandData, HelpCommandData, MarkSessionProcessing, ModelCommandData, SessionEstablishedOptions, QueuedDraft, SessionActivityMap, StatusCommandData,QueuedSendOptions,ChatAttachment,ChatMessage,PendingPermissionRequest,PermissionMode,SessionEstablishedContext,Project,ProjectSession,LLMProvider,SlashCommand } from '@/shared/types';
 import { grantClaudeToolPermission } from '@/modules/chat/utils/chatPermissions';
 import {
   hydrateChatDrafts,
@@ -63,13 +63,15 @@ type UseChatComposerStateArgs = {
    * first message of a brand-new conversation. The backend allocates the id
    * via POST /api/providers/sessions BEFORE the websocket send, so the id is
    * stable for the conversation's whole lifetime — the consumer navigates to
-   * /session/:id and records it as the current session.
+   * /session/:id and records it as the current session, unless `options.open`
+   * is false (the user moved to another chat while it was being created).
    */
-  onSessionEstablished?: (sessionId: string, context: SessionEstablishedContext) => void;
+  onSessionEstablished?: (sessionId: string, context: SessionEstablishedContext, options?: SessionEstablishedOptions) => void;
   onFileOpen?: (filePath: string, diffInfo?: unknown) => void;
   onShowSettings?: () => void;
   scrollToBottom: () => void;
-  addMessage: (msg: ChatMessage) => void;
+  /** Adds to the open session's transcript, or to `sessionId`'s when given (a send finishing after a switch). */
+  addMessage: (msg: ChatMessage, sessionId?: string | null) => void;
   setIsUserScrolledUp: (isScrolledUp: boolean) => void;
   setPendingPermissionRequests: Dispatch<SetStateAction<PendingPermissionRequest[]>>;
 };
@@ -104,6 +106,9 @@ const isImageAttachment = (attachment: ChatAttachment) => {
   if (attachment.mimeType?.startsWith('image/')) return true;
   return /\.(gif|jpe?g|png|svg|webp)$/i.test(attachment.path || attachment.name || '');
 };
+
+/** The attachments of a chat with none; one shared array, so a render without files keeps the same reference. */
+const NO_FILES: File[] = [];
 
 const uploadAttachmentFiles = async (files: File[]): Promise<unknown[]> => {
   if (files.length === 0) {
@@ -234,7 +239,7 @@ export function useChatComposerState({
    * needs and it keeps a stale message object from being captured while the
    * transcript refreshes underneath the composer.
    */
-  const [editingAnchorId, setEditingAnchorId] = useState<string | null>(null);
+  const [editing, setEditing] = useState<{ scope: string | null; anchorId: string } | null>(null);
 
   const [inputState, setInputState] = useState<{ scope: string | null; value: string }>(() => {
     if (typeof window === 'undefined') {
@@ -248,7 +253,9 @@ export function useChatComposerState({
     };
   });
   const input = inputState.value;
-  const [attachedFiles, setAttachedFiles] = useState<File[]>([]);
+  // Files attached in each chat, by draft scope: a chat's attachments stay with it across session switches
+  // (memory only — browser File objects cannot be stored with the text draft).
+  const [attachedFilesByScope, setAttachedFilesByScope] = useState<Map<string, File[]>>(() => new Map());
   const [fileErrors, setFileErrors] = useState<Map<string, string>>(new Map());
   const [isTextareaExpanded, setIsTextareaExpanded] = useState(false);
   const [commandModalPayload, setCommandModalPayload] = useState<CommandModalPayload | null>(null);
@@ -275,6 +282,32 @@ export function useChatComposerState({
   const draftScope = sessionKey ?? (selectedProjectId ? `project:${selectedProjectId}` : null);
   const draftScopeRef = useRef(draftScope);
   draftScopeRef.current = draftScope;
+  const attachedFiles = (draftScope ? attachedFilesByScope.get(draftScope) : undefined) ?? NO_FILES;
+  const editingAnchorId = editing && editing.scope === draftScope ? editing.anchorId : null;
+  /** Sets one chat's attachments; a send that finishes after a session switch clears its own chat's, not the open one's. */
+  const setAttachedFilesFor = useCallback((scope: string | null, next: SetStateAction<File[]>) => {
+    if (!scope) {
+      return;
+    }
+    setAttachedFilesByScope((previous) => {
+      const current = previous.get(scope) ?? NO_FILES;
+      const value = typeof next === 'function' ? next(current) : next;
+      if (value === current || (value.length === 0 && current.length === 0)) {
+        return previous;
+      }
+      const updated = new Map(previous);
+      if (value.length > 0) {
+        updated.set(scope, value);
+      } else {
+        updated.delete(scope);
+      }
+      return updated;
+    });
+  }, []);
+  const setAttachedFiles = useCallback<Dispatch<SetStateAction<File[]>>>(
+    (next) => setAttachedFilesFor(draftScopeRef.current, next),
+    [setAttachedFilesFor],
+  );
   const setInput = useCallback<Dispatch<SetStateAction<string>>>((next) => {
     setInputState((previous) => ({
       scope: draftScopeRef.current,
@@ -586,7 +619,7 @@ export function useChatComposerState({
     if (validFiles.length > 0) {
       setAttachedFiles((previous) => [...previous, ...validFiles].slice(0, MAX_ATTACHMENT_COUNT));
     }
-  }, []);
+  }, [setAttachedFiles]);
 
   const handlePaste = useCallback(
     (event: ClipboardEvent<HTMLTextAreaElement>) => {
@@ -664,14 +697,15 @@ export function useChatComposerState({
   // §3.1 clarify (C-09): a routed send held until the user adds the missing detail or lets it go; the command
   // stays in the composer, and the hold belongs to the chat it was typed in. `interrupt` remembers that the user
   // was cutting into the running turn, so the release still does.
-  const [clarifyHold, setClarifyHold] = useState<{ sessionKey: string | null; text: string; decoration: AidevSendDecoration; uploadedAttachments: unknown[]; interrupt: boolean } | null>(null);
+  const [clarifyHold, setClarifyHold] = useState<{ scope: string | null; text: string; decoration: AidevSendDecoration; uploadedAttachments: unknown[]; interrupt: boolean } | null>(null);
   // the hold being released: the next submit reuses its routing and uploads instead of doing both again
   const clarifyResumeRef = useRef<{ decoration: AidevSendDecoration; uploadedAttachments: unknown[] } | null>(null);
   // the command between Enter and its send (routing, uploads, a new session can take seconds): the composer clears at
   // once and shows it as "보내는 중", and a second Enter meanwhile is not a second send (it was: the same command went
-  // out twice). The ref closes the gap before React re-renders.
-  const sendingRef = useRef(false);
-  const [sending, setSending] = useState<string | null>(null);
+  // out twice). The ref closes the gap before React re-renders. Both are per chat (draft scope): a command still
+  // routing in one chat neither shows in nor blocks a send from another.
+  const sendingScopesRef = useRef<Set<string>>(new Set());
+  const [sendingByScope, setSendingByScope] = useState<Map<string, string>>(() => new Map());
   // …and while the user is still typing, the specialist judge already looks at the draft
   usePrejudge(input, selectedProject?.fullPath || selectedProject?.path || null, selectedSession?.id || currentSessionId || null);
 
@@ -720,7 +754,7 @@ export function useChatComposerState({
             type: 'error',
             content: `Failed to upload files: ${message}`,
             timestamp: new Date(),
-          });
+          }, queuedSessionKey);
           return;
         }
 
@@ -742,6 +776,9 @@ export function useChatComposerState({
         // sessions during upload, the durable record is already enough; the
         // newly opened composer shows its own session's queue.
         if (sessionKeyRef.current !== queuedSessionKey) {
+          // the queued text and files must not wait in that session's composer to be sent twice
+          writeDraftText(queuedSessionKey, '');
+          setAttachedFilesFor(queuedSessionKey, []);
           return;
         }
 
@@ -795,18 +832,55 @@ export function useChatComposerState({
         }
       }
 
-      if (sendingRef.current) return;
-      sendingRef.current = true;
-      setSending(currentInput);
+      // the chat this command was typed in: the user may open another one while it routes
+      const submitScope = draftScopeRef.current ?? `project:${selectedProject.projectId}`;
+      if (sendingScopesRef.current.has(submitScope)) return;
+      // every scope this send holds: a new chat's project scope, and its session id once allocated
+      const lockedScopes = [submitScope];
+      const lockSending = (scope: string) => {
+        sendingScopesRef.current.add(scope);
+        setSendingByScope((previous) => new Map(previous).set(scope, currentInput));
+      };
+      lockSending(submitScope);
+      // whether the chat this command was typed in is the one on screen (a new chat: its project scope, then its session)
+      const chatIsOpen = () => lockedScopes.includes(draftScopeRef.current ?? '');
+      // a failed send is reported in its own chat; a new chat with no session yet only while it is still open
+      // (its text is back in its draft either way)
+      const submitSessionId = sessionKey;
+      const reportSendError = (content: string) => {
+        if (!submitSessionId && !chatIsOpen()) {
+          return;
+        }
+        addMessage({ type: 'error', content, timestamp: new Date() }, submitSessionId);
+      };
       // the composer keeps what the user is typing when a queued turn is sent early
       if (!queued) {
         setInput('');
         inputValueRef.current = '';
       }
       // the text goes back into the composer when the send does not happen (error, or a clarify hold that edits it)
-      const restoreInput = () => { setInput(currentInput); inputValueRef.current = currentInput; };
+      // — into the chat it was typed in, never into another chat opened meanwhile
+      const restoreInput = () => {
+        if (chatIsOpen()) {
+          setInput(currentInput);
+          inputValueRef.current = currentInput;
+        } else {
+          writeDraftText(submitScope, currentInput);
+        }
+      };
       // Replacing an already-sent message belongs to the composer's text, not to a queued turn sent early.
       const replacesAnchorId = queued ? null : editingAnchorId;
+      // what the send leaves in the composer is reset only while its chat is the open one
+      const resetComposerChrome = () => {
+        if (!chatIsOpen()) {
+          return;
+        }
+        resetCommandMenuState();
+        setIsTextareaExpanded(false);
+        if (textareaRef.current) {
+          textareaRef.current.style.height = 'auto';
+        }
+      };
       try {
       const messageContent = currentInput;
       const resume = queued ? null : clarifyResumeRef.current;
@@ -820,11 +894,7 @@ export function useChatComposerState({
           const message = error instanceof Error ? error.message : 'Unknown error';
           console.error('File upload failed:', error);
           restoreInput();
-          addMessage({
-            type: 'error',
-            content: `Failed to upload files: ${message}`,
-            timestamp: new Date(),
-          });
+          reportSendError(`Failed to upload files: ${message}`);
           return;
         }
       }
@@ -850,10 +920,10 @@ export function useChatComposerState({
         forceAgent: submitOptions?.forceAgent ?? null,
       });
       // a new send supersedes a hold; a command missing essential detail waits for one line (ClarifyPrompt)
-      setClarifyHold(null);
+      setClarifyHold((hold) => (hold?.scope === submitScope ? null : hold));
       // a turn that was already composed and queued is not held for a clarifying question
       if (!resume && !queued && shouldAskClarify(aidevDecoration)) {
-        setClarifyHold({ sessionKey, text: messageContent, decoration: aidevDecoration, uploadedAttachments, interrupt });
+        setClarifyHold({ scope: submitScope, text: messageContent, decoration: aidevDecoration, uploadedAttachments, interrupt });
         restoreInput();
         return;
       }
@@ -890,21 +960,13 @@ export function useChatComposerState({
           const message = error instanceof Error ? error.message : 'Unknown error';
           console.error('Session creation failed:', error);
           restoreInput();
-          addMessage({
-            type: 'error',
-            content: `Failed to start a new session: ${message}`,
-            timestamp: new Date(),
-          });
+          reportSendError(`Failed to start a new session: ${message}`);
           return;
         }
 
         if (!targetSessionId) {
           restoreInput();
-          addMessage({
-            type: 'error',
-            content: 'Failed to start a new session: no session id returned.',
-            timestamp: new Date(),
-          });
+          reportSendError('Failed to start a new session: no session id returned.');
           return;
         }
 
@@ -913,11 +975,15 @@ export function useChatComposerState({
         newSessionPermissionMode = resolvePermissionModeForProvider(sessionProvider, permissionMode);
         localStorage.setItem(`permissionMode-${targetSessionId}`, newSessionPermissionMode);
 
+        // Opened only while the user is still on this new chat: one who moved on to another chat stays there.
         onSessionEstablished?.(targetSessionId, {
           provider: sessionProvider,
           project: selectedProject,
           summary: createdSessionName,
-        });
+        }, { open: chatIsOpen() });
+        // the new chat's scope is its session id from here on
+        lockedScopes.push(targetSessionId);
+        lockSending(targetSessionId);
       }
 
       // No specialist yet for this command: it waits in this chat's queue while the gateway designs one, and then runs
@@ -942,13 +1008,9 @@ export function useChatComposerState({
         // nothing of this chat runs now: a later run here is not this route's to report (the release routes it anew)
         routingStore.setFor('sent', targetSessionId, null);
         if (newSessionPermissionMode) routingStore.setFor('sent', null, null);
-        resetCommandMenuState();
-        setAttachedFiles([]);
+        setAttachedFilesFor(submitScope, []);
         setFileErrors(new Map());
-        setIsTextareaExpanded(false);
-        if (textareaRef.current) {
-          textareaRef.current.style.height = 'auto';
-        }
+        resetComposerChrome();
         if (draftScopeRef.current) {
           writeDraftText(draftScopeRef.current, inputValueRef.current);
         }
@@ -968,7 +1030,8 @@ export function useChatComposerState({
         ...(replacesAnchorId ? { replacesAnchorId } : {}),
       };
 
-      addMessage(userMessage);
+      // into the session it is sent to, which is not the one on screen when the user moved on meanwhile
+      addMessage(userMessage, targetSessionId);
       // Mark this request as processing in the per-session activity map (the
       // single source of truth the indicator derives from). The id is always
       // concrete at this point — no pending placeholder exists anymore.
@@ -977,8 +1040,10 @@ export function useChatComposerState({
         canInterrupt: true,
       });
 
-      setIsUserScrolledUp(false);
-      setTimeout(() => scrollToBottom(), 100);
+      if (chatIsOpen()) {
+        setIsUserScrolledUp(false);
+        setTimeout(() => scrollToBottom(), 100);
+      }
 
       // a queued turn goes out with the settings it was queued under
       const composedSendOptions = queued?.options ?? buildSendOptions(messageContent);
@@ -1025,23 +1090,26 @@ export function useChatComposerState({
         // nothing of the composer's own was sent
         return;
       }
-      setEditingAnchorId(null);
+      setEditing((current) => (current?.scope === submitScope ? null : current));
       // the composer was cleared at Enter; what was typed since stays
-      resetCommandMenuState();
-      setAttachedFiles([]);
+      setAttachedFilesFor(submitScope, []);
       setFileErrors(new Map());
-      setIsTextareaExpanded(false);
-
-      if (textareaRef.current) {
-        textareaRef.current.style.height = 'auto';
-      }
+      resetComposerChrome();
 
       if (draftScopeRef.current) {
         writeDraftText(draftScopeRef.current, inputValueRef.current);
       }
       } finally {
-        sendingRef.current = false;
-        setSending(null);
+        for (const scope of lockedScopes) {
+          sendingScopesRef.current.delete(scope);
+        }
+        setSendingByScope((previous) => {
+          const updated = new Map(previous);
+          for (const scope of lockedScopes) {
+            updated.delete(scope);
+          }
+          return updated;
+        });
       }
     },
     [
@@ -1066,6 +1134,8 @@ export function useChatComposerState({
       sendMessage,
       sessionKey,
       addMessage,
+      setAttachedFiles,
+      setAttachedFilesFor,
       setIsUserScrolledUp,
       slashCommands,
     ],
@@ -1131,7 +1201,7 @@ export function useChatComposerState({
     inputValueRef.current = draft.content;
     setAttachedFiles(draft.attachments);
     textareaRef.current?.focus();
-  }, [queuedDrafts, sessionKey, setInput]);
+  }, [queuedDrafts, sessionKey, setAttachedFiles, setInput]);
 
   const deleteQueuedDraft = useCallback((id: string) => {
     if (!sessionKey) {
@@ -1161,7 +1231,7 @@ export function useChatComposerState({
    */
   const sendQueuedDraftNow = useCallback((id: string) => {
     const draft = queuedDrafts.find((candidate) => candidate.id === id);
-    if (!draft || !sessionKey || sendingRef.current || (isLoading && !canAbortSession)) {
+    if (!draft || !sessionKey || sendingScopesRef.current.has(sessionKey) || (isLoading && !canAbortSession)) {
       return;
     }
     queuedFilesRef.current.delete(id);
@@ -1179,7 +1249,7 @@ export function useChatComposerState({
     if (!draft?.hold || !sessionKey) {
       return;
     }
-    if (isLoading || sendingRef.current) {
+    if (isLoading || sendingScopesRef.current.has(sessionKey)) {
       void releaseHold(sessionKey, { ...toStoredQueuedMessage(draft), id, hold: draft.hold }, GENERALIST);
       return;
     }
@@ -1439,14 +1509,14 @@ export function useChatComposerState({
   /** Loads an already-sent message back into the composer to be replaced. */
   const beginEditMessage = useCallback((message: ChatMessage) => {
     if (!message.transcriptAnchorId) return;
-    setEditingAnchorId(message.transcriptAnchorId);
+    setEditing({ scope: draftScopeRef.current, anchorId: message.transcriptAnchorId });
     setInput(message.content || '');
     inputValueRef.current = message.content || '';
     textareaRef.current?.focus();
   }, [setInput]);
 
   const cancelEditMessage = useCallback(() => {
-    setEditingAnchorId(null);
+    setEditing(null);
     setInput('');
     inputValueRef.current = '';
   }, [setInput]);
@@ -1505,10 +1575,10 @@ export function useChatComposerState({
     commandModalPayload,
     closeCommandModal,
     showCostModal,
-    clarify: clarifyHold && clarifyHold.sessionKey === sessionKey ? { question: clarifyHold.decoration.route.scope.clarify_question ?? null, decisionId: clarifyHold.decoration.route.decision_id } : null,
+    clarify: clarifyHold && clarifyHold.scope === draftScope ? { question: clarifyHold.decoration.route.scope.clarify_question ?? null, decisionId: clarifyHold.decoration.route.decision_id } : null,
     releaseClarify,
     dismissClarify,
     /** the command being sent (routing / upload / new session) — shown under the composer until it goes out */
-    sending,
+    sending: (draftScope ? sendingByScope.get(draftScope) : undefined) ?? null,
   };
 }

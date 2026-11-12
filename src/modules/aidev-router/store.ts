@@ -137,9 +137,10 @@ export const routingStore = {
   },
   /**
    * The conversation continues in `sessionId` (a new chat's id, a handoff, the way back): the overrides go with it, and
-   * a new chat's last route (sent before its id existed) becomes that chat's.
+   * a new chat's last route (sent before its id existed) becomes that chat's. With `open` false the user is on another
+   * chat by then: the overrides on screen are that chat's, so they stay with it.
    */
-  adoptSession(sessionId: string) {
+  adoptSession(sessionId: string, open = true) {
     // what a new chat sent, was verified or was offered before its id existed is that chat's now
     const adopted: Partial<RoutingState> = {};
     for (const key of ['sent', 'escalations', 'verifications'] as const) {
@@ -148,7 +149,7 @@ export const routingStore = {
       const { '': entry, ...rest } = map;
       adopted[key] = { ...rest, [sessionId]: entry } as never;
     }
-    routingStore.patch({ overridesSessionId: sessionId, ...adopted, ...(state.last && state.runSessionId === null ? { runSessionId: sessionId } : {}) });
+    routingStore.patch({ ...(open ? { overridesSessionId: sessionId } : {}), ...adopted, ...(state.last && state.runSessionId === null ? { runSessionId: sessionId } : {}) });
   },
   /** Drops one override (the engine chip's "자동": back to priority / routing for the next sends). */
   clearOverride(key: keyof RoutingOverrides) {
