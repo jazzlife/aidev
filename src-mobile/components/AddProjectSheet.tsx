@@ -96,14 +96,15 @@ function FolderBrowser({ path, onPath }: { path: string; onPath: (path: string) 
 }
 
 type Repo = { fullName: string; name: string; private: boolean; description: string | null; cloneUrl: string; pushedAt: string | null; archived: boolean; fork: boolean };
-type RepoPage = { account: { login: string }; tokenId: number; tokens: Array<{ id: number; name: string }>; repos: Repo[]; page: number; hasMore: boolean };
+type RepoPage = { account: { login: string }; missingScopes?: string[]; tokenId: number; tokens: Array<{ id: number; name: string }>; repos: Repo[]; page: number; hasMore: boolean };
 /** What is cloned: a repository picked from the account (with its token) or a typed address. */
 type CloneSource = { url: string; label: string; tokenId: number | null; private: boolean };
 
 /**
  * The repositories of the GitHub account connected on the runtime, newest pushed first, searchable; picking one moves
  * on to where it goes. Without a connected account it connects one here (the token is stored on the runtime like the
- * workbench's, and used for private repositories). A typed address stays available for anything else.
+ * workbench's, and used for private repositories); an account connected with fewer scopes than agents need (creating
+ * repositories, workflows) gets that login offered above its list. A typed address stays available for anything else.
  */
 function RepoPicker({ onPick }: { onPick: (source: CloneSource) => void }) {
   // the account and the repositories loaded so far (null: loading)
@@ -181,6 +182,12 @@ function RepoPicker({ onPick }: { onPick: (source: CloneSource) => void }) {
               {data.tokens.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
             </select>
           ) : null}
+        </div>
+      ) : null}
+      {data?.missingScopes?.length ? (
+        <div className="space-y-2 rounded-xl border border-line p-3" data-testid="github-scope-upgrade">
+          <p className="text-[14px]">저장소 만들기·워크플로 적용 권한({data.missingScopes.join(', ')})이 더 필요합니다. GitHub로 한 번 다시 로그인해 승인하세요.</p>
+          <GithubLogin returnTo="/m/projects?add=clone" onConnected={() => { void load(); }} />
         </div>
       ) : null}
       <div className="flex h-10 items-center gap-2 rounded-xl border border-line bg-bg px-3">

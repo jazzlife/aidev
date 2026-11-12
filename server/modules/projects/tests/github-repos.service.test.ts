@@ -39,3 +39,15 @@ test('a revoked token is reported as such', async () => {
   const revoked = deps({ fetch: (async () => new Response('{}', { status: 401 })) as typeof fetch });
   await assert.rejects(listGithubRepos({ userId: 1 }, revoked), (e: unknown) => e instanceof AppError && e.code === 'GITHUB_TOKEN_INVALID');
 });
+
+test('an account connected with fewer scopes than agents need reports the missing ones', async () => {
+  const withScopes = (granted: string | null) => deps({
+    fetch: (async (url: string) => new Response(JSON.stringify(url.endsWith('/user') ? { login: 'jazzlife' } : []), {
+      status: 200, headers: url.endsWith('/user') && granted !== null ? { 'x-oauth-scopes': granted } : {},
+    })) as typeof fetch,
+  });
+  assert.deepEqual((await listGithubRepos({ userId: 1 }, withScopes('read:user, repo'))).missingScopes, ['workflow', 'read:org']);
+  assert.deepEqual((await listGithubRepos({ userId: 1 }, withScopes('admin:org, read:user, repo, workflow'))).missingScopes, []);
+  // a fine-grained token: GitHub reports no scopes, nothing to ask for
+  assert.deepEqual((await listGithubRepos({ userId: 1 }, withScopes(null))).missingScopes, []);
+});

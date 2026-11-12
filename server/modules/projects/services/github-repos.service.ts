@@ -29,14 +29,25 @@ const defaultDependencies: GithubReposDependencies = {
 
 const PER_PAGE = 100;
 
-async function github<T>(deps: GithubReposDependencies, token: string, path: string): Promise<{ body: T; link: string | null }> {
+async function github<T>(deps: GithubReposDependencies, token: string, path: string): Promise<{ body: T; link: string | null; scopes: string | null }> {
   const response = await deps.fetch(`https://api.github.com${path}`, {
     headers: { authorization: `Bearer ${token}`, accept: 'application/vnd.github+json', 'x-github-api-version': '2022-11-28', 'user-agent': 'nadovibe' },
     signal: AbortSignal.timeout(15_000),
   });
   if (response.status === 401) throw new AppError('GitHub 토큰이 만료되었거나 취소되었습니다. 새 토큰으로 다시 연결하세요.', { code: 'GITHUB_TOKEN_INVALID', statusCode: 401 });
   if (!response.ok) throw new AppError(`GitHub이 저장소 목록을 주지 않았습니다 (${response.status})`, { code: 'GITHUB_REQUEST_FAILED', statusCode: 502 });
-  return { body: await response.json() as T, link: response.headers.get('link') };
+  return { body: await response.json() as T, link: response.headers.get('link'), scopes: response.headers.get('x-oauth-scopes') };
+}
+
+// What agents need from the connected account (the gateway's GitHub login asks for these): creating repositories and
+// pushing, pushing .github/workflows files, and organization repositories. A broader scope covers a narrower one.
+const NEEDED_SCOPES: Record<string, string[]> = { repo: ['repo'], workflow: ['workflow'], 'read:org': ['read:org', 'write:org', 'admin:org'] };
+
+/** The needed scopes `granted` (GitHub's X-OAuth-Scopes) lacks; none when GitHub reports no scopes (a fine-grained token). */
+function missingScopes(granted: string | null): string[] {
+  if (granted === null) return [];
+  const have = new Set(granted.split(',').map((scope) => scope.trim()));
+  return Object.entries(NEEDED_SCOPES).filter(([, coveredBy]) => !coveredBy.some((scope) => have.has(scope))).map(([scope]) => scope);
 }
 
 /** Used by the projects routes: the connected account (or `tokenId`'s) and one page of its repositories. */
@@ -47,12 +58,14 @@ export async function listGithubRepos(input: { userId: number; tokenId?: number 
   const value = deps.tokenValue(input.userId, chosen.id);
   if (!value) throw new AppError('연결된 GitHub 계정이 없습니다', { code: 'GITHUB_NOT_CONNECTED', statusCode: 404 });
   const page = Math.max(1, Math.min(input.page ?? 1, 50));
-  const [{ body: user }, { body: rows, link }] = await Promise.all([
+  const [{ body: user, scopes }, { body: rows, link }] = await Promise.all([
     github<{ login: string; avatar_url?: string }>(deps, value, '/user'),
     github<RepoRow[]>(deps, value, `/user/repos?per_page=${PER_PAGE}&page=${page}&sort=pushed&affiliation=owner,collaborator,organization_member`),
   ]);
   return {
     account: { login: user.login, avatarUrl: user.avatar_url ?? null },
+    // an account connected before the login asked for these: the picker offers GitHub login again to grant them
+    missingScopes: missingScopes(scopes),
     tokenId: chosen.id,
     tokens: tokens.map((token) => ({ id: token.id, name: token.credential_name })),
     repos: rows.map((row): GithubRepo => ({

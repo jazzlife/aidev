@@ -140,6 +140,26 @@ describe('ProjectCreationWizard', () => {
     expect(screen.getByTestId('repo-list').textContent).toContain('jazzlife/aidev');
   });
 
+  it('an account connected with fewer scopes than agents need gets "GitHub로 로그인" above its list', async () => {
+    api.githubRepos.mockImplementationOnce(() => json({ success: true, data: { account: { login: 'jazzlife' }, missingScopes: ['workflow', 'read:org'], tokenId: 7, tokens: [{ id: 7, name: 'GitHub' }], page: 1, hasMore: false, repos: [] } }));
+    const assign = vi.fn();
+    vi.stubGlobal('location', { ...window.location, assign, search: '', pathname: '/session/abc' });
+    render(<ProjectCreationWizard onClose={vi.fn()} initialTab="clone" />);
+    await settle();
+    expect(screen.getByTestId('github-scope-upgrade').textContent).toContain('workflow, read:org');
+    expect(screen.getByTestId('repo-picker')).toBeTruthy();
+    expect(screen.queryByText('토큰으로 연결')).toBeNull();
+    fireEvent.click(screen.getByText('GitHub로 로그인'));
+    expect(assign).toHaveBeenCalledWith('/api/aidev/github/oauth/start?return=%2Fsession%2Fabc%3Fadd%3Dclone');
+  });
+
+  it('a connected account with every needed scope shows no login', async () => {
+    render(<ProjectCreationWizard onClose={vi.fn()} initialTab="clone" />);
+    await settle();
+    expect(screen.getByTestId('repo-picker').textContent).toContain('@jazzlife');
+    expect(screen.queryByTestId('github-scope-upgrade')).toBeNull();
+  });
+
   it('opened back from GitHub on the clone tab with the outcome on top', async () => {
     render(<ProjectCreationWizard onClose={vi.fn()} initialTab="clone" notice={{ text: 'GitHub 계정이 연결되었습니다 (@jazzlife)', error: false }} />);
     await settle();

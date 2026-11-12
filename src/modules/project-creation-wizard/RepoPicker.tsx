@@ -7,7 +7,7 @@ import type { CloneSource } from '@/shared/types';
 import { repoFolderName } from '@/shared/utils';
 
 type Repo = { fullName: string; name: string; private: boolean; description: string | null; cloneUrl: string; pushedAt: string | null; archived: boolean; fork: boolean };
-type RepoPage = { account: { login: string }; tokenId: number; tokens: Array<{ id: number; name: string }>; repos: Repo[]; page: number; hasMore: boolean };
+type RepoPage = { account: { login: string }; missingScopes?: string[]; tokenId: number; tokens: Array<{ id: number; name: string }>; repos: Repo[]; page: number; hasMore: boolean };
 
 const relativeTime = (value: string) => {
   const minutes = Math.round((Date.now() - new Date(value).getTime()) / 60_000);
@@ -23,7 +23,8 @@ const relativeTime = (value: string) => {
 /**
  * Rendered by ProjectCreationWizard's clone tab: the repositories of the GitHub account connected on the runtime, newest
  * pushed first, searchable; picking one moves on to where it goes. Without a connected account it connects one here
- * (GitHub login, back to this tab). A typed address stays available for anything else.
+ * (GitHub login, back to this tab); an account connected with fewer scopes than agents need (creating repositories,
+ * workflows) gets that login offered above its list. A typed address stays available for anything else.
  */
 export default function RepoPicker({ onPick }: { onPick: (source: CloneSource) => void }) {
   // the account and the repositories loaded so far (null: not loaded yet)
@@ -107,6 +108,12 @@ export default function RepoPicker({ onPick }: { onPick: (source: CloneSource) =
               {data.tokens.map((token) => <option key={token.id} value={token.id}>{token.name}</option>)}
             </select>
           ) : null}
+        </div>
+      ) : null}
+      {data?.missingScopes?.length ? (
+        <div className="space-y-2 rounded-lg border border-border p-3" data-testid="github-scope-upgrade">
+          <p className="text-sm">저장소 만들기·워크플로 적용 권한({data.missingScopes.join(', ')})이 더 필요합니다. GitHub로 한 번 다시 로그인해 승인하세요.</p>
+          <GithubLogin returnTo={`${window.location.pathname}?add=clone`} onConnected={() => void load()} withTokenFallback={false} />
         </div>
       ) : null}
       <div className="relative">
