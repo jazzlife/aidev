@@ -25,8 +25,13 @@ export type SentRun = { runId: number | null; text: string; agent: string | null
 export type Escalation = { next: NextAction; text: string; sessionId: string | null; agent: string | null };
 /** Independent verification of a chat's last routed run: pending while the verifier reads the repository, then its verdict. */
 export type Verification = { runId: number; status: 'pending' | 'done'; result: RunVerification | null };
+/**
+ * A chat's last routing decision as its router bar shows it: the route, the command it was made for, the run it opened
+ * and that run's end and rating.
+ */
+export type ChatRoute = { route: RouteResult; text: string; runId: number | null; finishedAt: number | null; feedback: 'up' | 'down' | null };
 /** The per-chat maps below; their key is the session id ('' = a new chat whose id is not known yet). */
-type SessionKeyed = 'sent' | 'escalations' | 'verifications';
+type SessionKeyed = 'sent' | 'escalations' | 'verifications' | 'routes' | 'savedOverrides';
 
 export const sessionKey = (sessionId: string | null | undefined): string => sessionId ?? '';
 
@@ -35,8 +40,11 @@ export type RoutingState = {
   /** Agent forced for exactly the next send (the catalog's "다음 명령에 사용", an escalated retry or handoff); consumed by beforeSend. */
   oneShotAgent: string | null;
   busy: boolean;
-  last: RouteResult | null;
-  lastText: string | null;
+  /**
+   * Each chat's last routing decision (2026-11-12: one page-wide slot showed the last routed chat's agent, engine and
+   * scope in every chat's bar).
+   */
+  routes: Record<string, ChatRoute>;
   error: string | null;
   overrides: RoutingOverrides;
   /**
@@ -45,14 +53,8 @@ export type RoutingState = {
    * a new chat's id, a handoff — keeps them (adoptSession).
    */
   overridesSessionId: string | null;
-  /** run id the gateway allocated for the send currently in flight or last sent */
-  runId: number | null;
-  /** when the last routed run completed (null while running / before any run) */
-  runFinishedAt: number | null;
-  /** session the last routed run belongs to (known once the run completes; new chats get their id late) */
-  runSessionId: string | null;
-  /** feedback already given for the finished run */
-  runFeedback: 'up' | 'down' | null;
+  /** The picks of the chats the user left (targetId aside), restored when that chat is opened again. */
+  savedOverrides: Record<string, RoutingOverrides>;
   /**
    * E-03: settings forced for exactly the next send (escalated retry or engine handoff); consumed by beforeSend.
    * `forText`: the retry command they were made for — a command sent before it (the retry was queued behind a running
@@ -88,7 +90,7 @@ function readMode(): RoutingMode {
   }
 }
 
-let state: RoutingState = { mode: readMode(), oneShotAgent: null, busy: false, last: null, lastText: null, error: null, overrides: {}, overridesSessionId: null, runId: null, runSessionId: null, runFinishedAt: null, runFeedback: null, oneShotPlan: null, sent: {}, escalations: {}, pendingHandoff: null, chatCap: { sessionId: null, cap: null }, chatFloor: { sessionId: null, floor: null }, verifications: {} };
+let state: RoutingState = { mode: readMode(), oneShotAgent: null, busy: false, routes: {}, error: null, overrides: {}, overridesSessionId: null, savedOverrides: {}, oneShotPlan: null, sent: {}, escalations: {}, pendingHandoff: null, chatCap: { sessionId: null, cap: null }, chatFloor: { sessionId: null, floor: null }, verifications: {} };
 const listeners = new Set<() => void>();
 
 function emit() {
@@ -129,27 +131,36 @@ export const routingStore = {
   clearOverrides() {
     routingStore.patch({ overrides: {} });
   },
-  /** The open chat became `sessionId`: overrides picked in another chat are dropped (the PC pick follows useTargetChoice). */
+  /**
+   * The open chat became `sessionId`: the picks of the chat left are kept for it and that chat's own are restored, so
+   * none leaks into another chat (the PC pick follows useTargetChoice).
+   */
   followSession(sessionId: string | null) {
     if (state.overridesSessionId === sessionId) return;
-    const { targetId } = state.overrides;
-    routingStore.patch({ overridesSessionId: sessionId, overrides: targetId === undefined ? {} : { targetId } });
+    const { targetId, ...left } = state.overrides;
+    const { [sessionKey(state.overridesSessionId)]: _left, [sessionKey(sessionId)]: restored, ...others } = state.savedOverrides;
+    const savedOverrides = Object.keys(left).length ? { ...others, [sessionKey(state.overridesSessionId)]: left } : others;
+    routingStore.patch({ overridesSessionId: sessionId, savedOverrides, overrides: { ...restored, ...(targetId === undefined ? {} : { targetId }) } });
   },
   /**
    * The conversation continues in `sessionId` (a new chat's id, a handoff, the way back): the overrides go with it, and
-   * a new chat's last route (sent before its id existed) becomes that chat's. With `open` false the user is on another
+   * a new chat's route (sent before its id existed) becomes that chat's. With `open` false the user is on another
    * chat by then: the overrides on screen are that chat's, so they stay with it.
    */
   adoptSession(sessionId: string, open = true) {
-    // what a new chat sent, was verified or was offered before its id existed is that chat's now
+    // what a new chat sent, was routed, verified, offered or picked before its id existed is that chat's now
     const adopted: Partial<RoutingState> = {};
-    for (const key of ['sent', 'escalations', 'verifications'] as const) {
+    for (const key of ['sent', 'escalations', 'verifications', 'routes', 'savedOverrides'] as const) {
       const map = state[key] as Record<string, unknown>;
       if (!('' in map) || sessionId in map) continue;
       const { '': entry, ...rest } = map;
       adopted[key] = { ...rest, [sessionId]: entry } as never;
     }
-    routingStore.patch({ ...(open ? { overridesSessionId: sessionId } : {}), ...adopted, ...(state.last && state.runSessionId === null ? { runSessionId: sessionId } : {}) });
+    routingStore.patch({ ...(open ? { overridesSessionId: sessionId } : {}), ...adopted });
+  },
+  /** Applies `update` to every chat's route (a fact about the account, not one chat: a login, the default PC). */
+  updateRoutes(update: (route: RouteResult) => RouteResult) {
+    routingStore.patch({ routes: Object.fromEntries(Object.entries(state.routes).map(([key, chat]) => [key, { ...chat, route: update(chat.route) }])) });
   },
   /** Drops one override (the engine chip's "자동": back to priority / routing for the next sends). */
   clearOverride(key: keyof RoutingOverrides) {
@@ -158,6 +169,9 @@ export const routingStore = {
     routingStore.patch({ overrides: next });
   },
 };
+
+/** The chat's own last routing decision, or null when nothing was routed there on this page. */
+export const chatRouteOf = (current: RoutingState, sessionId: string | null | undefined): ChatRoute | null => current.routes[sessionKey(sessionId)] ?? null;
 
 /** React binding for routingStore. Used by the router bar/chip and the composer hook. */
 export function useRoutingState(): RoutingState {

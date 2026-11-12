@@ -2,7 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { api } from '@/shared/api';
 import { aidevApi, type Engine, type EnginesResult } from '@/modules/aidev-router/api';
-import { routingStore, sessionKey, useRoutingState } from '@/modules/aidev-router/store';
+import { chatRouteOf, routingStore, sessionKey, useRoutingState } from '@/modules/aidev-router/store';
 import { rememberHandoff } from '@/modules/aidev-router/hooks/useReturnFromHandoff';
 import { AIDEV_ENGINES, ENGINE_LABELS } from '@/shared/constants';
 
@@ -61,8 +61,10 @@ export function nextUsableEngine(blocked: Engine, available: Pick<EnginesResult,
  * except retry_worker and a usage-limit block, which `handoffOnUsageLimit` carries over on its own.
  */
 export function useEscalation({ sessionId: openSessionId, resend, openSession, getProjectPath }: UseEscalationArgs) {
-  const { escalations, last } = useRoutingState();
-  const escalation = escalations[sessionKey(openSessionId)] ?? null;
+  const routingState = useRoutingState();
+  const escalation = routingState.escalations[sessionKey(openSessionId)] ?? null;
+  // the open chat's own last route (another chat's may be the page's latest)
+  const last = chatRouteOf(routingState, openSessionId)?.route ?? null;
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // Sessions already carried over, so a repeated limit on the same chat cannot
@@ -199,7 +201,8 @@ export function useEscalation({ sessionId: openSessionId, resend, openSession, g
    */
   const switchBack = useCallback(async (args: { sessionId: string; engine: Engine; fromEngine: Engine; text: string; reason: string }): Promise<boolean> => {
     if (busy) return false;
-    const agentName = routingStore.get().last?.agent.name ?? null;
+    // the agent this chat's command was just routed to
+    const agentName = chatRouteOf(routingStore.get(), args.sessionId)?.route.agent.name ?? null;
     setError(null);
     await handoff({
       engine: args.engine,

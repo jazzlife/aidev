@@ -38,7 +38,7 @@ const routeFor = (opencodeAllowed: boolean) => ({
 
 beforeEach(() => {
   vi.restoreAllMocks();
-  routingStore.patch({ mode: 'auto', oneShotAgent: null, oneShotPlan: null, overrides: {}, runId: null });
+  routingStore.patch({ mode: 'auto', oneShotAgent: null, oneShotPlan: null, overrides: {}, routes: {} });
 });
 
 test('an OpenCode chat is routed like any engine once the account routes to OpenCode', async () => {
@@ -49,7 +49,7 @@ test('an OpenCode chat is routed like any engine once the account routes to Open
   await act(async () => { decoration = await result.current.beforeSend('테스트 추가해줘', { sessionId: 'oc-1', provider: 'opencode', isNewSession: false, userPinnedModel: false }); });
   assert.equal(route.mock.calls[0][0].sessionEngine, 'opencode');
   assert.equal(decoration!.route.plan.engine, 'opencode');
-  assert.equal(routingStore.get().runId, 8);
+  assert.equal(routingStore.get().routes['oc-1']?.runId, 8);
 });
 
 test('where the account does not route to OpenCode, an OpenCode chat is sent as it is and logs no run', async () => {

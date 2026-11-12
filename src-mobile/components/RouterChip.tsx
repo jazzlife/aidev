@@ -1,7 +1,7 @@
 import { useState } from 'react';
 import { Monitor, Sparkles, Star } from 'lucide-react';
 
-import { useRoutingState, routingStore, aidevApi, claudeAuth, policyNote, useClaudeAuth, useTargetChoice } from '@/modules/aidev-router';
+import { chatRouteOf, useRoutingState, routingStore, aidevApi, claudeAuth, policyNote, useClaudeAuth, useTargetChoice } from '@/modules/aidev-router';
 import { AIDEV_ENGINES, ENGINE_LABELS } from '@/shared/constants';
 import { ClaudeLoginSheet } from '@m/components/ClaudeLoginSheet';
 import { BottomSheet } from '@m/components/BottomSheet';
@@ -10,13 +10,15 @@ import { useGo } from '@m/lib/nav';
 
 const DEPTH_LABEL = ['즉답', '한 파일', '기능', '심층', '설계'];
 
-/** Used by ChatScreen: one collapsed chip summarising the last routing decision; tapping opens the detail sheet. */
+/** Used by ChatScreen: one collapsed chip summarising this chat's last routing decision; tapping opens the detail sheet. */
 export function RouterChip({ sessionId = null }: { sessionId?: string | null }) {
   const state = useRoutingState();
   const [open, setOpen] = useState(false);
   const go = useGo();
   const auth = useClaudeAuth();
-  const last = state.last;
+  // this chat's own last route: another chat's never shows here
+  const chatRoute = chatRouteOf(state, sessionId);
+  const last = chatRoute?.route ?? null;
   // F-08: the PC this chat's remote work goes to (pin / automatic)
   const targetChoice = useTargetChoice(sessionId);
   const tv = targetChoice.view;
@@ -24,9 +26,7 @@ export function RouterChip({ sessionId = null }: { sessionId?: string | null }) 
   const needsLogin = (last?.plan.engine_error && last.plan.engine === 'claude') || auth.expired;
   const loginNotice = needsLogin ? 'Claude 로그인 만료 · 다시 로그인' : auth.renewSoon ? `Claude 로그인 D-${auth.daysLeft} · 갱신` : null;
   if (state.mode === 'off') return <ClaudeLoginSheet />;
-  // the last plan's model is shown only in the chat it was routed for
-  const ownPlan = state.runSessionId === sessionId;
-  const label = state.busy ? '판정 중…' : last ? `${last.agent.name} · ${last.plan.engine ?? '-'} ${ownPlan ? last.plan.model ?? '' : ''} · D${last.scope.depth}${last.plan.target ? ` · ⇢ ${last.plan.target.name}` : ''}` : '자동 라우팅';
+  const label = state.busy ? '판정 중…' : last ? `${last.agent.name} · ${last.plan.engine ?? '-'} ${last.plan.model ?? ''} · D${last.scope.depth}${last.plan.target ? ` · ⇢ ${last.plan.target.name}` : ''}` : '자동 라우팅';
   return (
     <>
       <ClaudeLoginSheet />
@@ -45,7 +45,7 @@ export function RouterChip({ sessionId = null }: { sessionId?: string | null }) 
           <div className="space-y-4">
             <div>
               <div className="text-[12px] text-muted mb-1">명령</div>
-              <div className="text-[13px] line-clamp-3">{state.lastText}</div>
+              <div className="text-[13px] line-clamp-3">{chatRoute?.text}</div>
             </div>
             <div className="grid grid-cols-3 gap-2 text-center">
               <Stat label="깊이" value={`D${last.scope.depth} ${DEPTH_LABEL[last.scope.depth] ?? ''}`} />
@@ -88,7 +88,7 @@ export function RouterChip({ sessionId = null }: { sessionId?: string | null }) 
                   자동으로 되돌리기 <span className="text-[11px] text-muted">· 이 채팅은 엔진이 고정되어 있습니다</span>
                 </button>
               ) : null}
-              <div className="text-[12px] text-muted mt-2">{!ownPlan ? "모델: 이 채팅의 다음 명령에서 정합니다" : last.plan.model ? `${last.plan.model} / ${last.plan.effort ?? "-"}` : "모델 미정 (사용 가능한 엔진 없음)"}{last.plan.engine_locked ? ' · 세션은 엔진에 묶여 있고, 우선순위가 더 높은 엔진이 쓸 수 있게 되면 다음 메시지부터 그쪽으로 이어갑니다' : ''}</div>
+              <div className="text-[12px] text-muted mt-2">{last.plan.model ? `${last.plan.model} / ${last.plan.effort ?? "-"}` : "모델 미정 (사용 가능한 엔진 없음)"}{last.plan.engine_locked ? ' · 세션은 엔진에 묶여 있고, 우선순위가 더 높은 엔진이 쓸 수 있게 되면 다음 메시지부터 그쪽으로 이어갑니다' : ''}</div>
               {policyNote(last) ? <div className="text-[12px] mt-1" data-testid="router-policy-note">{policyNote(last)}</div> : null}
               <ul className="text-[11px] text-muted mt-1 list-disc pl-4">{last.plan.reason.map((reason) => <li key={reason}>{reason}</li>)}</ul>
             </div>

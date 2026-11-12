@@ -37,8 +37,7 @@ export const claudeAuth = {
     window.dispatchEvent(new Event(PROVIDER_MODELS_CHANGED_EVENT));
     await claudeAuth.refresh();
     await aidevApi.engines(true).catch(() => undefined);
-    const last = routingStore.get().last;
-    if (last?.plan.engine_error) routingStore.patch({ last: { ...last, plan: { ...last.plan, engine_error: null } } });
+    routingStore.updateRoutes((route) => (route.plan.engine_error ? { ...route, plan: { ...route.plan, engine_error: null } } : route));
   },
 };
 

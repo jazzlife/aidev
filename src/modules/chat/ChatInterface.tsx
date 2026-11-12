@@ -30,7 +30,7 @@ import {
 } from '@/shared/context/SessionProtectionContext';
 import ChatMessagesPane from '@/modules/chat/transcript/ChatMessagesPane';
 import ChatComposer from '@/modules/chat/composer/ChatComposer';
-import { AidevRouterBar, aidevApi, isPolicyProvider, ClarifyPrompt, announceRunComplete, changedFilesSince, EscalationCard, routingStore, sessionKey, useAidevRouting, useEffortCap, useEscalation, useReturnFromHandoff, useRoutingState, ReturnCard, VerificationCard } from '@/modules/aidev-router';
+import { AidevRouterBar, aidevApi, chatRouteOf, isPolicyProvider, ClarifyPrompt, announceRunComplete, changedFilesSince, EscalationCard, routingStore, sessionKey, useAidevRouting, useEffortCap, useEscalation, useReturnFromHandoff, useRoutingState, ReturnCard, VerificationCard } from '@/modules/aidev-router';
 import CommandResultModal from '@/modules/chat/modals/CommandResultModal';
 
 type ChatInterfaceProps = {
@@ -489,8 +489,8 @@ function ChatInterface({
   const routingOn = routingState.mode !== 'off' && routedProvider;
   const pinnedModel = routingState.overrides.model;
   const pinnedEffort = routingState.overrides.effort;
-  // the last plan is shown only in the chat it was routed for: another chat has not been routed yet ("자동")
-  const lastPlan = routingState.runSessionId === (selectedSession?.id ?? null) ? routingState.last?.plan : undefined;
+  // this chat's own last plan: a chat not routed yet on this page shows "자동"
+  const lastPlan = chatRouteOf(routingState, selectedSession?.id)?.route.plan;
   const composerEngine: AidevEngine = isAidevEngine(provider) ? provider : 'claude';
   const routedEngine = routingState.overrides.engine ?? composerEngine;
   const routedEffortOptions = useMemo(() => (effortLadder?.[routedEngine] ?? []).map((value) => ({ value })), [effortLadder, routedEngine]);

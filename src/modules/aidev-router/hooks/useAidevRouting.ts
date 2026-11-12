@@ -198,7 +198,8 @@ export function useAidevRouting() {
       } catch {
         runId = null; // a missing run row only loses learning signal for this turn
       }
-      routingStore.patch({ busy: false, last: route, lastText: text, runId, runSessionId: context.sessionId, runFinishedAt: null, runFeedback: null });
+      routingStore.patch({ busy: false });
+      routingStore.setFor('routes', context.sessionId, { route, text, runId, finishedAt: null, feedback: null });
       routingStore.setFor('sent', context.sessionId, { runId, text, agent: route.agent.name, reported: false });
       // Pinned by hand to the other engine (bar chip, or a model from the other engine's list): sessions are
       // provider-bound, so this chat cannot run there — the send continues in a new session on that engine (handoff).
@@ -234,7 +235,7 @@ export function useAidevRouting() {
   /**
    * Records the terminal signal of a routed run (§3.8). A run's end (`exit_code`) is matched to the run its own chat
    * last opened — never to the page's last send, which may belong to another chat — and is reported once; feedback
-   * goes to the last run.
+   * names its run (`runId`, the rated chat's).
    */
   const reportOutcome = useCallback(async (outcome: { session_id?: string | null; exit_code?: number | null; tool_errors?: number; user_feedback?: 'up' | 'down' | null; test_result?: 'pass' | 'fail' | null; summary?: string; reverted?: boolean; /** the engine refused the run on a usage limit (its reset time when known) */ usage_limit?: { type: string; resets_at: number | null } | null }, runId?: number | null) => {
     const ending = outcome.exit_code !== undefined;
@@ -243,17 +244,20 @@ export function useAidevRouting() {
     const sent = ending ? sentMap[sessionKey(sentKey)] ?? null : null;
     // a chat's run that this page did not route (sent from another device, a timer) has nothing to report here
     if (ending && !runId && (!sent || sent.reported)) return null;
-    const id = runId ?? (ending ? sent?.runId : routingStore.get().runId) ?? null;
+    const id = runId ?? (ending ? sent?.runId : null) ?? null;
     if (ending && sent) routingStore.setFor('sent', sentKey, { ...sent, reported: true });
-    const isLastRun = id !== null && id === routingStore.get().runId;
-    if (ending && isLastRun) routingStore.patch({ runFinishedAt: Date.now() });
-    if (outcome.user_feedback) routingStore.patch({ runFeedback: outcome.user_feedback });
-    if (outcome.session_id && isLastRun) routingStore.patch({ runSessionId: outcome.session_id });
     if (!id) {
       return null;
     }
-    const chatId = outcome.session_id ?? (sent ? sentKey : routingStore.get().runSessionId);
-    const followUp = { text: sent?.text ?? routingStore.get().lastText ?? '', agent: sent?.agent ?? routingStore.get().last?.agent.name ?? null };
+    // the chat whose bar shows this run: it shows the run ended, and the rating given
+    const routes = routingStore.get().routes;
+    const routeKey = Object.keys(routes).find((key) => routes[key].runId === id);
+    const chatRoute = routeKey === undefined ? null : routes[routeKey];
+    if (chatRoute && (ending || outcome.user_feedback)) {
+      routingStore.setFor('routes', routeKey, { ...chatRoute, ...(ending ? { finishedAt: Date.now() } : {}), ...(outcome.user_feedback ? { feedback: outcome.user_feedback } : {}) });
+    }
+    const chatId = outcome.session_id ?? (sent ? sentKey : routeKey || null);
+    const followUp = { text: sent?.text ?? chatRoute?.text ?? '', agent: sent?.agent ?? chatRoute?.route.agent.name ?? null };
     try {
       const result = await aidevApi.runOutcome(id, outcome);
       // E-03: a failed run comes back with a proposed next step (retry / stronger model / other engine), kept in its chat

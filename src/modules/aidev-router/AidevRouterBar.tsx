@@ -2,7 +2,7 @@ import { useEffect, useState, type CSSProperties } from 'react';
 import { ChevronDown, Monitor, Sparkles, Star, ThumbsDown, ThumbsUp } from 'lucide-react';
 
 import { aidevApi, type Engine, type EnginesResult } from '@/modules/aidev-router/api';
-import { routingStore, useRoutingState, type RoutingMode } from '@/modules/aidev-router/store';
+import { chatRouteOf, routingStore, useRoutingState, type RoutingMode } from '@/modules/aidev-router/store';
 import { useAidevRouting } from '@/modules/aidev-router/hooks/useAidevRouting';
 import { claudeAuth, useClaudeAuth } from '@/modules/aidev-router/hooks/useClaudeAuth';
 import { EFFORT_LABEL } from '@/modules/aidev-router/hooks/useEffortCap';
@@ -21,7 +21,7 @@ const DEPTH_LABEL = ['즉답', '한 파일', '기능', '심층', '설계'];
 const MODES: Array<{ value: RoutingMode; label: string }> = [{ value: 'auto', label: '자동' }, { value: 'manual', label: '확인 후' }, { value: 'off', label: '끄기' }];
 
 /**
- * Used by the workbench chat (ChatInterface, above the composer): one line summarising the last
+ * Used by the workbench chat (ChatInterface, below the composer): one line summarising this chat's last
  * routing decision — scope chips, agent with probability, engine/model — with dropdowns to override
  * the agent, the engine and the routing mode (IMPLEMENTATION-PLAN §3.6 / C-09). Overrides are
  * recorded on the decision and applied to the next send.
@@ -46,7 +46,10 @@ export function AidevRouterBar({ sessionId = null }: { sessionId?: string | null
   // F-08: which PC this chat's remote work goes to
   const targetChoice = useTargetChoice(sessionId);
   const tv = targetChoice.view;
-  useEffect(() => { aidevApi.engines().then(setEngines).catch(() => setEngines(null)); }, [state.last?.decision_id]);
+  // this chat's own last route: another chat's agent, engine and scope never show here
+  const chatRoute = chatRouteOf(state, sessionId);
+  const last = chatRoute?.route ?? null;
+  useEffect(() => { aidevApi.engines().then(setEngines).catch(() => setEngines(null)); }, [last?.decision_id]);
   useEffect(() => {
     if (!open) return undefined;
     const close = () => setOpen(null);
@@ -54,7 +57,6 @@ export function AidevRouterBar({ sessionId = null }: { sessionId?: string | null
     window.addEventListener('resize', close);
     return () => { window.removeEventListener('click', close); window.removeEventListener('resize', close); };
   }, [open]);
-  const last = state.last;
   const chip = 'inline-flex items-center gap-1 h-6 px-2 rounded-md border border-border bg-background text-[11px] text-muted-foreground whitespace-nowrap';
   const overrideAgent = (name: string) => { routingStore.setOverrides({ agent: name }); if (last) void aidevApi.overrideDecision(last.decision_id, { final_agent: name }); setOpen(null); };
   // picking an engine pins this chat to it (routing never moves a pinned chat); "자동" lets priority / routing decide again
@@ -103,7 +105,7 @@ export function AidevRouterBar({ sessionId = null }: { sessionId?: string | null
           <span className="relative">
             <button type="button" className={`${chip} text-foreground`} onClick={(event) => { event.stopPropagation(); setOpen(open === 'engine' ? null : 'engine', event); }} title={last.plan.reason.join('\n')}>
               <span>{engineName(state.overrides.engine ?? last.plan.engine)}</span>{state.overrides.engine || last.plan.engine_pinned ? <span className="text-muted-foreground">· 고정</span> : null}
-              {last.plan.model && state.runSessionId === sessionId ? <span className="text-muted-foreground">· {last.plan.model}/{last.plan.effort}</span> : null}
+              {last.plan.model ? <span className="text-muted-foreground">· {last.plan.model}/{last.plan.effort}</span> : null}
               <ChevronDown size={11} />
             </button>
             {open === 'engine' ? (
@@ -159,11 +161,11 @@ export function AidevRouterBar({ sessionId = null }: { sessionId?: string | null
             </span>
           ) : null}
           {last.lessons.length ? <span className={chip} title={last.lessons.map((lesson) => `${lesson.trigger} → ${lesson.rule}`).join('\n')}>교훈 {last.lessons.length}</span> : null}
-          {state.runFinishedAt && state.runId ? (
+          {chatRoute?.finishedAt && chatRoute.runId ? (
             <span className="inline-flex items-center gap-0.5 text-muted-foreground" title="이 실행 결과를 평가하면 다음 라우팅과 교훈 학습에 반영됩니다">
               <span className="mr-0.5">결과</span>
-              <button type="button" aria-label="좋아요" disabled={Boolean(state.runFeedback)} onClick={() => { void reportOutcome({ user_feedback: 'up' }); }} className={`rounded p-1 hover:bg-accent disabled:opacity-60 ${state.runFeedback === 'up' ? 'text-emerald-600' : ''}`}><ThumbsUp size={12} /></button>
-              <button type="button" aria-label="별로예요" disabled={Boolean(state.runFeedback)} onClick={() => { void reportOutcome({ user_feedback: 'down' }); }} className={`rounded p-1 hover:bg-accent disabled:opacity-60 ${state.runFeedback === 'down' ? 'text-red-600' : ''}`}><ThumbsDown size={12} /></button>
+              <button type="button" aria-label="좋아요" disabled={Boolean(chatRoute.feedback)} onClick={() => { void reportOutcome({ user_feedback: 'up' }, chatRoute.runId); }} className={`rounded p-1 hover:bg-accent disabled:opacity-60 ${chatRoute.feedback === 'up' ? 'text-emerald-600' : ''}`}><ThumbsUp size={12} /></button>
+              <button type="button" aria-label="별로예요" disabled={Boolean(chatRoute.feedback)} onClick={() => { void reportOutcome({ user_feedback: 'down' }, chatRoute.runId); }} className={`rounded p-1 hover:bg-accent disabled:opacity-60 ${chatRoute.feedback === 'down' ? 'text-red-600' : ''}`}><ThumbsDown size={12} /></button>
             </span>
           ) : null}
           <span className="ml-auto whitespace-nowrap text-muted-foreground">{last.latency_ms ?? '-'}ms{last.device ? ` · ${last.device}` : ''}</span>

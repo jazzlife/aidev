@@ -3,7 +3,7 @@ import { useLocation, useParams } from 'react-router-dom';
 import { Clock, Download, Gauge, GitBranch, MoreHorizontal, Search } from 'lucide-react';
 
 import { api, grantClaudeToolPermission, buildClaudeToolPermissionEntry, useChatRealtimeHandlers, useSessionStore, useWebSocket, type LLMProvider, type NormalizedMessage, type PendingPermissionRequest, type ProjectSession } from '@/modules/chat-core';
-import { aidevApi, designHoldFor, GENERALIST, routingStore, sessionKey, shouldAskClarify, useAidevRouting, useDesignHolds, useEscalation, usePrejudge, useReturnFromHandoff, useRoutingState, ReturnCard, VerificationCard, type AidevSendDecoration, type Engine } from '@/modules/aidev-router';
+import { aidevApi, chatRouteOf, designHoldFor, GENERALIST, routingStore, sessionKey, shouldAskClarify, useAidevRouting, useDesignHolds, useEscalation, usePrejudge, useReturnFromHandoff, useRoutingState, ReturnCard, VerificationCard, type AidevSendDecoration, type Engine } from '@/modules/aidev-router';
 import { isAidevEngine, parseProviderUsageLimit } from '@/shared/utils';
 import { hydrateChatDrafts, readQueuedMessages, subscribeToChatDrafts, writeQueuedMessages, type StoredQueuedMessage } from '@/shared/chatDrafts';
 import { Composer } from '@m/components/Composer';
@@ -590,7 +590,7 @@ export function ChatScreen() {
       {!busy ? <ReturnCard compact back={returnFromHandoff} /> : null}
       {openVerification && !busy ? <VerificationCard compact status={openVerification.status} result={openVerification.result} onDismiss={() => routingStore.setFor('verifications', sessionId, null)} /> : null}
       {escalation.escalation && !busy ? <EscalationPrompt next={escalation.escalation.next} label={escalation.label} busy={escalation.busy} error={escalation.error} onRun={() => { void escalation.run(); }} onDismiss={escalation.dismiss} /> : null}
-      {lastRunFinished && !busy ? <RunFeedback key={lastRunFinished} onFeedback={(value) => { void reportOutcome({ user_feedback: value }); }} /> : null}
+      {lastRunFinished && !busy ? <RunFeedback key={lastRunFinished} onFeedback={(value) => { void reportOutcome({ user_feedback: value }, chatRouteOf(routingStore.get(), sessionId)?.runId ?? null); }} /> : null}
       {clarify ? <ClarifyPrompt key={clarify.decoration.route.decision_id} text={clarify.text || attachmentLabel(clarify.attachments.map((a) => a.name ?? '파일'))} question={clarify.decoration.route.scope.clarify_question} onProceed={() => { setClarify(null); void dispatch(clarify.text, clarify.decoration, clarify.attachments, clarify.previews, { interrupt: busy }); }} onAnswer={(answer) => { setClarify(null); void dispatch(`${clarify.text}\n\n(추가 정보) ${answer}`, clarify.decoration, clarify.attachments, clarify.previews, { interrupt: busy }); }} /> : null}
       <RouterChip sessionId={sessionId} />
       {sending ? (

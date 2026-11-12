@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
 
 import { aidevApi, type Engine } from '@/modules/aidev-router/api';
-import { routingStore } from '@/modules/aidev-router/store';
+import { chatRouteOf, routingStore } from '@/modules/aidev-router/store';
 import { ENGINE_LABELS } from '@/shared/constants';
 
 /**
@@ -103,7 +103,7 @@ export function useReturnFromHandoff(sessionId: string | null, openSession: (ses
     setBusy(true); setError(null);
     try {
       const brief = await aidevApi.handoffBrief(sessionId, { from_engine: origin.toEngine, to_engine: origin.fromEngine, reason: `${ENGINE_LABELS[origin.fromEngine]} 사용량 한도가 풀려 돌아왔습니다` });
-      const agentName = routingStore.get().last?.agent.name ?? null;
+      const agentName = chatRouteOf(routingStore.get(), sessionId)?.route.agent.name ?? null;
       routingStore.patch({ pendingHandoff: { sessionId: origin.fromSessionId, text: brief.text }, oneShotPlan: { engine: origin.fromEngine }, oneShotAgent: agentName && agentName !== 'agent-architect' ? agentName : null });
       routingStore.setFor('escalations', sessionId, null);
       forget(sessionId);

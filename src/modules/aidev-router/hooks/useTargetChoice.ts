@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 
 import { aidevApi, type RouteResult, type RouteTargetSource } from '@/modules/aidev-router/api';
-import { routingStore, useRoutingState } from '@/modules/aidev-router/store';
+import { chatRouteOf, routingStore, useRoutingState } from '@/modules/aidev-router/store';
 
 function dropOverride() {
   const { targetId: _dropped, ...rest } = routingStore.get().overrides;
@@ -62,7 +62,7 @@ export function useTargetChoice(sessionId: string | null) {
   // the pick made since the last route (reset when a new route arrives)
   const [picked, setPicked] = useState<{ decisionId: number | null; id: number | null } | null>(null);
   const choose = useCallback(async (targetId: number | null) => {
-    const last = routingStore.get().last;
+    const last = chatRouteOf(routingStore.get(), sessionId)?.route ?? null;
     setPicked({ decisionId: last?.decision_id ?? null, id: targetId });
     // a known chat keeps the pick as its pin (a PC named in a later command still wins); a new chat
     // without an id yet holds it as a page-level override until the id is known
@@ -79,11 +79,11 @@ export function useTargetChoice(sessionId: string | null) {
 
   const setDefault = useCallback(async (targetId: number, on: boolean) => {
     await aidevApi.setDefaultTarget(targetId, on);
-    const last = routingStore.get().last;
-    // reflect it in the chip's list right away (the next route returns it anyway)
-    if (last?.targets) routingStore.patch({ last: { ...last, targets: last.targets.map((t) => ({ ...t, is_default: t.id === targetId ? on : on ? false : t.is_default })) } });
+    // reflect it in the chips' lists right away (the next route returns it anyway)
+    routingStore.updateRoutes((route) => (route.targets ? { ...route, targets: route.targets.map((t) => ({ ...t, is_default: t.id === targetId ? on : on ? false : t.is_default })) } : route));
   }, []);
 
-  const pickedNow = picked && picked.decisionId === (state.last?.decision_id ?? null) ? picked.id : undefined;
-  return { view: targetChipView(state.last, pickedNow, pinnedId, state.overrides.targetId), pinnedId, choose, setDefault };
+  const last = chatRouteOf(state, sessionId)?.route ?? null;
+  const pickedNow = picked && picked.decisionId === (last?.decision_id ?? null) ? picked.id : undefined;
+  return { view: targetChipView(last, pickedNow, pinnedId, state.overrides.targetId), pinnedId, choose, setDefault };
 }
