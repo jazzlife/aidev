@@ -17,6 +17,11 @@ if (process.env.JWT_SECRET.length < 32) throw new Error('Runtime key too short')
 const username = process.env.AIDEV_RUNTIME;
 if (!/^(user\d{2}|u[a-f0-9]{24})$/.test(username ?? '')) throw new Error('Invalid runtime identity');
 process.env.PATH = `${APP}/node_modules/.bin:${process.env.PATH ?? ''}`;
+// Every git here (agents' shells, the git panel) authenticates to github.com with the account connected in the app.
+// Command-scope config comes after the user's own helpers, so a gh login they set up still answers first.
+// (GIT_CONFIG_PARAMETERS, not GIT_CONFIG_KEY_n: Codex drops *KEY* variables from its shells.)
+const githubHelper = `'credential.https://github.com.helper'='!node /srv/app/current/runtime/git-credential-github.mjs'`;
+process.env.GIT_CONFIG_PARAMETERS = [process.env.GIT_CONFIG_PARAMETERS, githubHelper].filter(Boolean).join(' ');
 
 // Seed a fresh isolated database before the server exposes first-run registration.
 const { initializeDatabase, userDb, closeConnection } = await import(`${APP}/dist-server/server/modules/database/index.js`);

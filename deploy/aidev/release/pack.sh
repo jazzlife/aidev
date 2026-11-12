@@ -18,7 +18,7 @@ for c in gateway:auth-gateway runtime-manager:runtime-manager; do
   ( cd "$dir" && [ -d node_modules ] || npm ci --no-audit --no-fund --loglevel=error >/dev/null; npm run build >/dev/null )
   cp -a "$dir/dist" "$dir/package.json" "$dir/package-lock.json" "$R/control/$name/"; [ -d "$dir/data" ] && cp -a "$dir/data" "$R/control/$name/"
 done
-cp -a deploy/aidev/runtime/entrypoint.mjs "$R/runtime/"
+cp -a deploy/aidev/runtime/entrypoint.mjs deploy/aidev/runtime/git-credential-github.mjs "$R/runtime/"
 mkdir -p "$R/control/laya" && cp -a deploy/aidev/laya/app/. "$R/control/laya/"   # python, no build step
 # aidev-runner binaries built so far (deploy/aidev/runner/build.sh; macOS ones come from the Mac) → served at /_runner/download
 # binaries + adapters (runner/dist), per-OS install/build scripts and the runner source → /_runner/… (stage-dist.sh)
