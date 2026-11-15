@@ -22,6 +22,7 @@ import { createPlatformShip } from './platform-ship.js';
 import { createGithubOauth } from './github-oauth.js';
 import { createAdmin, INITIAL_PASSWORD } from './admin.js';
 import { allows as apiKeyAllows, isApiKey, rateOk, MAX_BODY_BYTES } from './api-keys.js';
+import { createAiAnalyze, isAiAnalyzePath } from './ai-analyze.js';
 
 const port = Number(process.env.PORT ?? 8080);
 // The release this process was started from; differs from /srv/app/current/RELEASE until restarted.
@@ -234,6 +235,13 @@ const aidev = createAidevApi({
 aidev.knowledgeRefresher.startSchedule();
 // provider policy: Artificial Analysis scores of the (model, effort) combinations, once a day once a key is stored
 startScoreSync(store);
+// /ai/v1: the AI analysis contract v1 — authenticate the NadoVibe account and forward to its runtime (ai-analyze.ts)
+const aiAnalyze = createAiAnalyze({
+  kvGet: (key) => store.kvGet(key),
+  useApiKey: (token) => store.useApiKey(token),
+  authenticate,
+  ready,
+});
 // /admin: user administration with its own sign-in (admin.ts)
 const admin = createAdmin({ store, secret, origin, json, provision: (runtime) => managerRequest(runtime, 'provision'), removeRuntime: (runtime) => managerRequest(runtime, 'delete') });
 /** A signed-in session for `user`: the token in the body and the host-only cookie. */
@@ -472,6 +480,8 @@ const server = http.createServer(async (req, res) => {
       catch (error) { return json(res, (error as { status?: number }).status ?? 400, { error: error instanceof Error ? error.message : 'pairing failed' }); }
     }
     if (req.headers.origin && req.headers.origin !== origin) return json(res, 403, { error: 'Origin rejected' });
+    // a server-to-server API with its own envelope and credentials (an analyze key); nothing below sees these paths
+    if (isAiAnalyzePath(url.pathname)) return await aiAnalyze.handle(req, res, url);
     if (await admin.handle(req, res, url)) return;
     if (url.pathname === '/api/auth/status') return json(res, 200, { needsSetup: false, isAuthenticated: Boolean(authenticate(req)) });
     if (url.pathname === '/api/auth/register') return json(res, 403, { error: 'Contact the administrator to create an account' });

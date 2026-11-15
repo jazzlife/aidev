@@ -110,6 +110,14 @@ const manager = http.createServer(async (req, res) => {
       return send(res, 200, { success: true, data: { agent: 'generalist', fit: 0.7, reason: 'mock: general request', new: null, engine: 'mock', ms: 5 } });
     }
     if (path === '/_mock/judge-calls') return send(res, 200, { calls: judgeCalls, engines: judgeEngines[name] ?? null });
+    // the runtime's AI analysis contract v1 (server/modules/ai-analyze): echoes what the gateway forwarded
+    if (path.startsWith('/api/ai-analyze/')) {
+      const chunks = []; for await (const c of req) chunks.push(c);
+      const raw = Buffer.concat(chunks);
+      if (raw.includes('non-envelope')) { res.writeHead(500, { 'content-type': 'text/html' }); return res.end('<h1>oops</h1>'); }
+      if (path.startsWith('/api/ai-analyze/v1/analyze/')) return send(res, 200, { ok: true, status: 'done', text: 'mock', runtime: name, path });
+      return send(res, 202, { ok: true, jobId: 'job_mock000001', pollAfterMs: 10, runtime: name, path, auth: req.headers.authorization ?? null, contentType: req.headers['content-type'] ?? null, bodyBytes: raw.length });
+    }
     if (path === '/api/aidev-tools/knowledge-check') {
       const b = await read(req);
       return /URP/.test(b.title || '')

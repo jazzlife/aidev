@@ -5,6 +5,7 @@ import { fileURLToPath } from 'node:url';
 
 import { LOCAL_AGENTS, localAgentCommand, localAgentPrompt, parseLocalAgentOutput, pickLocalAgent, type LocalAgent, type LocalAgentMode } from '@/modules/aidev-tools/local-agent.js';
 import { appConfigDb } from '@/modules/database/index.js';
+import type { AiAnalyzeModelPick } from '@/shared/types.js';
 
 /**
  * aidev-tools: the runtime side of the Nado AI Dev platform integration.
@@ -427,6 +428,37 @@ export const aidevToolsService = {
     if (turn?.targetId) env.AIDEV_TARGET_ID = String(turn.targetId);
     if (turn?.agent) env.AIDEV_AGENT = turn.agent;
     return { command, args, env };
+  },
+
+  /**
+   * The model an AI analysis (contract v1, ai-analyze module) runs on, picked by the gateway from this account's own
+   * settings: Claude allowed and signed in, no usage-limit hold, then the provider policy / tier table with the model
+   * floor and effort ceiling. Analyses run on Claude only: they read PDFs, which only the Claude turn takes as content.
+   * Outside the platform (local runs) there are no account settings: Sonnet, the CLI's default effort.
+   */
+  async pickAnalysisModel(effortHint: string | null): Promise<AiAnalyzeModelPick> {
+    if (!runtimeName) return { ok: true, model: 'sonnet', effort: null };
+    let pick: GatewayResponse;
+    try {
+      pick = await callGateway('POST', '/analyze/pick', { effort: effortHint }, 15_000);
+    } catch (error) {
+      return { ok: false, failure: { status: 502, code: 'upstream_error', message: `NadoVibe 계정 설정을 읽지 못했다 (${error instanceof Error ? error.message : String(error)}). 잠시 후 같은 requestId 로 다시 보내라` } };
+    }
+    if (pick.allowed !== true) {
+      return { ok: false, failure: { status: 403, code: 'forbidden', message: 'AI 분석은 Claude 로 돈다. 이 NadoVibe 계정의 설정에서 Claude 사용이 꺼져 있다 — 관리자에게 Claude 사용을 켜 달라고 하라' } };
+    }
+    if (pick.authenticated !== true) {
+      return { ok: false, failure: { status: 502, code: 'upstream_error', message: '이 NadoVibe 계정의 Claude 로그인이 없거나 만료됐다. NadoVibe 설정에서 Claude 에 다시 로그인하라' } };
+    }
+    const limitedUntil = Number(pick.limited_until);
+    if (Number.isFinite(limitedUntil) && limitedUntil > Date.now()) {
+      return { ok: false, failure: { status: 429, code: 'rate_limited', retryAfterSec: Math.ceil((limitedUntil - Date.now()) / 1000),
+        message: `이 NadoVibe 계정의 Claude 구독 사용량 한도에 걸려 있다 — ${new Date(limitedUntil).toISOString()} 에 풀린다. 그때 같은 requestId 로 다시 보내라` } };
+    }
+    if (typeof pick.model !== 'string' || !pick.model) {
+      return { ok: false, failure: { status: 502, code: 'upstream_error', message: '이 NadoVibe 계정의 설정에서 Claude 모델을 고르지 못했다. 설정의 모델 범위를 확인하라' } };
+    }
+    return { ok: true, model: pick.model, effort: typeof pick.effort === 'string' ? pick.effort : null };
   },
 
   /** Laya decision through the gateway registry (`/api/aidev/decide/:kind`). */

@@ -10,8 +10,13 @@
 import crypto from 'node:crypto';
 
 export const API_KEY_PREFIX = 'aidk_';
-/** The only scope so far. Keep one scope = one explicit route list. */
-export const API_KEY_SCOPES = ['decide'] as const;
+/**
+ * Keep one scope = one explicit route list.
+ *   decide  — the Laya decision endpoints below (allows()).
+ *   analyze — the AI analysis contract v1 at /ai/v1/* only (ai-analyze.ts resolves it there, before this file's
+ *             allowlist is consulted); every /api route refuses it, as allows() lets no other scope through.
+ */
+export const API_KEY_SCOPES = ['decide', 'analyze'] as const;
 export type ApiKeyScope = (typeof API_KEY_SCOPES)[number];
 
 export const isApiKey = (token: string | undefined): boolean => Boolean(token?.startsWith(API_KEY_PREFIX));
@@ -25,7 +30,7 @@ export function mintApiKey() {
 /** Lookup is by hash, so there is nothing to compare in non-constant time. */
 export const hashApiKey = (token: string) => crypto.createHash('sha256').update(token).digest('hex');
 
-/** May a key with `scope` make this request? Everything not listed is refused. */
+/** May a key with `scope` make this /api request? Everything not listed is refused (an `analyze` key: everything). */
 export function allows(scope: string, method: string, pathname: string): boolean {
   if (scope !== 'decide') return false;
   if (method === 'GET') return pathname === '/api/aidev/laya/health';

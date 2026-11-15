@@ -1443,3 +1443,73 @@ export type CliApplication = {
 export type SandboxCommandService = {
   execute(argumentsList: string[]): Promise<number>;
 };
+
+// ---------------------------
+//----------------- AI ANALYZE MODULE CONTRACTS ------------
+/**
+ * A failure of the AI analysis contract v1 (`POST /ai/v1/analyze`), carried to the caller as
+ * `{ ok: false, error: { code, message, ... } }` with `status` as the HTTP status.
+ *
+ * `message` is shown to the caller's operator as is, so it must be a sentence a person can act on.
+ * `details` lists schema errors line by line; `text` is the model's raw reply on `schema_mismatch`.
+ * Produced by the ai-analyze service and its Claude turn; the aidev-tools model pick reports through it too.
+ */
+export type AiAnalyzeFailure = {
+  status: number;
+  code: string;
+  message: string;
+  retryAfterSec?: number | null;
+  details?: string[];
+  text?: string;
+};
+
+/**
+ * The one input file of an analysis request, already decoded and checked against the readable types
+ * and size limits. Built by the ai-analyze service and handed to the Claude turn, which sends it to the
+ * model as a document (PDF, text) or image block.
+ */
+export type AiAnalyzeInput = {
+  name: string;
+  mime: 'application/pdf' | 'image/png' | 'image/jpeg' | 'text/plain';
+  bytes: Buffer;
+};
+
+/**
+ * One tool-less model turn of an analysis: the caller's role (`system`) and task (`prompt`, already
+ * carrying the output instructions), the optional input, and the model/effort the account's settings
+ * picked. Built by the ai-analyze service, run by its Claude turn.
+ */
+export type AiAnalyzeTurnRequest = {
+  system: string;
+  prompt: string;
+  input: AiAnalyzeInput | null;
+  model: string;
+  effort: string | null;
+  timeoutMs: number;
+};
+
+/**
+ * The outcome of one analysis model turn: the model's untouched reply, or a contract failure
+ * (usage limit, sign-in, unreadable input, timeout …). Returned by the Claude turn to the ai-analyze service.
+ */
+export type AiAnalyzeTurnResult =
+  | { ok: true; text: string; model: string | null; sessionId: string | null; costUsd: number | null; durationMs: number }
+  | { ok: false; failure: AiAnalyzeFailure };
+
+/**
+ * The model an analysis runs on, picked by the gateway from the account's own settings (allowed engines,
+ * Claude sign-in, usage-limit hold, provider policy, model floor, effort ceiling). Returned by
+ * aidevToolsService.pickAnalysisModel to the ai-analyze service; a failure is already a contract failure.
+ */
+export type AiAnalyzeModelPick =
+  | { ok: true; model: string; effort: string | null }
+  | { ok: false; failure: AiAnalyzeFailure };
+
+/**
+ * An HTTP reply of the ai-analyze service: the status and the contract body (`{ ok, ... }`).
+ * The service builds it, the ai-analyze routes send it unchanged.
+ */
+export type AiAnalyzeReply = {
+  status: number;
+  body: Record<string, unknown>;
+};

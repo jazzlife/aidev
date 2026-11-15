@@ -42,6 +42,7 @@ import {
 } from './modules/plugins/index.js';
 import providerRoutes from './modules/providers/provider.routes.js';
 import { voiceRoutes } from './modules/voice/index.js';
+import { aiAnalyzeRoutes } from './modules/ai-analyze/index.js';
 import {
     closeScheduledMessageDispatcher,
     initializeScheduledMessageDispatcher,
@@ -218,6 +219,9 @@ app.use('/api/scheduled-messages', authenticateToken, scheduledMessagesRoutes);
 app.use('/api/agent', agentRoutes);
 
 app.use('/api/voice', authenticateToken, voiceRoutes);
+
+// AI analysis contract v1 (gateway /ai/v1 → this runtime): one tool-less model turn on the account's own Claude subscription
+app.use('/api/ai-analyze', authenticateToken, aiAnalyzeRoutes);
 
 // Serve public files (like api-docs.html)
 app.use(express.static(path.join(APP_ROOT, 'public')));

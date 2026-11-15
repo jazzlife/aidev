@@ -755,6 +755,21 @@ export function createAidevApi(deps: AidevDeps) {
         }
         throw new HttpError(404, 'Not found');
       }
+      // AI analysis contract v1 (ai-analyze.ts → the runtime asks here): the model an analysis runs on, from this account's
+      // own settings. Claude only — analyses read PDFs, which only the Claude turn takes as content. Read-only: nothing
+      // about routing, limits or the account is written here.
+      if (rest === '/analyze/pick' && m === 'POST') {
+        const b = await readJson(req, 4096);
+        const depth = ({ low: 1, medium: 2, high: 3 } as Record<string, number>)[optStr(b.effort, 10) ?? ''] ?? 2;
+        const claude = (await engineAvailability(session)).claude;
+        const step = splitTier(store, uid, 'claude', depth);
+        const tier = step ? { model: step.model, effort: step.effort } : tierOf('claude', depth);
+        if (!step) {
+          applyModelFloor('claude', tier, store.effectiveModelFloor(uid).floor.claude);
+          tier.effort = applyEffortCap(tier.effort, depth, 'claude', store.effectiveEffortCap(uid).cap.claude);
+        }
+        return json(res, 200, { engine: 'claude', allowed: claude.allowed, authenticated: claude.authenticated, limited_until: claude.limited_until, model: tier.model, effort: tier.effort }), true;
+      }
       if (rest === '/engines' && m === 'GET') {
         const acct = store.accountEngines(uid);
         // ?refresh=1 right after an in-app login, so the next route sees the engine at once

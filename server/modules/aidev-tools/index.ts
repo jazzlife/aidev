@@ -3,7 +3,8 @@
  * (Laya decisions, remote targets) and the MCP server the providers inject.
  */
 
-// aidevToolsService: used by the Claude/Codex runtime providers (MCP server config) and the MCP bridge routes.
+// aidevToolsService: used by the Claude/Codex runtime providers (MCP server config), the MCP bridge routes, and
+// ai-analyze (pickAnalysisModel: the account's model for an analysis).
 export { aidevToolsService, sanitizeAidevOptions, composeAgentInstructions, buildOpenCodeAidevConfig } from './aidev-tools.service.js';
 export type { AidevTurnOptions } from './aidev-tools.service.js';
 // aidevToolsMcpRoutes: mounted by server/index.ts at /api/aidev-tools-mcp (local token protected).
