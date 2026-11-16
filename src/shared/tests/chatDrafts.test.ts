@@ -20,6 +20,7 @@ let draftsRequestFailed = false;
 // Held requests: a test opens the gate to let the server answer.
 let draftsGate: Promise<void> | null = null;
 let saveGate: Promise<void> | null = null;
+let saveStatus = 200;
 
 vi.mock('@/shared/api', () => ({
   api: {
@@ -39,7 +40,7 @@ vi.mock('@/shared/api', () => ({
       saveDraft: async (scope: string, draft: { text: string; queuedMessage?: unknown }) => {
         savedDrafts.push({ scope, ...draft });
         await saveGate;
-        return new Response('{}', { status: 200 });
+        return new Response('{}', { status: saveStatus });
       },
       deleteDraft: async (scope: string) => {
         deletedScopes.push(scope);
@@ -62,6 +63,7 @@ beforeEach(() => {
   draftsRequestFailed = false;
   draftsGate = null;
   saveGate = null;
+  saveStatus = 200;
   vi.useFakeTimers();
 });
 
@@ -311,4 +313,69 @@ test('a queue change is not undone by a reload the server answered from before i
   serverDrafts = [{ scope: 'session-a', text: '', queuedMessage: [second] }];
   await store.hydrateChatDrafts();
   assert.deepEqual(store.readQueuedMessages('session-a').map((turn) => turn.id), ['q-2']);
+});
+
+test('text typed just before the tab was frozen survives the reload and reaches the server', async () => {
+  serverDrafts = [{ scope: 'session-a', text: 'older', queuedMessage: [{ id: 'q1', content: 'queued', attachments: [] }] }];
+  const first = await loadStore();
+  first.writeDraftText('session-a', 'older and newer');
+  // iPad Safari freezes the hidden tab before the debounce fires, then discards it.
+  vi.clearAllTimers();
+
+  const second = await loadStore();
+  await second.hydrateChatDrafts();
+  assert.equal(second.readDraftText('session-a'), 'older and newer');
+  // the queue is still the server's
+  assert.deepEqual(second.readQueuedMessages('session-a').map((turn) => turn.id), ['q1']);
+
+  await vi.advanceTimersByTimeAsync(1_500);
+  assert.deepEqual(savedDrafts.at(-1), {
+    scope: 'session-a', text: 'older and newer', queuedMessage: [{ id: 'q1', content: 'queued', attachments: [] }],
+  });
+
+  // once the server has it, a later reload adopts the server again
+  serverDrafts = [{ scope: 'session-a', text: 'edited on the laptop', queuedMessage: null }];
+  const third = await loadStore();
+  await third.hydrateChatDrafts();
+  assert.equal(third.readDraftText('session-a'), 'edited on the laptop');
+});
+
+test('a draft cleared but not yet deleted on the server stays cleared after a reload', async () => {
+  const first = await loadStore();
+  first.writeDraftText('session-a', 'sent already');
+  await vi.advanceTimersByTimeAsync(1_500);
+  first.writeDraftText('session-a', '');
+  vi.clearAllTimers();
+
+  serverDrafts = [{ scope: 'session-a', text: 'sent already', queuedMessage: null }];
+  const second = await loadStore();
+  await second.hydrateChatDrafts();
+  assert.equal(second.readDraftText('session-a'), '');
+  await vi.advanceTimersByTimeAsync(1_500);
+  assert.deepEqual(deletedScopes, ['session-a']);
+});
+
+test('a save the server rejected keeps the text as unsent', async () => {
+  saveStatus = 520;
+  const first = await loadStore();
+  first.writeDraftText('session-a', 'rejected once');
+  await vi.advanceTimersByTimeAsync(1_500);
+
+  const second = await loadStore();
+  await second.hydrateChatDrafts();
+  assert.equal(second.readDraftText('session-a'), 'rejected once');
+});
+
+test('hiding the page sends the draft without waiting for the debounce', async () => {
+  const store = await loadStore();
+  store.writeDraftText('session-a', 'about to switch apps');
+
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'hidden' });
+  document.dispatchEvent(new Event('visibilitychange'));
+  Object.defineProperty(document, 'visibilityState', { configurable: true, get: () => 'visible' });
+
+  // (module copies loaded by earlier tests listen too)
+  assert.deepEqual(savedDrafts.filter((draft) => draft.text === 'about to switch apps'), [
+    { scope: 'session-a', text: 'about to switch apps', queuedMessage: null },
+  ]);
 });

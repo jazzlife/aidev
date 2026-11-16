@@ -25,6 +25,24 @@ describe('useReleaseWatch', () => {
     expect(reload).toHaveBeenCalledTimes(1);
   });
 
+  it('does not reload under a user who is writing: the notice instead', async () => {
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({ release: releases.shift() ?? 'b' })));
+    const reload = vi.fn();
+    Object.defineProperty(window, 'location', { configurable: true, value: { ...window.location, reload } });
+    const composer = document.createElement('textarea');
+    document.body.append(composer);
+    releases.push('a');
+    const { result } = renderHook(() => useReleaseWatch());
+    await settle();
+    composer.value = '쓰던 중'; composer.focus();
+    setVisibility('hidden'); document.dispatchEvent(new Event('visibilitychange'));
+    setVisibility('visible'); document.dispatchEvent(new Event('visibilitychange'));
+    await settle();
+    expect(reload).not.toHaveBeenCalled();
+    expect(result.current.updateReady).toBe(true);
+    composer.remove();
+  });
+
   it('only shows a notice for a release that lands while the page is in use, and nothing for the same release', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({ release: releases.shift() ?? 'a' })));

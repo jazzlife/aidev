@@ -46,6 +46,7 @@ type DraftRecord = {
 export const CHAT_DRAFTS_CHANGED_EVENT = 'chat-drafts:changed';
 
 const MIRROR_STORAGE_KEY = 'chat-drafts';
+const UNSYNCED_STORAGE_KEY = 'chat-drafts:unsynced';
 
 /**
  * Longer than the preference debounce: this fires on every keystroke, and a
@@ -65,6 +66,12 @@ const pendingScopes = new Set<string>();
 const savingScopes = new Map<string, number>();
 const savesStarted = new Map<string, number>();
 let serverWriteTimer: ReturnType<typeof setTimeout> | null = null;
+// Scopes whose composer text the server has not confirmed yet, persisted next to
+// the mirror. iPad Safari freezes a backgrounded tab (so the debounced save never
+// runs) and often discards it; the reload must then keep the mirrored text
+// instead of adopting the server's older copy, and send it. Text only: the queue
+// is the server's to shorten, and a turn re-sent from here could go out twice.
+let unsyncedText = new Set<string>();
 
 const isRecord = (value: unknown): value is Record<string, unknown> => (
   Boolean(value) && typeof value === 'object' && !Array.isArray(value)
@@ -153,6 +160,27 @@ function writeMirror(): void {
   }
 }
 
+function readUnsynced(): Set<string> {
+  try {
+    const parsed: unknown = JSON.parse(localStorage.getItem(UNSYNCED_STORAGE_KEY) ?? '[]');
+    return new Set(Array.isArray(parsed) ? parsed.filter((scope): scope is string => typeof scope === 'string') : []);
+  } catch {
+    return new Set();
+  }
+}
+
+function writeUnsynced(): void {
+  try {
+    if (unsyncedText.size > 0) {
+      localStorage.setItem(UNSYNCED_STORAGE_KEY, JSON.stringify([...unsyncedText]));
+    } else {
+      localStorage.removeItem(UNSYNCED_STORAGE_KEY);
+    }
+  } catch {
+    // Without storage there is no reload to protect either.
+  }
+}
+
 function notifyListeners(): void {
   for (const listener of listeners) {
     listener();
@@ -184,6 +212,13 @@ function flushServerWrites(): void {
   for (const scope of scopes) {
     const draft = drafts.get(scope);
     const settled = trackSave(scope);
+    const startedAt = savesStarted.get(scope);
+    // Confirmed only if nothing was typed into the scope after this save began.
+    const confirmed = () => {
+      if (!pendingScopes.has(scope) && savesStarted.get(scope) === startedAt && unsyncedText.delete(scope)) {
+        writeUnsynced();
+      }
+    };
 
     // A save that fails must never surface as an unhandled rejection out of a
     // timer callback: the mirror already holds the draft, and the next
@@ -196,6 +231,12 @@ function flushServerWrites(): void {
           queuedMessage: draft.queuedMessages.length > 0 ? draft.queuedMessages : null,
         });
       void request
+        .then((response) => {
+          if (!response.ok) {
+            throw new Error(`HTTP ${response.status}`);
+          }
+          confirmed();
+        })
         .catch((error: unknown) => {
           console.error('Failed to save chat draft:', error);
         })
@@ -241,6 +282,10 @@ function updateDraft(scope: string, update: Partial<DraftRecord>): void {
   drafts = nextDrafts;
 
   writeMirror();
+  if (next.text !== current.text && !unsyncedText.has(scope)) {
+    unsyncedText.add(scope);
+    writeUnsynced();
+  }
   queueServerWrite(scope);
   notifyListeners();
 }
@@ -329,35 +374,50 @@ export async function hydrateChatDrafts(): Promise<void> {
   );
 
   const merged = new Map<string, DraftRecord>();
+  const adopt = (scope: string, draft: DraftRecord) => {
+    if (!isEmptyDraft(draft)) {
+      merged.set(scope, draft);
+    }
+  };
   for (const draft of serverDrafts) {
     const scope = typeof draft.scope === 'string' ? draft.scope : '';
     if (!scope || localIsNewer(scope)) {
       continue;
     }
 
-    merged.set(scope, {
-      text: typeof draft.text === 'string' ? draft.text : '',
+    adopt(scope, {
+      // Text the server never received (the tab was frozen or reloaded first) stays.
+      text: unsyncedText.has(scope) ? readDraftText(scope) : typeof draft.text === 'string' ? draft.text : '',
       queuedMessages: normalizeQueuedMessages(draft.queuedMessage),
     });
   }
 
   // Local edits the server snapshot may not include yet win over it. Every
   // other missing scope was deleted remotely and must also disappear from the
-  // mirror.
+  // mirror — except text the server has not received yet.
   for (const [scope, local] of drafts) {
     if (localIsNewer(scope)) {
       merged.set(scope, local);
+    } else if (unsyncedText.has(scope) && !merged.has(scope)) {
+      adopt(scope, { text: local.text, queuedMessages: [] });
     }
   }
 
   drafts = merged;
   writeMirror();
+  // …and is sent now (a reload starts with nothing queued to send).
+  for (const scope of unsyncedText) {
+    if (!localIsNewer(scope)) {
+      queueServerWrite(scope);
+    }
+  }
   notifyListeners();
 }
 
 /** Drops every cached draft on sign-out, so the next user sees none of them. */
 export function resetChatDrafts(): void {
   drafts = new Map();
+  unsyncedText = new Set();
   pendingScopes.clear();
   savingScopes.clear();
   savesStarted.clear();
@@ -367,6 +427,7 @@ export function resetChatDrafts(): void {
   }
   try {
     localStorage.removeItem(MIRROR_STORAGE_KEY);
+    localStorage.removeItem(UNSYNCED_STORAGE_KEY);
   } catch {
     // The in-memory copy is already cleared, which is what readers use.
   }
@@ -377,4 +438,21 @@ export function resetChatDrafts(): void {
 // input value is a `useState` initializer that runs before any effect.
 if (typeof localStorage !== 'undefined') {
   drafts = readMirror();
+  unsyncedText = readUnsynced();
+}
+
+// Switching apps (iPad, phone) freezes the page right after it is hidden: send
+// what the debounce is still holding while the page can.
+if (typeof document !== 'undefined') {
+  const flushPending = () => {
+    if (serverWriteTimer !== null) {
+      flushServerWritesNow();
+    }
+  };
+  document.addEventListener('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') {
+      flushPending();
+    }
+  });
+  window.addEventListener('pagehide', flushPending);
 }
