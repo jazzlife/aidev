@@ -8,9 +8,10 @@ import { oneDark, oneLight } from 'react-syntax-highlighter/dist/esm/styles/pris
 import { useTranslation } from 'react-i18next';
 
 import { MermaidDiagram } from '@/modules/code-editor';
+import { LinkViewer } from '@/modules/chat/transcript/LinkViewer';
 import { MarkdownImage } from '@/modules/chat/transcript/MarkdownImage';
 import { normalizeInlineCodeFences } from '@/modules/chat/utils/chatFormatting';
-import { copyTextToClipboard } from '@/shared/utils';
+import { copyTextToClipboard, isIosHomeScreenApp } from '@/shared/utils';
 import { SyntaxHighlighter } from '@/shared/syntaxHighlighter';
 import { usePaletteOps } from '@/modules/command-palette';
 import { buildSyntaxTheme } from '@/modules/chat/utils/syntaxHighlightTheme';
@@ -27,6 +28,17 @@ type MarkdownProps = {
 // everything else is treated as a workspace file reference.
 const isExternalHref = (href?: string): boolean =>
   !!href && (/^(https?:|mailto:|tel:|data:)/i.test(href) || href.startsWith('#'));
+
+// A web link to this app's own origin (a preview at `/p/…`): the iOS home-screen app would open it in its own
+// window, in place of the app.
+const isSameOriginWebLink = (href?: string): href is string => {
+  if (!href || !/^https?:/i.test(href)) return false;
+  try {
+    return new URL(href).origin === window.location.origin;
+  } catch {
+    return false;
+  }
+};
 
 // Read the trailing `:line` / `:line:col` suffix so the editor can reveal it.
 // Both this and stripLineSuffix are anchored at the end, so callers pass an
@@ -305,6 +317,8 @@ function MarkdownBodyRenderer({ children, breaks = false }: Omit<MarkdownProps, 
   const katexPlugin = useRehypeKatex(hasMath);
   const rehypePlugins = useMemo(() => (katexPlugin ? [katexPlugin] : EMPTY_PLUGINS), [katexPlugin]);
   const { openFileInEditor, openDirectory } = usePaletteOps();
+  // a same-origin link opened in the iOS home-screen app's in-app viewer (null: none open)
+  const [viewerUrl, setViewerUrl] = useState<string | null>(null);
 
   const components = useMemo(
     () => ({
@@ -345,6 +359,13 @@ function MarkdownBodyRenderer({ children, breaks = false }: Omit<MarkdownProps, 
             className="text-blue-600 hover:underline dark:text-blue-400"
             target="_blank"
             rel="noopener noreferrer"
+            onClick={(event) => {
+              // other sites open in iOS's in-app browser, which has a 완료 button; this app's own pages do not
+              if (isSameOriginWebLink(href) && isIosHomeScreenApp()) {
+                event.preventDefault();
+                setViewerUrl(href);
+              }
+            }}
           >
             {linkChildren}
           </a>
@@ -355,9 +376,12 @@ function MarkdownBodyRenderer({ children, breaks = false }: Omit<MarkdownProps, 
   );
 
   return (
-    <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={components as any}>
-      {content}
-    </ReactMarkdown>
+    <>
+      <ReactMarkdown remarkPlugins={remarkPlugins} rehypePlugins={rehypePlugins} components={components as any}>
+        {content}
+      </ReactMarkdown>
+      {viewerUrl && <LinkViewer url={viewerUrl} onClose={() => setViewerUrl(null)} />}
+    </>
   );
 }
 

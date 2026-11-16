@@ -212,6 +212,28 @@ export async function copyTextToClipboard(text: string): Promise<boolean> {
 
 // ---------------------------
 
+//----------------- iOS HOME-SCREEN APP ------------
+
+/**
+ * True in an iPhone/iPad web app opened from the home screen. It has no browser chrome, so a page or file that
+ * opens in the app's own window (a same-origin link, a download) replaces the app with no way back. Used by chat
+ * to open such links in an in-app viewer and to save attachments through the share sheet instead.
+ */
+export function isIosHomeScreenApp(): boolean {
+  if (typeof window === 'undefined' || typeof navigator === 'undefined') {
+    return false;
+  }
+  if ((navigator as Navigator & { standalone?: boolean }).standalone === true) {
+    return true;
+  }
+  // iPadOS reports itself as a Mac; the touch points tell it apart.
+  return window.matchMedia?.('(display-mode: standalone)').matches === true
+    && /iPhone|iPad|iPod|Macintosh/.test(navigator.userAgent)
+    && navigator.maxTouchPoints > 1;
+}
+
+// ---------------------------
+
 //----------------- NOTIFICATION SOUND ------------
 
 /** localStorage key holding the user's completion-sound preference. Private to the sound helpers. */
