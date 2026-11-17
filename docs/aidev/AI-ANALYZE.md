@@ -1,6 +1,8 @@
 # AI 분석 API (계약 v1)
 
-외부 서버(LEDgo 등)가 도면·이미지·텍스트를 보내 **정해진 JSON 모양으로** 분석 결과를 받는 API다.
+외부 서버(LEDgo 등)가 **데이터와 관련 이미지**를 보내 **정해진 JSON 모양으로** 분석 결과를 받는 API다.
+원본 도면 파일(DWG·DXF 등)은 보내지 않는다 — 부르는 쪽이 데이터로 바꿔 `task.prompt` 에 넣고, 렌더링한 이미지(또는 PDF)를
+`inputs` 에 함께 싣는다. 모델은 각 입력을 `[input i/n: 이름 (mime)]` 줄 뒤에서 보므로 과제에서 이름으로 가리킬 수 있다.
 규범은 LEDgo 가 건넨 "AI 분석 계약 v1" 문서이고, 적합성 검사기(`ai-contract-check.mjs`)로 맞는지 확인한다.
 
 ```
@@ -44,10 +46,13 @@ curl -sS https://dev.nado.work/api/aidev/keys -H "authorization: Bearer $TOKEN" 
 | 항목 | 값 | 넘으면 |
 | --- | --- | --- |
 | 요청 본문 | 34 MB (게이트웨이, Content-Length 로 먼저 판정) | 413 `too_large` |
-| PDF | 22 MB (Claude 요청 32 MB 안에 base64 로 들어가는 크기) | 413 `too_large` |
-| PNG·JPEG | 5 MB | 413 `too_large` |
-| 텍스트(DXF) | 1 MB | 413 `too_large` |
-| 입력 개수 | 요청당 1개 | 413 `too_large` |
+| task.system·task.prompt (데이터 포함) | 각 500,000자 | 413 `too_large` |
+| inputs 개수 | 20개 (넘으면 Claude 가 모든 이미지를 2000px 로 줄인다) | 413 `too_large` |
+| inputs 합계 | 22 MB (Claude 요청 32 MB 안에 base64 로 들어가는 크기) | 413 `too_large` |
+| PNG·JPEG·GIF·WebP | 장당 5 MB, 내용이 mime 과 맞아야 함 | 413 / 415 |
+| PDF | 22 MB | 413 `too_large` |
+| 텍스트 | 1 MB | 413 `too_large` |
+| 그 밖의 형식 | 받지 않는다 (데이터로 바꿔 prompt 에) | 415 `unsupported_media` |
 | 동시 분석 | 계정당 1건 + 대기 2건 | 429 `rate_limited` |
 | 한 턴 | 10분 (스키마 재시도 1회는 따로) | 504 `timeout` |
 | 결과 보관 | 48시간 (성공만) | 다시 분석 |

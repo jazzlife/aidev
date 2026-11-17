@@ -1464,25 +1464,25 @@ export type AiAnalyzeFailure = {
 };
 
 /**
- * The one input file of an analysis request, already decoded and checked against the readable types
- * and size limits. Built by the ai-analyze service and handed to the Claude turn, which sends it to the
- * model as a document (PDF, text) or image block.
+ * One input of an analysis request (an image, a PDF or a text file), already decoded and checked against the
+ * readable types and size limits. Built by the ai-analyze service and handed to the Claude turn, which sends it
+ * to the model as an image or document block, labelled with its name so the task can refer to it.
  */
 export type AiAnalyzeInput = {
   name: string;
-  mime: 'application/pdf' | 'image/png' | 'image/jpeg' | 'text/plain';
+  mime: 'application/pdf' | 'image/png' | 'image/jpeg' | 'image/gif' | 'image/webp' | 'text/plain';
   bytes: Buffer;
 };
 
 /**
  * One tool-less model turn of an analysis: the caller's role (`system`) and task (`prompt`, already
- * carrying the output instructions), the optional input, and the model/effort the account's settings
+ * carrying the output instructions and the caller's data), the inputs in request order, and the model/effort the account's settings
  * picked. Built by the ai-analyze service, run by its Claude turn.
  */
 export type AiAnalyzeTurnRequest = {
   system: string;
   prompt: string;
-  input: AiAnalyzeInput | null;
+  inputs: AiAnalyzeInput[];
   model: string;
   effort: string | null;
   timeoutMs: number;

@@ -10,8 +10,9 @@ import type { AiAnalyzeFailure, AiAnalyzeTurnRequest, AiAnalyzeTurnResult } from
 /**
  * One analysis turn on the account's Claude subscription (the runtime's Claude sign-in), shaped like the specialist
  * judge's side turn: no tools, one turn, no settings or memory files, nothing written to the chat history
- * (`persistSession: false`), an empty working folder. The input goes to the model as a content block — a PDF or a
- * text file (DXF) as a `document`, a PNG/JPEG as an `image` — so the model reads it itself, without a Read tool.
+ * (`persistSession: false`), an empty working folder. Each input goes to the model as a content block — a PDF or a
+ * text file as a `document`, an image as an `image` — after a line naming it, so the model reads it itself (without a
+ * Read tool) and the task can refer to each input by name. The caller's data is in the prompt, after the inputs.
  * Verified on 2026-11-16: a PDF and a text document each came back with the word only they contained.
  *
  * Each call starts its own CLI process: it shares nothing with the chats' processes or the judge's warm one.
@@ -26,12 +27,15 @@ type ContentBlock =
   | { type: 'image'; source: { type: 'base64'; media_type: string; data: string } }
   | { type: 'document'; source: { type: 'base64'; media_type: 'application/pdf'; data: string } | { type: 'text'; media_type: 'text/plain'; data: string } };
 
-function contentFor(request: AiAnalyzeTurnRequest): ContentBlock[] {
+/** The inputs, each after a line naming it, then the task. Exported for this module's tests. */
+export function contentFor(request: AiAnalyzeTurnRequest): ContentBlock[] {
   const blocks: ContentBlock[] = [];
-  const input = request.input;
-  if (input?.mime === 'application/pdf') blocks.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: input.bytes.toString('base64') } });
-  else if (input?.mime === 'text/plain') blocks.push({ type: 'document', source: { type: 'text', media_type: 'text/plain', data: input.bytes.toString('utf8') } });
-  else if (input) blocks.push({ type: 'image', source: { type: 'base64', media_type: input.mime, data: input.bytes.toString('base64') } });
+  request.inputs.forEach((input, index) => {
+    blocks.push({ type: 'text', text: `[input ${index + 1}/${request.inputs.length}: ${input.name} (${input.mime})]` });
+    if (input.mime === 'application/pdf') blocks.push({ type: 'document', source: { type: 'base64', media_type: 'application/pdf', data: input.bytes.toString('base64') } });
+    else if (input.mime === 'text/plain') blocks.push({ type: 'document', source: { type: 'text', media_type: 'text/plain', data: input.bytes.toString('utf8') } });
+    else blocks.push({ type: 'image', source: { type: 'base64', media_type: input.mime, data: input.bytes.toString('base64') } });
+  });
   blocks.push({ type: 'text', text: request.prompt });
   return blocks;
 }

@@ -16,17 +16,30 @@ import type { createAnalysisResultsStore } from '@/modules/ai-analyze/analysis-r
  *   account's own chats; past the queue the caller is asked to come back (429).
  */
 
-const READABLE = new Set<AiAnalyzeInput['mime']>(['application/pdf', 'image/png', 'image/jpeg', 'text/plain']);
 /**
- * Input limits (decoded bytes). A Claude request takes at most 32 MB, and a PDF travels base64-encoded (4/3 larger):
- * 22 MiB of PDF is ~29.3 MiB on the wire with room left for the prompt. An image block takes at most 5 MB. A text file
- * (DXF) is read as tokens: past ~1 MiB it no longer fits the model's context.
+ * Input limits (decoded bytes). The caller sends its data as text in `task.prompt` and the related images (or a PDF)
+ * as `inputs`. A Claude request takes at most 32 MB and inputs travel base64-encoded (4/3 larger): 22 MiB of inputs
+ * in total is ~29.3 MiB on the wire with room left for the prompt. An image block takes at most 5 MB. Past 20 images
+ * Claude shrinks every image to 2000 px, so a request carries at most 20 inputs. A text file is read as tokens: past
+ * ~1 MiB it no longer fits the model's context.
  */
 const MAX_BYTES: Record<AiAnalyzeInput['mime'], number> = {
   'application/pdf': 22 * 1024 * 1024,
   'image/png': 5 * 1024 * 1024,
   'image/jpeg': 5 * 1024 * 1024,
+  'image/gif': 5 * 1024 * 1024,
+  'image/webp': 5 * 1024 * 1024,
   'text/plain': 1024 * 1024,
+};
+const MAX_INPUTS = 20;
+const MAX_TOTAL_BYTES = 22 * 1024 * 1024;
+/** The bytes each type starts with: a file that is not what its mime says is refused here, with its name. */
+const SIGNATURE: Partial<Record<AiAnalyzeInput['mime'], (head: Buffer) => boolean>> = {
+  'application/pdf': (head) => head.subarray(0, 1024).toString('latin1').includes('%PDF-'),
+  'image/png': (head) => head.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])),
+  'image/jpeg': (head) => head[0] === 0xff && head[1] === 0xd8 && head[2] === 0xff,
+  'image/gif': (head) => head.subarray(0, 4).toString('latin1') === 'GIF8',
+  'image/webp': (head) => head.subarray(0, 4).toString('latin1') === 'RIFF' && head.subarray(8, 12).toString('latin1') === 'WEBP',
 };
 const MAX_TEXT_CHARS = 500_000;
 /** Kept at least 24 h (§3.1); 48 h so a retry on the next working day still finds its answer. */
@@ -46,7 +59,7 @@ type Parsed = {
   schemaName: string | null;
   inputs: Array<{ name: string; mime: string; base64: string }>;
 };
-type Job = { parsed: Parsed; input: AiAnalyzeInput | null; jobId: string };
+type Job = { parsed: Parsed; inputs: AiAnalyzeInput[]; jobId: string };
 
 type Deps = {
   store: ReturnType<typeof createAnalysisResultsStore>;
@@ -112,7 +125,7 @@ function parseRequest(raw: unknown): Parsed | AiAnalyzeFailure {
   }
   if (raw.inputs !== undefined && !Array.isArray(raw.inputs)) return failure(400, 'bad_request', 'inputs 는 배열이어야 한다');
   const list = (raw.inputs ?? []) as unknown[];
-  if (list.length > 1) return failure(413, 'too_large', '이 엔진은 요청 하나에 입력 하나만 받는다. 파일을 하나씩 나눠 보내라');
+  if (list.length > MAX_INPUTS) return failure(413, 'too_large', `inputs 는 요청 하나에 ${MAX_INPUTS}개까지다 (${list.length}개 받음). 이미지를 줄이거나 요청을 나눠 보내라`);
   const inputs: Parsed['inputs'] = [];
   for (const item of list) {
     if (!isObject(item) || typeof item.mime !== 'string' || typeof item.base64 !== 'string') return failure(400, 'bad_request', 'inputs 의 항목에는 mime 과 base64 가 필요하다');
@@ -121,19 +134,25 @@ function parseRequest(raw: unknown): Parsed | AiAnalyzeFailure {
   return { requestId, system: task.system, prompt: task.prompt, effort, format: output.format, schema, schemaName, inputs };
 }
 
-/** The one input, decoded and within its limits, or the failure that refuses it. */
-function decodeInput(inputs: Parsed['inputs']): AiAnalyzeInput | null | AiAnalyzeFailure {
-  const item = inputs[0];
-  if (!item) return null;
-  const mime = item.mime.toLowerCase().split(';')[0].trim() as AiAnalyzeInput['mime'];
-  if (!READABLE.has(mime)) return failure(415, 'unsupported_media', `${item.mime} 는 읽지 못한다. PDF·PNG·JPEG·텍스트(DXF)만 받는다`);
-  const base64 = item.base64.replace(/\s+/g, '');
-  if (!base64 || base64.length % 4 !== 0 || !BASE64.test(base64)) return failure(400, 'bad_request', `${item.name} 의 base64 가 올바르지 않다 (줄바꿈 없는 표준 base64 여야 한다)`);
-  const bytes = Buffer.from(base64, 'base64');
-  const limit = MAX_BYTES[mime];
-  if (bytes.length > limit) return failure(413, 'too_large', `${item.name} 이(가) ${(bytes.length / 1048576).toFixed(1)}MB 로, ${mime} 상한 ${(limit / 1048576).toFixed(0)}MB 를 넘는다. 목차만 보내는 모드로 낮춰라`);
-  if (mime === 'application/pdf' && !bytes.subarray(0, 1024).toString('latin1').includes('%PDF-')) return failure(415, 'unsupported_media', `${item.name} 은(는) PDF 가 아니다 (%PDF- 머리가 없다)`);
-  return { name: item.name, mime, bytes };
+/** Every input decoded and within its limits, in request order, or the failure that refuses the request. */
+function decodeInputs(inputs: Parsed['inputs']): AiAnalyzeInput[] | AiAnalyzeFailure {
+  const decoded: AiAnalyzeInput[] = [];
+  let total = 0;
+  for (const item of inputs) {
+    const mime = item.mime.toLowerCase().split(';')[0].trim() as AiAnalyzeInput['mime'];
+    if (!(mime in MAX_BYTES)) return failure(415, 'unsupported_media', `${item.name}: ${item.mime} 는 읽지 못한다. 이미지(PNG·JPEG·GIF·WebP)·PDF·텍스트만 받는다 — 다른 파일은 데이터로 바꿔 task.prompt 에 넣어라`);
+    const base64 = item.base64.replace(/\s+/g, '');
+    if (!base64 || base64.length % 4 !== 0 || !BASE64.test(base64)) return failure(400, 'bad_request', `${item.name} 의 base64 가 올바르지 않다 (줄바꿈 없는 표준 base64 여야 한다)`);
+    const bytes = Buffer.from(base64, 'base64');
+    const limit = MAX_BYTES[mime];
+    if (bytes.length > limit) return failure(413, 'too_large', `${item.name} 이(가) ${(bytes.length / 1048576).toFixed(1)}MB 로, ${mime} 상한 ${(limit / 1048576).toFixed(0)}MB 를 넘는다. 해상도를 낮추거나 나눠 보내라`);
+    total += bytes.length;
+    if (total > MAX_TOTAL_BYTES) return failure(413, 'too_large', `inputs 합계가 ${MAX_TOTAL_BYTES / 1048576}MB 를 넘는다 (${item.name} 에서 초과). 이미지 해상도를 낮추거나 요청을 나눠 보내라`);
+    const signature = SIGNATURE[mime];
+    if (signature && !signature(bytes)) return failure(415, 'unsupported_media', `${item.name} 의 내용이 ${mime} 가 아니다. mime 을 실제 형식에 맞춰 보내라`);
+    decoded.push({ name: item.name, mime, bytes });
+  }
+  return decoded;
 }
 
 /** The prompt the model gets: the caller's task, then — for JSON — the declared shape it must answer in. */
@@ -168,11 +187,11 @@ export function createAiAnalyzeService(deps: Deps) {
   let running = false;
 
   async function runJob(job: Job): Promise<void> {
-    const { parsed, input, jobId } = job;
+    const { parsed, inputs, jobId } = job;
     const finished = (f: AiAnalyzeFailure) => deps.store.fail(jobId, f, now());
     const pick = await deps.pickModel(parsed.effort);
     if (!pick.ok) return finished(pick.failure);
-    const turn = (prompt: string) => deps.runTurn({ system: parsed.system, prompt, input, model: pick.model, effort: pick.effort, timeoutMs: turnTimeoutMs });
+    const turn = (prompt: string) => deps.runTurn({ system: parsed.system, prompt, inputs, model: pick.model, effort: pick.effort, timeoutMs: turnTimeoutMs });
     let answer = await turn(promptFor(parsed));
     if (!answer.ok) return finished(answer.failure);
     let cost = answer.costUsd;
@@ -232,8 +251,8 @@ export function createAiAnalyzeService(deps: Deps) {
         if (prior.status === 'done') return { status: 200, body: { ok: true, ...prior.result, costUsd: 0, durationMs: 0, cached: true } };
         return { status: 202, body: { ok: true, jobId: prior.jobId, pollAfterMs: POLL_AFTER_MS } };
       }
-      const input = decodeInput(parsed.inputs);
-      if (input && 'code' in input) return errorReply(input);
+      const inputs = decodeInputs(parsed.inputs);
+      if ('code' in inputs) return errorReply(inputs);
       if (queue.length >= maxQueued) {
         return errorReply(failure(429, 'rate_limited', '이 NadoVibe 계정에서 분석이 이미 여러 건 진행·대기 중이다. 잠시 후 같은 requestId 로 다시 보내라', { retryAfterSec: 60 }));
       }
@@ -242,8 +261,8 @@ export function createAiAnalyzeService(deps: Deps) {
       const jobId = `job_${randomBytes(8).toString('hex')}`;
       deps.store.insertRunning({ requestId: parsed.requestId, jobId, fingerprint, createdAt: now() });
       live.add(jobId);
-      // only what the job needs is kept: the parsed text and the decoded file, not the request body
-      queue.push({ parsed: { ...parsed, inputs: [] }, input, jobId });
+      // only what the job needs is kept: the parsed text and the decoded inputs, not the request body
+      queue.push({ parsed: { ...parsed, inputs: [] }, inputs, jobId });
       void drain();
       return { status: 202, body: { ok: true, jobId, pollAfterMs: POLL_AFTER_MS } };
     },

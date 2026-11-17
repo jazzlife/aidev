@@ -40,6 +40,9 @@ const SCHEMA = { type: 'object', required: ['quote'], additionalProperties: fals
 const textBody = (requestId: string, prompt = 'say hello') => ({ requestId, task: { system: 's', prompt }, output: { format: 'text' } });
 const jsonBody = (requestId: string, extra: Record<string, unknown> = {}) => ({ requestId, task: { system: 's', prompt: 'find the word', effort: 'high' }, output: { format: 'json', schema: SCHEMA, schemaName: 'test.quote.v1' }, ...extra });
 const pdfBase64 = Buffer.from('%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF\n', 'latin1').toString('base64');
+const PNG_HEAD = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+const pngBase64 = Buffer.concat([PNG_HEAD, Buffer.from('rest')]).toString('base64');
+const jpegBase64 = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0x10]).toString('base64');
 
 test('a text request becomes a job and its answer is polled back', async () => {
   const { service, run, turns } = setup();
@@ -123,18 +126,27 @@ test('requests the engine cannot serve are refused at once, before any job', () 
   assert.deepEqual(code(jsonBody('x', { inputs: [{ name: 'a.bin', mime: 'application/x-not-real', base64: 'AAEC' }] })), [415, 'unsupported_media']);
   assert.deepEqual(code(jsonBody('x', { inputs: [{ name: 'a.pdf', mime: 'application/pdf', base64: Buffer.from('not a pdf').toString('base64') }] })), [415, 'unsupported_media']);
   assert.deepEqual(code(jsonBody('x', { inputs: [{ name: 'a.pdf', mime: 'application/pdf', base64: '%%%%' }] })), [400, 'bad_request'], 'not base64');
-  assert.deepEqual(code(jsonBody('x', { inputs: [{ name: 'a.pdf', mime: 'application/pdf', base64: pdfBase64 }, { name: 'b.pdf', mime: 'application/pdf', base64: pdfBase64 }] })), [413, 'too_large'], 'one input per request');
-  const bigImage = Buffer.alloc(5 * 1024 * 1024 + 1).toString('base64');
+  assert.deepEqual(code(jsonBody('x', { inputs: Array.from({ length: 21 }, (_, i) => ({ name: `p${i}.png`, mime: 'image/png', base64: pngBase64 })) })), [413, 'too_large'], 'at most 20 inputs');
+  const fourMb = Buffer.concat([PNG_HEAD, Buffer.alloc(4 * 1024 * 1024)]).toString('base64');
+  assert.deepEqual(code(jsonBody('x', { inputs: Array.from({ length: 6 }, (_, i) => ({ name: `big${i}.png`, mime: 'image/png', base64: fourMb })) })), [413, 'too_large'], 'inputs total at most 22 MB');
+  assert.deepEqual(code(jsonBody('x', { inputs: [{ name: 'fake.png', mime: 'image/png', base64: Buffer.from('GIF89a....').toString('base64') }] })), [415, 'unsupported_media'], 'content must match the mime');
+  assert.deepEqual(code(jsonBody('x', { inputs: [{ name: 'plan.dwg', mime: 'image/vnd.dwg', base64: 'AAEC' }] })), [415, 'unsupported_media'], 'raw drawing files are converted to data by the caller');
+  const bigImage = Buffer.concat([PNG_HEAD, Buffer.alloc(5 * 1024 * 1024)]).toString('base64');
   assert.deepEqual(code(jsonBody('x', { inputs: [{ name: 'a.png', mime: 'image/png', base64: bigImage }] })), [413, 'too_large']);
   assert.equal(turns.length, 0);
 });
 
-test('the input reaches the model turn decoded, and the job keeps no copy of the request body', async () => {
+test('data in the prompt and several related images reach the model turn decoded, in order', async () => {
   const { run, turns } = setup({ turn: async () => answer('{"quote":"x"}') });
-  await run(jsonBody('in1', { inputs: [{ name: 'drawing.pdf', mime: 'application/pdf', base64: pdfBase64 }] }));
-  assert.equal(turns[0].input?.mime, 'application/pdf');
-  assert.equal(turns[0].input?.name, 'drawing.pdf');
-  assert.equal(turns[0].input?.bytes.toString('base64'), pdfBase64);
+  const data = JSON.stringify({ layers: [{ name: 'E-LED', entities: 42 }], texts: ['14.4W/m'] });
+  await run(jsonBody('in1', { task: { system: 's', prompt: `# 도면 데이터\n${data}` }, inputs: [
+    { name: 'plan.png', mime: 'image/png', base64: pngBase64 },
+    { name: 'detail.jpg', mime: 'image/jpeg', base64: jpegBase64 },
+    { name: 'sheet.pdf', mime: 'application/pdf', base64: pdfBase64 },
+  ] }));
+  assert.deepEqual(turns[0].inputs.map((input) => [input.name, input.mime]), [['plan.png', 'image/png'], ['detail.jpg', 'image/jpeg'], ['sheet.pdf', 'application/pdf']]);
+  assert.equal(turns[0].inputs[0].bytes.toString('base64'), pngBase64);
+  assert.ok(turns[0].prompt.includes(data), 'the caller\'s data is in the prompt');
 });
 
 test('one analysis at a time per account; past the queue the caller is asked to come back', async () => {

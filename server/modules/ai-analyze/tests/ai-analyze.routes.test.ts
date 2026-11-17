@@ -5,7 +5,7 @@ import test from 'node:test';
 import express from 'express';
 
 import { createAiAnalyzeRouter } from '@/modules/ai-analyze/ai-analyze.routes.js';
-import { classifyTurnFailure } from '@/modules/ai-analyze/claude-analysis.js';
+import { classifyTurnFailure, contentFor } from '@/modules/ai-analyze/claude-analysis.js';
 
 test('the routes pass the service reply through, and keep the contract envelope on errors and unknown paths', async () => {
   const app = express();
@@ -39,4 +39,17 @@ test('a failed model turn maps to the contract code the caller acts on', () => {
   assert.equal(classifyTurnFailure('prompt is too long: 250000 tokens > 200000 maximum', 400, null, false).code, 'too_large');
   assert.equal(classifyTurnFailure('Could not process PDF', 400, null, false).code, 'unsupported_media');
   assert.equal(classifyTurnFailure('socket hang up', 500, null, false).code, 'upstream_error');
+});
+
+test('each input reaches the model as its own block after a line naming it, and the task comes last', () => {
+  const blocks = contentFor({ system: 's', prompt: 'TASK', model: 'sonnet', effort: null, timeoutMs: 1000, inputs: [
+    { name: 'plan.png', mime: 'image/png', bytes: Buffer.from('a') },
+    { name: 'sheet.pdf', mime: 'application/pdf', bytes: Buffer.from('b') },
+    { name: 'notes.txt', mime: 'text/plain', bytes: Buffer.from('hello') },
+  ] });
+  assert.deepEqual(blocks.map((block) => block.type), ['text', 'image', 'text', 'document', 'text', 'document', 'text']);
+  assert.equal((blocks[0] as { text: string }).text, '[input 1/3: plan.png (image/png)]');
+  assert.deepEqual((blocks[5] as { source: unknown }).source, { type: 'text', media_type: 'text/plain', data: 'hello' });
+  assert.equal((blocks[6] as { text: string }).text, 'TASK');
+  assert.deepEqual(contentFor({ system: 's', prompt: 'only data', model: 'sonnet', effort: null, timeoutMs: 1000, inputs: [] }), [{ type: 'text', text: 'only data' }]);
 });
