@@ -5,6 +5,7 @@ import path from 'node:path';
 import { query } from '@anthropic-ai/claude-agent-sdk';
 
 import { claudeCliModel } from '@/shared/index.js';
+import { resolveClaudeCodeExecutablePath } from '@/shared/claude-cli-path.js';
 import type { AiAnalyzeFailure, AiAnalyzeTurnRequest, AiAnalyzeTurnResult } from '@/shared/types.js';
 
 /**
@@ -16,6 +17,9 @@ import type { AiAnalyzeFailure, AiAnalyzeTurnRequest, AiAnalyzeTurnResult } from
  * Verified on 2026-11-16: a PDF and a text document each came back with the word only they contained.
  *
  * Each call starts its own CLI process: it shares nothing with the chats' processes or the judge's warm one.
+ * It is the same Claude Code executable the chats run (CLAUDE_CLI_PATH / `claude`), not the SDK's bundled one: the
+ * model names the account's settings pick (`best` → `fable`) are the ones that executable knows — the bundled binary
+ * refused `fable` on the server (2026-11-17) while the chats ran it.
  * The account's usage-limit state is not written from here — an analysis never changes how chats are routed.
  */
 
@@ -81,6 +85,7 @@ export async function runClaudeAnalysisTurn(request: AiAnalyzeTurnRequest): Prom
     async function* input() {
       yield { type: 'user' as const, message: { role: 'user' as const, content }, parent_tool_use_id: null, session_id: '' };
     }
+    const executable = resolveClaudeCodeExecutablePath(process.env.CLAUDE_CLI_PATH);
     const stream = query({
       prompt: input() as Parameters<typeof query>[0]['prompt'],
       options: {
@@ -88,6 +93,7 @@ export async function runClaudeAnalysisTurn(request: AiAnalyzeTurnRequest): Prom
         ...(request.effort && EFFORTS.has(request.effort) ? { effort: request.effort as 'low' | 'medium' | 'high' | 'xhigh' | 'max' } : {}),
         allowedTools: [], tools: [], permissionMode: 'bypassPermissions', systemPrompt: request.system,
         settingSources: [], persistSession: false, abortController,
+        ...(executable ? { pathToClaudeCodeExecutable: executable } : {}),
       },
     });
     for await (const message of stream) {

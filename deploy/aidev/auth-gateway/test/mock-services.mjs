@@ -114,6 +114,8 @@ const manager = http.createServer(async (req, res) => {
     if (path.startsWith('/api/ai-analyze/')) {
       const chunks = []; for await (const c of req) chunks.push(c);
       const raw = Buffer.concat(chunks);
+      if (raw.includes('status-502')) return send(res, 502, { ok: false, error: { code: 'upstream_error', message: 'model failed' } });
+      if (raw.includes('status-504')) return send(res, 504, { ok: false, error: { code: 'timeout', message: 'too slow' } });
       if (raw.includes('non-envelope')) { res.writeHead(500, { 'content-type': 'text/html' }); return res.end('<h1>oops</h1>'); }
       if (path.startsWith('/api/ai-analyze/v1/analyze/')) return send(res, 200, { ok: true, status: 'done', text: 'mock', runtime: name, path });
       return send(res, 202, { ok: true, jobId: 'job_mock000001', pollAfterMs: 10, runtime: name, path, auth: req.headers.authorization ?? null, contentType: req.headers['content-type'] ?? null, bodyBytes: raw.length });

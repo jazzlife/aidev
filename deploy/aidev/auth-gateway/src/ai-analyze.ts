@@ -33,8 +33,13 @@ type Deps = {
 /** Is this one of the contract's paths (all of /ai/v1 is answered here, in the contract's envelope)? */
 export const isAiAnalyzePath = (pathname: string) => pathname === '/ai/v1' || pathname.startsWith('/ai/v1/');
 
+/**
+ * Cloudflare replaces a 502/504 body with its own HTML page, so the caller would lose the envelope and its message:
+ * those go out as 503 with the envelope's `code` (upstream_error, timeout) unchanged — as proxyHttp does for the app.
+ */
 function send(res: ServerResponse, status: number, body: unknown) {
   if (res.headersSent) return void res.destroy();
+  if (status === 502 || status === 504) status = 503;
   res.writeHead(status, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' });
   res.end(JSON.stringify(body));
 }

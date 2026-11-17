@@ -114,6 +114,11 @@ envelope(await req('POST', '/ai/v1/analyze', { ...ask, requestId: 'non-envelope'
   s.db.close();
   assert.equal((await req('POST', '/ai/v1/analyze', ask, bearer(analyzeKey.token))).status, 202, 'back on');
 }
+// a 502/504 from the runtime keeps its envelope behind the CDN: it goes out as 503 with the same code
+r = await req('POST', '/ai/v1/analyze', { ...ask, requestId: 'status-502' }, bearer(analyzeKey.token));
+assert.deepEqual([r.status, r.json.error.code], [503, 'upstream_error'], r.text);
+r = await req('POST', '/ai/v1/analyze', { ...ask, requestId: 'status-504' }, bearer(analyzeKey.token));
+assert.deepEqual([r.status, r.json.error.code], [503, 'timeout'], r.text);
 console.log('PASS unknown paths, an oversized body, a non-envelope reply and the off switch answer in the envelope');
 
 // ---- an analyze key reaches nothing else; a decide key still does what it did ------------------------
