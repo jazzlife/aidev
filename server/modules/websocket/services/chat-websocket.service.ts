@@ -181,6 +181,19 @@ async function abortActiveRun(
 }
 
 /**
+ * Aborts for a turn cutting in until nothing runs. A provider can take seconds
+ * to stop (Codex and OpenCode wait up to 10s for the turn to settle), and
+ * another cut-in or the queue may start a run in the meantime; aborting only
+ * once refused this turn with RUN_IN_PROGRESS. Each pass ends a different run,
+ * so the loop stops as soon as nobody starts another.
+ */
+async function abortUntilIdle(sessionId: string, dependencies: ChatWebSocketDependencies): Promise<void> {
+  while (await abortActiveRun(sessionId, dependencies, { superseded: true })) {
+    // a run started while the previous abort was in flight is cut as well
+  }
+}
+
+/**
  * Handles `chat.send`: resolves the session row (provider, project path, and
  * provider-native id all come from the database — never from the client),
  * registers the run, and dispatches to the provider runtime.
@@ -209,7 +222,7 @@ async function handleChatSend(
   }
 
   if (data.interrupt === true) {
-    await abortActiveRun(resolved.sessionId, dependencies, { superseded: true });
+    await abortUntilIdle(resolved.sessionId, dependencies);
   }
 
   await dispatchRun(ws, userId, resolved.sessionId, resolved.session, data, dependencies);
@@ -637,7 +650,7 @@ export async function runDetachedChatTurn(
     // stream begins. The interrupted run's own dispatch settles later through
     // completeRunIfCurrent, which is scoped to that run and cannot touch the
     // one started here.
-    await abortActiveRun(input.sessionId, dependencies, { superseded: true });
+    await abortUntilIdle(input.sessionId, dependencies);
   }
 
   return dispatchRun(

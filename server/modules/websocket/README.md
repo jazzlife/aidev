@@ -138,10 +138,10 @@ flowchart TD
 
 ### Chat Notes
 
-1. **Unified envelope**: every server-to-client frame carries a `kind` — either a provider `NormalizedMessage` kind or a gateway kind (`chat_subscribed`, `session_upserted`, `loading_progress`, `protocol_error`). There is no second `type`-based protocol.
+1. **Unified envelope**: every server-to-client frame carries a `kind` — either a provider `NormalizedMessage` kind or a gateway kind (`chat_subscribed`, `run_started`, `session_upserted`, `loading_progress`, `protocol_error`). There is no second `type`-based protocol.
 2. **Unified terminal lifecycle**: every provider run ends with exactly one `complete` message built by `createCompleteMessage()` (`server/shared/utils.ts`): `{ kind: "complete", sessionId, actualSessionId, exitCode, success, aborted }`. The chat handler emits a synthetic `complete` for runs that crash or get aborted, and the run registry drops duplicate completes.
 3. **Per-run event log**: every live event gets a monotonically increasing `seq`. `chat.subscribe { sessions: [{ sessionId, lastSeq }] }` re-attaches the live stream to the requesting socket (any provider, not just Claude) and replays events with `seq > lastSeq`. If the buffer no longer covers `lastSeq`, the client refreshes over REST.
-4. `chat_subscribed` includes `isProcessing` (replaces `check-session-status`) and `pendingPermissions` (replaces `get-pending-permissions`).
+4. `chat_subscribed` includes `isProcessing` (replaces `check-session-status`) and `pendingPermissions` (replaces `get-pending-permissions`). Every run start is also announced to the session's watching sockets as `{ kind: "run_started", sessionId }` (unsequenced, not replayed), so a run started by the queue, a schedule or another device shows as busy and a cut-in from that client goes out with `interrupt: true`.
 5. **Delivery**: a browser cannot see a socket the server already closed (a phone back from the background keeps one that reads OPEN and swallows every frame). The client sends `{ type: "ping", id }` after each command and on returning to the app; the gateway answers `{ kind: "pong", id }` at once, and a missing pong makes the client reconnect and send its unconfirmed commands again. Commands carry a `frameId`; the gateway drops a second frame with the same id, so a resend never runs a turn twice.
 
 ## `/shell` Terminal Flow

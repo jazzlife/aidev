@@ -207,9 +207,15 @@ export type MessageKind =
  * provider adapter. Together with `MessageKind` they form the complete set of
  * `kind` values a websocket client can receive, so the frontend only ever
  * needs one kind-based switch.
+ *
+ * `run_started` tells a session's watchers that a run has begun, whoever began
+ * it (this tab, another device, the queue, a schedule), so their composer cuts
+ * in instead of sending into a busy session. It is not sequenced: a socket
+ * that subscribes later learns the same from `chat_subscribed.isProcessing`.
  */
 export type GatewayEventKind =
   | 'chat_subscribed'
+  | 'run_started'
   | 'session_upserted'
   | 'loading_progress'
   | 'protocol_error';

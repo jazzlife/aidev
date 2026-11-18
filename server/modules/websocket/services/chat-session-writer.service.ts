@@ -158,7 +158,16 @@ export class ChatSessionWriter {
     this.options.onProviderSessionId(providerSessionId);
   }
 
-  private forward(message: NormalizedMessage): void {
+  /**
+   * Tells the run's audience that it has begun. Outside the event log on
+   * purpose (no `seq`, no replay): a socket that subscribes later gets the same
+   * answer from `chat_subscribed.isProcessing`.
+   */
+  announceRunStarted(appSessionId: string): void {
+    this.forward({ kind: 'run_started', sessionId: appSessionId, timestamp: new Date().toISOString() });
+  }
+
+  private forward(message: NormalizedMessage | { kind: 'run_started'; sessionId: string; timestamp: string }): void {
     const payload = JSON.stringify(message);
 
     // Sending is also when dead sockets get collected: a refreshed tab leaves

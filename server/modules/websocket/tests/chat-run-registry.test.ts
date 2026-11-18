@@ -19,6 +19,11 @@ class FakeConnection {
   send(data: string): void {
     this.frames.push(JSON.parse(data) as Record<string, unknown>);
   }
+
+  /** The run's events, without the unsequenced `run_started` every run opens with. */
+  get events(): Array<Record<string, unknown>> {
+    return this.frames.filter((frame) => frame.kind !== 'run_started');
+  }
 }
 
 async function withIsolatedDatabase(runTest: () => void | Promise<void>): Promise<void> {
@@ -61,11 +66,15 @@ test('live events are remapped to the app session id and sequenced', async () =>
     run.writer.send({ kind: 'stream_delta', provider: 'claude', sessionId: 'provider-id-9', content: 'hello' });
     run.writer.send({ kind: 'text', provider: 'claude', sessionId: 'provider-id-9', content: 'hello world' });
 
-    assert.equal(connection.frames.length, 2);
+    assert.equal(connection.frames.length, 3);
+    // The run announces itself first, outside the event log.
+    assert.equal(connection.frames[0]?.kind, 'run_started');
     assert.equal(connection.frames[0]?.sessionId, 'app-run-1');
-    assert.equal(connection.frames[0]?.seq, 1);
+    assert.equal(connection.frames[0]?.seq, undefined);
     assert.equal(connection.frames[1]?.sessionId, 'app-run-1');
-    assert.equal(connection.frames[1]?.seq, 2);
+    assert.equal(connection.frames[1]?.seq, 1);
+    assert.equal(connection.frames[2]?.sessionId, 'app-run-1');
+    assert.equal(connection.frames[2]?.seq, 2);
   });
 });
 
@@ -246,7 +255,7 @@ test('attachConnection adds a socket without cutting off the ones already watchi
     assert.equal(chatRunRegistry.attachConnection('app-run-5', secondConnection), true);
     run.writer.send({ kind: 'stream_delta', provider: 'opencode', sessionId: 'o', content: 'after' });
 
-    assert.deepEqual(firstConnection.frames.map((frame) => frame.content), ['before', 'after']);
+    assert.deepEqual(firstConnection.events.map((frame) => frame.content), ['before', 'after']);
     assert.deepEqual(secondConnection.frames.map((frame) => frame.content), ['after']);
   });
 });
@@ -266,6 +275,7 @@ test('a refreshed tab stops receiving once its old socket is closed', async () =
 
     // The page reloads: the original socket closes and the fresh one subscribes.
     staleConnection.readyState = 3;
+    staleConnection.frames.length = 0;
     const reloadedConnection = new FakeConnection();
     assert.equal(chatRunRegistry.attachConnection('app-run-5b', reloadedConnection), true);
 
@@ -417,8 +427,10 @@ test('a run started from one device streams to another device that has the sessi
     assert.ok(run);
     run.writer.send({ kind: 'stream_delta', provider: 'claude', sessionId: 'provider-id', content: 'hi' });
 
-    assert.equal(desktop.frames.length, 1);
-    assert.equal(phone.frames.length, 1);
+    assert.equal(desktop.frames.length, 2);
+    // The phone learns the session is busy before anything streams, so its composer cuts in rather than sending
+    // into the run (which the gateway refused with RUN_IN_PROGRESS).
+    assert.deepEqual(phone.frames.map((frame) => frame.kind), ['run_started', 'stream_delta']);
     assert.equal(phone.frames[0]?.sessionId, 'app-run-watch');
     assert.equal(gone.frames.length, 0);
   });

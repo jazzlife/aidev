@@ -255,6 +255,11 @@ export const chatRunRegistry = {
     }
 
     runs.set(input.appSessionId, run);
+    // A run its watchers did not send themselves (the queue, a schedule,
+    // another device) used to stream into a composer that still believed the
+    // session idle, so the user's cut-in went out as a plain send and was
+    // refused with RUN_IN_PROGRESS.
+    run.writer.announceRunStarted(input.appSessionId);
     return run;
   },
 

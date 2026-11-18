@@ -187,6 +187,16 @@ export function useChatRealtimeHandlers({
           return;
         }
 
+        case 'run_started': {
+          // A run began in this session, from here or anywhere else (the queue, a schedule, another device). Without
+          // this a run this tab did not send streamed in while the composer still saw the session idle, so a cut-in
+          // went out as a plain send and was refused. A fresh run has no status yet and can be interrupted.
+          if (sid) {
+            onSessionProcessing?.(sid, { statusText: null, canInterrupt: true });
+          }
+          return;
+        }
+
         case 'protocol_error': {
           console.error('[Chat] Protocol error:', msg.code, msg.error);
           if (sid) {
