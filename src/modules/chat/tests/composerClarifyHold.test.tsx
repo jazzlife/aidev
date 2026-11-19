@@ -31,6 +31,7 @@ vi.mock('@/shared/api', () => {
       },
       commands: { list: () => okJson({ success: true, commands: [] }) },
       providers: { createSession: () => okJson({ data: { sessionId: 'session-new', sessionName: '새 채팅' } }) },
+      assets: { uploadFiles: () => okJson({ attachments: [{ path: '1795056319524-657749895-LEDgo1.jpg', name: 'LEDgo1.jpg', mimeType: 'image/jpeg' }] }) },
       files: { search: () => okJson({ success: true, files: [] }) },
     },
   };
@@ -279,4 +280,19 @@ test('an app re-send goes out alone and leaves what the user is typing in the co
   assert.match(String(sent[0].content), /^cafe24s 그룹 매핑/);
   assert.doesNotMatch(String(sent[0].content), /트리구조/);
   assert.equal(view.result.current.input, '1번 방법으로 하면 트리구조의 그룹이', 'the draft stays');
+});
+
+test('a command sent with attachments is not held for a question about them', async () => {
+  // 2026-11-19, LEDgo: the judge reads the text only, so "첨부된 사진처럼" got "첨부된 파일을 확인할 수 없습니다 — …" and
+  // the new chat's first command, photo attached, was held on every try
+  routing.beforeSend = async () => decoration(true);
+  const sent: Array<Record<string, unknown>> = [];
+  const view = renderComposer(sent);
+
+  await act(async () => { view.result.current.setInput('첨부된 사진처럼 3d led 카드로 바꾸자'); });
+  await act(async () => { view.result.current.setAttachedFiles([new File(['x'], 'LEDgo1.jpg', { type: 'image/jpeg' })]); });
+  await act(async () => { await view.result.current.handleSubmit(submitEvent); });
+  assert.equal(view.result.current.clarify, null, 'not held');
+  assert.equal(sent.length, 1);
+  assert.deepEqual((sent[0].options as Record<string, unknown>).attachments, [{ path: '1795056319524-657749895-LEDgo1.jpg', name: 'LEDgo1.jpg', mimeType: 'image/jpeg' }]);
 });

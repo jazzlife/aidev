@@ -329,7 +329,8 @@ export function ChatScreen() {
       // read before the clarify guard: its type predicate narrows `decoration` to null afterwards
       const switchBack = decoration?.switchBack ?? null;
       // §3.1: essential detail missing from a deeper command → ask once (not for agent creation or the app's re-sends)
-      if (shouldAskClarify(decoration)) { setClarify({ text, decoration, attachments, previews }); return; }
+      // not with attachments: the question is written from the text alone and asks for the attached file itself
+      if (shouldAskClarify(decoration, attachments.length > 0)) { setClarify({ text, decoration, attachments, previews }); return; }
       // engine priority: the chat continues on the higher engine that is usable again (unless pinned)
       if (switchBack && meta && isAidevEngine(meta.provider) && !attachments.length) {
         const moved = await switchBackRef.current?.({ sessionId: meta.id, engine: switchBack.engine, fromEngine: meta.provider, text: routed, reason: switchBack.reason });

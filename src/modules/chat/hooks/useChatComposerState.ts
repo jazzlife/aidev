@@ -936,13 +936,14 @@ export function useChatComposerState({
       // a new send supersedes a hold; a command missing essential detail waits for one line (ClarifyPrompt)
       setClarifyHold((hold) => (hold?.scope === submitScope ? null : hold));
       // a turn that was already composed and queued is not held for a clarifying question
-      if (!resume && !queued && shouldAskClarify(aidevDecoration)) {
+      if (!resume && !queued && shouldAskClarify(aidevDecoration, uploadedAttachments.length > 0)) {
         setClarifyHold({ scope: submitScope, text: messageContent, decoration: aidevDecoration, uploadedAttachments, interrupt });
         restoreInput();
         return;
       }
-      // engine priority: the chat continues on the higher engine that is usable again (unless pinned)
-      if (!resume && !queued && aidevDecoration?.switchBack && targetSessionId && onEngineSwitchBack && isAidevEngine(provider)) {
+      // engine priority: the chat continues on the higher engine that is usable again (unless pinned). Not with
+      // attachments: the move sends a text brief to a new session and the files would not go with it (as on mobile).
+      if (!resume && !queued && uploadedAttachments.length === 0 && aidevDecoration?.switchBack && targetSessionId && onEngineSwitchBack && isAidevEngine(provider)) {
         const moved = await onEngineSwitchBack({ sessionId: targetSessionId, engine: aidevDecoration.switchBack.engine, fromEngine: provider, text: messageContent, reason: aidevDecoration.switchBack.reason });
         if (moved) return;
       }

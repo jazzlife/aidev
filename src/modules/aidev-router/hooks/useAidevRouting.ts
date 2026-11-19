@@ -46,10 +46,13 @@ export type BeforeSendContext = {
 
 /**
  * Used by the workbench composer and the mobile chat (C-05/C-09): whether a routed send should wait for one line of
- * detail (§3.1). Never for the app's own re-sends — the user already chose there.
+ * detail (§3.1). Never for the app's own re-sends — the user already chose there. Never for a command sent with
+ * attachments either: the judge that writes the question reads the text only, so "like the attached photo" made it ask
+ * for the very file that was attached, and the command was held instead of sent (2026-11-19, LEDgo: "첨부된 파일을
+ * 확인할 수 없습니다 — …" on every new chat). The worker gets the attachments and can ask itself.
  */
-export function shouldAskClarify(decoration: AidevSendDecoration | null): decoration is AidevSendDecoration {
-  return Boolean(decoration && decoration.route.scope.ask_clarify && !decoration.appResend);
+export function shouldAskClarify(decoration: AidevSendDecoration | null, withAttachments = false): decoration is AidevSendDecoration {
+  return Boolean(decoration && decoration.route.scope.ask_clarify && !decoration.appResend && !withAttachments);
 }
 const asEngine = (value: string): Engine | null => (isAidevEngine(value) ? value : null);
 
