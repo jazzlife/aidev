@@ -1,7 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 
-import { buildVerificationBrief, parseVerification, verifierCandidates, verifierEngineOrder, verifierModel } from '@/modules/aidev-tools/run-verifier.service.js';
+import { buildVerificationBrief, parseVerification, verifiedTurn, verifierCandidates, verifierEngineOrder, verifierModel } from '@/modules/aidev-tools/run-verifier.service.js';
 
 const verdict = { verdict: 'fail', summary: '테스트가 통과했다는 주장이 틀렸다', checked: [{ claim: 'npm test 통과', result: 'wrong', evidence: 'npm test → 2 failed' }], issues: ['GameLoop.cs의 타이머가 60fps를 보장하지 않음'] };
 
@@ -102,4 +102,40 @@ test('buildVerificationBrief carries the platform tools the worker used and what
   ], { command: null, agent: 'generalist', engine: 'claude', model: 'sonnet' });
   assert.match(brief.text, /## 작업자가 쓴 플랫폼 도구와 그 결과[^\n]*\n- opencode_task \{"task":"read notes.txt","mode":"read"\} → \{"status":"done","model":"opencode-go\/kimi-k3","report":"KIWI"\}/);
   assert.doesNotMatch(brief.text, /- Read /, 'ordinary tools are not listed there');
+});
+
+test('verifiedTurn pins the run\'s own turn and sees when the chat went on past it', () => {
+  const at = (seconds: number) => new Date(Date.UTC(2026, 10, 19, 0, 0, seconds)).toISOString();
+  const startedAt = Date.parse(at(10));
+  const messages = [
+    { kind: 'text', role: 'user', content: '이전 명령', timestamp: at(0) },
+    { kind: 'text', role: 'assistant', content: '이전 보고', timestamp: at(5) },
+    { kind: 'text', role: 'user', content: '로그인 화면 고쳐', timestamp: at(11) },
+    { kind: 'tool_use', toolName: 'Edit', toolInput: { file_path: 'login.tsx' }, timestamp: at(12) },
+    { kind: 'text', role: 'assistant', content: 'login.tsx를 고쳤습니다.', timestamp: at(20) },
+  ];
+  const own = verifiedTurn(messages, startedAt);
+  assert.equal(own.movedOn, false);
+  assert.equal(own.turn[0]?.content, '로그인 화면 고쳐');
+  // the user's next command (typed, or queued during the run and sent by the server) is already in the chat
+  const went = verifiedTurn([...messages, { kind: 'text', role: 'user', content: '이제 회원가입도', timestamp: at(30) }, { kind: 'text', role: 'assistant', content: '진행 중…', timestamp: at(31) }], startedAt);
+  assert.equal(went.movedOn, true);
+  assert.equal(went.turn.at(-1)?.content, 'login.tsx를 고쳤습니다.', 'the turn stops before the next command');
+  const brief = buildVerificationBrief([...messages, { kind: 'text', role: 'user', content: '이제 회원가입도', timestamp: at(30) }], { command: null, agent: 'frontend-react', engine: 'claude', model: 'opus', startedAt });
+  assert.match(brief.text, /로그인 화면 고쳐/);
+  assert.doesNotMatch(brief.text, /회원가입/);
+  // no start time (an older gateway): the newest turn, as before
+  assert.equal(verifiedTurn(messages, null).turn[0]?.content, '로그인 화면 고쳐');
+  // an image-only command opens a turn too
+  const imageOnly = verifiedTurn([...messages.slice(0, 2), { kind: 'text', role: 'user', content: '', images: [{ data: 'data:image/png;base64,AAAA' }], timestamp: at(11) }], startedAt);
+  assert.equal(imageOnly.turn.length, 1);
+});
+
+test('buildVerificationBrief lists the command\'s images and files for the verifier to open', () => {
+  const brief = buildVerificationBrief([
+    { kind: 'text', role: 'user', content: '첨부한 화면처럼 바꿔', images: [{ data: 'data:image/png;base64,AAAA' }], files: [{ path: '/home/cloudcli/.cloudcli/assets/spec.pdf', name: 'spec.pdf' }] },
+    { kind: 'text', role: 'assistant', content: '바꿨습니다.' },
+  ], { command: null, agent: 'generalist', engine: 'claude', model: 'opus', imageFiles: ['/tmp/aidev-verify/7/image-1.png'] });
+  assert.match(brief.text, /## 명령에 첨부된 이미지[^\n]*\n- \/tmp\/aidev-verify\/7\/image-1\.png/);
+  assert.match(brief.text, /## 명령에 첨부된 파일\n- \/home\/cloudcli\/\.cloudcli\/assets\/spec\.pdf/);
 });

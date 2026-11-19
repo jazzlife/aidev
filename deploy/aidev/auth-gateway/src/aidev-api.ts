@@ -323,6 +323,19 @@ export function createAidevApi(deps: AidevDeps) {
   type Verification = { verdict: 'pass' | 'fail' | 'unclear'; summary: string; checked: Array<{ claim: string; result: string; evidence: string }>; issues: string[]; engine: string | null; model: string | null; at: number };
 
   /**
+   * Whether a run is work the verifier can check from the project (2026-11-19, user decision): an explanation, an
+   * answer or a reading of data has no claim to re-run, and ops work done on a user's PC (remote runs) cannot
+   * be re-run from the runtime — 14 days before this rule, those runs were nearly all `unclear`, or `fail` for
+   * "cannot confirm", and the fail sent the command back to the worker by itself.
+   */
+  function verifiableWork(run: RunRow): boolean {
+    if (run.task_kind === 'explain' || run.task_kind === 'bulk_read') return false;
+    if (run.task_kind !== 'ops') return true;
+    // the run's own remote runs, not target_id: every run carries the account's default PC there
+    return store.db.prepare('SELECT 1 FROM remote_runs WHERE run_id=? LIMIT 1').get(run.id) === undefined;
+  }
+
+  /**
    * Whether a finished run gets an independent verification, and starts it when so. Only clean exits of
    * D2+ work by a non-meta agent: a verifier re-reading a one-line answer costs more than it protects, and
    * a run that already failed goes to escalation instead. `run_verification=off` (app_kv) disables it.
@@ -330,6 +343,7 @@ export function createAidevApi(deps: AidevDeps) {
   function startVerification(session: Session, run: RunRow, outcome: string, eligible: boolean): boolean {
     if (!eligible || outcome === 'fail' || run.verification || verifying.has(run.id)) return false;
     if (!run.session_id || !run.agent_id || (run.depth ?? 0) < VERIFY_MIN_DEPTH) return false;
+    if (!verifiableWork(run)) return false;
     if (store.kvGet('run_verification') === 'off') return false;
     const agent = store.agentById(run.agent_id);
     if (!agent || agent.domain === 'meta') return false;
@@ -364,7 +378,8 @@ export function createAidevApi(deps: AidevDeps) {
     try {
       const candidates = verifyCandidates(uid, run, engines);
       const response = await deps.runtimeFetch(session, '/api/aidev-tools/verify', { method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ session_id: run.session_id, run_id: run.id, agent: agent.name, engine: run.engine, engines, command: decisionRow?.command ?? null, worker_model: run.model, depth: run.depth, model_floor: floor, verifier_agent: verifierAgentFor(uid, agent), ...(candidates ? { candidates } : {}) }) }, VERIFY_TIMEOUT_MS);
+        // started_at pins the check to this run's own turn: the chat may have gone on since
+        body: JSON.stringify({ session_id: run.session_id, run_id: run.id, started_at: run.started_at, agent: agent.name, engine: run.engine, engines, command: decisionRow?.command ?? null, worker_model: run.model, depth: run.depth, model_floor: floor, verifier_agent: verifierAgentFor(uid, agent), ...(candidates ? { candidates } : {}) }) }, VERIFY_TIMEOUT_MS);
       const body = await response.json().catch(() => ({})) as { data?: Omit<Verification, 'at'>; error?: string };
       verdict = response.ok && body.data ? { ...body.data, at: Date.now() } : unclear(`검증을 실행하지 못했습니다: ${body.error ?? response.status}`);
     } catch (error) {
@@ -375,6 +390,10 @@ export function createAidevApi(deps: AidevDeps) {
     store.setRunVerification(uid, run.id, verdict);
     console.log(`[aidev] run ${run.id} verified (${verdict.engine ?? '-'} ${verdict.model ?? '-'}): ${verdict.verdict} — ${verdict.summary.slice(0, 160)}`);
     if (verdict.verdict !== 'pass' && verdict.verdict !== 'fail') return;
+    // the user sent the chat's next command while the check ran (83 of 747 checks in the 14 days before 2026-11-19):
+    // the verdict is kept on the run, but it no longer fails the run or sends the old command back over the new one
+    const movedOn = store.db.prepare('SELECT 1 FROM runs WHERE user_id=? AND session_id=? AND id>? LIMIT 1').get(uid, run.session_id, run.id) !== undefined;
+    if (movedOn) { console.log(`[aidev] run ${run.id}: the chat went on during the check — verdict kept, not acted on`); return; }
     // the verdict is the run's test result: fail → escalation + lesson, pass → success (a user 👎 still wins)
     const outcome = verdict.verdict === 'fail' || before.outcome === 'fail' ? 'fail' : 'success';
     const final = store.updateRun(uid, run.id, { testResult: verdict.verdict, outcome });

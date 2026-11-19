@@ -121,6 +121,7 @@ router.post('/verify', asyncHandler(async (req: Request, res: Response) => {
   const result = await runVerifierService.verify({
     sessionId,
     runId: typeof body.run_id === 'number' ? body.run_id : null,
+    startedAt: typeof body.started_at === 'number' && Number.isFinite(body.started_at) ? body.started_at : null,
     agent: typeof body.agent === 'string' ? body.agent : null,
     engine: isSideEngine(body.engine) ? body.engine : null,
     workerModel: typeof body.worker_model === 'string' ? body.worker_model : null,

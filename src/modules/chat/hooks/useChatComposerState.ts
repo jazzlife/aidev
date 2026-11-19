@@ -176,8 +176,12 @@ const createQueuedMessageId = (): string => `q-${Date.now().toString(36)}-${Math
  * (its text, already-uploaded files and the settings it was queued with)
  * instead of what is in the composer, which stays as it is.
  */
-/** `forceAgent`: the agent this send runs on whatever routing picks (a held turn run at once on the generalist). */
-type SubmitOptions = { interrupt?: boolean; queued?: QueuedDraft; forceAgent?: string };
+/**
+ * `forceAgent`: the agent this send runs on whatever routing picks (a held turn run at once on the generalist).
+ * `appText`: the app's own re-send (a verifier's rework, a handoff brief) — this text alone goes out, and what the user
+ * is typing or has attached in the composer stays untouched (it used to be prepended to the re-send and sent with it).
+ */
+type SubmitOptions = { interrupt?: boolean; queued?: QueuedDraft; forceAgent?: string; appText?: string };
 
 const getNotificationSessionSummary = (
   selectedSession: ProjectSession | null,
@@ -716,8 +720,11 @@ export function useChatComposerState({
     ) => {
       event.preventDefault();
       const queued = submitOptions?.queued ?? null;
-      const currentInput = queued ? queued.content : inputValueRef.current;
-      const currentAttachments = queued ? [] : attachedFiles;
+      const appText = queued ? null : submitOptions?.appText ?? null;
+      // the composer's own text and files belong to this send only when the user sent them
+      const fromComposer = !queued && appText === null;
+      const currentInput = queued ? queued.content : appText ?? inputValueRef.current;
+      const currentAttachments = fromComposer ? attachedFiles : [];
       const queuedUploadedAttachments = queued?.uploadedAttachments ?? [];
       const interrupt = submitOptions?.interrupt === true;
       if (
@@ -771,6 +778,10 @@ export function useChatComposerState({
         // the session-switch return below — the queued text must be
         // recallable even when it dispatches without this composer.
         recordSentMessage(currentInput, queuedSessionKey);
+        // an app re-send came from neither the composer nor its draft: both stay as the user left them
+        if (!fromComposer) {
+          return;
+        }
 
         // The server owns dispatch after persistence. If the user changed
         // sessions during upload, the durable record is already enough; the
@@ -801,7 +812,7 @@ export function useChatComposerState({
       // Also accept exact "help" as a convenience alias for users who expect CLI-style help.
       const commandInput = currentInput.trimEnd();
       const isHelpAlias = commandInput.trim().toLowerCase() === 'help';
-      if (commandInput.startsWith('/') || isHelpAlias) {
+      if (fromComposer && (commandInput.startsWith('/') || isHelpAlias)) {
         const firstSpace = commandInput.indexOf(' ');
         const commandName = isHelpAlias
           ? '/help'
@@ -853,14 +864,16 @@ export function useChatComposerState({
         }
         addMessage({ type: 'error', content, timestamp: new Date() }, submitSessionId);
       };
-      // the composer keeps what the user is typing when a queued turn is sent early
-      if (!queued) {
+      // the composer keeps what the user is typing when a queued turn or an app re-send goes out
+      if (fromComposer) {
         setInput('');
         inputValueRef.current = '';
       }
       // the text goes back into the composer when the send does not happen (error, or a clarify hold that edits it)
       // — into the chat it was typed in, never into another chat opened meanwhile
       const restoreInput = () => {
+        // an app re-send never lands in the composer over what the user is typing (its error is reported instead)
+        if (appText !== null) return;
         if (chatIsOpen()) {
           setInput(currentInput);
           inputValueRef.current = currentInput;
@@ -868,8 +881,8 @@ export function useChatComposerState({
           writeDraftText(submitScope, currentInput);
         }
       };
-      // Replacing an already-sent message belongs to the composer's text, not to a queued turn sent early.
-      const replacesAnchorId = queued ? null : editingAnchorId;
+      // Replacing an already-sent message belongs to the composer's text, not to a queued turn sent early or an app re-send.
+      const replacesAnchorId = fromComposer ? editingAnchorId : null;
       // what the send leaves in the composer is reset only while its chat is the open one
       const resetComposerChrome = () => {
         if (!chatIsOpen()) {
@@ -883,8 +896,9 @@ export function useChatComposerState({
       };
       try {
       const messageContent = currentInput;
-      const resume = queued ? null : clarifyResumeRef.current;
-      clarifyResumeRef.current = null;
+      // a held command being released is the composer's; an app re-send leaves it for the composer's next send
+      const resume = fromComposer ? clarifyResumeRef.current : null;
+      if (appText === null) clarifyResumeRef.current = null;
 
       let uploadedAttachments = queued ? queuedUploadedAttachments : resume?.uploadedAttachments ?? [];
       if (uploadedAttachments.length === 0 && currentAttachments.length > 0) {
@@ -988,7 +1002,7 @@ export function useChatComposerState({
 
       // No specialist yet for this command: it waits in this chat's queue while the gateway designs one, and then runs
       // on it (DesignHoldWatcher); its card can run it at once on the generalist instead (2026-11-09, user decision).
-      const heldFor = queued || replacesAnchorId ? null : designHoldFor(aidevDecoration);
+      const heldFor = !fromComposer || replacesAnchorId ? null : designHoldFor(aidevDecoration);
       if (heldFor) {
         const sendOptions = buildSendOptions(messageContent);
         writeQueuedMessages(targetSessionId, [
@@ -1086,7 +1100,7 @@ export function useChatComposerState({
       // navigated to. Queued drafts were recorded when they were queued; the
       // consecutive-duplicate check keeps this second call a no-op.
       recordSentMessage(currentInput, targetSessionId);
-      if (queued) {
+      if (!fromComposer) {
         // nothing of the composer's own was sent
         return;
       }
@@ -1280,6 +1294,11 @@ export function useChatComposerState({
     inputValueRef.current = next;
     if (send) handleSubmitRef.current?.(createFakeSubmitEvent());
   }, [setInput]);
+
+  /** The app's own re-send (a verifier's rework, a handoff brief): `text` alone goes out; the composer stays as it is. */
+  const sendAppText = useCallback((text: string) => {
+    void handleSubmitRef.current?.(createFakeSubmitEvent(), { appText: text });
+  }, []);
 
   useEffect(() => {
     inputValueRef.current = input;
@@ -1560,6 +1579,7 @@ export function useChatComposerState({
     sendQueuedDraftNow,
     runHeldDraftNow,
     handleVoiceTranscript,
+    sendAppText,
     handleInputChange,
     handleKeyDown,
     handlePaste,

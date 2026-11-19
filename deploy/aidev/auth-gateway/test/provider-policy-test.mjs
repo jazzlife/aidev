@@ -155,12 +155,12 @@ console.log('PASS escalation: Q1 and the range');
 
 // ---- verifier candidates: the verification order, each provider's pick at max(depth, 3) ---------------------------------
 const session = { user: { id: uid, username: 'alice', runtime: 'u' + 'a'.repeat(24) }, sid: 's1' };
-let verifyBody = null; let curateBody = null; let modelsBody = null;
+let verifyBody = null; let curateBody = null; let modelsBody = null; let verifyVerdict = 'pass'; let onVerify = null;
 const runtimeFetch = async (_s, p, init = {}) => {
   if (p === '/api/providers/opencode/models' && modelsBody) return Response.json(modelsBody);
   if (p.startsWith('/api/providers/')) return Response.json({ data: { authenticated: true } });
   if (p === '/api/aidev-tools/curate') { curateBody = JSON.parse(init.body); return Response.json({ data: { candidate: null } }); }
-  if (p === '/api/aidev-tools/verify') { verifyBody = JSON.parse(init.body); return Response.json({ data: { verdict: 'pass', summary: 'ok', checked: [], issues: [], engine: 'codex', model: 'x' } }); }
+  if (p === '/api/aidev-tools/verify') { verifyBody = JSON.parse(init.body); onVerify?.(); return Response.json({ data: { verdict: verifyVerdict, summary: 'ok', checked: [], issues: verifyVerdict === 'fail' ? ['빠짐'] : [], engine: 'codex', model: 'x' } }); }
   return Response.json({}, { status: 404 });
 };
 const api = createAidevApi({ store, laya: laya(2), runtimeFetch, json: (res, status, body) => { res.status = status; res.body = body; }, push: { sendToUser: async () => ({ delivered: 0 }) }, isOnline: () => false });
@@ -180,6 +180,38 @@ const failedRun = store.addRun({ userId: uid, sessionId: 'v2', agentId: store.ag
 await call('PATCH', `/api/aidev/runs/${failedRun}/outcome`, { exit_code: 1 }); await settle();
 assert.deepEqual(curateBody.candidates, [{ engine: 'claude', model: 'sonnet' }, { engine: 'codex', model: null }], 'work order; claude D0 of sonnet..opus, codex the runtime\'s light model');
 console.log('PASS verifier and curator candidates');
+
+// ---- what is verified (2026-11-19): code work only, pinned to its own turn, never acted on once the chat went on --------
+const workRun = (sessionId, taskKind) => store.addRun({ userId: uid, sessionId, agentId: store.agent(uid, 'frontend-react').id, engine: 'claude', model: 'opus', effort: 'low', depth: 2, taskKind });
+verifyBody = null;
+res = await call('PATCH', `/api/aidev/runs/${workRun('k1', 'explain')}/outcome`, { exit_code: 0 }); await settle();
+assert.equal(res.body.verifying, false, 'an explanation is not verified'); assert.equal(verifyBody, null);
+res = await call('PATCH', `/api/aidev/runs/${workRun('k2', 'bulk_read')}/outcome`, { exit_code: 0 }); await settle();
+assert.equal(res.body.verifying, false, 'a reading of data is not verified');
+const remoteOps = workRun('k3', 'ops');
+const pc = store.addTarget({ userId: uid, name: 'pc-k3', platform: 'win32', pairingCode: 'K3', pairingExpires: Date.now() + 60000 });
+store.addRemoteRun({ runId: remoteOps, targetId: pc, userId: uid, kind: 'exec', cmd: 'dir', cwd: null, risk: 0, approvedBy: 'auto' });
+res = await call('PATCH', `/api/aidev/runs/${remoteOps}/outcome`, { exit_code: 0 }); await settle();
+assert.equal(res.body.verifying, false, 'ops on a user\'s PC is not verified');
+const localOps = workRun('k4', 'ops');
+res = await call('PATCH', `/api/aidev/runs/${localOps}/outcome`, { exit_code: 0 }); await settle();
+assert.equal(res.body.verifying, true, 'ops in the runtime still is');
+assert.equal(verifyBody.started_at, store.run(uid, localOps).started_at, 'the check is pinned to the run\'s own turn');
+// the user sends the next command while the check runs: a fail verdict is kept but does not fail the run or retry it
+verifyVerdict = 'fail'; onVerify = () => workRun('k5', 'implement');
+const overtaken = workRun('k5', 'implement');
+await call('PATCH', `/api/aidev/runs/${overtaken}/outcome`, { exit_code: 0 }); await settle();
+let after = store.run(uid, overtaken);
+assert.equal(JSON.parse(after.verification).verdict, 'fail', 'the verdict is kept');
+assert.notEqual(after.outcome, 'fail'); assert.equal(after.next_action, null, 'no retry over the new command');
+// the same verdict on a chat that did not go on fails the run and proposes the rework
+onVerify = null;
+const alone = workRun('k6', 'implement');
+await call('PATCH', `/api/aidev/runs/${alone}/outcome`, { exit_code: 0 }); await settle();
+after = store.run(uid, alone);
+assert.equal(after.outcome, 'fail'); assert.equal(JSON.parse(after.next_action).action, 'retry_worker');
+verifyVerdict = 'pass';
+console.log('PASS verification scope and a chat that went on');
 
 // ---- settings API: one provider's range in one request, preview from the same split -----------------------------------
 res = await call('PUT', '/api/aidev/settings/provider-policy', { engine: 'codex', ladder: ['gpt-5.6-terra', 'gpt-5.6-sol'], floor: 'gpt-5.6-terra', ceiling: 'gpt-5.6-sol', effort_floor: 'medium', effort_cap: 'high' });

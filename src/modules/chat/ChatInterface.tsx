@@ -80,7 +80,8 @@ function ChatInterface({
   // is designed by the gateway out of band (§3.7), never as a turn of this chat.
   const { reportOutcome: reportAidevOutcome } = useAidevRouting();
   const chatMessagesRef = useRef<ChatMessage[]>([]);
-  const handleVoiceTranscriptRef = useRef<((text: string, send?: boolean) => void) | null>(null);
+  // the app's own re-sends (a verifier's rework, a handoff brief): sent alone, never mixed into what the user is typing
+  const sendAppTextRef = useRef<((text: string) => void) | null>(null);
   // Assigned from useEscalation below; the composer hook that calls it is created before it exists.
   const switchBackRef = useRef<((args: { sessionId: string; engine: AidevEngine; fromEngine: AidevEngine; text: string; reason: string }) => Promise<boolean>) | null>(null);
   // Assigned from useEscalation below; the complete subscriber is installed before it exists.
@@ -105,7 +106,8 @@ function ChatInterface({
     // verdict and follow-up, kept for when it is opened again). A `superseded` end is the user cutting in: the next
     // turn is already routed, so it is not this run's end to report.
     // a limit refusal is reported as such: the gateway skips the engine until the reset, and holds nothing else against it
-    if (!event.superseded) void reportAidevOutcome({ exit_code: exitCode, session_id: event.sessionId ?? selectedSession?.id ?? null, ...(usageLimit ? { usage_limit: { type: usageLimit.type, resets_at: usageLimit.resetsAt ?? null } } : {}) });
+    // A run the user stopped ends with exit 0 too: it is not work to verify (a check would fail it and send it back).
+    if (!event.superseded) void reportAidevOutcome({ exit_code: exitCode, session_id: event.sessionId ?? selectedSession?.id ?? null, ...(event.aborted ? { verify: false } : {}), ...(usageLimit ? { usage_limit: { type: usageLimit.type, resets_at: usageLimit.resetsAt ?? null } } : {}) });
     if (event.sessionId && selectedSession?.id && event.sessionId !== selectedSession.id) return;
     const finishedId = event.sessionId ?? selectedSession?.id ?? null;
     if (finishedId && finishedId === seenSessionIdRef.current) {
@@ -266,6 +268,7 @@ function ChatInterface({
     sendQueuedDraftNow,
     runHeldDraftNow,
     handleVoiceTranscript,
+    sendAppText,
     handleInputChange,
     handleKeyDown,
     handlePaste,
@@ -315,14 +318,15 @@ function ChatInterface({
     // engine priority: assigned from useEscalation below (the composer hook is created before it)
     onEngineSwitchBack: (args) => switchBackRef.current?.(args) ?? Promise.resolve(false),
   });
-  useEffect(() => { chatMessagesRef.current = chatMessages; handleVoiceTranscriptRef.current = handleVoiceTranscript; });
+  useEffect(() => { chatMessagesRef.current = chatMessages; sendAppTextRef.current = sendAppText; });
 
   // E-03: one-tap follow-up for a failed run. A handoff opens a new session on the other engine in
   // this project; its brief is sent once that session is selected and the composer's provider has
   // caught up with it (so routing sees the right engine).
   const escalation = useEscalation({
     sessionId: currentSessionId || selectedSession?.id || null,
-    resend: (text) => { handleVoiceTranscriptRef.current?.(text, true); },
+    resend: (text) => { sendAppTextRef.current?.(text); },
+    busy: isProcessing,
     openSession: (sessionId, engine, title) => {
       if (!selectedProject) return;
       handleSessionEstablished(sessionId, { provider: engine, project: selectedProject, summary: title });
@@ -341,7 +345,7 @@ function ChatInterface({
     const id = selectedSession?.id;
     if (!id || (selectedSession?.__provider && selectedSession.__provider !== provider)) return;
     const brief = takeHandoffRef.current(id);
-    if (brief) setTimeout(() => { handleVoiceTranscriptRef.current?.(brief, true); }, 0);
+    if (brief) setTimeout(() => { sendAppTextRef.current?.(brief); }, 0);
   }, [provider, selectedSession?.id, selectedSession?.__provider]);
 
   // On WebSocket reconnect, request a bounded persisted-tail sync (deferred

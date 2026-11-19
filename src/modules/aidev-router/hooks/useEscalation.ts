@@ -9,8 +9,10 @@ import { AIDEV_ENGINES, ENGINE_LABELS } from '@/shared/constants';
 type UseEscalationArgs = {
   /** The chat on screen: only its own proposal is shown and run here, so a retry never lands in another chat. */
   sessionId: string | null;
-  /** Sends text as a new user turn in the open session through the composer (routing runs again). */
+  /** Sends text as a new user turn in the open session (routing runs again); what the user is typing stays as it is. */
   resend: (text: string) => void;
+  /** The open chat is running a turn: a verifier's rework is then not sent by itself. */
+  busy: boolean;
   /** Opens another session (the handoff target, bound to `engine`) in the host UI. */
   openSession: (sessionId: string, engine: Engine, title: string) => void;
   /** Project path of the open session; the handoff session is created in the same project. */
@@ -60,7 +62,7 @@ export function nextUsableEngine(blocked: Engine, available: Pick<EnginesResult,
  * and the mobile ChatScreen; nothing runs without the user's tap (each attempt spends usage) —
  * except retry_worker and a usage-limit block, which `handoffOnUsageLimit` carries over on its own.
  */
-export function useEscalation({ sessionId: openSessionId, resend, openSession, getProjectPath }: UseEscalationArgs) {
+export function useEscalation({ sessionId: openSessionId, resend, busy: chatBusy, openSession, getProjectPath }: UseEscalationArgs) {
   const routingState = useRoutingState();
   const escalation = routingState.escalations[sessionKey(openSessionId)] ?? null;
   // the open chat's own last route (another chat's may be the page's latest)
@@ -130,13 +132,18 @@ export function useEscalation({ sessionId: openSessionId, resend, openSession, g
 
   // Runs already sent back to their worker, so a re-render (or the card reappearing) never sends twice.
   const reworkedRuns = useRef<Set<number>>(new Set());
-  // retry_worker is the one proposal that goes out by itself: the worker gets the verifier's findings right away
+  // retry_worker is the one proposal that goes out by itself: the worker gets the verifier's findings right away —
+  // but only while the chat is idle and its last routed command is still the failed run. A command the user sent or
+  // queued since is never followed by the old one (2026-11-19: reworks landed over the user's next command); the card
+  // stays for a tap instead, and it is not sent by itself later either.
   useEffect(() => {
     const current = escalation;
     if (!current || current.next.action !== 'retry_worker' || reworkedRuns.current.has(current.next.from_run)) return;
     reworkedRuns.current.add(current.next.from_run);
+    const lastRun = routingStore.get().sent[sessionKey(openSessionId)]?.runId ?? null;
+    if (chatBusy || lastRun !== current.next.from_run) return;
     void run();
-  }, [escalation, run]);
+  }, [chatBusy, escalation, openSessionId, run]);
 
   /**
    * Carries the work to the next provider without waiting for a tap, for a run the

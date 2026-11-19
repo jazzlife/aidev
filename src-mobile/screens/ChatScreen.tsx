@@ -226,7 +226,8 @@ export function ChatScreen() {
     const usageLimit = parseProviderUsageLimit(event.usageLimit);
     // any chat's routed run is reported against that chat's own run (its verdict and follow-up wait there);
     // a `superseded` end is the user cutting in — the next turn is already routed
-    if (!event.superseded) void reportOutcome({ exit_code: exitCode, session_id: event.sessionId ?? sessionId, ...(usageLimit ? { usage_limit: { type: usageLimit.type, resets_at: usageLimit.resetsAt ?? null } } : {}) });
+    // a run the user stopped ends with exit 0 too: it is not work to verify (a check would fail it and send it back)
+    if (!event.superseded) void reportOutcome({ exit_code: exitCode, session_id: event.sessionId ?? sessionId, ...(event.aborted ? { verify: false } : {}), ...(usageLimit ? { usage_limit: { type: usageLimit.type, resets_at: usageLimit.resetsAt ?? null } } : {}) });
     if (event.sessionId && event.sessionId !== sessionId) return;
     setLastRunFinished(Date.now());
   }), [subscribe, sessionId, reportOutcome]);
@@ -433,6 +434,7 @@ export function ChatScreen() {
   const escalation = useEscalation({
     sessionId,
     resend: (text) => sendRef.current(text),
+    busy,
     openSession: (id) => { routingStore.adoptSession(id); navigate(`/session/${encodeURIComponent(id)}`); },
     getProjectPath: () => meta?.projectPath || project?.fullPath || null,
   });

@@ -266,3 +266,17 @@ test('a new chat\'s session being created does not pull back a user who moved to
     view.unmount();
   }
 });
+
+test('an app re-send goes out alone and leaves what the user is typing in the composer', async () => {
+  // 2026-11-19: a verifier's rework was prepended with the user's half-typed next command and sent with it
+  routing.beforeSend = async () => decoration(true, { appResend: true });
+  const sent: Array<Record<string, unknown>> = [];
+  const view = renderComposer(sent);
+
+  await act(async () => { view.result.current.setInput('1번 방법으로 하면 트리구조의 그룹이'); });
+  await act(async () => { view.result.current.sendAppText('cafe24s 그룹 매핑\n\n[검증에서 발견된 문제 — 먼저 해결할 것]\n- 빠짐'); });
+  await vi.waitFor(() => assert.equal(sent.length, 1));
+  assert.match(String(sent[0].content), /^cafe24s 그룹 매핑/);
+  assert.doesNotMatch(String(sent[0].content), /트리구조/);
+  assert.equal(view.result.current.input, '1번 방법으로 하면 트리구조의 그룹이', 'the draft stays');
+});

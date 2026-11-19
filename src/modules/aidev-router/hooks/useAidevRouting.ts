@@ -237,7 +237,7 @@ export function useAidevRouting() {
    * last opened — never to the page's last send, which may belong to another chat — and is reported once; feedback
    * names its run (`runId`, the rated chat's).
    */
-  const reportOutcome = useCallback(async (outcome: { session_id?: string | null; exit_code?: number | null; tool_errors?: number; user_feedback?: 'up' | 'down' | null; test_result?: 'pass' | 'fail' | null; summary?: string; reverted?: boolean; /** the engine refused the run on a usage limit (its reset time when known) */ usage_limit?: { type: string; resets_at: number | null } | null }, runId?: number | null) => {
+  const reportOutcome = useCallback(async (outcome: { session_id?: string | null; exit_code?: number | null; /** false: the run is not checked by the verifier (the user stopped it) */ verify?: boolean; tool_errors?: number; user_feedback?: 'up' | 'down' | null; test_result?: 'pass' | 'fail' | null; summary?: string; reverted?: boolean; /** the engine refused the run on a usage limit (its reset time when known) */ usage_limit?: { type: string; resets_at: number | null } | null }, runId?: number | null) => {
     const ending = outcome.exit_code !== undefined;
     const sentMap = routingStore.get().sent;
     const sentKey = outcome.session_id && sentMap[outcome.session_id] ? outcome.session_id : sentMap[''] ? null : outcome.session_id ?? null;

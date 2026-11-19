@@ -1,3 +1,7 @@
+import { promises as fs } from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+
 import { query } from '@anthropic-ai/claude-agent-sdk';
 import { Codex } from '@openai/codex-sdk';
 
@@ -25,6 +29,8 @@ import type { AidevSideEngine } from '@/shared/index.js';
 export type VerifyInput = {
   sessionId: string;
   runId: number | null;
+  /** when the gateway opened the run (ms): pins the check to the run's own turn, the chat may have gone on since */
+  startedAt: number | null;
   agent: string | null;
   /** the worker's engine and model */
   engine: AidevSideEngine | null;
@@ -57,6 +63,7 @@ const VERIFIER_PROMPT = `당신은 독립 검증자다. 다른 agent(작업자)�
 - 파일을 수정·생성·삭제하지 않는다. 확인용 명령(읽기, 빌드, 테스트, 린트, git status/diff)만 실행한다.
 - 파괴적 명령(삭제, reset, push, 배포, 설치)은 실행하지 않는다.
 - 확인하지 못한 주장은 ok가 아니라 unverified로 적는다. 추측으로 ok를 주지 않는다.
+- 명령에 첨부된 이미지·파일은 브리프에 적힌 경로를 직접 열어 확인한다. 브리프에 경로가 없는 첨부는 볼 수 없는 것이니, 그것만을 이유로 fail이나 unclear를 주지 않는다.
 - "작업자가 쓴 플랫폼 도구와 그 결과"는 플랫폼이 기록한 사실이다(서브에이전트 보고, 원격 PC 실행 결과 등). 다시 실행할 수 없으니 그 결과 자체를 근거로 받아들이고, 작업자의 보고가 그 결과와 맞는지를 확인한다.
 - 아래 블록 하나만 출력한다. 블록 밖의 설명은 최소화한다.
 <aidev-verify>
@@ -141,19 +148,75 @@ function inputOf(raw: unknown): Record<string, unknown> {
   return {};
 }
 
-type HistoryMessage = { kind: string; role?: string; content?: string; text?: string; toolName?: string; toolInput?: unknown; toolResult?: { isError?: boolean; content?: unknown } | null };
+type HistoryMessage = { kind: string; role?: string; content?: string; text?: string; timestamp?: string; images?: unknown; files?: unknown; toolName?: string; toolInput?: unknown; toolResult?: { isError?: boolean; content?: unknown } | null };
+
+/** A user turn's opening message: typed text, or attachments alone (an image-only turn has no text). */
+const isUserTurn = (message: HistoryMessage): boolean => message.kind === 'text' && message.role === 'user'
+  && Boolean(message.content || (Array.isArray(message.images) && message.images.length > 0));
+
+/** The run row is written before its command is sent, so the command's message is later; this absorbs clock jitter. */
+const TURN_CLOCK_SLACK_MS = 2_000;
 
 /**
- * Pure part (exported for tests): the worker's last turn — everything after the newest user message — as
- * the brief the verifier checks: the command, files the worker touched, commands it ran, errors it saw,
- * and its final report (the claims).
+ * Pure part (exported for tests): the run's own turn — from the first user message written once the run had started
+ * (`startedAt`) to the next user message — and whether the chat already went on past it (a next command, a queued one
+ * the server sent). Without `startedAt`, or with no message that recent, the newest user message's turn.
  */
-export function buildVerificationBrief(messages: HistoryMessage[], input: { command: string | null; agent: string | null; engine: string | null; model: string | null }): { text: string; files: string[]; claims: string } {
-  let start = 0;
-  for (let index = messages.length - 1; index >= 0; index -= 1) {
-    if (messages[index].kind === 'text' && messages[index].role === 'user' && messages[index].content) { start = index; break; }
+export function verifiedTurn(messages: HistoryMessage[], startedAt: number | null): { turn: HistoryMessage[]; movedOn: boolean } {
+  let start = -1;
+  if (startedAt !== null) {
+    start = messages.findIndex((message) => isUserTurn(message) && Date.parse(message.timestamp ?? '') >= startedAt - TURN_CLOCK_SLACK_MS);
   }
-  const turn = messages.slice(start);
+  if (start < 0) {
+    for (let index = messages.length - 1; index >= 0; index -= 1) {
+      if (isUserTurn(messages[index])) { start = index; break; }
+    }
+    return { turn: messages.slice(Math.max(start, 0)), movedOn: false };
+  }
+  const next = messages.findIndex((message, index) => index > start && isUserTurn(message));
+  return next < 0 ? { turn: messages.slice(start), movedOn: false } : { turn: messages.slice(start, next), movedOn: true };
+}
+
+/** The attachments on the turn's command: images (Claude history keeps them inline as data URLs, Codex as paths) and files. */
+function turnAttachments(turn: HistoryMessage[]): { images: Array<{ data?: string; path?: string }>; files: string[] } {
+  const opening = turn[0] && isUserTurn(turn[0]) ? turn[0] : null;
+  const list = (value: unknown) => (Array.isArray(value) ? value.filter((entry): entry is Record<string, unknown> => Boolean(entry) && typeof entry === 'object') : []);
+  return {
+    images: list(opening?.images).map((image) => ({ data: typeof image.data === 'string' ? image.data : undefined, path: typeof image.path === 'string' ? image.path : undefined })),
+    files: list(opening?.files).flatMap((file) => (typeof file.path === 'string' ? [file.path] : [])),
+  };
+}
+
+const DATA_URL = /^data:image\/(png|jpeg|gif|webp);base64,(.+)$/;
+
+/**
+ * The command's images as files the verifier can open (Claude's Read, Codex's local image input), written under `dir`;
+ * an image already on disk (a Codex turn) is used where it is. Images that cannot be had are left out.
+ */
+async function imageFilesFor(turn: HistoryMessage[], dir: string): Promise<string[]> {
+  const files: string[] = [];
+  for (const [index, image] of turnAttachments(turn).images.entries()) {
+    const inline = image.data ? DATA_URL.exec(image.data) : null;
+    if (inline) {
+      await fs.mkdir(dir, { recursive: true });
+      const file = path.join(dir, `image-${index + 1}.${inline[1] === 'jpeg' ? 'jpg' : inline[1]}`);
+      await fs.writeFile(file, Buffer.from(inline[2], 'base64'));
+      files.push(file);
+    } else if (image.path && path.isAbsolute(image.path) && await fs.access(image.path).then(() => true, () => false)) {
+      files.push(image.path);
+    }
+  }
+  return files;
+}
+
+/**
+ * Pure part (exported for tests): the run's turn (verifiedTurn) as the brief the verifier checks: the command and its
+ * attachments, files the worker touched, commands it ran, errors it saw, and its final report (the claims).
+ */
+export function buildVerificationBrief(messages: HistoryMessage[], input: { command: string | null; agent: string | null; engine: string | null; model: string | null; startedAt?: number | null; imageFiles?: string[] }): { text: string; files: string[]; claims: string } {
+  const { turn } = verifiedTurn(messages, input.startedAt ?? null);
+  const attachedFiles = turnAttachments(turn).files;
+  const imageFiles = input.imageFiles ?? [];
   const files = new Set<string>(); const commands: string[] = []; const errors: string[] = []; const reports: string[] = [];
   // the platform's own tools (a piece handed to OpenCode, a command on a user's PC): their results are claims' evidence
   // the verifier cannot reproduce from the repository, so it gets them as recorded (2026-10-16: a run that used
@@ -178,6 +241,8 @@ export function buildVerificationBrief(messages: HistoryMessage[], input: { comm
   const claims = clip(reports.slice(-3).join('\n\n'), 6000);
   const lines = [
     `## 사용자의 명령\n${clip(input.command ?? (userText || '(알 수 없음)'), 2000)}`,
+    imageFiles.length ? `## 명령에 첨부된 이미지 (사용자가 명령과 함께 보낸 것 — 직접 열어 보고 판단한다)\n${imageFiles.map((file) => `- ${file}`).join('\n')}` : null,
+    attachedFiles.length ? `## 명령에 첨부된 파일\n${attachedFiles.map((file) => `- ${file}`).join('\n')}` : null,
     `## 작업자\nagent ${input.agent ?? '(없음)'} · ${input.engine ?? '?'} ${input.model ?? ''}`.trim(),
     files.size ? `## 작업자가 수정했다고 기록된 파일\n${[...files].slice(-40).map((file) => `- ${file}`).join('\n')}` : '## 작업자가 수정했다고 기록된 파일\n(도구 기록 없음)',
     commands.length ? `## 작업자가 실행한 명령(최근)\n${commands.slice(-12).map((command) => `- ${command}`).join('\n')}` : null,
@@ -251,13 +316,49 @@ async function askClaude(prompt: string, cwd: string, model: string, effort: str
  *  session indexer skips them (see lesson-curator.service.ts). */
 const SIDE_TURN_SOURCE = 'subagent';
 
-async function askCodex(prompt: string, cwd: string, model: string, effort: string | null, systemPrompt: string, timeoutMs: number): Promise<string> {
+async function askCodex(prompt: string, cwd: string, model: string, effort: string | null, systemPrompt: string, timeoutMs: number, images: string[]): Promise<string> {
   const codex = new Codex({ config: { ...codexSandboxConfig(), developer_instructions: systemPrompt } as never });
   // reads and runs checks in the project; write access (where the host's sandbox allows it) only so build/test caches
   // work — the prompt forbids edits
   const thread = codex.startThread({ threadSource: SIDE_TURN_SOURCE, workingDirectory: cwd, skipGitRepoCheck: true, sandboxMode: codexCheckSandboxMode(), approvalPolicy: 'never', model, modelReasoningEffort: (effort ?? 'high') as 'high', webSearchMode: 'disabled' });
-  const turn = await thread.run(prompt, { signal: AbortSignal.timeout(timeoutMs) }).catch((error: unknown) => { noteCodexTurnError(error); throw error; });
+  // the command's images go in as images: the model sees them without a tool call
+  const input = images.length ? [{ type: 'text' as const, text: prompt }, ...images.map((file) => ({ type: 'local_image' as const, path: file }))] : prompt;
+  const turn = await thread.run(input, { signal: AbortSignal.timeout(timeoutMs) }).catch((error: unknown) => { noteCodexTurnError(error); throw error; });
   return turn.finalResponse ?? '';
+}
+
+/** Runs the brief on the verifier engines in order until one answers. */
+async function checkBrief(input: VerifyInput, cwd: string, brief: { text: string }, imageFiles: string[]): Promise<Verification & { briefChars: number }> {
+  // the gateway's candidates (verification order / provider policy) or the worker's other engine first; on the same
+  // engine the check runs as a different agent (verifierAgent). This runtime's own knowledge of Codex applies to both.
+  const codexState = { signedOut: Boolean(currentCodexAuthFailure()), busy: codexBusyUntil > Date.now() };
+  // OpenCode refusing on a usage limit (a chat or an earlier side turn saw it): passed over until its reset instead of
+  // spending the check's budget on the same refusal. Lazy: the providers module imports this module's barrel.
+  const { providerUsageLimitsService } = await import('@/modules/providers/index.js');
+  const openCodeHeld = providerUsageLimitsService.snapshot().opencode?.blockedUntil;
+  const order = verifierCandidates(input, codexState).filter((candidate) => candidate.engine !== 'opencode' || openCodeHeld === null || openCodeHeld === undefined);
+  const systemPrompt = verifierSystemPrompt(input.verifierAgent);
+  let lastError: unknown = null;
+  const deadline = Date.now() + VERIFY_BUDGET_MS;
+  for (const { engine, model, effort } of order) {
+    const remaining = deadline - Date.now();
+    if (remaining < MIN_ENGINE_MS) break;
+    try {
+      const text = engine === 'opencode' ? await askOpenCodeSideTurn({ label: 'verify', instructions: systemPrompt, prompt: brief.text, cwd, model, effort, access: 'check', timeoutMs: remaining })
+        : engine === 'claude' ? await askClaude(brief.text, cwd, model!, effort, systemPrompt, remaining) : await askCodex(brief.text, cwd, model!, effort, systemPrompt, remaining, imageFiles);
+      const parsed = parseVerification(text);
+      const result: Verification = parsed
+        ? { ...parsed, engine, model }
+        : { verdict: 'unclear', summary: `검증자가 판정 블록을 내지 않았습니다: ${clip(text.replace(/\s+/g, ' ').trim(), 300)}`, checked: [], issues: [], engine, model };
+      console.log(`[aidev-tools] verify run=${input.runId ?? '-'} agent=${input.agent ?? '-'} by ${engine} ${model ?? '(default)'}${input.verifierAgent ? ` as ${input.verifierAgent.name}` : ''}: ${result.verdict} — ${clip(result.summary, 200)}`);
+      return { ...result, briefChars: brief.text.length };
+    } catch (error) {
+      lastError = error;
+      if (engine === 'codex' && /at capacity/i.test(error instanceof Error ? error.message : String(error))) codexBusyUntil = Date.now() + CODEX_BUSY_MS;
+      console.warn(`[aidev-tools] verify run=${input.runId ?? '-'} ${engine} ${model ?? '(default)'} failed: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+  return { verdict: 'unclear', summary: `검증 턴을 실행하지 못했습니다: ${lastError instanceof Error ? lastError.message : '사용 가능한 엔진 없음'}`, checked: [], issues: [], engine: null, model: null, briefChars: brief.text.length };
 }
 
 export const runVerifierService = {
@@ -268,36 +369,23 @@ export const runVerifierService = {
     // Lazy: the providers module imports this module's barrel (see lesson-curator.service.ts).
     const { sessionsService } = await import('@/modules/providers/index.js');
     const history = await sessionsService.fetchHistory(input.sessionId, { limit: 400, offset: 0 });
-    const brief = buildVerificationBrief(history.messages as HistoryMessage[], { command: input.command, agent: input.agent, engine: input.engine, model: input.workerModel });
-    // the gateway's candidates (verification order / provider policy) or the worker's other engine first; on the same
-    // engine the check runs as a different agent (verifierAgent). This runtime's own knowledge of Codex applies to both.
-    const codexState = { signedOut: Boolean(currentCodexAuthFailure()), busy: codexBusyUntil > Date.now() };
-    // OpenCode refusing on a usage limit (a chat or an earlier side turn saw it): passed over until its reset instead of
-    // spending the check's budget on the same refusal. Lazy: the providers module imports this module's barrel.
-    const { providerUsageLimitsService } = await import('@/modules/providers/index.js');
-    const openCodeHeld = providerUsageLimitsService.snapshot().opencode?.blockedUntil;
-    const order = verifierCandidates(input, codexState).filter((candidate) => candidate.engine !== 'opencode' || openCodeHeld === null || openCodeHeld === undefined);
-    const systemPrompt = verifierSystemPrompt(input.verifierAgent);
-    let lastError: unknown = null;
-    const deadline = Date.now() + VERIFY_BUDGET_MS;
-    for (const { engine, model, effort } of order) {
-      const remaining = deadline - Date.now();
-      if (remaining < MIN_ENGINE_MS) break;
-      try {
-        const text = engine === 'opencode' ? await askOpenCodeSideTurn({ label: 'verify', instructions: systemPrompt, prompt: brief.text, cwd, model, effort, access: 'check', timeoutMs: remaining })
-          : engine === 'claude' ? await askClaude(brief.text, cwd, model!, effort, systemPrompt, remaining) : await askCodex(brief.text, cwd, model!, effort, systemPrompt, remaining);
-        const parsed = parseVerification(text);
-        const result: Verification = parsed
-          ? { ...parsed, engine, model }
-          : { verdict: 'unclear', summary: `검증자가 판정 블록을 내지 않았습니다: ${clip(text.replace(/\s+/g, ' ').trim(), 300)}`, checked: [], issues: [], engine, model };
-        console.log(`[aidev-tools] verify run=${input.runId ?? '-'} agent=${input.agent ?? '-'} by ${engine} ${model ?? '(default)'}${input.verifierAgent ? ` as ${input.verifierAgent.name}` : ''}: ${result.verdict} — ${clip(result.summary, 200)}`);
-        return { ...result, briefChars: brief.text.length };
-      } catch (error) {
-        lastError = error;
-        if (engine === 'codex' && /at capacity/i.test(error instanceof Error ? error.message : String(error))) codexBusyUntil = Date.now() + CODEX_BUSY_MS;
-        console.warn(`[aidev-tools] verify run=${input.runId ?? '-'} ${engine} ${model ?? '(default)'} failed: ${error instanceof Error ? error.message : String(error)}`);
-      }
+    const messages = history.messages as HistoryMessage[];
+    const { turn, movedOn } = verifiedTurn(messages, input.startedAt);
+    // the chat went on past this run (the user's next command, or one queued during the run): checking the old command
+    // now only brings it back over the new one
+    if (movedOn) {
+      console.log(`[aidev-tools] verify run=${input.runId ?? '-'}: the chat went on past this run — not checked`);
+      return { verdict: 'unclear', summary: '이 실행 뒤에 같은 채팅의 다음 명령이 이어져 검증하지 않았습니다.', checked: [], issues: [], engine: null, model: null, briefChars: 0 };
     }
-    return { verdict: 'unclear', summary: `검증 턴을 실행하지 못했습니다: ${lastError instanceof Error ? lastError.message : '사용 가능한 엔진 없음'}`, checked: [], issues: [], engine: null, model: null, briefChars: brief.text.length };
+    const imageDir = path.join(os.tmpdir(), 'aidev-verify', `${input.runId ?? 'run'}-${Date.now()}`);
+    try {
+      const imageFiles = await imageFilesFor(turn, imageDir).catch((error: unknown) => {
+        console.warn(`[aidev-tools] verify run=${input.runId ?? '-'}: the command's images were not written: ${error instanceof Error ? error.message : String(error)}`);
+        return [];
+      });
+      return await checkBrief(input, cwd, buildVerificationBrief(messages, { command: input.command, agent: input.agent, engine: input.engine, model: input.workerModel, startedAt: input.startedAt, imageFiles }), imageFiles);
+    } finally {
+      await fs.rm(imageDir, { recursive: true, force: true }).catch(() => undefined);
+    }
   },
 };

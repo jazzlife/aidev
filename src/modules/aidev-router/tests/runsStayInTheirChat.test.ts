@@ -72,18 +72,44 @@ describe('a routed run stays with the chat it ran in', () => {
 
     // NewHyOn-Web is on screen: nothing is sent there
     const resendHere = vi.fn();
-    renderHook(() => useEscalation({ sessionId: 'newhyon', resend: resendHere, openSession: vi.fn(), getProjectPath: () => null }));
+    renderHook(() => useEscalation({ sessionId: 'newhyon', resend: resendHere, busy: false, openSession: vi.fn(), getProjectPath: () => null }));
     await act(async () => { await Promise.resolve(); });
     expect(resendHere).not.toHaveBeenCalled();
 
     // back in MyDrives: the retry goes out there, with MyDrives' own agent
     const resendThere = vi.fn();
-    renderHook(() => useEscalation({ sessionId: 'mydrives', resend: resendThere, openSession: vi.fn(), getProjectPath: () => null }));
+    renderHook(() => useEscalation({ sessionId: 'mydrives', resend: resendThere, busy: false, openSession: vi.fn(), getProjectPath: () => null }));
     await act(async () => { await Promise.resolve(); });
     expect(resendThere).toHaveBeenCalledTimes(1);
     expect(resendThere.mock.calls[0][0]).toMatch(/^심플 버전을 만들고 고도화하는 작업을 해\./);
     expect(routingStore.get().oneShotPlan).toMatchObject({ escalatedFromRun: 10 });
     expect(routingStore.get().escalations.mydrives).toBeUndefined();
+  });
+
+  it("a verifier's retry is not sent over a chat that went on: running, or with a newer routed command", async () => {
+    const routing = await sendInBoth();
+    vi.spyOn(aidevApi, 'runOutcome').mockResolvedValue({ run: {}, verifying: true });
+    vi.spyOn(aidevApi, 'run').mockResolvedValue({ run: { id: 10, outcome: 'fail', test_result: 'fail', verification: failed, next_action: retry, session_id: 'mydrives' }, verifying: false } as unknown as RunView);
+    await act(async () => { await routing.current.reportOutcome({ exit_code: 0, session_id: 'mydrives' }); });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(routingStore.get().escalations.mydrives?.next.action).toBe('retry_worker');
+
+    // the user's next command (queued during the run) is running now: the old one is not sent, not even once it ends
+    const resend = vi.fn();
+    const { rerender } = renderHook(({ busy }) => useEscalation({ sessionId: 'mydrives', resend, busy, openSession: vi.fn(), getProjectPath: () => null }), { initialProps: { busy: true } });
+    await act(async () => { await Promise.resolve(); });
+    rerender({ busy: false });
+    await act(async () => { await Promise.resolve(); });
+    expect(resend).not.toHaveBeenCalled();
+    // the card stays for a tap
+    expect(routingStore.get().escalations.mydrives?.next.action).toBe('retry_worker');
+
+    // an idle chat whose last routed command is a newer one (sent from another device's routing, say): not sent either
+    routingStore.setFor('escalations', 'mydrives', { ...routingStore.get().escalations.mydrives!, next: { ...retry, from_run: 9 } });
+    const resendIdle = vi.fn();
+    renderHook(() => useEscalation({ sessionId: 'mydrives', resend: resendIdle, busy: false, openSession: vi.fn(), getProjectPath: () => null }));
+    await act(async () => { await Promise.resolve(); });
+    expect(resendIdle).not.toHaveBeenCalled();
   });
 
   it("a send in another chat leaves a verification that is still running in its chat", async () => {
