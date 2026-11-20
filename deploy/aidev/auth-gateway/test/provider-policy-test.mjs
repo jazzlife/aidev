@@ -160,7 +160,7 @@ const runtimeFetch = async (_s, p, init = {}) => {
   if (p === '/api/providers/opencode/models' && modelsBody) return Response.json(modelsBody);
   if (p.startsWith('/api/providers/')) return Response.json({ data: { authenticated: true } });
   if (p === '/api/aidev-tools/curate') { curateBody = JSON.parse(init.body); return Response.json({ data: { candidate: null } }); }
-  if (p === '/api/aidev-tools/verify') { verifyBody = JSON.parse(init.body); onVerify?.(); return Response.json({ data: { verdict: verifyVerdict, summary: 'ok', checked: [], issues: verifyVerdict === 'fail' ? ['빠짐'] : [], engine: 'codex', model: 'x' } }); }
+  if (p === '/api/aidev-tools/verify') { verifyBody = JSON.parse(init.body); onVerify?.(); if (verifyVerdict === 'skipped') return Response.json({ data: { verdict: 'unclear', summary: 'the turn changed no project file', checked: [], issues: [], engine: null, model: null, skipped: 'the turn changed no project file' } }); return Response.json({ data: { verdict: verifyVerdict, summary: 'ok', checked: [], issues: verifyVerdict === 'fail' ? ['빠짐'] : [], engine: 'codex', model: 'x' } }); }
   return Response.json({}, { status: 404 });
 };
 const api = createAidevApi({ store, laya: laya(2), runtimeFetch, json: (res, status, body) => { res.status = status; res.body = body; }, push: { sendToUser: async () => ({ delivered: 0 }) }, isOnline: () => false });
@@ -210,6 +210,13 @@ const alone = workRun('k6', 'implement');
 await call('PATCH', `/api/aidev/runs/${alone}/outcome`, { exit_code: 0 }); await settle();
 after = store.run(uid, alone);
 assert.equal(after.outcome, 'fail'); assert.equal(JSON.parse(after.next_action).action, 'retry_worker');
+// a review that changed nothing: the runtime skips it — no verdict, the run keeps its outcome, no rework
+verifyVerdict = 'skipped';
+const review = workRun('k7', 'refactor');
+res = await call('PATCH', `/api/aidev/runs/${review}/outcome`, { exit_code: 0 }); await settle();
+assert.equal(res.body.verifying, true);
+after = store.run(uid, review);
+assert.equal(after.verification, null, 'nothing stored'); assert.notEqual(after.outcome, 'fail'); assert.equal(after.next_action, null);
 verifyVerdict = 'pass';
 console.log('PASS verification scope and a chat that went on');
 

@@ -80,7 +80,13 @@ async function followVerification(runId: number, sessionId: string | null, sent:
     let view: RunView;
     try { view = await aidevApi.run(runId); } catch { continue; }
     const result = view.run.verification;
-    if (!result) { if (!view.verifying) break; continue; }
+    if (!result) {
+      if (view.verifying) continue;
+      // the check ended without a verdict: nothing was there to check (a review, an answer, a chat that went on)
+      const current = own();
+      if (current) routingStore.setFor('verifications', current.key, null);
+      return;
+    }
     const current = own();
     if (!current) return;
     routingStore.setFor('verifications', current.key, { runId, status: 'done', result });

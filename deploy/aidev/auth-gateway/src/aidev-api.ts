@@ -380,7 +380,10 @@ export function createAidevApi(deps: AidevDeps) {
       const response = await deps.runtimeFetch(session, '/api/aidev-tools/verify', { method: 'POST', headers: { 'content-type': 'application/json' },
         // started_at pins the check to this run's own turn: the chat may have gone on since
         body: JSON.stringify({ session_id: run.session_id, run_id: run.id, started_at: run.started_at, agent: agent.name, engine: run.engine, engines, command: decisionRow?.command ?? null, worker_model: run.model, depth: run.depth, model_floor: floor, verifier_agent: verifierAgentFor(uid, agent), ...(candidates ? { candidates } : {}) }) }, VERIFY_TIMEOUT_MS);
-      const body = await response.json().catch(() => ({})) as { data?: Omit<Verification, 'at'>; error?: string };
+      const body = await response.json().catch(() => ({})) as { data?: Omit<Verification, 'at'> & { skipped?: string }; error?: string };
+      // the runtime found nothing to check (the turn changed no project file, or the chat went on past it): no verdict
+      // is stored, so the run keeps its outcome and the apps drop the pending card
+      if (response.ok && body.data?.skipped) { console.log(`[aidev] run ${run.id} not verified: ${body.data.skipped}`); return; }
       verdict = response.ok && body.data ? { ...body.data, at: Date.now() } : unclear(`검증을 실행하지 못했습니다: ${body.error ?? response.status}`);
     } catch (error) {
       verdict = unclear(`검증을 실행하지 못했습니다: ${error instanceof Error ? error.message : String(error)}`);

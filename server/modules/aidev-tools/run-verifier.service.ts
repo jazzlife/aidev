@@ -58,7 +58,7 @@ const VERIFIER_PROMPT = `당신은 독립 검증자다. 다른 agent(작업자)�
 ## 절차
 1. 작업자의 보고에서 검증 가능한 주장을 뽑는다: 수정·추가했다는 파일, 구현했다는 기능, 통과했다는 빌드·타입체크·린트·테스트.
 2. 주장마다 파일을 직접 읽고(Read/Grep/Glob), 보고에 적힌 검사(빌드·타입체크·테스트)는 같은 명령을 직접 실행해 결과를 확인한다. 실행 결과는 종료 코드와 출력으로 판단한다.
-3. 사용자의 원래 명령이 요구한 것 중 보고에 없거나 빠진 것을 찾는다.
+3. 사용자의 원래 명령이 요구했는데 작업자가 끝냈다고 보고하고도 실제로는 되지 않은 것을 찾는다. 명령이 검토·분석·질문·계획만 요구했다면("수정하지 말고 검토만") 구현이 없는 것은 빠진 것이 아니다.
 ## 규칙
 - 파일을 수정·생성·삭제하지 않는다. 확인용 명령(읽기, 빌드, 테스트, 린트, git status/diff)만 실행한다.
 - 파괴적 명령(삭제, reset, push, 배포, 설치)은 실행하지 않는다.
@@ -69,7 +69,8 @@ const VERIFIER_PROMPT = `당신은 독립 검증자다. 다른 agent(작업자)�
 <aidev-verify>
 {"verdict":"pass"|"fail"|"unclear","summary":"<한두 문장: 보고가 실제와 맞는지>","checked":[{"claim":"<주장>","result":"ok"|"wrong"|"unverified","evidence":"<무엇을 읽거나 실행해 확인했는지, 한 줄>"}],"issues":["<작업자가 틀렸거나 빠뜨린 것, 사용자가 바로 알아야 할 순서로>"]}
 </aidev-verify>
-verdict 기준: 주장 중 하나라도 wrong이거나 명령의 핵심 요구가 빠졌으면 fail. 모든 주장이 ok이고 빠진 것이 없으면 pass. 핵심 주장을 확인할 수 없으면 unclear.`;
+verdict 기준: 작업자가 한 일에 대한 주장(수정·구현·검사 통과)이 하나라도 wrong이거나, 작업자가 끝냈다고 한 핵심 요구가 실제로 되지 않았으면 fail. 모든 주장이 ok이면 pass. 핵심 주장을 확인할 수 없으면 unclear.
+다음은 fail 사유가 아니다 — 필요하면 issues에만 적는다: 작업자가 하지 못했다거나 사용자 확인을 기다린다고 스스로 밝힌 것, 진단·설명의 표현이나 수치 해석의 차이, 사용자가 요구하지 않은 개선점. fail이면 issues가 그대로 작업자에게 다시 맡겨지므로, 사용자의 명령을 바꾸는 요구를 issues에 넣지 않는다.`;
 
 /** Engine ladders as routing's MODEL_LADDER (weakest first); the verifier never runs below the third rung. */
 const LADDER: Record<'claude' | 'codex', string[]> = { claude: ['haiku', 'sonnet', 'opus', 'best'], codex: ['gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.6-sol', 'gpt-6-astra'] };
@@ -136,6 +137,10 @@ const PLATFORM_TOOL = /^(mcp__aidev-tools__|aidev-tools[._])/;
 const FILE_TOOLS = new Set(['Edit', 'Write', 'MultiEdit', 'NotebookEdit', 'apply_patch', 'edit', 'write']);
 // Claude (Bash), Codex (shell, exec_command, local_shell) and OpenCode (bash; its file tools take `filePath`)
 const COMMAND_TOOLS = new Set(['Bash', 'shell', 'exec_command', 'local_shell', 'bash']);
+/** The agents' own notes (plans, memory, skills): writing one is not work on the project. */
+const AGENT_METADATA_PATH = /(^|[\\/])\.(claude|codex)[\\/]/;
+/** A command that records work in git: the turn changed the project even when no edit tool shows it. */
+const GIT_RECORDING_COMMAND = /\bgit\s+(commit|push|apply|am|merge|cherry-pick)\b/;
 
 function clip(value: unknown, max: number): string {
   const text = typeof value === 'string' ? value : JSON.stringify(value ?? '');
@@ -213,7 +218,7 @@ async function imageFilesFor(turn: HistoryMessage[], dir: string): Promise<strin
  * Pure part (exported for tests): the run's turn (verifiedTurn) as the brief the verifier checks: the command and its
  * attachments, files the worker touched, commands it ran, errors it saw, and its final report (the claims).
  */
-export function buildVerificationBrief(messages: HistoryMessage[], input: { command: string | null; agent: string | null; engine: string | null; model: string | null; startedAt?: number | null; imageFiles?: string[] }): { text: string; files: string[]; claims: string } {
+export function buildVerificationBrief(messages: HistoryMessage[], input: { command: string | null; agent: string | null; engine: string | null; model: string | null; startedAt?: number | null; imageFiles?: string[] }): { text: string; files: string[]; claims: string; changedProject: boolean } {
   const { turn } = verifiedTurn(messages, input.startedAt ?? null);
   const attachedFiles = turnAttachments(turn).files;
   const imageFiles = input.imageFiles ?? [];
@@ -230,7 +235,10 @@ export function buildVerificationBrief(messages: HistoryMessage[], input: { comm
         const result = message.toolResult ? `${message.toolResult.isError ? '오류: ' : ''}${clip(message.toolResult.content, 600)}` : '(결과 없음)';
         platformCalls.push(`${message.toolName.replace(PLATFORM_TOOL, '')} ${clip(args, 300)} → ${result}`);
       }
-      if (FILE_TOOLS.has(message.toolName) && typeof (args.file_path ?? args.filePath ?? args.path) === 'string') files.add(String(args.file_path ?? args.filePath ?? args.path));
+      const filePath = args.file_path ?? args.filePath ?? args.path;
+      if (FILE_TOOLS.has(message.toolName) && typeof filePath === 'string' && !AGENT_METADATA_PATH.test(filePath)) files.add(filePath);
+      // OpenCode records a patch as the list of files it touched
+      if (message.toolName === 'Patch' && Array.isArray(args.files)) for (const file of args.files) if (typeof file === 'string' && !AGENT_METADATA_PATH.test(file)) files.add(file);
       if (COMMAND_TOOLS.has(message.toolName) && (typeof args.command === 'string' || Array.isArray(args.command))) commands.push(clip(Array.isArray(args.command) ? args.command.join(' ') : args.command, 200));
     } else if ((message.kind === 'tool_result' && message.toolResult?.isError) || message.kind === 'error') {
       errors.push(clip(message.kind === 'error' ? (message.content ?? message.text) : message.toolResult?.content, 300));
@@ -251,7 +259,9 @@ export function buildVerificationBrief(messages: HistoryMessage[], input: { comm
     `## 작업자의 최종 보고 (검증할 주장)\n${claims || '(보고 없음 — 명령의 요구가 저장소에 반영됐는지 직접 확인)'}`,
     '위 보고의 주장을 하나씩 실제로 확인하고 <aidev-verify> 블록을 출력하라.',
   ].filter((line): line is string => line !== null);
-  return { text: lines.join('\n\n'), files: [...files], claims };
+  // what there is to verify: a turn that changed no project file (a review, an analysis, an answer, a plan) has no work
+  const changedProject = files.size > 0 || commands.some((command) => GIT_RECORDING_COMMAND.test(command));
+  return { text: lines.join('\n\n'), files: [...files], claims, changedProject };
 }
 
 /** Accepts the tagged block, a ```json fence, or a bare object — models drop the tags now and then. */
@@ -363,7 +373,7 @@ async function checkBrief(input: VerifyInput, cwd: string, brief: { text: string
 
 export const runVerifierService = {
   /** Verifies the worker's last turn in `sessionId`; `unclear` when the verifier itself could not run or answer. */
-  async verify(input: VerifyInput): Promise<Verification & { briefChars: number }> {
+  async verify(input: VerifyInput): Promise<Verification & { briefChars: number; skipped?: string }> {
     const session = sessionsDb.getSessionById(input.sessionId);
     const cwd = session?.project_path || process.cwd();
     // Lazy: the providers module imports this module's barrel (see lesson-curator.service.ts).
@@ -373,9 +383,18 @@ export const runVerifierService = {
     const { turn, movedOn } = verifiedTurn(messages, input.startedAt);
     // the chat went on past this run (the user's next command, or one queued during the run): checking the old command
     // now only brings it back over the new one
-    if (movedOn) {
-      console.log(`[aidev-tools] verify run=${input.runId ?? '-'}: the chat went on past this run — not checked`);
-      return { verdict: 'unclear', summary: '이 실행 뒤에 같은 채팅의 다음 명령이 이어져 검증하지 않았습니다.', checked: [], issues: [], engine: null, model: null, briefChars: 0 };
+    // Not checked (`skipped`: the gateway stores no verdict and the apps show no card): the chat went on past this run
+    // (the user's next command, or one queued during the run) — checking the old command now only brings it back over
+    // the new one; or the turn changed no project file — a review, an analysis, an answer or a plan has no work to
+    // check, and a fail sent the command back with "fix these" until the worker implemented what was only to be
+    // reviewed (2026-11-20, runs 2705–2707).
+    const skip = (reason: string) => {
+      console.log(`[aidev-tools] verify run=${input.runId ?? '-'}: not checked — ${reason}`);
+      return { verdict: 'unclear' as const, summary: reason, checked: [], issues: [], engine: null, model: null, briefChars: 0, skipped: reason };
+    };
+    if (movedOn) return skip('the chat went on past this run');
+    if (!buildVerificationBrief(messages, { command: input.command, agent: input.agent, engine: input.engine, model: input.workerModel, startedAt: input.startedAt }).changedProject) {
+      return skip('the turn changed no project file');
     }
     const imageDir = path.join(os.tmpdir(), 'aidev-verify', `${input.runId ?? 'run'}-${Date.now()}`);
     try {

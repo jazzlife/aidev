@@ -112,6 +112,17 @@ describe('a routed run stays with the chat it ran in', () => {
     expect(resendIdle).not.toHaveBeenCalled();
   });
 
+  it('a check that ended without a verdict (nothing to check) leaves no card', async () => {
+    const routing = await sendInBoth();
+    vi.spyOn(aidevApi, 'runOutcome').mockResolvedValue({ run: {}, verifying: true });
+    vi.spyOn(aidevApi, 'run').mockResolvedValue({ run: { id: 10, outcome: 'unknown', verification: null, next_action: null, session_id: 'mydrives' }, verifying: false } as unknown as RunView);
+    await act(async () => { await routing.current.reportOutcome({ exit_code: 0, session_id: 'mydrives' }); });
+    expect(routingStore.get().verifications.mydrives).toMatchObject({ status: 'pending' });
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000); });
+    expect(routingStore.get().verifications.mydrives).toBeUndefined();
+    expect(routingStore.get().escalations.mydrives).toBeUndefined();
+  });
+
   it("a send in another chat leaves a verification that is still running in its chat", async () => {
     const routing = await sendInBoth();
     vi.spyOn(aidevApi, 'runOutcome').mockResolvedValue({ run: {}, verifying: true });

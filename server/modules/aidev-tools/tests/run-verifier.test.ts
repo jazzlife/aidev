@@ -139,3 +139,19 @@ test('buildVerificationBrief lists the command\'s images and files for the verif
   assert.match(brief.text, /## 명령에 첨부된 이미지[^\n]*\n- \/tmp\/aidev-verify\/7\/image-1\.png/);
   assert.match(brief.text, /## 명령에 첨부된 파일\n- \/home\/cloudcli\/\.cloudcli\/assets\/spec\.pdf/);
 });
+
+test('a turn that changed no project file has nothing to verify (a review, an analysis, a plan)', () => {
+  const brief = (tools: Array<Record<string, unknown>>) => buildVerificationBrief([
+    { kind: 'text', role: 'user', content: '코드 수정은 하지 말고 구조만 검토해' },
+    ...tools.map((tool) => ({ kind: 'tool_use', ...tool })),
+    { kind: 'text', role: 'assistant', content: '검토 결과입니다.' },
+  ], { command: null, agent: 'backend-node', engine: 'claude', model: 'opus' }).changedProject;
+  // reading and running checks only (runs 2705–2707: a review failed and sent back until it was implemented)
+  assert.equal(brief([{ toolName: 'Read', toolInput: { file_path: 'src/server.ts' } }, { toolName: 'Bash', toolInput: { command: 'grep -rn status src' } }]), false);
+  // a plan or a memory note is the agent's own file, not work on the project
+  assert.equal(brief([{ toolName: 'Write', toolInput: { file_path: '/home/cloudcli/.claude/plans/review.md' } }, { toolName: 'Write', toolInput: { file_path: '/home/cloudcli/.claude/projects/-x/memory/rule.md' } }]), false);
+  // an edit (Codex patches are normalized to Edit/Write), an OpenCode patch, or work recorded in git
+  assert.equal(brief([{ toolName: 'Edit', toolInput: JSON.stringify({ file_path: 'src/server.ts' }) }]), true);
+  assert.equal(brief([{ toolName: 'Patch', toolInput: { files: ['src/server.ts'] } }]), true);
+  assert.equal(brief([{ toolName: 'Bash', toolInput: { command: "sed -i 's/a/b/' src/x.ts && git commit -am fix" } }]), true);
+});
