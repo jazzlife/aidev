@@ -43,7 +43,9 @@ test('a connected engine with no figures is green with "한도 여유"; a refusa
   framed();
   await waitFor(() => screen.getByTestId('usage-summary-opencode'));
   assert.equal(screen.getByTestId('usage-summary-opencode').textContent, '여유');
-  assert.match(screen.getByTestId('usage-summary-codex').textContent ?? '', /^한도\((1h|59m)\)$/, 'refused: until it lifts');
+  assert.equal(screen.queryByTestId('usage-summary-bar-opencode'), null, 'no figure: an empty track');
+  assert.equal(screen.getByTestId('usage-summary-bar-codex').style.width, '100%', 'refused: a full bar');
+  assert.match(screen.getByTestId('usage-summary-codex').textContent ?? '', /^한도 \((1h|59m)\)$/, 'refused: until it lifts');
   assert.ok(screen.getByTestId('usage-summary-codex').querySelector('.text-red-500'));
   fireEvent.click(screen.getByRole('button', { name: '자세히' }));
   const opencode = screen.getByTestId('usage-opencode');
@@ -72,9 +74,12 @@ test('at rest one summary line: each engine\'s logo, its fullest account window\
   // the logo names the engine; the use and the time left until that window resets follow, with no window name
   const claude = screen.getByTestId('usage-summary-claude');
   assert.ok(claude.querySelector('svg[aria-label="Claude"]'));
-  assert.equal(claude.textContent, '13%(1h)');
-  assert.equal(screen.getByTestId('usage-summary-codex').textContent, '75%(1h)');
+  assert.equal(claude.textContent, '13% (1h)');
+  assert.equal(screen.getByTestId('usage-summary-codex').textContent, '75% (1h)');
   assert.ok(screen.getByTestId('usage-summary-codex').querySelector('.text-amber-500'), 'amber: 70% or more');
+  // the bar of that window fills to its use, in its colour
+  assert.equal(screen.getByTestId('usage-summary-bar-codex').style.width, '75%');
+  assert.ok(screen.getByTestId('usage-summary-bar-codex').classList.contains('bg-amber-500'));
   assert.equal(screen.queryByTestId('usage-claude'), null, 'no details at rest');
   fireEvent.click(screen.getByRole('button', { name: '자세히' }));
   assert.match(screen.getByTestId('usage-claude').textContent ?? '', /주간 · 별도 모델/);
@@ -97,7 +102,7 @@ test('signed in but cut off: the summary greys the logo and keeps the last figur
   const codex = screen.getByTestId('usage-summary-codex');
   assert.equal(codex.dataset.disconnected, 'true');
   assert.ok(codex.querySelector('.grayscale'));
-  assert.equal(codex.textContent, '40%(1h)');
+  assert.equal(codex.textContent, '40% (1h)');
   fireEvent.click(screen.getByRole('button', { name: '자세히' }));
   assert.ok(screen.getByTestId('usage-codex').querySelector('.bg-muted-foreground\\/50'));
 });

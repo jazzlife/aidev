@@ -97,9 +97,10 @@ const engineIcon = (engine: string, className = '') => (engine === 'claude'
   : <LLMProviderLogo provider={engine} className={`h-3.5 w-3.5 shrink-0 ${className}`} />);
 
 /**
- * One engine in the summary line: its logo, how much of the fullest account window is used and the time left until
- * that window resets — or, during a refusal, the time left until it lifts. Amber from 70%, red from 90% or refused.
- * Signed in but cut off (the account could not be reached): the logo greyed out, the last figures kept.
+ * One engine in the summary line: its logo, a bar of the fullest account window filling the room between, then how
+ * much is used and the time left until that window resets — or, during a refusal, a full red bar and the time left
+ * until it lifts. Amber from 70%, red from 90% or refused. Signed in but cut off (the account could not be reached):
+ * the logo and the bar greyed out, the last figures kept.
  */
 function EngineSummary({ view, palette, now }: { view: UsageLimitView; palette: Palette; now: number }) {
   const { engine } = view;
@@ -111,12 +112,21 @@ function EngineSummary({ view, palette, now }: { view: UsageLimitView; palette: 
   const usage = blocked ? '한도' : percent !== null ? `${percent}%` : '여유';
   const until = blocked ? view.blockedUntil || null : fullest?.resetsAt ?? null;
   const color = blocked || (percent ?? 0) >= 90 ? palette.badText : (percent ?? 0) >= 70 ? palette.warnText : '';
+  // a refusal fills the bar; no figure ("여유") leaves the track empty
+  const fill = blocked ? 100 : Math.min(100, percent ?? 0);
   return (
-    <span className="inline-flex items-center gap-1 whitespace-nowrap tabular-nums" title={label} data-testid={`usage-summary-${engine}`} data-blocked={blocked || undefined} data-disconnected={view.disconnected || undefined}>
-      {engineIcon(engine, view.disconnected ? 'opacity-40 grayscale' : '')}
-      <span className={`font-medium ${color}`}>{usage}</span>
-      {until !== null && until > now ? <span className={palette.muted}>({shortTimeLeft(until, now)})</span> : null}
-    </span>
+    <div className="flex min-w-0 items-center gap-1.5 whitespace-nowrap tabular-nums" title={label} data-testid={`usage-summary-${engine}`} data-blocked={blocked || undefined} data-disconnected={view.disconnected || undefined}>
+      {/* one icon slot for the 16px mascot and the 14px logos, so the bars start together too */}
+      <span className="flex w-4 shrink-0 justify-center">{engineIcon(engine, view.disconnected ? 'opacity-40 grayscale' : '')}</span>
+      <div className={`h-1.5 min-w-6 flex-1 overflow-hidden rounded-full ${palette.track}`}>
+        {fill > 0 ? <div data-testid={`usage-summary-bar-${engine}`} className={`h-full rounded-full transition-[width] ${view.disconnected ? palette.off : tone(palette, percent, blocked)}`} style={{ width: `${fill}%` }} /> : null}
+      </div>
+      {/* a fixed-width figure column ("100% (6d23h)" fits) so the bars of stacked engines end together */}
+      <span className="min-w-[5.75rem] shrink-0 text-right">
+        <span className={`font-medium ${color}`}>{usage}</span>
+        {until !== null && until > now ? <span className={palette.muted}> ({shortTimeLeft(until, now)})</span> : null}
+      </span>
+    </div>
   );
 }
 
@@ -149,7 +159,9 @@ export function UsageLimitPanel({ compact = false, frame = (panel) => panel }: {
         {views.map((view) => <EngineUsage key={view.engine} view={view} compact={compact} now={now} />)}
       </div>
     ) : (
-      <div data-testid="usage-limit-panel" className={`flex flex-wrap items-center gap-x-3 gap-y-1 ${compact ? 'rounded-xl border border-line bg-bg px-3 py-2 text-[13px]' : 'px-2.5 py-1.5 text-xs'}`}>
+      // as many equal columns as fit (an engine needs about 10rem): side by side when wide, one per row when narrow,
+      // the bars aligned either way
+      <div data-testid="usage-limit-panel" className={`grid grid-cols-[repeat(auto-fit,minmax(10rem,1fr))] gap-x-4 gap-y-1.5 ${compact ? 'rounded-xl border border-line bg-bg px-3 py-2 text-[13px]' : 'px-2.5 py-1.5 text-xs'}`}>
         {views.map((view) => <EngineSummary key={view.engine} view={view} palette={palette} now={now} />)}
       </div>
     ),
