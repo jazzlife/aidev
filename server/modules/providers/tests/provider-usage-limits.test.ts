@@ -61,8 +61,8 @@ test("a model's weekly window (Fable) refusing marks that window only; the accou
   service.recordClear('claude');
   claude = service.snapshot(1767200000000).claude!;
   assert.equal(claude.windows.find((window) => window.type === 'seven_day_fable')?.blocked, true);
-  // its own reset lifts it
-  assert.equal(service.snapshot(1767830400001).claude!.windows.find((window) => window.type === 'seven_day_fable')?.blocked, false);
+  // its own reset lifts it, and the window is left out until that model reports again (2026-11-26)
+  assert.deepEqual(service.snapshot(1767830400001).claude!.windows.map((window) => window.type), ['five_hour']);
 });
 
 test('Codex only shows refusals: a block with no reset holds five hours, a completed turn clears it', () => {

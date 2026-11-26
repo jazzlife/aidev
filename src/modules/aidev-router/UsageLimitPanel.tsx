@@ -1,6 +1,6 @@
-import type { ReactNode } from 'react';
+import { useState, type ReactNode } from 'react';
 
-import { formatTimeLeft, useUsageLimits, type UsageLimitView } from '@/modules/aidev-router/hooks/useUsageLimits';
+import { formatTimeLeft, useUsageLimits, type UsageLimitView, type UsageWindowView } from '@/modules/aidev-router/hooks/useUsageLimits';
 import { ENGINE_LABELS } from '@/shared/constants';
 
 
@@ -68,22 +68,58 @@ function EngineUsage({ view, compact, now }: { view: UsageLimitView; compact: bo
   );
 }
 
+/** A model's own weekly window (`seven_day_<model>`, Fable's …) does not limit the account: the summary leaves it to the details. */
+const isAccountWindow = (type: string) => !/^seven_day_.+/.test(type);
+
+/** One engine in the summary line: its colour, its name, and the fullest account window — or the refusal in force. */
+function EngineSummary({ view, palette, now }: { view: UsageLimitView; palette: Palette; now: number }) {
+  const blocked = view.blockedUntil !== null;
+  // the account window that will refuse first; a window past its reset comes with no figure, so it never counts
+  const fullest = view.windows.reduce<UsageWindowView | null>((top, window) => (isAccountWindow(window.type) && window.percent !== null && (top === null || window.percent > (top.percent ?? 0)) ? window : top), null);
+  const status = blocked ? `한도 도달${view.blockedUntil ? ` · ${formatTimeLeft(view.blockedUntil, now)}` : ''}` : fullest ? `${fullest.label} ${fullest.percent}%` : '여유';
+  return (
+    <span className="inline-flex items-center gap-1.5 whitespace-nowrap" data-testid={`usage-summary-${view.engine}`} data-blocked={blocked || undefined}>
+      <span className={`h-2 w-2 shrink-0 rounded-full ${tone(palette, fullest?.percent ?? null, blocked)}`} />
+      <span className="font-medium">{ENGINE_LABELS[view.engine] ?? view.engine}</span>
+      <span className={`tabular-nums ${palette.muted}`}>{status}</span>
+    </span>
+  );
+}
+
 /**
  * Used by the mobile drawer (compact), the workbench sessions panel (desktop docked, tablet drawer) and
- * the legacy sidebar footer: each signed-in engine's account usage — the five-hour / weekly windows
- * with how much of each is used and when they reset, or that the engine is refusing until a time.
- * Claude's comes from its turn events (so before the first turn it says so), Codex's from the account.
+ * the legacy sidebar footer: each signed-in engine's account usage. One summary line by default — each
+ * engine's fullest account window, or the refusal in force — and "자세히" opens every window with its bar
+ * and reset time (2026-11-26). Claude's comes from its turn events, Codex's from the account.
  * A signed-out engine is left out; with none signed in (or before the first answer) nothing is drawn,
  * not even the caller's frame — `frame` wraps the panel in the caller's divider and heading.
  */
 export function UsageLimitPanel({ compact = false, frame = (panel) => panel }: { compact?: boolean; frame?: (panel: ReactNode) => ReactNode }) {
   const { views, loaded } = useUsageLimits();
+  // the details are opened on request only: the summary line is what the drawer shows at rest
+  const [expanded, setExpanded] = useState(false);
   if (!loaded || !views.length) return null;
   // one clock per render: the reset times are relative to it
   const now = Date.now();
+  const palette = compact ? MOBILE : WORKBENCH;
+  const text = compact ? 'text-[13px]' : 'text-xs';
+  const toggle = (
+    <button type="button" aria-expanded={expanded} onClick={() => setExpanded(!expanded)} className={`ml-auto shrink-0 ${text} ${palette.muted} hover:underline`}>
+      {expanded ? '접기' : '자세히'}
+    </button>
+  );
+  if (!expanded) {
+    return frame(
+      <div data-testid="usage-limit-panel" className={`flex flex-wrap items-center gap-x-3 gap-y-1 ${text} ${compact ? 'rounded-xl border border-line bg-bg px-3 py-2' : 'px-2.5 py-1.5'}`}>
+        {views.map((view) => <EngineSummary key={view.engine} view={view} palette={palette} now={now} />)}
+        {toggle}
+      </div>,
+    );
+  }
   return frame(
     <div data-testid="usage-limit-panel" className={compact ? 'divide-y divide-line rounded-xl border border-line bg-bg' : 'px-1 py-1'}>
       {views.map((view) => <EngineUsage key={view.engine} view={view} compact={compact} now={now} />)}
+      <div className={`flex ${compact ? 'px-3 py-1.5' : 'px-2.5 pb-1'}`}>{toggle}</div>
     </div>,
   );
 }

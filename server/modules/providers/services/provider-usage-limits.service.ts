@@ -240,9 +240,13 @@ export const providerUsageLimitsService = {
       if (!entry) continue;
       const holdUntil = entry.blockedUntil === null ? null : (entry.blockedUntil > 0 ? entry.blockedUntil : entry.observedAt + UNKNOWN_RESET_HOLD_MS);
       const lifted = holdUntil !== null && holdUntil <= now;
-      // a window past its reset: its old figure no longer holds (Claude's next turn reports the new one)
-      const windows = entry.windows.map((window) => (window.resetsAt !== null && window.resetsAt <= now ? { ...window, utilization: null, blocked: false }
-        : window.blocked && lifted ? { ...window, blocked: false } : window));
+      // a window past its reset: its old figure no longer holds (Claude's next turn reports the new one). A model's own
+      // window is left out instead — it comes back only with a turn on that model, so an account not using that model
+      // kept "reset, renewed on the next run" for good (devgame, 2026-11-26)
+      const windows = entry.windows
+        .filter((window) => !(isModelScopedUsageLimit(window.type) && window.resetsAt !== null && window.resetsAt <= now))
+        .map((window) => (window.resetsAt !== null && window.resetsAt <= now ? { ...window, utilization: null, blocked: false }
+          : window.blocked && lifted ? { ...window, blocked: false } : window));
       out[entry.provider] = lifted ? { ...entry, blockedUntil: null, windows } : { ...entry, blockedUntil: holdUntil, windows };
     }
     return out;

@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict';
 
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import React from 'react';
 import { test, vi } from 'vitest';
 
@@ -24,8 +24,8 @@ test('only the engines the runtime reports are drawn', async () => {
   providers = { claude: { provider: 'claude', observedAt: 0, windows: [], blockedUntil: null } };
   framed();
   await waitFor(() => screen.getByTestId('frame'));
-  assert.ok(screen.getByTestId('usage-claude'));
-  assert.equal(screen.queryByTestId('usage-codex'), null);
+  assert.ok(screen.getByTestId('usage-summary-claude'));
+  assert.equal(screen.queryByTestId('usage-summary-codex'), null);
 });
 
 test('figures read a while ago say when: today by time, yesterday, else the date', () => {
@@ -41,7 +41,8 @@ test('a connected engine with no figures is green with "한도 여유"; a refusa
     codex: { provider: 'codex', observedAt: Date.now(), windows: [{ type: 'five_hour', utilization: 1, resetsAt: Date.now() + 3_600_000, blocked: true }], blockedUntil: Date.now() + 3_600_000 },
   };
   framed();
-  await waitFor(() => screen.getByTestId('usage-opencode'));
+  await waitFor(() => screen.getByTestId('usage-summary-opencode'));
+  fireEvent.click(screen.getByRole('button', { name: '자세히' }));
   const opencode = screen.getByTestId('usage-opencode');
   assert.match(opencode.textContent ?? '', /OpenCode한도 여유/);
   assert.ok(opencode.querySelector('.bg-emerald-500'), 'green: connected');
@@ -49,4 +50,28 @@ test('a connected engine with no figures is green with "한도 여유"; a refusa
   const codex = screen.getByTestId('usage-codex');
   assert.match(codex.textContent ?? '', /한도 도달 · 해제까지/);
   assert.ok(codex.querySelector('.bg-red-500'));
+});
+
+test('at rest one summary line: each engine\'s fullest account window, a model\'s own window left to the details (2026-11-26)', async () => {
+  const later = Date.now() + 3_600_000;
+  providers = {
+    claude: { provider: 'claude', observedAt: Date.now(), blockedUntil: null, windows: [
+      { type: 'seven_day', utilization: 0.13, resetsAt: later, blocked: false },
+      { type: 'seven_day_overage_included', utilization: 0.5, resetsAt: later, blocked: false },
+    ] },
+    codex: { provider: 'codex', observedAt: Date.now(), blockedUntil: null, windows: [
+      { type: 'five_hour', utilization: 0.1, resetsAt: later, blocked: false },
+      { type: 'seven_day', utilization: 0.75, resetsAt: later, blocked: false },
+    ] },
+  };
+  framed();
+  await waitFor(() => screen.getByTestId('usage-summary-claude'));
+  assert.equal(screen.getByTestId('usage-summary-claude').textContent, 'Claude주간 13%');
+  assert.equal(screen.getByTestId('usage-summary-codex').textContent, 'Codex주간 75%');
+  assert.ok(screen.getByTestId('usage-summary-codex').querySelector('.bg-amber-500'), 'amber: 70% or more');
+  assert.equal(screen.queryByTestId('usage-claude'), null, 'no details at rest');
+  fireEvent.click(screen.getByRole('button', { name: '자세히' }));
+  assert.match(screen.getByTestId('usage-claude').textContent ?? '', /주간 · 별도 모델/);
+  fireEvent.click(screen.getByRole('button', { name: '접기' }));
+  assert.equal(screen.queryByTestId('usage-claude'), null);
 });
