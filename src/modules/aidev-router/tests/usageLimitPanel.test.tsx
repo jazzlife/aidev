@@ -24,8 +24,15 @@ test('only the engines the runtime reports are drawn', async () => {
   providers = { claude: { provider: 'claude', observedAt: 0, windows: [], blockedUntil: null } };
   framed();
   await waitFor(() => screen.getByTestId('frame'));
-  assert.ok(screen.getByTestId('usage-summary-claude'));
-  assert.equal(screen.queryByTestId('usage-summary-codex'), null);
+  assert.equal(screen.getByTestId('usage-summary-claude').dataset.disconnected, undefined);
+  // the summary keeps a signed-out engine as its logo alone, greyed out (2026-11-26); the details leave it out
+  const codex = screen.getByTestId('usage-summary-codex');
+  assert.equal(codex.dataset.disconnected, 'true');
+  assert.equal(codex.textContent, '');
+  assert.ok(codex.querySelector('.grayscale'));
+  fireEvent.click(screen.getByRole('button', { name: '자세히' }));
+  assert.ok(screen.getByTestId('usage-claude'));
+  assert.equal(screen.queryByTestId('usage-codex'), null);
 });
 
 test('figures read a while ago say when: today by time, yesterday, else the date', () => {

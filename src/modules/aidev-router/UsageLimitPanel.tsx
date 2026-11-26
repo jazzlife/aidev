@@ -2,7 +2,7 @@ import { ChevronDown, ChevronUp } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 
 import { formatTimeLeft, useUsageLimits, type UsageLimitView, type UsageWindowView } from '@/modules/aidev-router/hooks/useUsageLimits';
-import { ENGINE_LABELS } from '@/shared/constants';
+import { AIDEV_ENGINES, ENGINE_LABELS } from '@/shared/constants';
 import { LLMProviderLogo } from '@/shared/ui';
 
 
@@ -90,11 +90,21 @@ export function shortTimeLeft(at: number, now: number): string {
   return hours ? `${hours}h${minutes % 60 ? `${minutes % 60}m` : ''}` : `${minutes}m`;
 }
 
+/** An engine's mark in the summary: Claude by its mascot, the others by their logos. */
+const engineIcon = (engine: string, className = '') => (engine === 'claude'
+  ? <ClaudeCodeMascot className={`h-4 w-4 shrink-0 ${className}`} />
+  : <LLMProviderLogo provider={engine} className={`h-3.5 w-3.5 shrink-0 ${className}`} />);
+
 /**
  * One engine in the summary line: its logo, how much of the fullest account window is used and the time left until
  * that window resets — or, during a refusal, the time left until it lifts. Amber from 70%, red from 90% or refused.
+ * An engine that is not signed in (the runtime reports no view for it) is its logo alone, greyed out.
  */
-function EngineSummary({ view, palette, now }: { view: UsageLimitView; palette: Palette; now: number }) {
+function EngineSummary({ engine, view, palette, now }: { engine: UsageLimitView['engine']; view: UsageLimitView | undefined; palette: Palette; now: number }) {
+  const label = ENGINE_LABELS[engine] ?? engine;
+  if (!view) {
+    return <span className="inline-flex items-center" title={`${label} · 연결 안 됨`} data-testid={`usage-summary-${engine}`} data-disconnected>{engineIcon(engine, 'opacity-40 grayscale')}</span>;
+  }
   const blocked = view.blockedUntil !== null;
   // the account window that will refuse first; a window past its reset comes with no figure, so it never counts
   const fullest = view.windows.reduce<UsageWindowView | null>((top, window) => (isAccountWindow(window.type) && window.percent !== null && (top === null || window.percent > (top.percent ?? 0)) ? window : top), null);
@@ -103,8 +113,8 @@ function EngineSummary({ view, palette, now }: { view: UsageLimitView; palette: 
   const until = blocked ? view.blockedUntil || null : fullest?.resetsAt ?? null;
   const color = blocked || (percent ?? 0) >= 90 ? palette.badText : (percent ?? 0) >= 70 ? palette.warnText : '';
   return (
-    <span className="inline-flex items-center gap-1 whitespace-nowrap tabular-nums" title={ENGINE_LABELS[view.engine] ?? view.engine} data-testid={`usage-summary-${view.engine}`} data-blocked={blocked || undefined}>
-      {view.engine === 'claude' ? <ClaudeCodeMascot className="h-4 w-4 shrink-0" /> : <LLMProviderLogo provider={view.engine} className="h-3.5 w-3.5 shrink-0" />}
+    <span className="inline-flex items-center gap-1 whitespace-nowrap tabular-nums" title={label} data-testid={`usage-summary-${engine}`} data-blocked={blocked || undefined}>
+      {engineIcon(engine)}
       <span className={`font-medium ${color}`}>{usage}</span>
       {until !== null && until > now ? <span className={palette.muted}>({shortTimeLeft(until, now)})</span> : null}
     </span>
@@ -141,7 +151,8 @@ export function UsageLimitPanel({ compact = false, frame = (panel) => panel }: {
       </div>
     ) : (
       <div data-testid="usage-limit-panel" className={`flex flex-wrap items-center gap-x-3 gap-y-1 ${compact ? 'rounded-xl border border-line bg-bg px-3 py-2 text-[13px]' : 'px-2.5 py-1.5 text-xs'}`}>
-        {views.map((view) => <EngineSummary key={view.engine} view={view} palette={palette} now={now} />)}
+        {/* every engine, so one not signed in shows greyed out; the details list the signed-in ones only */}
+        {AIDEV_ENGINES.map((engine) => <EngineSummary key={engine} engine={engine} view={views.find((view) => view.engine === engine)} palette={palette} now={now} />)}
       </div>
     ),
     toggle,
