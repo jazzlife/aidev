@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, Clock } from 'lucide-react';
+import { ChevronDown, ChevronUp } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 
 import { formatTimeLeft, useUsageLimits, type UsageLimitView, type UsageWindowView } from '@/modules/aidev-router/hooks/useUsageLimits';
@@ -73,8 +73,13 @@ function EngineUsage({ view, compact, now }: { view: UsageLimitView; compact: bo
 /** A model's own weekly window (`seven_day_<model>`, Fable's …) does not limit the account: the summary leaves it to the details. */
 const isAccountWindow = (type: string) => !/^seven_day_.+/.test(type);
 
-/** "4일 2시간", "3시간 20분", "12분" — the summary's time left, without the details' "남음". */
-const shortTimeLeft = (at: number, now: number) => formatTimeLeft(at, now).replace(/ 남음$/, '');
+/** "3d21h", "3h20m", "12m" — the summary's time left, the two largest units; a zero second unit is dropped ("2d"). */
+export function shortTimeLeft(at: number, now: number): string {
+  const minutes = Math.max(1, Math.ceil((at - now) / 60_000));
+  const [days, hours] = [Math.floor(minutes / 1440), Math.floor((minutes % 1440) / 60)];
+  if (days) return `${days}d${hours ? `${hours}h` : ''}`;
+  return hours ? `${hours}h${minutes % 60 ? `${minutes % 60}m` : ''}` : `${minutes}m`;
+}
 
 /**
  * One engine in the summary line: its logo, how much of the fullest account window is used and the time left until
@@ -92,7 +97,7 @@ function EngineSummary({ view, palette, now }: { view: UsageLimitView; palette: 
     <span className="inline-flex items-center gap-1 whitespace-nowrap tabular-nums" title={ENGINE_LABELS[view.engine] ?? view.engine} data-testid={`usage-summary-${view.engine}`} data-blocked={blocked || undefined}>
       <LLMProviderLogo provider={view.engine} className="h-3.5 w-3.5 shrink-0" />
       <span className={`font-medium ${color}`}>{usage}</span>
-      {until !== null && until > now ? <span className={`inline-flex items-center gap-0.5 ${palette.muted}`}><Clock size={10} />{shortTimeLeft(until, now)}</span> : null}
+      {until !== null && until > now ? <span className={palette.muted}>({shortTimeLeft(until, now)})</span> : null}
     </span>
   );
 }

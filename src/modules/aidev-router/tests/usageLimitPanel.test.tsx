@@ -10,7 +10,7 @@ vi.mock('@/shared/api', () => ({
   api: { providers: { usageLimits: () => Promise.resolve({ json: () => Promise.resolve({ success: true, data: { providers } }) }) } },
 }));
 
-const { UsageLimitPanel, formatObservedAt } = await import('@/modules/aidev-router/UsageLimitPanel');
+const { UsageLimitPanel, formatObservedAt, shortTimeLeft } = await import('@/modules/aidev-router/UsageLimitPanel');
 const framed = () => render(<UsageLimitPanel frame={(panel, toggle) => <section data-testid="frame"><h2>계정 한도{toggle}</h2>{panel}</section>} />);
 
 test('nothing signed in → no panel and no frame', async () => {
@@ -43,7 +43,7 @@ test('a connected engine with no figures is green with "한도 여유"; a refusa
   framed();
   await waitFor(() => screen.getByTestId('usage-summary-opencode'));
   assert.equal(screen.getByTestId('usage-summary-opencode').textContent, '여유');
-  assert.match(screen.getByTestId('usage-summary-codex').textContent ?? '', /^한도(1시간|59분)$/, 'refused: until it lifts');
+  assert.match(screen.getByTestId('usage-summary-codex').textContent ?? '', /^한도\((1h|59m)\)$/, 'refused: until it lifts');
   assert.ok(screen.getByTestId('usage-summary-codex').querySelector('.text-red-500'));
   fireEvent.click(screen.getByRole('button', { name: '자세히' }));
   const opencode = screen.getByTestId('usage-opencode');
@@ -72,12 +72,20 @@ test('at rest one summary line: each engine\'s logo, its fullest account window\
   // the logo names the engine; the use and the time left until that window resets follow, with no window name
   const claude = screen.getByTestId('usage-summary-claude');
   assert.ok(claude.querySelector('svg[aria-label="Claude"]'));
-  assert.equal(claude.textContent, '13%1시간');
-  assert.equal(screen.getByTestId('usage-summary-codex').textContent, '75%1시간');
+  assert.equal(claude.textContent, '13%(1h)');
+  assert.equal(screen.getByTestId('usage-summary-codex').textContent, '75%(1h)');
   assert.ok(screen.getByTestId('usage-summary-codex').querySelector('.text-amber-500'), 'amber: 70% or more');
   assert.equal(screen.queryByTestId('usage-claude'), null, 'no details at rest');
   fireEvent.click(screen.getByRole('button', { name: '자세히' }));
   assert.match(screen.getByTestId('usage-claude').textContent ?? '', /주간 · 별도 모델/);
   fireEvent.click(screen.getByRole('button', { name: '접기' }));
   assert.equal(screen.queryByTestId('usage-claude'), null);
+});
+
+test('the summary\'s time left: the two largest units, compact', () => {
+  const now = new Date(2026, 10, 26, 9, 0).getTime();
+  assert.equal(shortTimeLeft(now + (3 * 1440 + 21 * 60) * 60_000, now), '3d21h');
+  assert.equal(shortTimeLeft(now + 2 * 1440 * 60_000, now), '2d');
+  assert.equal(shortTimeLeft(now + 200 * 60_000, now), '3h20m');
+  assert.equal(shortTimeLeft(now + 12 * 60_000, now), '12m');
 });
