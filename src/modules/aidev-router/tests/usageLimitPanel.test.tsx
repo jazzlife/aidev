@@ -11,7 +11,7 @@ vi.mock('@/shared/api', () => ({
 }));
 
 const { UsageLimitPanel, formatObservedAt } = await import('@/modules/aidev-router/UsageLimitPanel');
-const framed = () => render(<UsageLimitPanel frame={(panel) => <section data-testid="frame"><h2>계정 한도</h2>{panel}</section>} />);
+const framed = () => render(<UsageLimitPanel frame={(panel, collapse) => <section data-testid="frame"><h2>계정 한도{collapse}</h2>{panel}</section>} />);
 
 test('nothing signed in → no panel and no frame', async () => {
   providers = {};

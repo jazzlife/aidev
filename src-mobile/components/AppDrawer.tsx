@@ -45,7 +45,8 @@ function Drawer({ onClose }: { onClose: () => void }) {
   }, []);
   const open = (path: string) => { onClose(); go(path); };
   const row = (active: boolean) => `w-full h-11 rounded-xl flex items-center gap-3 px-3 text-[15px] text-left ${active ? 'bg-elevated font-medium' : 'active:bg-elevated'}`;
-  const section = (title: string) => <div className="px-3 pt-4 pb-1 text-[11px] uppercase tracking-wide text-muted">{title}</div>;
+  // `extra`: a control at the right of the heading (the usage panel's 접기)
+  const section = (title: string, extra?: ReactNode) => <div className="flex items-center px-3 pt-4 pb-1 text-[11px] uppercase tracking-wide text-muted">{title}{extra}</div>;
   const card = 'w-full rounded-xl border border-line bg-bg px-3 py-2.5 text-left active:bg-elevated';
   const isRunning = Boolean(conversation && running.ids.has(conversation.sessionId));
   const others = running.list.filter((entry) => entry.sessionId !== conversation?.sessionId).length;
@@ -84,7 +85,7 @@ function Drawer({ onClose }: { onClose: () => void }) {
             {others > 0 ? <button type="button" className="w-full px-2 py-1 text-left text-[13px] text-accent" onClick={() => open('/')}>다른 대화 {others}개 실행 중 ›</button> : null}
           </div>
 
-          <UsageLimitPanel compact frame={(panel) => <>{section('계정 한도')}<div className="px-1">{panel}</div></>} />
+          <UsageLimitPanel compact frame={(panel, collapse) => <>{section('계정 한도', collapse)}<div className="px-1">{panel}</div></>} />
 
           {section('원격 PC')}
           <button type="button" className={row(pathname.startsWith('/screen'))} onClick={() => open('/screen')}><Monitor size={18} className="text-muted" /> 원격 제어</button>
