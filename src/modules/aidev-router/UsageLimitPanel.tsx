@@ -1,4 +1,4 @@
-import { ChevronUp, Clock } from 'lucide-react';
+import { ChevronDown, ChevronUp, Clock } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 
 import { formatTimeLeft, useUsageLimits, type UsageLimitView, type UsageWindowView } from '@/modules/aidev-router/hooks/useUsageLimits';
@@ -100,13 +100,13 @@ function EngineSummary({ view, palette, now }: { view: UsageLimitView; palette: 
 /**
  * Used by the mobile drawer (compact), the workbench sessions panel (desktop docked, tablet drawer) and
  * the legacy sidebar footer: each signed-in engine's account usage. One summary line by default — each
- * engine's logo with its fullest account window's use and time left, or the refusal in force — and "자세히" opens every window with its bar
- * and reset time (2026-11-26). Claude's comes from its turn events, Codex's from the account.
- * A signed-out engine is left out; with none signed in (or before the first answer) nothing is drawn,
- * not even the caller's frame — `frame` wraps the panel in the caller's divider and heading, and puts `collapse` (the
- * details' 접기 icon, null at rest) at the right of that heading rather than on a row of its own.
+ * engine's logo with its fullest account window's use and time left, or the refusal in force — and the chevron
+ * opens every window with its bar and reset time (2026-11-26). Claude's comes from its turn events, Codex's from
+ * the account. A signed-out engine is left out; with none signed in (or before the first answer) nothing is drawn,
+ * not even the caller's frame — `frame` wraps the panel in the caller's divider and heading, and puts `toggle`
+ * (the 자세히/접기 chevron) at the right of that heading so neither takes a place of its own.
  */
-export function UsageLimitPanel({ compact = false, frame = (panel) => panel }: { compact?: boolean; frame?: (panel: ReactNode, collapse: ReactNode) => ReactNode }) {
+export function UsageLimitPanel({ compact = false, frame = (panel) => panel }: { compact?: boolean; frame?: (panel: ReactNode, toggle: ReactNode) => ReactNode }) {
   const { views, loaded } = useUsageLimits();
   // the details are opened on request only: the summary line is what the drawer shows at rest
   const [expanded, setExpanded] = useState(false);
@@ -114,22 +114,22 @@ export function UsageLimitPanel({ compact = false, frame = (panel) => panel }: {
   // one clock per render: the reset times are relative to it
   const now = Date.now();
   const palette = compact ? MOBILE : WORKBENCH;
-  const text = compact ? 'text-[13px]' : 'text-xs';
-  if (!expanded) {
-    return frame(
-      <div data-testid="usage-limit-panel" className={`flex flex-wrap items-center gap-x-3 gap-y-1 ${text} ${compact ? 'rounded-xl border border-line bg-bg px-3 py-2' : 'px-2.5 py-1.5'}`}>
-        {views.map((view) => <EngineSummary key={view.engine} view={view} palette={palette} now={now} />)}
-        <button type="button" aria-expanded={false} onClick={() => setExpanded(true)} className={`ml-auto shrink-0 ${palette.muted} hover:underline`}>자세히</button>
-      </div>,
-      null,
-    );
-  }
+  const Chevron = expanded ? ChevronUp : ChevronDown;
+  const toggle = (
+    <button type="button" aria-label={expanded ? '접기' : '자세히'} aria-expanded={expanded} onClick={() => setExpanded(!expanded)} className={`ml-auto shrink-0 rounded ${compact ? 'p-1' : 'p-0.5'} ${palette.muted} hover:opacity-70`}>
+      <Chevron size={compact ? 16 : 14} />
+    </button>
+  );
   return frame(
-    <div data-testid="usage-limit-panel" className={compact ? 'divide-y divide-line rounded-xl border border-line bg-bg' : 'px-1 py-1'}>
-      {views.map((view) => <EngineUsage key={view.engine} view={view} compact={compact} now={now} />)}
-    </div>,
-    <button type="button" aria-label="접기" aria-expanded onClick={() => setExpanded(false)} className={`ml-auto shrink-0 rounded ${compact ? 'p-1' : 'p-0.5'} ${palette.muted} hover:opacity-70`}>
-      <ChevronUp size={compact ? 16 : 14} />
-    </button>,
+    expanded ? (
+      <div data-testid="usage-limit-panel" className={compact ? 'divide-y divide-line rounded-xl border border-line bg-bg' : 'px-1 py-1'}>
+        {views.map((view) => <EngineUsage key={view.engine} view={view} compact={compact} now={now} />)}
+      </div>
+    ) : (
+      <div data-testid="usage-limit-panel" className={`flex flex-wrap items-center gap-x-3 gap-y-1 ${compact ? 'rounded-xl border border-line bg-bg px-3 py-2 text-[13px]' : 'px-2.5 py-1.5 text-xs'}`}>
+        {views.map((view) => <EngineSummary key={view.engine} view={view} palette={palette} now={now} />)}
+      </div>
+    ),
+    toggle,
   );
 }

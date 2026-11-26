@@ -733,9 +733,9 @@ export default function SidebarContent({
 
       {/* Workbench (desktop docked / tablet drawer): no footer, but the accounts' usage limits stay at the bottom (2026-10-09) */}
       {embedded ? (
-        <UsageLimitPanel frame={(panel, collapse) => (
+        <UsageLimitPanel frame={(panel, toggle) => (
           <div className="shrink-0 border-t border-border px-2 pb-1 pt-1" data-testid="sidebar-usage-limits">
-            <div className="flex items-center px-2.5 pb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground/70">계정 한도{collapse}</div>
+            <div className="flex items-center px-2.5 pb-0.5 text-[10px] uppercase tracking-wide text-muted-foreground/70">계정 한도{toggle}</div>
             {panel}
           </div>
         )} />
