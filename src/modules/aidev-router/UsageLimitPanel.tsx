@@ -73,6 +73,15 @@ function EngineUsage({ view, compact, now }: { view: UsageLimitView; compact: bo
 /** A model's own weekly window (`seven_day_<model>`, Fable's …) does not limit the account: the summary leaves it to the details. */
 const isAccountWindow = (type: string) => !/^seven_day_.+/.test(type);
 
+/** Claude Code's mascot (the asset the user supplied, 2026-11-26): the summary names Claude by it rather than the company logo. */
+function ClaudeCodeMascot({ className }: { className: string }) {
+  return (
+    <svg viewBox="0 0 24 24" role="img" aria-label="Claude" className={className} xmlns="http://www.w3.org/2000/svg">
+      <path fill="#D97757" fillRule="evenodd" clipRule="evenodd" d="M20.998 10.949H24v3.102h-3v3.028h-1.487V20H18v-2.921h-1.487V20H15v-2.921H9V20H7.488v-2.921H6V20H4.487v-2.921H3V14.05H0V10.95h3V5h17.998v5.949zM6 10.949h1.488V8.102H6v2.847zm10.51 0H18V8.102h-1.49v2.847z" />
+    </svg>
+  );
+}
+
 /** "3d21h", "3h20m", "12m" — the summary's time left, the two largest units; a zero second unit is dropped ("2d"). */
 export function shortTimeLeft(at: number, now: number): string {
   const minutes = Math.max(1, Math.ceil((at - now) / 60_000));
@@ -95,7 +104,7 @@ function EngineSummary({ view, palette, now }: { view: UsageLimitView; palette: 
   const color = blocked || (percent ?? 0) >= 90 ? palette.badText : (percent ?? 0) >= 70 ? palette.warnText : '';
   return (
     <span className="inline-flex items-center gap-1 whitespace-nowrap tabular-nums" title={ENGINE_LABELS[view.engine] ?? view.engine} data-testid={`usage-summary-${view.engine}`} data-blocked={blocked || undefined}>
-      <LLMProviderLogo provider={view.engine} className="h-3.5 w-3.5 shrink-0" />
+      {view.engine === 'claude' ? <ClaudeCodeMascot className="h-4 w-4 shrink-0" /> : <LLMProviderLogo provider={view.engine} className="h-3.5 w-3.5 shrink-0" />}
       <span className={`font-medium ${color}`}>{usage}</span>
       {until !== null && until > now ? <span className={palette.muted}>({shortTimeLeft(until, now)})</span> : null}
     </span>
