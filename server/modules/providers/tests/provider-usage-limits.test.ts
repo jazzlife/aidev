@@ -115,7 +115,17 @@ test('Codex: the drawer read asks the ChatGPT account for its windows, at most o
     assert.deepEqual(codex.windows, [{ type: 'five_hour', utilization: 1, resetsAt: 1791503600000, blocked: true }]);
     // the account cannot be read: the last picture stays
     globalThis.fetch = (async () => new Response('nope', { status: 401 })) as typeof fetch;
-    assert.equal((await service.snapshotLive(codexOnly, now + 122_000)).codex!.blockedUntil, 1791503600000);
+    codex = (await service.snapshotLive(codexOnly, now + 122_000)).codex!;
+    assert.equal(codex.blockedUntil, 1791503600000);
+    // …and the credential refused: signed in but cut off (2026-11-26); a server error leaves that standing
+    assert.equal(codex.disconnected, true);
+    globalThis.fetch = (async () => new Response('busy', { status: 503 })) as typeof fetch;
+    assert.equal((await service.snapshotLive(codexOnly, now + 183_000)).codex!.disconnected, true);
+    // a read that answers reconnects it; one that cannot reach the account at all cuts it off again
+    globalThis.fetch = (async () => new Response(JSON.stringify(payload), { status: 200 })) as typeof fetch;
+    assert.equal((await service.snapshotLive(codexOnly, now + 244_000)).codex!.disconnected, undefined);
+    globalThis.fetch = (async () => { throw new TypeError('fetch failed'); }) as typeof fetch;
+    assert.equal((await service.snapshotLive(codexOnly, now + 305_000)).codex!.disconnected, true);
   } finally {
     globalThis.fetch = previousFetch;
     if (previousHome === undefined) delete process.env.CODEX_HOME; else process.env.CODEX_HOME = previousHome;

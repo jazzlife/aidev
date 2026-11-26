@@ -2,7 +2,7 @@ import { ChevronDown, ChevronUp } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 
 import { formatTimeLeft, useUsageLimits, type UsageLimitView, type UsageWindowView } from '@/modules/aidev-router/hooks/useUsageLimits';
-import { AIDEV_ENGINES, ENGINE_LABELS } from '@/shared/constants';
+import { ENGINE_LABELS } from '@/shared/constants';
 import { LLMProviderLogo } from '@/shared/ui';
 
 
@@ -11,9 +11,9 @@ import { LLMProviderLogo } from '@/shared/ui';
  * tokens (and its CSS only carries classes used under src-mobile plus this file). So the compact (mobile)
  * variant draws with the mobile tokens and the workbench variant with its own.
  */
-type Palette = { muted: string; track: string; ok: string; warn: string; bad: string; warnText: string; badText: string };
-const WORKBENCH: Palette = { muted: 'text-muted-foreground', track: 'bg-muted', ok: 'bg-emerald-500', warn: 'bg-amber-500', bad: 'bg-red-500', warnText: 'text-amber-500', badText: 'text-red-500' };
-const MOBILE: Palette = { muted: 'text-muted', track: 'bg-line', ok: 'bg-ok', warn: 'bg-warn', bad: 'bg-danger', warnText: 'text-warn', badText: 'text-danger' };
+type Palette = { muted: string; track: string; ok: string; warn: string; bad: string; off: string; warnText: string; badText: string };
+const WORKBENCH: Palette = { muted: 'text-muted-foreground', track: 'bg-muted', ok: 'bg-emerald-500', warn: 'bg-amber-500', bad: 'bg-red-500', off: 'bg-muted-foreground/50', warnText: 'text-amber-500', badText: 'text-red-500' };
+const MOBILE: Palette = { muted: 'text-muted', track: 'bg-line', ok: 'bg-ok', warn: 'bg-warn', bad: 'bg-danger', off: 'bg-muted', warnText: 'text-warn', badText: 'text-danger' };
 
 /** Bar colour by how full the window is. */
 const tone = (palette: Palette, percent: number | null, blocked: boolean) => (blocked || (percent ?? 0) >= 90 ? palette.bad : (percent ?? 0) >= 70 ? palette.warn : palette.ok);
@@ -37,8 +37,9 @@ function EngineUsage({ view, compact, now }: { view: UsageLimitView; compact: bo
   return (
     <div className={compact ? 'px-3 py-2' : 'px-2.5 py-1.5'} data-testid={`usage-${view.engine}`} data-blocked={blocked || undefined}>
       <div className="flex items-center gap-2">
-        {/* the runtime reports signed-in engines only: green is connected and not refusing, red a limit in force */}
-        <span className={`h-2 w-2 shrink-0 rounded-full ${blocked ? palette.bad : palette.ok}`} />
+        {/* the runtime reports signed-in engines only: green is connected and not refusing, red a limit in force,
+            grey signed in but the account could not be reached */}
+        <span className={`h-2 w-2 shrink-0 rounded-full ${blocked ? palette.bad : view.disconnected ? palette.off : palette.ok}`} title={view.disconnected ? '연결 끊김' : undefined} />
         <span className={`${compact ? 'text-[14px]' : 'text-xs'} font-medium`}>{ENGINE_LABELS[view.engine] ?? view.engine}</span>
         {/* a status only when there is something to say: no picture yet, or a refusal in force; otherwise how old the
             figures are when they are not fresh — Claude's come with its runs only, so they can be a day old */}
@@ -98,13 +99,11 @@ const engineIcon = (engine: string, className = '') => (engine === 'claude'
 /**
  * One engine in the summary line: its logo, how much of the fullest account window is used and the time left until
  * that window resets — or, during a refusal, the time left until it lifts. Amber from 70%, red from 90% or refused.
- * An engine that is not signed in (the runtime reports no view for it) is its logo alone, greyed out.
+ * Signed in but cut off (the account could not be reached): the logo greyed out, the last figures kept.
  */
-function EngineSummary({ engine, view, palette, now }: { engine: UsageLimitView['engine']; view: UsageLimitView | undefined; palette: Palette; now: number }) {
-  const label = ENGINE_LABELS[engine] ?? engine;
-  if (!view) {
-    return <span className="inline-flex items-center" title={`${label} · 연결 안 됨`} data-testid={`usage-summary-${engine}`} data-disconnected>{engineIcon(engine, 'opacity-40 grayscale')}</span>;
-  }
+function EngineSummary({ view, palette, now }: { view: UsageLimitView; palette: Palette; now: number }) {
+  const { engine } = view;
+  const label = `${ENGINE_LABELS[engine] ?? engine}${view.disconnected ? ' · 연결 끊김' : ''}`;
   const blocked = view.blockedUntil !== null;
   // the account window that will refuse first; a window past its reset comes with no figure, so it never counts
   const fullest = view.windows.reduce<UsageWindowView | null>((top, window) => (isAccountWindow(window.type) && window.percent !== null && (top === null || window.percent > (top.percent ?? 0)) ? window : top), null);
@@ -113,8 +112,8 @@ function EngineSummary({ engine, view, palette, now }: { engine: UsageLimitView[
   const until = blocked ? view.blockedUntil || null : fullest?.resetsAt ?? null;
   const color = blocked || (percent ?? 0) >= 90 ? palette.badText : (percent ?? 0) >= 70 ? palette.warnText : '';
   return (
-    <span className="inline-flex items-center gap-1 whitespace-nowrap tabular-nums" title={label} data-testid={`usage-summary-${engine}`} data-blocked={blocked || undefined}>
-      {engineIcon(engine)}
+    <span className="inline-flex items-center gap-1 whitespace-nowrap tabular-nums" title={label} data-testid={`usage-summary-${engine}`} data-blocked={blocked || undefined} data-disconnected={view.disconnected || undefined}>
+      {engineIcon(engine, view.disconnected ? 'opacity-40 grayscale' : '')}
       <span className={`font-medium ${color}`}>{usage}</span>
       {until !== null && until > now ? <span className={palette.muted}>({shortTimeLeft(until, now)})</span> : null}
     </span>
@@ -151,8 +150,7 @@ export function UsageLimitPanel({ compact = false, frame = (panel) => panel }: {
       </div>
     ) : (
       <div data-testid="usage-limit-panel" className={`flex flex-wrap items-center gap-x-3 gap-y-1 ${compact ? 'rounded-xl border border-line bg-bg px-3 py-2 text-[13px]' : 'px-2.5 py-1.5 text-xs'}`}>
-        {/* every engine, so one not signed in shows greyed out; the details list the signed-in ones only */}
-        {AIDEV_ENGINES.map((engine) => <EngineSummary key={engine} engine={engine} view={views.find((view) => view.engine === engine)} palette={palette} now={now} />)}
+        {views.map((view) => <EngineSummary key={view.engine} view={view} palette={palette} now={now} />)}
       </div>
     ),
     toggle,

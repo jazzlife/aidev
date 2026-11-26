@@ -235,6 +235,8 @@ export type ProviderUsageLimitsSnapshot = {
   observedAt: number;
   windows: ProviderUsageWindow[];
   blockedUntil: number | null;
+  /** Signed in, but the runtime's last read of the account failed on the credential or the network (the summary greys the engine). */
+  disconnected?: boolean;
 };
 
 export type ServerEvent = {

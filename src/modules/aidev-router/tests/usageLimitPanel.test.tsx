@@ -24,15 +24,8 @@ test('only the engines the runtime reports are drawn', async () => {
   providers = { claude: { provider: 'claude', observedAt: 0, windows: [], blockedUntil: null } };
   framed();
   await waitFor(() => screen.getByTestId('frame'));
-  assert.equal(screen.getByTestId('usage-summary-claude').dataset.disconnected, undefined);
-  // the summary keeps a signed-out engine as its logo alone, greyed out (2026-11-26); the details leave it out
-  const codex = screen.getByTestId('usage-summary-codex');
-  assert.equal(codex.dataset.disconnected, 'true');
-  assert.equal(codex.textContent, '');
-  assert.ok(codex.querySelector('.grayscale'));
-  fireEvent.click(screen.getByRole('button', { name: '자세히' }));
-  assert.ok(screen.getByTestId('usage-claude'));
-  assert.equal(screen.queryByTestId('usage-codex'), null);
+  assert.ok(screen.getByTestId('usage-summary-claude'));
+  assert.equal(screen.queryByTestId('usage-summary-codex'), null, 'not signed in: not drawn at all');
 });
 
 test('figures read a while ago say when: today by time, yesterday, else the date', () => {
@@ -95,4 +88,16 @@ test('the summary\'s time left: the two largest units, compact', () => {
   assert.equal(shortTimeLeft(now + 2 * 1440 * 60_000, now), '2d');
   assert.equal(shortTimeLeft(now + 200 * 60_000, now), '3h20m');
   assert.equal(shortTimeLeft(now + 12 * 60_000, now), '12m');
+});
+
+test('signed in but cut off: the summary greys the logo and keeps the last figures; the details grey the dot', async () => {
+  providers = { codex: { provider: 'codex', observedAt: Date.now(), blockedUntil: null, disconnected: true, windows: [{ type: 'seven_day', utilization: 0.4, resetsAt: Date.now() + 3_600_000, blocked: false }] } };
+  framed();
+  await waitFor(() => screen.getByTestId('usage-summary-codex'));
+  const codex = screen.getByTestId('usage-summary-codex');
+  assert.equal(codex.dataset.disconnected, 'true');
+  assert.ok(codex.querySelector('.grayscale'));
+  assert.equal(codex.textContent, '40%(1h)');
+  fireEvent.click(screen.getByRole('button', { name: '자세히' }));
+  assert.ok(screen.getByTestId('usage-codex').querySelector('.bg-muted-foreground\\/50'));
 });

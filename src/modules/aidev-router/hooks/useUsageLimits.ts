@@ -28,6 +28,8 @@ export type UsageLimitView = {
   blockedUntil: number | null;
   observedAt: number | null;
   windows: UsageWindowView[];
+  /** signed in, but the runtime's last read of the account failed on the credential or the network */
+  disconnected: boolean;
 };
 
 /** "7일 3시간 남음" / "3시간 20분 남음" / "12분 남음" until a reset; "곧 초기화" once it is due. */
@@ -42,11 +44,12 @@ export function formatTimeLeft(resetsAt: number, now = Date.now()): string {
 
 /** Used by the panel and tests: one engine's snapshot (or none) as the drawer draws it. */
 export function usageLimitView(engine: Engine, snapshot: ProviderUsageLimitsSnapshot | null | undefined): UsageLimitView {
-  if (!snapshot || !snapshot.observedAt) return { engine, unknown: true, blockedUntil: null, observedAt: null, windows: [] };
+  const disconnected = snapshot?.disconnected === true;
+  if (!snapshot || !snapshot.observedAt) return { engine, unknown: true, blockedUntil: null, observedAt: null, windows: [], disconnected };
   const windows = snapshot.windows
     .filter((window: ProviderUsageWindow) => window.type !== 'unknown' || window.blocked)
     .map((window) => ({ type: window.type, label: windowLabel(window.type), percent: window.utilization === null ? null : Math.round(window.utilization * 100), resetsAt: window.resetsAt, blocked: window.blocked }));
-  return { engine, unknown: false, blockedUntil: snapshot.blockedUntil, observedAt: snapshot.observedAt, windows };
+  return { engine, unknown: false, blockedUntil: snapshot.blockedUntil, observedAt: snapshot.observedAt, windows, disconnected };
 }
 
 /**

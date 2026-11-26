@@ -764,6 +764,11 @@ export type ProviderUsageLimitsSnapshot = {
   observedAt: number;
   windows: ProviderUsageWindow[];
   blockedUntil: number | null;
+  /**
+   * Signed in, but the last live read of the account failed on the credential (401/403) or the network: the drawers
+   * grey the engine out. Set by the live route only, never persisted; absent when connected or unknown.
+   */
+  disconnected?: boolean;
 };
 
 export type ProviderAuthStatus = {

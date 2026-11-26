@@ -55,6 +55,21 @@ let codexFetchedAt = 0;
 let claudeFetchedAt = 0;
 let signedIn: Set<LLMProvider> | null = null;
 let signedInAt = 0;
+/** Signed-in engines whose last live account read failed on the credential or the network (not persisted). */
+const disconnected = new Set<LLMProvider>();
+
+/**
+ * A live account read's answer as a connection: reachable (true), refused on the credential (false), or anything else —
+ * a server error, a reply that says nothing — which leaves the last standing (null).
+ */
+const connectionOf = (status: number): boolean | null => (status === 401 || status === 403 ? false : status < 500 ? true : null);
+
+/** Records a live read's connection; a read that threw (network, timeout) counts as disconnected. */
+async function track(provider: LLMProvider, read: () => Promise<boolean | null>) {
+  const connected = await read().catch(() => false);
+  if (connected === true) disconnected.delete(provider);
+  if (connected === false) disconnected.add(provider);
+}
 
 function load(): Store {
   if (store) return store;
@@ -100,18 +115,21 @@ function codexWindow(raw: unknown, now: number): ProviderUsageWindow | null {
   return { type, utilization: Math.max(0, Math.min(1, usedPercent / 100)), resetsAt, blocked: usedPercent >= 100 };
 }
 
-/** Replaces the Codex picture with the account's current windows; leaves it alone when the account cannot be read. */
-async function refreshCodexUsage(now: number) {
+/**
+ * Replaces the Codex picture with the account's current windows; leaves it alone when the account cannot be read.
+ * Answers the connection the read found (connectionOf; null without a login file to read with).
+ */
+async function refreshCodexUsage(now: number): Promise<boolean | null> {
   const auth = readCodexAuth();
-  if (!auth) return;
+  if (!auth) return null;
   const response = await fetch(CODEX_USAGE_URL, {
     headers: { Authorization: `Bearer ${auth.accessToken}`, 'ChatGPT-Account-Id': auth.accountId },
     signal: AbortSignal.timeout(CODEX_USAGE_TIMEOUT_MS),
   });
-  if (!response.ok) return;
+  if (!response.ok) return connectionOf(response.status);
   const body = await response.json() as { rate_limit?: { allowed?: unknown; limit_reached?: unknown; primary_window?: unknown; secondary_window?: unknown } | null };
   const limit = body.rate_limit;
-  if (!limit || typeof limit !== 'object') return;
+  if (!limit || typeof limit !== 'object') return true;
   let windows: ProviderUsageWindow[] = [];
   for (const raw of [limit.primary_window, limit.secondary_window]) {
     const window = codexWindow(raw, now);
@@ -123,6 +141,7 @@ async function refreshCodexUsage(now: number) {
   const blockedUntil = limitReached ? (resets.length ? Math.min(...resets) : 0) : null;
   load().codex = { provider: 'codex', observedAt: now, windows, blockedUntil };
   save();
+  return true;
 }
 
 /**
@@ -150,10 +169,13 @@ export function claudeUsageFromHeaders(headers: Headers): Record<string, unknown
   };
 }
 
-/** Asks Claude for the account's windows with the platform token; leaves the picture alone when it cannot. */
-async function refreshClaudeUsage() {
+/**
+ * Asks Claude for the account's windows with the platform token; leaves the picture alone when it cannot. Answers the
+ * connection the read found (connectionOf; a 429 is the account answering; null without the platform token).
+ */
+async function refreshClaudeUsage(): Promise<boolean | null> {
   const token = process.env.CLAUDE_CODE_OAUTH_TOKEN?.trim();
-  if (!token) return;
+  if (!token) return null;
   const response = await fetch(CLAUDE_USAGE_URL, {
     method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'anthropic-beta': 'oauth-2025-04-20', 'anthropic-version': '2023-06-01', 'content-type': 'application/json' },
@@ -162,9 +184,10 @@ async function refreshClaudeUsage() {
     signal: AbortSignal.timeout(CODEX_USAGE_TIMEOUT_MS),
   });
   // a refusal on a limit still carries the headers; anything else (a sign-in problem) says nothing about usage
-  if (!response.ok && response.status !== 429) return;
+  if (!response.ok && response.status !== 429) return connectionOf(response.status);
   const info = claudeUsageFromHeaders(response.headers);
   if (info) providerUsageLimitsService.recordClaude(info);
+  return true;
 }
 
 function current(provider: LLMProvider): ProviderUsageLimitsSnapshot {
@@ -257,7 +280,8 @@ export const providerUsageLimitsService = {
    * comes back empty), with Codex's read afresh from the ChatGPT account at most once a minute. A
    * failed read keeps the last picture (its observedAt says how old it is). An engine found signed
    * out loses its stored picture, so a later sign-in — perhaps another account — starts blank.
-   * `isSignedIn` answers null when it cannot tell; the engine then keeps its last standing.
+   * `isSignedIn` answers null when it cannot tell; the engine then keeps its last standing. A signed-in engine whose
+   * last live read failed on the credential or the network is marked `disconnected` (2026-11-26).
    */
   async snapshotLive(isSignedIn: (provider: LLMProvider) => Promise<boolean | null>, now = Date.now(), refresh = false): Promise<Partial<Record<LLMProvider, ProviderUsageLimitsSnapshot>>> {
     // `refresh`: a sign-in just changed (the apps say so) — ask about the sign-ins and Codex's account now
@@ -268,6 +292,7 @@ export const providerUsageLimitsService = {
       for (const provider of USAGE_ENGINES) {
         const state = await isSignedIn(provider).catch(() => null);
         if (state === true || (state === null && previous?.has(provider))) next.add(provider);
+        if (state === false) disconnected.delete(provider);
         if (state === false && load()[provider]) {
           delete load()[provider];
           save();
@@ -278,15 +303,18 @@ export const providerUsageLimitsService = {
     }
     if (signedIn.has('codex') && now - codexFetchedAt >= CODEX_USAGE_CACHE_MS) {
       codexFetchedAt = now;
-      await refreshCodexUsage(now).catch(() => undefined);
+      await track('codex', () => refreshCodexUsage(now));
     }
     if (signedIn.has('claude') && now - claudeFetchedAt >= CLAUDE_USAGE_CACHE_MS) {
       claudeFetchedAt = now;
-      await refreshClaudeUsage().catch(() => undefined);
+      await track('claude', refreshClaudeUsage);
     }
     const all = providerUsageLimitsService.snapshot(now);
     const out: Partial<Record<LLMProvider, ProviderUsageLimitsSnapshot>> = {};
-    for (const provider of signedIn) out[provider] = all[provider] ?? { provider, observedAt: 0, windows: [], blockedUntil: null };
+    for (const provider of signedIn) {
+      const entry = all[provider] ?? { provider, observedAt: 0, windows: [], blockedUntil: null };
+      out[provider] = disconnected.has(provider) ? { ...entry, disconnected: true } : entry;
+    }
     return out;
   },
 
@@ -296,6 +324,7 @@ export const providerUsageLimitsService = {
    */
   forget(provider: LLMProvider) {
     signedIn?.delete(provider);
+    disconnected.delete(provider);
     signedInAt = 0;
     codexFetchedAt = 0;
     claudeFetchedAt = 0;
@@ -311,6 +340,7 @@ export const providerUsageLimitsService = {
     claudeFetchedAt = 0;
     signedIn = null;
     signedInAt = 0;
+    disconnected.clear();
     try { fs.unlinkSync(file()); } catch { /* none */ }
   },
 };
