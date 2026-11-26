@@ -54,7 +54,7 @@ function EngineUsage({ view, compact, now }: { view: UsageLimitView; compact: bo
         ) : null}
       </div>
       {view.windows.length ? (
-        <ul className={`mt-1 grid grid-cols-[auto_minmax(0,1fr)_2rem] items-center gap-x-2 gap-y-1 ${small} ${palette.muted}`}>
+        <ul className={`mt-1 grid grid-cols-[auto_minmax(0,1fr)_auto] items-center gap-x-2 gap-y-1 ${small} ${palette.muted}`}>
           {/* one line per window: "name (time left until reset)", the bar, how much is used — the grid keeps the bars aligned */}
           {view.windows.map((window) => (
             <li key={window.type} className="contents">
@@ -62,7 +62,8 @@ function EngineUsage({ view, compact, now }: { view: UsageLimitView; compact: bo
               <div className={`h-1.5 overflow-hidden rounded-full ${palette.track}`}>
                 {window.percent !== null ? <div className={`h-full rounded-full ${tone(palette, window.percent, window.blocked)}`} style={{ width: `${Math.min(100, window.percent)}%` }} /> : null}
               </div>
-              <span className="text-right tabular-nums">{window.percent !== null ? `${window.percent}%` : '—'}</span>
+              {/* sized to the widest figure and set against the bar, so a short "3%" does not float away from it */}
+              <span className="tabular-nums">{window.percent !== null ? `${window.percent}%` : '—'}</span>
             </li>
           ))}
         </ul>
