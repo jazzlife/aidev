@@ -1,6 +1,6 @@
 /** Mobile app design tokens live in theme/tokens.css; this config only scopes Tailwind to the mobile tree
  *  and the shared modules it imports — all non-visual, except the usage-limit panel, which draws with the
- *  mobile tokens in its compact variant and so is scanned here too. */
+ *  mobile tokens in its compact variant, and the provider logos its summary shows, so both are scanned here too. */
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -8,7 +8,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 
 export default {
   darkMode: ['media'],
-  content: [path.join(here, 'index.html'), path.join(here, '{screens,components,lib}/**/*.{ts,tsx}'), path.join(here, 'App.tsx'), path.join(here, '..', 'src/modules/aidev-router/UsageLimitPanel.tsx')],
+  content: [path.join(here, 'index.html'), path.join(here, '{screens,components,lib}/**/*.{ts,tsx}'), path.join(here, 'App.tsx'), path.join(here, '..', 'src/modules/aidev-router/UsageLimitPanel.tsx'), path.join(here, '..', 'src/shared/ui/{LLMProviderLogo,ClaudeLogo,CodexLogo,OpenCodeLogo}.tsx')],
   theme: {
     extend: {
       fontFamily: { sans: ['-apple-system', 'BlinkMacSystemFont', '"Segoe UI"', 'Roboto', '"Noto Sans KR"', 'sans-serif'], mono: ['ui-monospace', 'SFMono-Regular', 'Menlo', 'monospace'] },
@@ -24,6 +24,9 @@ export default {
         ok: 'rgb(var(--m-ok) / <alpha-value>)',
         warn: 'rgb(var(--m-warn) / <alpha-value>)',
         danger: 'rgb(var(--m-danger) / <alpha-value>)',
+        // the shared provider logos (the usage panel's summary) draw with the workbench's names for ink and page
+        foreground: 'rgb(var(--m-ink) / <alpha-value>)',
+        background: 'rgb(var(--m-bg) / <alpha-value>)',
       },
       borderRadius: { xl2: '1.25rem' },
       spacing: { 'safe-b': 'env(safe-area-inset-bottom)', 'safe-t': 'env(safe-area-inset-top)' },

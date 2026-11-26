@@ -9,7 +9,7 @@ type LLMProviderLogoProps = {
   className?: string;
 };
 
-/** Used by the chat, onboarding, project-workspace, settings and sidebar modules to show which coding agent a session or project belongs to. */
+/** Used by the chat, onboarding, project-workspace, settings and sidebar modules to show which coding agent a session or project belongs to, and by aidev-router's usage-limit summary to name each engine. */
 export function LLMProviderLogo({
   provider = 'claude',
   className = 'w-5 h-5',

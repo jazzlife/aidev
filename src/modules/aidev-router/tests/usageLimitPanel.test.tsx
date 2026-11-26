@@ -42,6 +42,9 @@ test('a connected engine with no figures is green with "한도 여유"; a refusa
   };
   framed();
   await waitFor(() => screen.getByTestId('usage-summary-opencode'));
+  assert.equal(screen.getByTestId('usage-summary-opencode').textContent, '여유');
+  assert.match(screen.getByTestId('usage-summary-codex').textContent ?? '', /^한도(1시간|59분)$/, 'refused: until it lifts');
+  assert.ok(screen.getByTestId('usage-summary-codex').querySelector('.text-red-500'));
   fireEvent.click(screen.getByRole('button', { name: '자세히' }));
   const opencode = screen.getByTestId('usage-opencode');
   assert.match(opencode.textContent ?? '', /OpenCode한도 여유/);
@@ -52,7 +55,7 @@ test('a connected engine with no figures is green with "한도 여유"; a refusa
   assert.ok(codex.querySelector('.bg-red-500'));
 });
 
-test('at rest one summary line: each engine\'s fullest account window, a model\'s own window left to the details (2026-11-26)', async () => {
+test('at rest one summary line: each engine\'s logo, its fullest account window\'s use and time left, a model\'s own window left to the details (2026-11-26)', async () => {
   const later = Date.now() + 3_600_000;
   providers = {
     claude: { provider: 'claude', observedAt: Date.now(), blockedUntil: null, windows: [
@@ -66,9 +69,12 @@ test('at rest one summary line: each engine\'s fullest account window, a model\'
   };
   framed();
   await waitFor(() => screen.getByTestId('usage-summary-claude'));
-  assert.equal(screen.getByTestId('usage-summary-claude').textContent, 'Claude주간 13%');
-  assert.equal(screen.getByTestId('usage-summary-codex').textContent, 'Codex주간 75%');
-  assert.ok(screen.getByTestId('usage-summary-codex').querySelector('.bg-amber-500'), 'amber: 70% or more');
+  // the logo names the engine; the use and the time left until that window resets follow, with no window name
+  const claude = screen.getByTestId('usage-summary-claude');
+  assert.ok(claude.querySelector('svg[aria-label="Claude"]'));
+  assert.equal(claude.textContent, '13%1시간');
+  assert.equal(screen.getByTestId('usage-summary-codex').textContent, '75%1시간');
+  assert.ok(screen.getByTestId('usage-summary-codex').querySelector('.text-amber-500'), 'amber: 70% or more');
   assert.equal(screen.queryByTestId('usage-claude'), null, 'no details at rest');
   fireEvent.click(screen.getByRole('button', { name: '자세히' }));
   assert.match(screen.getByTestId('usage-claude').textContent ?? '', /주간 · 별도 모델/);

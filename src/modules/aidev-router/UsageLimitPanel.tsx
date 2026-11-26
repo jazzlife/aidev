@@ -1,8 +1,9 @@
-import { ChevronUp } from 'lucide-react';
+import { ChevronUp, Clock } from 'lucide-react';
 import { useState, type ReactNode } from 'react';
 
 import { formatTimeLeft, useUsageLimits, type UsageLimitView, type UsageWindowView } from '@/modules/aidev-router/hooks/useUsageLimits';
 import { ENGINE_LABELS } from '@/shared/constants';
+import { LLMProviderLogo } from '@/shared/ui';
 
 
 /**
@@ -10,9 +11,9 @@ import { ENGINE_LABELS } from '@/shared/constants';
  * tokens (and its CSS only carries classes used under src-mobile plus this file). So the compact (mobile)
  * variant draws with the mobile tokens and the workbench variant with its own.
  */
-type Palette = { muted: string; track: string; ok: string; warn: string; bad: string };
-const WORKBENCH: Palette = { muted: 'text-muted-foreground', track: 'bg-muted', ok: 'bg-emerald-500', warn: 'bg-amber-500', bad: 'bg-red-500' };
-const MOBILE: Palette = { muted: 'text-muted', track: 'bg-line', ok: 'bg-ok', warn: 'bg-warn', bad: 'bg-danger' };
+type Palette = { muted: string; track: string; ok: string; warn: string; bad: string; warnText: string; badText: string };
+const WORKBENCH: Palette = { muted: 'text-muted-foreground', track: 'bg-muted', ok: 'bg-emerald-500', warn: 'bg-amber-500', bad: 'bg-red-500', warnText: 'text-amber-500', badText: 'text-red-500' };
+const MOBILE: Palette = { muted: 'text-muted', track: 'bg-line', ok: 'bg-ok', warn: 'bg-warn', bad: 'bg-danger', warnText: 'text-warn', badText: 'text-danger' };
 
 /** Bar colour by how full the window is. */
 const tone = (palette: Palette, percent: number | null, blocked: boolean) => (blocked || (percent ?? 0) >= 90 ? palette.bad : (percent ?? 0) >= 70 ? palette.warn : palette.ok);
@@ -72,17 +73,26 @@ function EngineUsage({ view, compact, now }: { view: UsageLimitView; compact: bo
 /** A model's own weekly window (`seven_day_<model>`, Fable's …) does not limit the account: the summary leaves it to the details. */
 const isAccountWindow = (type: string) => !/^seven_day_.+/.test(type);
 
-/** One engine in the summary line: its colour, its name, and the fullest account window — or the refusal in force. */
+/** "4일 2시간", "3시간 20분", "12분" — the summary's time left, without the details' "남음". */
+const shortTimeLeft = (at: number, now: number) => formatTimeLeft(at, now).replace(/ 남음$/, '');
+
+/**
+ * One engine in the summary line: its logo, how much of the fullest account window is used and the time left until
+ * that window resets — or, during a refusal, the time left until it lifts. Amber from 70%, red from 90% or refused.
+ */
 function EngineSummary({ view, palette, now }: { view: UsageLimitView; palette: Palette; now: number }) {
   const blocked = view.blockedUntil !== null;
   // the account window that will refuse first; a window past its reset comes with no figure, so it never counts
   const fullest = view.windows.reduce<UsageWindowView | null>((top, window) => (isAccountWindow(window.type) && window.percent !== null && (top === null || window.percent > (top.percent ?? 0)) ? window : top), null);
-  const status = blocked ? `한도 도달${view.blockedUntil ? ` · ${formatTimeLeft(view.blockedUntil, now)}` : ''}` : fullest ? `${fullest.label} ${fullest.percent}%` : '여유';
+  const percent = fullest?.percent ?? null;
+  const usage = blocked ? '한도' : percent !== null ? `${percent}%` : '여유';
+  const until = blocked ? view.blockedUntil || null : fullest?.resetsAt ?? null;
+  const color = blocked || (percent ?? 0) >= 90 ? palette.badText : (percent ?? 0) >= 70 ? palette.warnText : '';
   return (
-    <span className="inline-flex items-center gap-1.5 whitespace-nowrap" data-testid={`usage-summary-${view.engine}`} data-blocked={blocked || undefined}>
-      <span className={`h-2 w-2 shrink-0 rounded-full ${tone(palette, fullest?.percent ?? null, blocked)}`} />
-      <span className="font-medium">{ENGINE_LABELS[view.engine] ?? view.engine}</span>
-      <span className={`tabular-nums ${palette.muted}`}>{status}</span>
+    <span className="inline-flex items-center gap-1 whitespace-nowrap tabular-nums" title={ENGINE_LABELS[view.engine] ?? view.engine} data-testid={`usage-summary-${view.engine}`} data-blocked={blocked || undefined}>
+      <LLMProviderLogo provider={view.engine} className="h-3.5 w-3.5 shrink-0" />
+      <span className={`font-medium ${color}`}>{usage}</span>
+      {until !== null && until > now ? <span className={`inline-flex items-center gap-0.5 ${palette.muted}`}><Clock size={10} />{shortTimeLeft(until, now)}</span> : null}
     </span>
   );
 }
@@ -90,7 +100,7 @@ function EngineSummary({ view, palette, now }: { view: UsageLimitView; palette: 
 /**
  * Used by the mobile drawer (compact), the workbench sessions panel (desktop docked, tablet drawer) and
  * the legacy sidebar footer: each signed-in engine's account usage. One summary line by default — each
- * engine's fullest account window, or the refusal in force — and "자세히" opens every window with its bar
+ * engine's logo with its fullest account window's use and time left, or the refusal in force — and "자세히" opens every window with its bar
  * and reset time (2026-11-26). Claude's comes from its turn events, Codex's from the account.
  * A signed-out engine is left out; with none signed in (or before the first answer) nothing is drawn,
  * not even the caller's frame — `frame` wraps the panel in the caller's divider and heading, and puts `collapse` (the
