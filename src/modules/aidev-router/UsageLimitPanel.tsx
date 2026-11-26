@@ -121,9 +121,8 @@ function EngineSummary({ view, palette, now }: { view: UsageLimitView; palette: 
       <div className={`h-1.5 min-w-6 flex-1 overflow-hidden rounded-full ${palette.track}`}>
         {fill > 0 ? <div data-testid={`usage-summary-bar-${engine}`} className={`h-full rounded-full transition-[width] ${view.disconnected ? palette.off : tone(palette, percent, blocked)}`} style={{ width: `${fill}%` }} /> : null}
       </div>
-      {/* the use sits right against its bar; one fixed width ("100% (6d23h)") keeps stacked engines' bars ending together,
-          the room left over goes after the time, not between the bar and its figure */}
-      <span className="min-w-[5.5rem] shrink-0">
+      {/* the figures follow their bar; the bar takes whatever room is left */}
+      <span className="shrink-0">
         <span className={`font-medium ${color}`}>{usage}</span>
         {until !== null && until > now ? <span className={palette.muted}> ({shortTimeLeft(until, now)})</span> : null}
       </span>
