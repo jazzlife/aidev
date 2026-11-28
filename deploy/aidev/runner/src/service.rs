@@ -175,21 +175,44 @@ fn run(cmd: &str, args: &[&str]) -> Result<(), String> {
     if status.success() { Ok(()) } else { Err(format!("{cmd} {} 실패 ({status})", args.join(" "))) }
 }
 
-/// PowerShell with a time limit (Windows): no stdin, so nothing can wait on it; killed after `limit`.
+/// PowerShell with a time limit (Windows): no stdin, so nothing can wait on it; killed after `limit`. A failure says
+/// what failed: an error that stops the script comes back as "<command>: <message>" (UTF-8 on stderr — PowerShell's
+/// own error output is lost in a window-less child, or CLIXML), otherwise "exit <code>".
 #[cfg_attr(not(windows), allow(dead_code))]
 fn powershell(script: &str, limit: std::time::Duration) -> Result<(), String> {
     use crate::proc_util::NoWindow;
+    let script = format!(
+        "try {{\n{script}\n}} catch {{\n\
+           $m = [Text.Encoding]::UTF8.GetBytes(\"`n$($_.InvocationInfo.MyCommand.Name): $($_.Exception.Message)\")\n\
+           $e = [Console]::OpenStandardError(); $e.Write($m, 0, $m.Length); $e.Flush()\n\
+           exit 1\n\
+         }}"
+    );
     let mut child = Command::new("powershell.exe")
-        .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &crate::exec::powershell_encoded(script)])
+        .args(["-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand", &crate::exec::powershell_encoded(&script)])
         .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::piped())
         .no_window()
         .spawn()
         .map_err(|e| format!("powershell: {e}"))?;
+    // read aside: a process the script started may hold the pipe open after PowerShell ends
+    let (tx, rx) = std::sync::mpsc::channel();
+    if let Some(mut err) = child.stderr.take() {
+        std::thread::spawn(move || {
+            let mut buf = Vec::new();
+            let _ = std::io::Read::read_to_end(&mut err, &mut buf);
+            let _ = tx.send(String::from_utf8_lossy(&buf).into_owned());
+        });
+    }
     let deadline = std::time::Instant::now() + limit;
     loop {
         match child.try_wait() {
             Ok(Some(status)) if status.success() => return Ok(()),
-            Ok(Some(status)) => return Err(format!("exit {}", status.code().unwrap_or(-1))),
+            Ok(Some(status)) => {
+                let text = rx.recv_timeout(std::time::Duration::from_secs(2)).unwrap_or_default();
+                let why = text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with("#<") && !l.starts_with("<Objs")).next_back().map(|l| l.trim_start_matches(": ").to_string());
+                return Err(why.unwrap_or_else(|| format!("exit {}", status.code().unwrap_or(-1))));
+            }
             Ok(None) if std::time::Instant::now() < deadline => std::thread::sleep(std::time::Duration::from_millis(200)),
             Ok(None) => {
                 let _ = child.kill();
@@ -391,7 +414,8 @@ pub fn task_script(exe: &str, limited: bool, logon_only: bool, user: &str) -> St
     let q = |s: &str| format!("'{}'", s.replace('\'', "''"));
     let level = if limited { "Limited" } else { "Highest" };
     let mut script = format!(
-        "$s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew\n\
+        "$ErrorActionPreference = 'Stop'\n\
+         $s = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -StartWhenAvailable -ExecutionTimeLimit ([TimeSpan]::Zero) -RestartCount 999 -RestartInterval (New-TimeSpan -Minutes 1) -MultipleInstances IgnoreNew\n\
          $a = New-ScheduledTaskAction -Execute {exe} -Argument 'start --hidden'\n\
          $t = New-ScheduledTaskTrigger -AtLogOn -User {user}\n\
          $p = New-ScheduledTaskPrincipal -UserId {user} -LogonType Interactive -RunLevel {level}\n\
@@ -443,6 +467,8 @@ fn run_elevated(exe: &str, args: &str) -> Result<(), String> {
     );
     powershell(&script, std::time::Duration::from_secs(180)).map_err(|e| {
         if e == "timeout" { "관리자 확인 창(UAC)에 응답이 없어 취소했습니다 — 화면에 UAC 창이 보이는 곳(이 PC 앞)에서 다시 실행하세요".to_string() }
+        // started with administrator rights, then failed on its own (its window is hidden): not a refused UAC
+        else if e.starts_with("exit ") { format!("관리자 권한으로 다시 실행한 `aidev-runner {args}`이(가) 실패했습니다 ({e}) — 관리자 권한 PowerShell에서 직접 실행하면 원인이 보입니다") }
         else { "관리자 권한 승인이 필요합니다 (UAC에서 '예') — 관리자 권한 없이 쓰려면 `aidev-runner install --limited --logon-only`".to_string() }
     })
 }
@@ -563,9 +589,8 @@ pub fn install(print_only: bool, limited: bool, logon_only: bool, for_user: Opti
             let user = for_user.unwrap_or_else(|| format!("{}\\{}", std::env::var("USERDOMAIN").unwrap_or_default(), std::env::var("USERNAME").unwrap_or_default()).trim_start_matches('\\').to_string());
             let script = task_script(&exe_s, limited, logon_only, &user);
             if print_only { return Ok(script); }
-            let needs_admin = !(limited && logon_only);
             #[cfg(windows)]
-            if needs_admin && !crate::proc_util::is_elevated() {
+            if !(limited && logon_only) && !crate::proc_util::is_elevated() {
                 let mut args = vec!["install".to_string(), "--user".into(), format!("\"{user}\"")];
                 if limited { args.push("--limited".into()); }
                 if logon_only { args.push("--logon-only".into()); }
@@ -574,7 +599,7 @@ pub fn install(print_only: bool, limited: bool, logon_only: bool, for_user: Opti
             }
             println!("작업 스케줄러에 등록하는 중…");
             powershell(&script, std::time::Duration::from_secs(90))
-                .map_err(|e| if e == "timeout" { "작업 스케줄러가 90초 안에 응답하지 않았습니다".to_string() } else if needs_admin { "작업 등록 실패 — 관리자 권한이 필요합니다".to_string() } else { "작업 등록 실패 (Register-ScheduledTask)".to_string() })?;
+                .map_err(|e| if e == "timeout" { "작업 스케줄러가 90초 안에 응답하지 않았습니다".to_string() } else { format!("작업 등록 실패 — {e}") })?;
             let path_note = if rerun { String::new() } else { format!("\n{}", register_path(&bin)) };
             return Ok(format!("{}{path_note}{placed}", describe(limited, logon_only, false)));
         }
@@ -1174,6 +1199,13 @@ pub fn installed() -> Option<String> {
         "macos" => home.join("Library/LaunchAgents/work.nado.aidev-runner.plist").exists().then(|| {
             if std::path::Path::new(BOOT_PLIST).exists() { "LaunchAgent + LaunchDaemon(부팅)".into() } else { "LaunchAgent".into() }
         }),
+        // the tasks `install` registers: the sign-in task always, the boot task unless --logon-only
+        "windows" => {
+            use crate::proc_util::NoWindow;
+            let task = |name: &str| Command::new("schtasks.exe").args(["/Query", "/TN", name]).no_window().stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null()).stderr(std::process::Stdio::null()).status().is_ok_and(|s| s.success());
+            task("aidev-runner").then(|| if task(BOOT_TASK) { "작업 스케줄러 (로그인 + 부팅 작업)".into() } else { "작업 스케줄러 (로그인 작업)".into() })
+        }
         _ => None,
     }
 }
@@ -1356,6 +1388,7 @@ mod tests {
         assert!(s.contains("-LogonType Interactive -RunLevel Highest") && s.contains("-ExecutionTimeLimit ([TimeSpan]::Zero)"));
         assert!(s.contains("'start --hidden --boot'") && s.contains("-LogonType S4U -RunLevel Highest") && s.contains("-AtStartup"));
         assert!(s.contains("Set-ItemProperty -Path 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run' -Name 'NadoVibe Runner'") && s.contains("conhost.exe\" --headless") && s.contains("/Run /TN aidev-runner"));
+        assert!(s.starts_with("$ErrorActionPreference = 'Stop'\n"));
         let s = super::task_script("x", true, true, "PC\\me");
         assert!(s.contains("-LogonType Interactive -RunLevel Limited") && !s.contains("S4U") && s.contains("Unregister-ScheduledTask -TaskName aidev-runner-boot"));
     }
