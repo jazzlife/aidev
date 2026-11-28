@@ -6,7 +6,7 @@
 .DESCRIPTION
   libvpx's own Visual Studio 2022 project build (/MD, the C runtime Rust links by default). Needs Git, Visual Studio
   2022 with C++ (for -Arch arm64 also its ARM64 build tools and the clang-cl toolset) and MSYS2 at C:\msys64 for libvpx's configure script; make,
-  diffutils and yasm (the x64 assembly: libvpx's project files call yasm) are added to MSYS2 here.
+  diffutils and yasm (the x64 assembly: libvpx's project files call yasm; UCRT64's — MSYS2 no longer builds MINGW64's) are added to MSYS2 here.
   The version is pinned: src\vpx_ffi.rs (bindgen) is generated from its headers. scripts/build-libvpx.sh: Linux, macOS.
 
 .EXAMPLE
@@ -38,7 +38,7 @@ if (-not (Test-Path $Src)) {
 }
 $Msys = 'C:\msys64'
 if (-not (Test-Path "$Msys\usr\bin\bash.exe")) { throw 'MSYS2가 필요합니다 (C:\msys64) — winget install -e --id MSYS2.MSYS2' }
-if (Invoke-Native "$Msys\usr\bin\pacman.exe" @('-S', '--noconfirm', '--needed', 'make', 'diffutils', 'mingw-w64-x86_64-yasm')) { throw 'MSYS2에 make / diffutils / yasm 을 설치하지 못했습니다 (pacman)' }
+if (Invoke-Native "$Msys\usr\bin\pacman.exe" @('-S', '--noconfirm', '--needed', 'make', 'diffutils', 'mingw-w64-ucrt-x86_64-yasm')) { throw 'MSYS2에 make / diffutils / yasm 을 설치하지 못했습니다 (pacman)' }
 $vswhere = "${env:ProgramFiles(x86)}\Microsoft Visual Studio\Installer\vswhere.exe"
 $msbuild = if (Test-Path $vswhere) { & $vswhere -latest -products * -requires Microsoft.Component.MSBuild -find 'MSBuild\**\Bin\MSBuild.exe' | Select-Object -First 1 }
 if (-not $msbuild) { throw 'Visual Studio 2022 (MSBuild)가 필요합니다' }
@@ -48,7 +48,7 @@ New-Item -ItemType Directory -Force $work | Out-Null
 # (the clang-cl projects give no file its own -march: the Armv8.2+ extensions are left out, plain NEON stays)
 $target = if ($Arch -eq 'arm64') { 'arm64-win64-vs17-clangcl --disable-neon-dotprod --disable-neon-i8mm --disable-sve --disable-sve2' } else { 'x86_64-win64-vs17 --as=yasm' }
 # MSYS2's tools first, then MSBuild (libvpx's make calls msbuild.exe) and everything else this shell has
-$env:PATH = "$Msys\usr\bin;$Msys\mingw64\bin;$(Split-Path -Parent $msbuild);$env:PATH"
+$env:PATH = "$Msys\usr\bin;$Msys\ucrt64\bin;$(Split-Path -Parent $msbuild);$env:PATH"
 $env:MSYS2_PATH_TYPE = 'inherit'
 $srcU = (& "$Msys\usr\bin\cygpath.exe" -u $Src).Trim()
 $workU = (& "$Msys\usr\bin\cygpath.exe" -u $work).Trim()
