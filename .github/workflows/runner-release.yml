@@ -266,7 +266,7 @@ jobs:
   netcoredbg-mac:
     name: netcoredbg (Apple Silicon)
     needs: version
-    runs-on: macos-14
+    runs-on: macos-15
     # upstream publishes no osx-arm64 build, so it is built here from source (about 10 minutes)
     steps:
       - uses: actions/checkout@v5
